@@ -1,0 +1,79 @@
+import { describe, it, expect, vi } from 'vitest';
+import { MODEL_KEYS, assertModel } from './contract.js';
+import { createFakeModel } from '../test/fakeModel.js';
+
+describe('MODEL_KEYS', () => {
+  it('is frozen and lists the 18 contract methods', () => {
+    expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
+    expect(MODEL_KEYS).toHaveLength(18);
+    // step9가 보장해야 하는 핵심 키들.
+    for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'subscribe']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
+  });
+});
+
+describe('assertModel', () => {
+  function fullStub() {
+    const stub = {};
+    for (const key of MODEL_KEYS) stub[key] = () => {};
+    return stub;
+  }
+
+  it('passes for a model implementing every key', () => {
+    expect(() => assertModel(fullStub())).not.toThrow();
+  });
+
+  it('throws naming the missing method', () => {
+    const partial = fullStub();
+    delete partial.subscribe;
+    expect(() => assertModel(partial)).toThrow(/subscribe/);
+  });
+
+  it('throws when a key is not a function', () => {
+    const bad = fullStub();
+    bad.login = 'nope';
+    expect(() => assertModel(bad)).toThrow(/login/);
+  });
+
+  it('throws for non-objects', () => {
+    expect(() => assertModel(null)).toThrow();
+    expect(() => assertModel(undefined)).toThrow();
+  });
+});
+
+describe('createFakeModel', () => {
+  it('satisfies the full contract (incl. restoreSession/createUser/updateUser)', () => {
+    const fake = createFakeModel();
+    expect(() => assertModel(fake)).not.toThrow();
+    for (const key of MODEL_KEYS) expect(typeof fake[key]).toBe('function');
+  });
+
+  it('login/restoreSession round-trip a seeded user without leaking the password', async () => {
+    const fake = createFakeModel({ users: [{ userId: 'kim', password: 'pw', name: '김기자', role: 'R' }] });
+    const r = await fake.login('kim', 'pw');
+    expect(r.ok).toBe(true);
+    expect(r.user.password).toBeUndefined();
+    const restored = await fake.restoreSession();
+    expect(restored.ok).toBe(true);
+    expect(restored.user.userId).toBe('kim');
+    await fake.logout();
+    expect((await fake.restoreSession()).ok).toBe(false);
+  });
+
+  it('saveArticle assigns an id when missing and notifies subscribers', async () => {
+    const fake = createFakeModel();
+    const onChange = vi.fn();
+    fake.subscribe({}, onChange);
+    const r = await fake.saveArticle({ title: '새 기사' });
+    expect(r.ok).toBe(true);
+    expect(r.articleId).toBeTruthy();
+    expect(onChange).toHaveBeenCalled();
+  });
+
+  it('queryUsers never exposes passwords', async () => {
+    const fake = createFakeModel({ users: [{ userId: 'a', password: 'secret' }] });
+    const { items } = await fake.queryUsers();
+    expect(items[0].password).toBeUndefined();
+  });
+});
