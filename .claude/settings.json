@@ -1,4 +1,17 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf .claude/commands/*)",
+      "Bash(rm -rf .claude/docs/*)",
+      "Bash(rm -rf .claude/scripts/*)",
+      "Edit(.claude/commands/*)",
+      "Edit(.claude/docs/ARD.md)",
+      "Edit(.claude/docs/PRD.md)",
+      "Edit(.claude/docs/ARCHITECTURE.md)",
+      "Edit(.claude/scripts/*)",
+      "Edit(.claude/scripts/*)"
+    ]
+  },
   "hooks": {
     "Stop": [
       {
