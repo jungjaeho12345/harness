@@ -127,7 +127,7 @@
       "name": "editor-wiring",
       "status": "completed",
       "started_at": "2026-06-14T07:21:35+0900",
-      "completed_at": "2026-06-14T07:40:00+0900",
+      "completed_at": "2026-06-14T07:39:15+0900",
       "summary": "이미 구현·단위테스트됐으나 미결선(degraded)이던 에디터 키 입력 헬퍼를 실제 에디터 UI에 결선(로직 재구현 없이 import·호출만). [15-A] Editor.jsx에 readCaret(selection→blocksToText 기준 텍스트 오프셋·라인 div=텍스트 블록 순서) 추가 후 isInputBlocked 결선 — '(끝)' 마커 시작 이상이면 삽입성 입력만 차단(onKeyDown 문자·Enter / onPaste / onCompositionStart, isInsertionKey로 판별)하고 e.preventDefault; 삭제(Backspace/Delete)·이동·선택은 차단하지 않음(news.md 162행). 부모 onKeyDown 먼저 처리 후 defaultPrevented면 양보. [15-B] WriterPage.jsx onKeyDown에 isDeleteLine(Ctrl+D)·빈 줄 Backspace/Delete 분기 추가 — readCaret+lineAtOffset로 텍스트 라인 인덱스를 구하고 textLineToBlockIndex(텍스트 블록만 카운팅)로 blocks 인덱스 환산 후 deleteLineAt 적용(라인+바로 뒤 임베드 1개 동반 삭제)·serialize→updateField('body'); 비어 있지 않은 줄의 Backspace 문자 삭제는 기본 동작 유지. [15-C] Editor.jsx에 composingRef 추적(onCompositionStart/End)·onInput은 조합 중 본문 동기화/재색칠 미룸(텍스트는 contentEditable DOM에 보존)·compositionend/blur에서 shouldRecolor 게이트로 동기화 재개(입력 유실 없음, news.md 168행). [15-D] grep으로 4개 헬퍼 파일 export 참조 확인 — isInputBlocked·lineAtOffset·isDeleteLine·deleteLineAt·shouldRecolor·RECOLOR_TRIGGERS가 프로덕션 결선됨; 나머지(appendEndMarker·editorNewline.hasEndMarker·lines·removeLineFromText·colorLines)는 각자 단위테스트가 import하므로 보수적으로 보존(진짜 미사용 export 없음). ROLES·TopBar right prop·임베드 src 검증은 step16 소관이라 미변경. 신규 테스트 11개(Editor 15-A 6·15-C 2, WriterPage 15-B 3 — jsdom Selection/Range로 캐럿 설정·preventDefault 스파이·직렬화 결과 검증). AC(lint clean·build·backend 178 무변동·web 202(+11)) = 380 전부 통과, 기존 369개 무회귀. 본문 contract(markupVersion, step14)·임베드 보안(step16)은 건드리지 않음."
     },
     {
