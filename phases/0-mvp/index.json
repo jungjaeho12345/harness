@@ -53,7 +53,10 @@
     {
       "step": 6,
       "name": "media-search-service",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-14T02:48:43+0900",
+      "completed_at": "2026-06-14T02:55:00+0900",
+      "summary": "미디어 검색 서버 프록시 서비스 (ADR-005, 외부 호출은 주입 fetchFn으로 추상화 — 네트워크 비의존). src/services/mediaSearch.js(createMediaSearch({fetchFn,env}): async search(query,type)→ normalizeType로 type==='image'만 'image', 그 외(누락/알수없음 포함)는 'video'로 정규화; image→Google Custom Search(customsearch/v1, searchType=image, GOOGLE_API_KEY+GOOGLE_CSE_ID 필요)·video→YouTube Data API v3(youtube/v3/search, part=snippet&type=video, YOUTUBE_API_KEY 필요), 키는 주입 env에서만 읽음(하드코딩 금지)·query는 encodeURIComponent; 반환 {items:Array,error:boolean} — 키 누락 시 fetch 미호출·네트워크/HTTP오류(res.ok=false)·fetch throw는 모두 throw 없이 {items:[],error:true}(매번 새 객체), 정상 응답은 body.items 배열만 취하고 없으면 []로 정규화). test/mediaSearch.test.js 9개 신규(image/video 분기·누락/알수없는 type→video·items 없음 정규화·YouTube키/Google키+CSE_ID 누락·네트워크 throw·HTTP non-ok → 빈 결과, 모두 가짜 fetchFn으로 네트워크 없이). AC(lint/build/test 140/140) 전부 통과."
     },
     {
       "step": 7,
