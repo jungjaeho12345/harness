@@ -243,8 +243,9 @@ class StepExecutor:
             sys.exit(1)
 
         prompt = preamble + step_file.read_text(encoding="utf-8")
+        claude_cmd = "claude.cmd" if sys.platform == "win32" else "claude"
         result = subprocess.run(
-            ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", prompt],
+            [claude_cmd, "-p", "--dangerously-skip-permissions", "--output-format", "json", prompt],
             cwd=self._root, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=1800,
         )
