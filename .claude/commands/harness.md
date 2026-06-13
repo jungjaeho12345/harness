@@ -14,7 +14,7 @@
 
 ### C. Step 설계
 
-사용자가 구현 계획 작성을 지시하면 여러 step으로 나뉜 초안을 작성해 피드백을 요청한다. 필요시 harness-plan-reviewer 에이전트를 병렬로 사용한다.
+사용자가 구현 계획 작성을 지시하면 여러 step으로 나뉜 초안을 작성해 피드백을 요청한다. 필요시 harness-plan-reviewer, figma-ui-builder 에이전트를 병렬로 사용한다.
 
 설계 원칙:
 
