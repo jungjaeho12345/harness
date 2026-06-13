@@ -1,0 +1,53 @@
+# Step 8: http-server
+
+## 읽어야 할 파일
+
+- `/news.md` — **API 명세서, 보안** 섹션(엔드포인트 목록, 세션/권한, CORS, CSP, 레이트리밋)
+- `/docs/ADR.md` — ADR-004(세션 인가, req.body.role 불신), ADR-005(SSE 무효화 스트림)
+- `/docs/ARCHITECTURE.md` — 얇은 transport
+- `src/controllers/index.js`(step7), `src/db/schema.js`(step1), `src/services/sessionService.js`(step4)
+
+## 작업
+
+Express REST/SSE 전송 계층을 구현한다. **비즈니스 로직 없음 — 컨트롤러 위임 + 인가 게이트 + shape 매핑만.** 의존성은 주입 가능하게(테스트가 in-memory db/서비스로 구동). TDD.
+
+1. `server/index.js`:
+   - `export function createApp({ controllers, sessionService })` 반환 Express app.
+     - `express.json()`, `helmet`(CSP: scriptSrc 'self', imgSrc 'self' data: https:, connectSrc 'self', frameAncestors 'self' 등 SPA+SSE+외부 썸네일 동작하도록), `cors({ origin: ['http://localhost:5173','http://127.0.0.1:5173'] })`.
+     - 세션 식별: 요청 헤더 `x-session-id` → `sessionService.touchSession`으로 acting 신원/role 도출. **`req.body.role` 신뢰 금지.**
+     - 로그인 레이트리밋: `/api/login`에만 15분/10회.
+   - 라우트(news.md API 명세):
+     - `GET /api/health`
+     - `POST /api/login`, `POST /api/logout`, `GET /api/session`(F5 복원)
+     - `GET /api/users`(세션 게이트: Z=전체 명단, 그 외=부서 등 최소 필드), `POST /api/users`·`PUT /api/users/:id`(**Z 전용**)
+     - `GET/POST /api/receiver-config`, `DELETE /api/receiver-config/:id`(**Z 전용**)
+     - `GET /api/articles`(세션 게이트), `GET /api/articles/search`, `POST /api/articles`(R/D/Z 저장; 부서 비면 세션 부서 stamp)
+     - `POST /api/articles/:id/action`(송고/보류/KILL — **role은 세션에서**, editDps 게이트 후 applyAction)
+     - `PUT /api/articles/:id`(부분 수정 — **잠금 보유자만**: assertLockHolder)
+     - `POST /api/articles/:id/lock` · `/unlock` · `/force-unlock`(force는 D/Z 전용)
+     - `GET /api/media/search`(세션 게이트)
+     - `GET /api/stream`(SSE) — in-process `EventEmitter`로 기사 create/update/status/lock 변경 시 `event: change` 브로드캐스트(**행 데이터 없는 무효화 신호**). EventSource가 헤더를 못 보내므로 `?session=` 쿼리 인증 폴백 허용(이 라우트 한정).
+   - 전역 에러 핸들러(4-arg, 마지막 등록): 내부 스택 비노출, `{ ok:false, reason:'internal-error' }`.
+   - 프로덕션 부트스트랩: 직접 실행 시 루트 `news.db` 열고 `createSchema`, `createSessionService` + `createControllers` 결선, `PORT`(기본 3001) listen. 테스트 import 시에는 listen 안 함.
+2. 테스트(`test/server*.test.js`): in-memory db로 createApp을 만들어 핵심 경로 — 미인증 거부, 세션 인가, `req.body.role` 무시(세션 role 사용), 송고/보류/KILL 전이, 잠금 보유자 가드, Z 전용 게이트, SSE ready 이벤트 — 를 검증. (가능하면 `app.listen(0)` + fetch, 또는 라우트 핸들러 직접 호출.)
+
+## Acceptance Criteria
+
+```bash
+npm run lint
+npm run build
+npm test
+```
+
+## 검증 절차
+
+1. AC 실행.
+2. 체크리스트: 모든 acting role이 세션에서 도출되는가(body.role 무시)? Z 전용/잠금 보유자/세션 게이트가 강제되는가? SSE가 무효화 신호만 보내는가? 부트스트랩이 createSchema만(삭제 없음) 호출하는가?
+3. step 8 업데이트(completed + summary: createApp 시그니처와 라우트 표, 인가 모델).
+
+## 금지사항
+
+- 라우트 핸들러에 비즈니스 로직을 넣지 마라. 이유: ADR-006 — 컨트롤러/서비스 위임.
+- `req.body.role`을 신뢰하지 마라. 이유: ADR-004 권한 상승 방지.
+- 부트스트랩에서 DROP/DELETE/마이그레이션 삭제를 하지 마라. 이유: DB 비파괴.
+- 기존 테스트를 깨뜨리지 마라.
