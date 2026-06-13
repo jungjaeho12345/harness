@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import {
+  render, screen, waitFor, fireEvent, createEvent,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
 import { WriterPage } from './WriterPage.jsx';
 import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
+import { serialize, textBlock, embedBlock } from './editorContent.js';
 
 function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, pendingEdit, seed } = {}) {
   if (pendingEdit) sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify(pendingEdit));
@@ -139,5 +142,80 @@ describe('WriterPage — 송고/보류 가드 + 확인창', () => {
     const apply = vi.spyOn(model, 'applyAction');
     await userEvent.click(actionBtn('송고'));
     expect(apply).not.toHaveBeenCalled();
+  });
+});
+
+// 15-B: Ctrl+D / 빈 줄 Backspace 라인 삭제 + 임베드 동반 삭제 결선(isDeleteLine/deleteLineAt/lineAtOffset).
+describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭제 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 캐럿을 lineIndex번째 라인 div에 둔다.
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 본문(markupVersion)을 가진 기사로 편집 진입한 WriterPage를 띄운다.
+  async function openWith(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(screen.getByText('다음')).toBeInTheDocument());
+    return utils;
+  }
+
+  // 에디터 라인 div들의 텍스트(탭 라벨 등 다른 '제목'과 혼동 없이 본문만 본다).
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  it('Ctrl+D는 활성 라인과 바로 뒤 임베드를 함께 삭제한다', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock('본문'), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy();
+
+    caretAtLine(container, 1); // "본문" 라인
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['제목', '다음']));
+    expect(container.querySelector('[data-embed-type="image"]')).toBeNull();
+  });
+
+  it('빈 줄에서 Backspace는 그 줄과 동반 임베드를 삭제한다', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock(''), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy();
+
+    caretAtLine(container, 1); // 빈 줄
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'Backspace' });
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeNull());
+    expect(editorLines(container)).toEqual(['제목', '다음']);
+  });
+
+  it('비어 있지 않은 줄의 Backspace(문자 삭제)는 개입하지 않는다(임베드 보존)', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock('본문'), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // "본문" — 비어 있지 않음
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Backspace' });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled(); // 기본 동작 유지
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy();
+    expect(editorLines(container)).toContain('본문');
   });
 });

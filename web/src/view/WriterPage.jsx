@@ -7,10 +7,11 @@ import { useState } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
-import { Editor } from './Editor.jsx';
+import { Editor, readCaret } from './Editor.jsx';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
-import { deserialize, serialize, hasEndMarker } from './editorContent.js';
-import { insertEndMarker, isInsertEndMarker } from './editorShortcuts.js';
+import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
+import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from './editorShortcuts.js';
+import { lineAtOffset } from './editorCaret.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import { bodyTitle, mergeTextIntoBody, appendEmbedToBody } from './writerBody.js';
 
@@ -35,6 +36,18 @@ const READONLY_LABELS = [
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
+// 텍스트 라인 인덱스(라인 div 순서) → blocks 배열 인덱스. 텍스트 블록만 세어 환산한다(임베드 제외 — Editor의 textLine 카운팅과 동일 규칙).
+function textLineToBlockIndex(blocks, textLineIndex) {
+  let count = -1;
+  for (let i = 0; i < blocks.length; i += 1) {
+    if (blocks[i] && blocks[i].type === 'text') {
+      count += 1;
+      if (count === textLineIndex) return i;
+    }
+  }
+  return -1;
+}
+
 export function WriterPage() {
   const { identity } = useAppContext();
   const {
@@ -58,13 +71,28 @@ export function WriterPage() {
   };
 
   // Alt+Y → "(끝)" 최종 블록 삽입 + 맞춤법 검사 on(중복이면 무삽입).
+  // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
     if (isInsertEndMarker(e)) {
       e.preventDefault();
       const r = insertEndMarker(blocks);
       updateField('body', serialize(r.blocks));
       setSpell(true);
+      return;
     }
+    const ctrlD = isDeleteLine(e);
+    if (!ctrlD && e.key !== 'Backspace' && e.key !== 'Delete') return;
+
+    const text = blocksToText(blocks);
+    const caret = readCaret(e.currentTarget);
+    const textLineIndex = lineAtOffset(text, caret ? caret.offset : text.length).lineIndex;
+    // Backspace/Delete는 빈 줄(라인 삭제)에만 개입한다 — 비어 있지 않은 줄의 문자 삭제는 막지 않는다.
+    if (!ctrlD && (text.split('\n')[textLineIndex] ?? '') !== '') return;
+
+    const blockIndex = textLineToBlockIndex(blocks, textLineIndex);
+    if (blockIndex < 0) return;
+    e.preventDefault();
+    updateField('body', serialize(deleteLineAt(blocks, blockIndex).blocks));
   };
 
   const onRemoveEmbed = (blockIndex) => {
