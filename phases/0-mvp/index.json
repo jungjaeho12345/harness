@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "data-models",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-14T02:22:24+0900",
+      "completed_at": "2026-06-14T02:27:22+0900",
+      "summary": "데이터 접근 계층(직접 SQL, ORM 없음) — src/models/userModel.js(createUserModel(db): findById·query(AND 동등 필터)·insert·update, 삭제 함수 없음), src/models/articleModel.js(createArticleModel(db): getById({article,contents}|null)·insert/update(Article+Contents 단일 트랜잭션, BEGIN/COMMIT/ROLLBACK)·query(작성/송고/배부 시간 범위·작성자·송고자·articleId·status IN·부서 다중 departments IN·status 제외 excludeStatus NOT IN, createdAt DESC 정렬)·searchByText(제목·content·markupVersion LIKE)·setLock·clearLock), src/models/receiverConfigModel.js(createReceiverConfigModel(db): query·insert(lastInsertRowid 반환)·remove(설정 행만 DELETE — Article/Contents 비파괴)). test/{userModel,articleModel,receiverConfigModel}.test.js 24개 신규 테스트(트랜잭션 원자성 롤백·부서 다중/상태 제외 필터·시간 범위/정렬·검색·잠금 컬럼 갱신·remove 비파괴). AC(lint/build/test 37/37) 전부 통과."
     },
     {
       "step": 3,
