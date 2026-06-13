@@ -12,11 +12,13 @@
 - 각 작업이 끝날 때마다 slack의 harness 채널로 내용 전달한다.
 
 > 에이전트
-- 부책임자는 spec-driven-pl-orchestrator 에이전트가 한다.
-- front 개발은 expert-frontend 에이전트가 한다.
-- design은 figma-web-design-pl 에이전트가 한다.
-- 서버 개발은 expert-backend 에이전트가 한다.
-- 보안은 security-coding-leader 에이전트가 한다.
+하네스 엔지니어링 5단계 파이프라인을 다음 에이전트가 담당한다 (정의: `.claude/agents/`).
+- 총괄(오케스트레이터)은 harness-orchestrator 에이전트가 한다. (단계 게이트 조율·execute.py 실행·에러/blocked 복구·Slack 보고)
+- ① 기획은 harness-planner 에이전트가 한다. (docs 탐색 → phase를 step으로 분해 → index.json·step{N}.md 작성)
+- ② 검토는 harness-plan-reviewer 에이전트가 한다. (실행 전 step 계획 검수 게이트)
+- ③ 구현은 harness-implementer 에이전트가 한다. (step 단위 TDD 구현)
+- ④ 테스트는 harness-tester 에이전트가 한다. (AC 커맨드 실행·테스트 보강·아키텍처 체크)
+- ⑤ 리뷰는 harness-code-reviewer 에이전트가 한다. (diff 코드리뷰 — 버그·아키텍처·보안·DB 비파괴)
 
 > 아키텍처 규칙
 - CRITICAL: {절대 지켜야 할 규칙 1 (예: 모든 API 로직은 app/api/ 라우트 핸들러에서만 처리)}
