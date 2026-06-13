@@ -85,8 +85,10 @@
     {
       "step": 10,
       "name": "frontend-app-controllers",
-      "status": "pending",
-      "started_at": "2026-06-14T03:18:04+0900"
+      "status": "error",
+      "started_at": "2026-06-14T03:18:04+0900",
+      "error_message": "[3회 시도 후 실패] Step did not update status",
+      "failed_at": "2026-06-14T03:19:27+0900"
     },
     {
       "step": 11,
