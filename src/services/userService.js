@@ -35,5 +35,25 @@ export function createUserService({ userModel }) {
     return userModel.query(filters).map(sanitize);
   }
 
-  return { login, query };
+  // 사용자 생성 — 비밀번호는 bcrypt 해시로 저장하고, 반환값엔 비밀번호를 담지 않는다.
+  function create(dto = {}) {
+    const { password, ...rest } = dto;
+    const row = {
+      ...rest,
+      password: bcrypt.hashSync(String(password ?? ''), 10),
+      active: rest.active ?? 'Y',
+    };
+    userModel.insert(row);
+    return { ok: true, user: sanitize(row) };
+  }
+
+  // 사용자 수정 — 비밀번호가 오면 해시로 저장한다(없으면 그대로 둠). 비밀번호는 반환하지 않는다.
+  function update(userId, fields = {}) {
+    const patch = { ...fields };
+    if (patch.password !== undefined) patch.password = bcrypt.hashSync(String(patch.password), 10);
+    const changes = userModel.update(userId, patch);
+    return { ok: true, changes };
+  }
+
+  return { login, query, create, update };
 }

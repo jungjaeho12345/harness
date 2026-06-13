@@ -55,6 +55,8 @@ export function createControllers(db, {
 
   const user = {
     query: (filters) => userService.query(filters),
+    create: (dto) => userService.create(dto),
+    update: (userId, fields) => userService.update(userId, fields),
   };
 
   const article = {
