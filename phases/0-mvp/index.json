@@ -47,7 +47,7 @@
       "name": "collection-services",
       "status": "completed",
       "started_at": "2026-06-14T02:42:42+0900",
-      "completed_at": "2026-06-14T02:47:13+0900",
+      "completed_at": "2026-06-14T02:48:41+0900",
       "summary": "수집(자동기사) 파이프라인·수신 설정 서비스 (순수 도메인, 외부 FTP/네트워크 비의존 — sourceId/payload 주입). src/parsers/defaultParser.js(parse(payload)→{title,content}: 객체(API)는 title/content|body 추출·title 없으면 본문 첫 줄 승격, 문자열(FTP)은 첫 줄=제목·나머지=본문, CRLF/선행빈줄 정규화) + src/parsers/parser.js(진입점, defaultParse 위임 — 향후 포맷 분기 자리). src/services/collectionService.js(createCollectionService({articleService,receiverConfigModel,parser}): receive(sourceId,payload)→ receiverConfigModel.query로 등록 판정(미등록=unregistered·전부 비활성=inactive 거부, 거부 시 무등록), parse 후 본문을 yh-editor markupVersion 블록 JSON(제목 줄 포함)으로 만들어 articleService.create 재사용(status RDS·트랜잭션)·Contents.attribute='자동기사' 필수 기록). src/services/receiverConfigService.js(createReceiverConfigService({receiverConfigModel,authorization}): query/create/remove 모두 authorization.manageReceiverConfig Z 게이트 통과 후 위임, 미인증=unauthenticated·비-Z=forbidden, remove는 설정 행만 삭제(수집 기사 비파괴)). test/parser.test.js(7)·collectionService.test.js(5)·receiverConfigService.test.js(4) 16개 신규. AC(lint/build/test 131/131) 전부 통과."
     },
     {
