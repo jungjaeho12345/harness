@@ -79,13 +79,14 @@
       "name": "frontend-model",
       "status": "completed",
       "started_at": "2026-06-14T03:13:37+0900",
-      "completed_at": "2026-06-14T03:18:03+0900",
+      "completed_at": "2026-06-14T03:19:17+0900",
       "summary": "프론트엔드 Model 계층 — transport(fetch/EventSource)를 계약 뒤에 격리(ADR-003). web/src/model/contract.js(MODEL_KEYS=Object.freeze 18키: login·logout·restoreSession·queryUsers·createUser·updateUser·queryArticles·searchArticles·searchMedia·applyAction·saveArticle·lockArticle·unlockArticle·forceUnlockArticle·queryReceiverConfig·createReceiverConfig·deleteReceiverConfig·subscribe; assertModel(model)→모든 키 함수 검증·누락 키 명시 throw). web/src/model/httpModel.js(createHttpModel({base}={})→base 기본 import.meta.env.VITE_API_BASE??'http://127.0.0.1:3001'; 단일 request()가 sessionStorage('yh.sessionId') 보관 토큰을 x-session-id로 자동 첨부·body 있을 때만 Content-Type/JSON 직렬화·배열 필터는 반복 쿼리 파라미터(status/departments IN); login→POST/api/login·sessionId 보관, logout→POST 후 토큰 제거, restoreSession→GET/api/session(throw 아님), createUser→POST/api/users·updateUser→PUT/api/users/:id, saveArticle→articleId 유무로 POST/api/articles vs PUT/api/articles/:id 분기, applyAction→POST :id/action body{action}(role 미전송, 서버 세션 도출), lock/unlock/forceUnlock·queryReceiverConfig/create/delete 매핑, subscribe(filter,onChange)→EventSource('/api/stream?session=')·ready/change/error 리스너·{connected():bool,unsubscribe()} 반환·표준 자동 재연결). web/src/test/fakeModel.js(createFakeModel(seed)→in-memory 계약 구현, 비밀번호 응답 미노출·saveArticle 신규 id 부여+notify·subscribe 리스너, assertModel 통과). web/src/main.jsx 갱신(createHttpModel() 생성→<App model={model}/> placeholder 주입). 테스트 web/src/model/{contract,httpModel}.test.js 19개 신규(assertModel 강제·fakeModel 계약 충족·URL/메서드/헤더·x-session-id 자동첨부·restoreSession GET·saveArticle POST/PUT 분기·createUser/updateUser·applyAction role 미전송·배열 필터·EventSource 구독). AC(lint/build/test:web 19 + backend 173 = 192) 전부 통과."
     },
     {
       "step": 10,
       "name": "frontend-app-controllers",
-      "status": "pending"
+      "status": "pending",
+      "started_at": "2026-06-14T03:18:04+0900"
     },
     {
       "step": 11,
