@@ -21,3 +21,7 @@ phases/**/step*-output.json
 # python 바이트코드 캐시 (하네스 실행기)
 __pycache__/
 *.pyc
+
+# python
+__pycache__/
+*.pyc
