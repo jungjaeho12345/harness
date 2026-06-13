@@ -31,7 +31,7 @@
       "name": "article-lifecycle-service",
       "status": "completed",
       "started_at": "2026-06-14T02:28:54+0900",
-      "completed_at": "2026-06-14T02:35:18+0900",
+      "completed_at": "2026-06-14T02:36:27+0900",
       "summary": "기사 생애주기·기사 서비스 (순수 도메인, HTTP 비의존, role은 인자). src/services/lifecycle.js(transition(status, role, action)→{ok,status}|{ok:false,reason}: R RDS→send=RDS/hold=RRH/kill=RRK·DPS·DDH 액션불가·approveDelete불가; D/Z 동일 RDS→send=DPS/hold=DDH/kill=DDK·DPS→send=DPS(재송고)/hold=DDH/approveDelete=DPD(kill불가)·DDH→send=DPS/kill=DDK(hold불가); 정의외(상태·권한·액션)·터미널상태(RRH/RRK/DDK/DPD)·미지정 권한/액션 모두 거부). src/services/articleService.js(createArticleService({articleModel,db}): create(dto)→generateArticleId·status RDS·트랜잭션 저장·{ok,articleId}; update(부분갱신,editedAt 자동,status 비변경); query/search 위임; applyAction(id,role,action,{userId})→transition 적용·send는 본문 블록 \"(끝)\" 마커 가드(no-end-marker)·send 시 sender/sentAt 기록·hold/kill/approveDelete은 마커 불필요·not-found; 편집잠금 acquire/release/forceRelease/assertLockHolder — 보유자=세션id·stale 30분 후 takeover·획득실패 시 locker 비노출·release는 보유자만/멱등·forceRelease는 무조건). test/lifecycle.test.js(40)·articleService.test.js(12)·editLock.test.js(8) 60개 신규. AC(lint/build/test 97/97) 전부 통과."
     },
     {
