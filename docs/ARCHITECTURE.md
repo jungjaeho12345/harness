@@ -7,6 +7,7 @@
 ```
 server/
   index.js              # 얇은 HTTP/SSE transport — 라우팅 + 인가 게이트만, 비즈니스 로직 없음
+  ftpWatcher.js         # 수집(자동기사) FTP 스풀 디렉토리 watcher — 파일 이벤트 시 controllers.collection.receive 호출 (watch 주입형, 테스트는 실제 FS 미사용)
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel) — 직접 SQL
@@ -18,7 +19,7 @@ web/                    # 프론트엔드 (Vite root)
   src/
     main.jsx            # 엔트리 — createHttpModel() 주입
     model/              # 주입형 Model 계약(contract.js) + httpModel(REST/SSE 배선) + 에디터/기사구조 로직
-    controller/         # React 훅 컨트롤러 (useLogin · useWrite · useView · useSearch · useRcvMgmt)
+    controller/         # React 훅 컨트롤러 (useLogin · useWrite · useView · useSearch · useRcvMgmt · useUserMgmt)
     view/               # 순수 뷰 로직 + 컴포넌트 (에디터 · 컨텍스트 메뉴 · 임베드 · 컬럼 설정 …)
     app/                # App · 라우팅(.do SPA) · context
     styles/             # yonhap.css 디자인 시스템
