@@ -13,8 +13,10 @@
     {
       "step": 1,
       "name": "db-foundation",
-      "status": "pending"
-    },
+      "status": "completed",
+      "started_at": "2026-06-14T02:09:58+0900",
+      "completed_at": "2026-06-14T02:14:10+0900",
+      "summary": "DB 파운데이션 — src/db/schema.js(createSchema(db): User/Article/Contents/ReceiverConfig 4개 테이블을 단일 SCHEMA 정의에서 생성, CREATE TABLE IF NOT EXISTS + PRAGMA table_info 기반 additive ALTER ADD COLUMN 멱등 마이그레이션, DROP/DELETE·보조인덱스·FK 없음, User=TEXT/나머지=VARCHAR, active 기본 'Y'·lockYN 기본 'N')과 src/db/articleId.js(generateArticleId(db): 'AKR'+YYYYMMDD(UTC)+난수9자리, Article·Contents 양쪽 중복 시 재생성). test/schema.test.js·test/articleId.test.js 13개 신규 테스트 추가(멱등성·컬럼존재·additive마이그레이션·인덱스/FK부재·포맷/유일성/충돌회피). AC(lint/build/test 14/14) 전부 통과."
     {
       "step": 2,
       "name": "data-models",
