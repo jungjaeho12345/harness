@@ -2,8 +2,8 @@
 
 ## 읽어야 할 파일
 
-- `/news.md` — **기사 생애주기(전이 규칙), 편집 잠금(lockYN), 송고 시 "(끝)" 검증** 섹션이 이 step의 1차 기준. 권한 R/D/Z × 상태 × 액션 전이표 전체.
-- `/schema.md` — status 값(RDS/DPS/RRH/RRK/DDH/DDK), 잠금 컬럼
+- `/docs/news.md` — **기사 생애주기(전이 규칙), 편집 잠금(lockYN), 송고 시 "(끝)" 검증** 섹션이 이 step의 1차 기준. 권한 R/D/Z × 상태 × 액션 전이표 전체.
+- `/docs/SCHEMA.md` — status 값(RDS/DPS/RRH/RRK/DDH/DDK), 잠금 컬럼
 - `/docs/ARCHITECTURE.md`, `/docs/ADR.md`(ADR-006 얇은 transport — 도메인 로직은 서비스에)
 - `src/models/articleModel.js`, `src/db/articleId.js` (이전 step 산출물)
 
@@ -12,15 +12,16 @@
 기사 생애주기와 기사 서비스를 구현한다. **role은 항상 인자로 받는다(클라이언트 신뢰 아님 — 신뢰 검증은 step8 HTTP 계층)**. TDD: 전이표의 모든 칸을 테스트로 먼저 박아라.
 
 1. `src/services/lifecycle.js`:
-   - `export function transition(status, role, action)` — 순수 함수. action은 `'send'|'hold'|'kill'`. news.md 전이표대로 다음 status를 반환하거나, 정의되지 않은 (status, role, action) 조합은 거부(예: `{ ok:false, reason }`).
-   - 핵심 규칙(news.md 그대로): 신규 최초 송고는 권한 무관 RDS 유지. R: RDS→send=RDS, hold=RRH, kill=RRK, DDH엔 액션 불가. D/Z(동일): RDS→send=DPS, hold=DDH, kill=DDK; DPS→send=DPS(재송고), hold=DDH, kill 불가; DDH→send=DPS, kill=DDK; DPS 삭제승인=DPD.
+   - `export function transition(status, role, action)` — 순수 함수. action은 `'send'|'hold'|'kill'|'approveDelete'`. news.md 전이표대로 다음 status를 반환하거나, 정의되지 않은 (status, role, action) 조합은 거부(예: `{ ok:false, reason }`).
+   - 핵심 규칙(news.md 그대로): 신규 최초 송고는 권한 무관 RDS 유지. R: RDS→send=RDS, hold=RRH, kill=RRK; DDH·DPS엔 액션 불가; approveDelete 불가. D/Z(동일): RDS→send=DPS, hold=DDH, kill=DDK; DPS→send=DPS(재송고), hold=DDH, kill 불가, **approveDelete=DPD**; DDH→send=DPS, kill=DDK.
+   - **삭제 승인**: `approveDelete`는 **DPS 상태 + 권한 D/Z**에서만 DPD로 전이한다(news.md 생애주기 "삭제 승인"). 그 외 상태·권한 R은 모두 거부. DPD는 행 삭제가 아니라 상태값 전이다(DB 비파괴).
 2. `src/services/articleService.js` — `export function createArticleService({ articleModel, db })`:
    - `create(dto)` — Article+Contents 조립, `generateArticleId`, status `RDS`, 트랜잭션 저장. `{ ok, articleId }`.
    - `update(articleId, fields)` — 부분 업데이트(트랜잭션). 잠금 보유 검증은 호출자(HTTP) 책임.
    - `query(filters)`, `search(q)` — 모델 위임.
-   - `applyAction(articleId, role, action, { userId, sessionId })` — `transition` 적용 후 status 갱신. **send는 본문 블록 마지막에 "(끝)"이 있어야 한다 — 없으면 거부**(`reason:'no-end-marker'`). hold/kill은 "(끝)" 불필요.
+   - `applyAction(articleId, role, action, { userId, sessionId })` — `transition` 적용 후 status 갱신. **send는 본문 블록 마지막에 "(끝)"이 있어야 한다 — 없으면 거부**(`reason:'no-end-marker'`). hold/kill/approveDelete은 "(끝)" 불필요.
    - 편집 잠금: `acquireEditLock(articleId, { userId, sessionId })`, `releaseEditLock(...)`, `forceReleaseEditLock(articleId)`, `assertLockHolder(articleId, { userId, sessionId })`. 보유자 = **세션 id**. 30분 무갱신이면 stale로 보고 다음 시도자가 획득 가능. 획득 실패 시 누가 잠갔는지 노출하지 않는다.
-3. 테스트(`test/lifecycle.test.js`, `test/articleService.test.js`, `test/editLock*.test.js`): 전이표 전 조합(허용/거부), "(끝)" 송고 가드, 잠금 획득/해제/강제해제/stale 만료.
+3. 테스트(`test/lifecycle.test.js`, `test/articleService.test.js`, `test/editLock*.test.js`): 전이표 전 조합(허용/거부) — `approveDelete`는 DPS+D/Z만 DPD, R·비DPS는 거부 포함, "(끝)" 송고 가드, 잠금 획득/해제/강제해제/stale 만료.
 
 ## Acceptance Criteria
 

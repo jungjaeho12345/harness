@@ -2,8 +2,8 @@
 
 ## 읽어야 할 파일
 
-- `/rcv.md` — **수집(자동기사) 기술 명세서 (이 step의 1차 기준)**. 수신(FTP 이벤트/API) → 분석(제목·본문) → 등록(Article/Contents), 속성 '자동기사' 필수, 미등록 ID 차단, rcvMgmt.do 설정 CRUD.
-- `/schema.md` — Article/Contents, `attribute` 컬럼
+- `/docs/RCV.md` — **수집(자동기사) 기술 명세서 (이 step의 1차 기준)**. 수신(FTP 이벤트/API) → 분석(제목·본문) → 등록(Article/Contents), 속성 '자동기사' 필수, 미등록 ID 차단, rcvMgmt.do 설정 CRUD.
+- `/docs/SCHEMA.md` — Article/Contents, `attribute` 컬럼
 - `src/models/articleModel.js`, `src/models/receiverConfigModel.js` (step2)
 - `src/services/articleService.js` (step3 — create 재사용), `src/services/authorization.js` (step4 — Z 게이트)
 

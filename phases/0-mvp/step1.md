@@ -2,7 +2,7 @@
 
 ## 읽어야 할 파일
 
-- `/schema.md` — **DB 스키마 명세서 (이 step의 1차 기준)**. User/Article/Contents 3개 테이블, PK, 컬럼, 타입, 비파괴 멱등 마이그레이션 규칙.
+- `/docs/SCHEMA.md` — **DB 스키마 명세서 (이 step의 1차 기준)**. User/Article/Contents 3개 테이블, PK, 컬럼, 타입, 비파괴 멱등 마이그레이션 규칙.
 - `/docs/ARCHITECTURE.md` — `src/db/` 위치
 - `/docs/ADR.md` — ADR-002(node:sqlite, 직접 SQL), 비파괴 원칙
 - `/CLAUDE.md` — DB 비파괴 CRITICAL 규칙

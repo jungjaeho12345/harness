@@ -2,7 +2,7 @@
 
 ## 읽어야 할 파일
 
-- `/news.md` — **기사 작성페이지 미디어 탭**(이미지=Google 이미지, 영상=YouTube, 서버 프록시, API 키는 서버 환경변수, 외부 실패 시 빈 결과) 섹션
+- `/docs/news.md` — **기사 작성페이지 미디어 탭**(이미지=Google 이미지, 영상=YouTube, 서버 프록시, API 키는 서버 환경변수, 외부 실패 시 빈 결과) 섹션
 - `/docs/ADR.md` — ADR-005 주변(서버 프록시 원칙), ADR 보안
 - `/docs/ARCHITECTURE.md` — `src/services/` 위치
 

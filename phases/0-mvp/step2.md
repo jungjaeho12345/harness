@@ -2,7 +2,7 @@
 
 ## 읽어야 할 파일
 
-- `/schema.md` — 테이블/컬럼, Contents↔Article 1:1, 트랜잭션 규칙
+- `/docs/SCHEMA.md` — 테이블/컬럼, Contents↔Article 1:1, 트랜잭션 규칙
 - `/docs/ARCHITECTURE.md` — `src/models/`는 직접 SQL 데이터 접근 계층(ORM 없음)
 - `/docs/ADR.md` — ADR-002
 - `src/db/schema.js`, `src/db/articleId.js` (step1 산출물)

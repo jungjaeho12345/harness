@@ -2,8 +2,8 @@
 
 ## 읽어야 할 파일
 
-- `/news.md` — **세션 정책(1h 슬라이딩), 로그인 워크플로우, 사용자 권한(R/D/Z)** 섹션이 1차 기준.
-- `/schema.md` — User 테이블, `active`('Y'/'N'), bcrypt 해시
+- `/docs/news.md` — **세션 정책(1h 슬라이딩), 로그인 워크플로우, 사용자 권한(R/D/Z)** 섹션이 1차 기준.
+- `/docs/SCHEMA.md` — User 테이블, `active`('Y'/'N'), bcrypt 해시
 - `/docs/ADR.md` — ADR-004(세션 기반 서버측 인가, role은 세션에서만 도출)
 - `src/models/userModel.js` (step2 산출물)
 

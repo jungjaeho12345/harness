@@ -2,8 +2,8 @@
 
 ## 읽어야 할 파일
 
-- `/schema.md` — User 테이블, bcrypt
-- `/news.md` — 사용자 권한(R/D/Z), 로그인 워크플로우
+- `/docs/SCHEMA.md` — User 테이블, bcrypt
+- `/docs/news.md` — 사용자 권한(R/D/Z), 로그인 워크플로우
 - `/CLAUDE.md` — DB 비파괴(절대 삭제 금지), 명령어
 - `server/index.js`(step8), `src/db/schema.js`(step1), `src/services/userService.js`(step4)
 
