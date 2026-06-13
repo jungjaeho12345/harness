@@ -119,7 +119,7 @@
       "name": "body-contract",
       "status": "completed",
       "started_at": "2026-06-14T07:10:30+0900",
-      "completed_at": "2026-06-14T07:20:00+0900",
+      "completed_at": "2026-06-14T07:21:33+0900",
       "summary": "본문(markupVersion) 데이터 유실 contract 수정 — [14-A] 클라가 본문을 body 키로 전송해 서버 ARTICLE_FIELDS pick에서 통째로 유실되던 버그를, useWriteController에 toSaveDto 헬퍼를 두어 tab.fields.body→dto.markupVersion으로 매핑(body/role 미전송, 내부 탭 키는 body 유지)해서 save/submit 3개 호출부를 일관화. tabFromArticle 본문 우선순위를 markupVersion 최우선으로 교정. fakeModel.saveArticle도 body 키를 버리도록 정규화(서버 pick 이음새 모사 — 단위테스트가 contract 불일치를 더는 가리지 않음). [14-B] 목록행(Contents)엔 본문이 없어 편집 진입 시 빈 에디터 문제를, 읽기전용 단건조회로 해결: GET /api/articles/:id 라우트 추가(세션 게이트·404 not-found·/search 뒤 등록으로 :id 충돌 회피·DB 비파괴 SELECT만), articleService.getById·controllers.article.getById 위임(ADR-006), Model 계약에 getArticle 추가(MODEL_KEYS 18→19·httpModel GET 배선·fakeModel in-memory 구현, ADR-003), openArticle이 model.getArticle로 전체 기사를 재조회해 본문·readOnly 메타를 채우고 실패 시 목록행 폴백. 신규 테스트 6개(서버 contract 통합 test/body-contract.test.js 3 — 실제 createApp+:memory: round-trip·송고 (끝) 가드 통과·401/404; 프론트 useWriteController 2 — markupVersion 전송·openArticle 재조회; httpModel getArticle 1). AC(lint clean·build·backend 178·web 191) = 369 전부 통과, 기존 363개 무회귀."
     },
     {
