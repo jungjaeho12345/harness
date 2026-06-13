@@ -99,6 +99,32 @@ describe('useWriteController', () => {
     expect(result.current.activeTab.articleId).toBeNull();
   });
 
+  it('save/submit send the body under the server-persisted markupVersion key (not body)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '제목'); });
+    act(() => { result.current.updateField('body', '제목\n본문\n(끝)'); });
+
+    await act(async () => { await result.current.save(); });
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ markupVersion: '제목\n본문\n(끝)' }));
+    const dto = save.mock.calls[0][0];
+    expect(dto.body).toBeUndefined(); // body 키는 서버가 버리므로 보내지 않는다(contract 일치).
+    expect(dto.role).toBeUndefined(); // role은 서버 세션에서 도출(ADR-004).
+  });
+
+  it('openArticle re-fetches the full article (markupVersion) when the list row lacks a body', async () => {
+    // 목록행에는 본문이 없다(Contents만). 단건 재조회(getArticle)로 markupVersion을 채워야 한다.
+    const markup = JSON.stringify({ format: 'yh-editor', version: 1, blocks: [{ type: 'text', text: '본문라인' }] });
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: '제목', markupVersion: markup, status: 'RDS' }] });
+    const getArticle = vi.spyOn(model, 'getArticle');
+
+    // 목록행(본문 없음)으로 편집 진입.
+    await act(async () => { await result.current.openArticle({ articleId: 'AKR9', title: '제목', status: 'RDS' }, 'edit'); });
+
+    expect(getArticle).toHaveBeenCalledWith('AKR9');
+    expect(result.current.activeTab.fields.body).toBe(markup); // 재조회로 본문이 채워졌다.
+  });
+
   it('submit on a new tab saves (RDS) without a lifecycle transition, then resets', async () => {
     const { result, model } = setup({});
     const save = vi.spyOn(model, 'saveArticle');

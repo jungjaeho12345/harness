@@ -82,16 +82,25 @@ export function createFakeModel(seed = {}) {
       notify('status');
       return { ok: true, articleId };
     },
+    getArticle(articleId) {
+      const a = findArticle(articleId);
+      if (!a) return { ok: false, reason: 'not-found' };
+      // 서버 getById와 같은 shape({ article, contents }). in-memory는 평탄 1행이라 둘 다 같은 행을 비춘다.
+      return { ok: true, article: { ...a }, contents: { ...a } };
+    },
     saveArticle(dto = {}) {
-      if (dto.articleId) {
-        const a = findArticle(dto.articleId);
-        if (a) Object.assign(a, dto);
-        else articles.push({ ...dto });
+      // 서버는 본문을 markupVersion 컬럼에만 저장하고 body 키는 버린다(ARTICLE_FIELDS pick 이음새).
+      // 같은 정규화를 해야 contract 불일치(본문이 body로 전송되는 버그)가 단위테스트에서도 드러난다.
+      const { body, ...persist } = dto; // eslint-disable-line no-unused-vars
+      if (persist.articleId) {
+        const a = findArticle(persist.articleId);
+        if (a) Object.assign(a, persist);
+        else articles.push({ ...persist });
         notify('update');
-        return { ok: true, articleId: dto.articleId };
+        return { ok: true, articleId: persist.articleId };
       }
       const articleId = `AKRFAKE${String(seq++).padStart(9, '0')}`;
-      articles.push({ ...dto, articleId, status: 'RDS' });
+      articles.push({ ...persist, articleId, status: 'RDS' });
       notify('create');
       return { ok: true, articleId };
     },

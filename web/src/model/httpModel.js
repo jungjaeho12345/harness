@@ -85,6 +85,10 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     queryArticles(filters = {}) {
       return request('/api/articles', { query: filters });
     },
+    // 단건 조회 — 본문(markupVersion)을 포함한 전체 기사 { ok, article, contents }. 편집 진입 시 본문 채우기.
+    getArticle(articleId) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}`);
+    },
     searchArticles(q) {
       return request('/api/articles/search', { query: { q } });
     },

@@ -64,6 +64,7 @@ export function createControllers(db, {
     search: (q) => articleService.search(q),
     create: (dto) => articleService.create(dto),
     update: (articleId, fields) => articleService.update(articleId, fields),
+    getById: (articleId) => articleService.getById(articleId),
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
     acquireEditLock: (articleId, opts) => articleService.acquireEditLock(articleId, opts),
     releaseEditLock: (articleId, opts) => articleService.releaseEditLock(articleId, opts),

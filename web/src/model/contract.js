@@ -10,6 +10,7 @@ export const MODEL_KEYS = Object.freeze([
   'createUser',
   'updateUser',
   'queryArticles',
+  'getArticle',
   'searchArticles',
   'searchMedia',
   'applyAction',

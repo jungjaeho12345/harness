@@ -78,6 +78,11 @@ export function createArticleService({ articleModel, db }) {
     return { ok: true, changes };
   }
 
+  // 단건 조회 — 본문(Article.markupVersion)을 포함한 { article, contents }(없으면 null). 읽기 전용.
+  function getById(articleId) {
+    return articleModel.getById(articleId);
+  }
+
   function query(filters) {
     return articleModel.query(filters);
   }
@@ -158,7 +163,7 @@ export function createArticleService({ articleModel, db }) {
   }
 
   return {
-    create, update, query, search, applyAction,
+    create, update, getById, query, search, applyAction,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };
 }

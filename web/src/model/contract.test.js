@@ -3,11 +3,11 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 18 contract methods', () => {
+  it('is frozen and lists the 19 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(18);
-    // step9가 보장해야 하는 핵심 키들.
-    for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'subscribe']) {
+    expect(MODEL_KEYS).toHaveLength(19);
+    // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
+    for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
     }
   });

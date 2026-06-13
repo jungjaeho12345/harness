@@ -30,6 +30,15 @@ function pick(src, keys) {
   return out;
 }
 
+// 탭 편집 필드 → 서버 영속 dto. 본문은 서버가 저장하는 키(markupVersion)로 싣고 body 키는 보내지 않는다
+// (server ARTICLE_FIELDS와 일치 — body로 보내면 본문이 통째로 유실된다). role은 어디서도 싣지 않는다(ADR-004).
+function toSaveDto(tab) {
+  const { body, ...rest } = tab.fields;
+  const dto = { ...rest, markupVersion: body };
+  if (tab.articleId) dto.articleId = tab.articleId;
+  return dto;
+}
+
 function blankTab() {
   return {
     id: nextTabId(),
@@ -50,7 +59,8 @@ function tabFromArticle(article, mode, fallbackAuthor) {
     status: article.status ?? null,
     fields: {
       title: article.title ?? '',
-      body: article.body ?? article.markupVersion ?? article.content ?? '',
+      // 본문은 서버 영속 키(markupVersion)를 최우선으로 한다 — 단건 재조회가 채워준다.
+      body: article.markupVersion ?? article.body ?? article.content ?? '',
       author: article.author ?? fallbackAuthor ?? '',
       embargoAt: article.embargoAt ?? '',
       secondEmbargoAt: article.secondEmbargoAt ?? '',
@@ -143,7 +153,15 @@ export function useWriteController() {
     const existing = tabsRef.current.find((t) => t.articleId === article.articleId);
     if (existing) { setActiveTabId(existing.id); return existing.id; }
 
-    const tab = tabFromArticle(article, mode, identity && identity.name);
+    // 목록행(Contents)에는 본문이 없다 — 단건 재조회로 본문(markupVersion)·공통정보를 채운다.
+    // 조회 실패 시 넘어온 목록행으로 폴백한다(탭 열기를 막지 않는다).
+    let full = article;
+    try {
+      const r = await model.getArticle(article.articleId);
+      if (r && r.ok) full = { ...article, ...r.article, ...r.contents };
+    } catch { /* 조회 실패 — 폴백 */ }
+
+    const tab = tabFromArticle(full, mode, identity && identity.name);
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
 
@@ -165,9 +183,7 @@ export function useWriteController() {
   const save = useCallback(async () => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const dto = { ...tab.fields };
-    if (tab.articleId) dto.articleId = tab.articleId;
-    const r = await model.saveArticle(dto);
+    const r = await model.saveArticle(toSaveDto(tab));
     if (r && r.ok && r.articleId && !tab.articleId) {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
@@ -181,12 +197,12 @@ export function useWriteController() {
     if (!tab) return { ok: false, reason: 'no-tab' };
 
     if (!tab.articleId) {
-      const r = await model.saveArticle({ ...tab.fields });
+      const r = await model.saveArticle(toSaveDto(tab));
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }
 
-    await model.saveArticle({ articleId: tab.articleId, ...tab.fields });
+    await model.saveArticle(toSaveDto(tab));
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId)).catch(() => {});

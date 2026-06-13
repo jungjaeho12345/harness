@@ -202,6 +202,18 @@ export function createApp({ controllers, sessionService }) {
     } catch (e) { next(e); }
   });
 
+  // 단건 조회 — 본문(Article.markupVersion)을 포함한 전체 기사. 읽기 전용(DB 비파괴).
+  // 편집 진입 시 목록행(Contents)에 없는 본문을 채우는 데 쓴다. /search 보다 뒤에 등록해 :id 충돌을 피한다.
+  app.get('/api/articles/:id', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const r = controllers.article.getById(req.params.id);
+      if (!r) return res.status(404).json({ ok: false, reason: 'not-found' });
+      return res.json({ ok: true, article: r.article, contents: r.contents });
+    } catch (e) { next(e); }
+  });
+
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다. 신규는 항상 RDS로 저장(서비스).
   app.post('/api/articles', (req, res, next) => {
     try {
