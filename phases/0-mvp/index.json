@@ -63,7 +63,7 @@
       "name": "controllers",
       "status": "completed",
       "started_at": "2026-06-14T02:51:31+0900",
-      "completed_at": "2026-06-14T03:02:00+0900",
+      "completed_at": "2026-06-14T02:57:34+0900",
       "summary": "컨트롤러 계층 (서비스/모델 결선, 로직 재구현 없이 위임만 — ADR-006). src/controllers/index.js(createControllers(db, {sessionService, env=process.env, fetchFn=globalThis.fetch}={}): 내부에서 userModel/articleModel/receiverConfigModel + userService/articleService/authorization/receiverConfigService/collectionService/mediaSearch 결선, sessionService는 주입받아 HTTP 계층과 공유(없으면 createSessionService 생성), media의 env/fetchFn은 합성 루트 기본값 공급. 반환 {auth,user,article,media,receiverConfig,collection}: auth={login(자격검증 userService.login→세션발급 sessionService.createSession 오케스트레이션, {ok,sessionId,user} 비밀번호 미노출), logout(invalidate→{ok}), session(touchSession 헬퍼), manageUsers, editDps(→authorization Z/D 게이트)}; user={query}; article={query,search,create,update,applyAction,acquireEditLock,releaseEditLock,forceReleaseEditLock,assertLockHolder}(→articleService 얇은 래퍼); media={search}(→mediaSearch); receiverConfig={query,create,remove}(→receiverConfigService sessionId Z 게이트); collection={receive}(→collectionService). test/controllers.test.js 16개 신규(도메인/메서드 결선·login 세션발급+비밀번호 미노출·logout·외부 sessionService 주입 공유·user.query·create→applyAction(D송고→DPS)·(끝) 가드·편집잠금 acquire/assert/release/force·update/search·manageUsers/editDps 게이트·receiverConfig Z create/query/remove·collection 자동기사 등록·media image/video 분기). AC(lint/build/test 156/156) 전부 통과."
     },
     {
