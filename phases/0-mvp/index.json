@@ -39,7 +39,7 @@
       "name": "auth-session-services",
       "status": "completed",
       "started_at": "2026-06-14T02:36:28+0900",
-      "completed_at": "2026-06-14T02:41:38+0900",
+      "completed_at": "2026-06-14T02:42:41+0900",
       "summary": "인증·세션·인가 서비스 (순수 도메인, HTTP 비의존, 시간 의존은 주입 now()). src/services/sessionService.js(createSessionService({now}={}): createSession(user)→randomBytes(32) hex 무작위 토큰(권한 미포함)·같은 userId 기존 세션 무효화 후 발급; touchSession(sid)→유효 시 1h 슬라이딩 갱신 후 정제 신원{userId,role,department,departmentCode,name}(비밀번호 없음) 반환·없거나 now()>=expiresAt면 undefined·만료 세션 정리; invalidate(sid) 로그아웃; in-process Map 스토어). src/services/userService.js(createUserService({userModel}): async login(userId,password)→bcrypt.compare(존재 무관 항상 1회 비교, 미존재 시 DUMMY_HASH로 타이밍 완화)·active==='N' 차단(inactive)·실패 invalid-credentials·성공 시 SAFE_FIELDS 정제 사용자 반환(password 절대 미포함); query(filters)→정제 목록). src/services/authorization.js(createAuthorization({sessionService,articleModel}): acting role은 검증 세션에서만 도출(클라 role/payload 불신); assertAuthorized(role,capability)→CAPABILITIES 맵 게이트(manageUsers/manageReceiverConfig=Z, editDps=D)·미정의 capability 거부; editDps(sid,articleId,action)→세션→DPS 기사 고침/포털고침 D 전용(unauthenticated/unknown-action/not-found/not-dps/forbidden); manageUsers·manageReceiverConfig(sid,op,payload)→Z 전용 게이트, 미인증/비-Z 거부). test/sessionService.test.js(7)·userService.test.js(5)·authorization.test.js(6) 18개 신규. AC(lint/build/test 115/115) 전부 통과."
     },
     {
