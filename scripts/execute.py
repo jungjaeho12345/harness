@@ -244,8 +244,10 @@ class StepExecutor:
 
         prompt = preamble + step_file.read_text(encoding="utf-8")
         claude_cmd = "claude.cmd" if sys.platform == "win32" else "claude"
+        # prompt은 stdin으로 전달 — Windows CMD 최대 길이(~32 767자) 초과 방지
         result = subprocess.run(
-            [claude_cmd, "-p", "--dangerously-skip-permissions", "--output-format", "json", prompt],
+            [claude_cmd, "-p", "--dangerously-skip-permissions", "--output-format", "json"],
+            input=prompt,
             cwd=self._root, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=1800,
         )
