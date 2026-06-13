@@ -5,7 +5,7 @@
 ## 기술명세서
 - DB는 SQLite를 사용한다 (node:sqlite, 서버 기동 시 server/index.js가 생성한다).
 - DB 파일은 프로젝트 루트의 news.db이다.
-- 테이블은 User, Article, Contents 3개이다.
+- 테이블은 User, Article, Contents, ReceiverConfig 4개이다.
 - 타입은 Article/Contents는 VARCHAR, User는 TEXT로 설정한다 (추가된 컬럼은 VARCHAR).
 - 스키마 변경은 기존 데이터를 삭제하지 않고 컬럼을 추가하는 방식(멱등 마이그레이션)으로만 적용한다.
 - DB에 있는 내용은 절대 삭제하지 않는다.
@@ -49,3 +49,14 @@ ContentsVO에 대한 명세서
 - 기사상태(status)는 기사 생애주기 값 RDS, DPS, RRH, RRK, DDH, DDK, DPD를 가진다 (전이 규칙은 news.md 기사 생애주기를 따른다). DPD는 DPS 기사의 삭제 승인 상태값이다(행 삭제가 아니라 상태값 전이 — DB 비파괴).
 - 기사아이디는 'AKR' + YYYYMMDD + 난수 9자리 규칙으로 생성한다 (중복이면 난수를 다시 생성한다).
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
+
+## ReceiverConfig Table
+수집(자동기사) 수신 설정에 대한 명세서. Z(관리자) 전용 CRUD.
+# property
+- id(INTEGER PK, ROWID alias, AUTOINCREMENT), 소스아이디(sourceId), 유형(type), 이름(name), 호스트(host), 포트(port), 사용자명(username), 비밀번호(password), API엔드포인트(apiEndpoint), API키(apiKey), 활성여부(active), 생성시간(createdAt) 컬럼을 가진다.
+- id는 INTEGER PRIMARY KEY (SQLite ROWID alias) — 자동 증가. 나머지 컬럼은 VARCHAR.
+- sourceId는 수신 시 식별자로, collectionService.receive(sourceId, payload)가 이 값으로 등록 여부를 판정한다. 미등록 sourceId는 수신 거부.
+- type은 'FTP' 또는 'API'.
+- active는 'Y'/'N', 기본값 'Y'. 비활성 설정은 등록 거부 대상이 된다.
+- 행 삭제(remove)는 설정 행만 지운다 — 이미 수집된 Article/Contents는 절대 건드리지 않는다(DB 비파괴 원칙).
+- 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.

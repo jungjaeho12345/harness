@@ -17,11 +17,12 @@
      - **User**: `userId` TEXT PK, `name`, `password`(bcrypt 해시), `role`(R/D/Z), `department`, `departmentCode`, `active` TEXT default `'Y'`. (User는 TEXT)
      - **Article**: `articleId` VARCHAR PK, `title`, `content`, `markupVersion`, `modifier`. (Article/Contents는 VARCHAR)
      - **Contents**: `articleId` VARCHAR PK, `title`, `content`, `author`, `modifier`, `sender`, `department`, `departmentCode`, `createdAt`, `editedAt`, `sentAt`, `distributedAt`, `embargoAt`, `secondEmbargoAt`, `status`, `lockYN` default `'N'`, `lockerUserId`, `lockerSessionId`, `lockedAt`, `coAuthor`, `region`, `attribute`, `keyword`, `internalComment`, `externalComment`, `attachmentFile`, `referenceFile`.
+   - **ReceiverConfig**: `id` INTEGER PRIMARY KEY, `sourceId` VARCHAR, `type` VARCHAR, `name` VARCHAR, `host` VARCHAR, `port` VARCHAR, `username` VARCHAR, `password` VARCHAR, `apiEndpoint` VARCHAR, `apiKey` VARCHAR, `active` VARCHAR default `'Y'`, `createdAt` VARCHAR. (설정 행 삭제는 이 테이블만 — Article/Contents 비파괴)
    - 멱등 마이그레이션: 누락 컬럼은 `ALTER TABLE ... ADD COLUMN`으로만 추가. **절대 DROP/DELETE 하지 않는다.**
    - PK 자동 인덱스만 사용. 보조 인덱스/FK 제약 선언 금지(정합성은 애플리케이션이 유지).
 2. `src/db/articleId.js`:
    - `export function generateArticleId(db)` — `'AKR' + YYYYMMDD + 9자리 난수`. 생성값이 Article/Contents에 이미 있으면 난수를 다시 생성(중복 회피).
-3. 테스트(`test/schema.test.js`, `test/articleId.test.js`): `new DatabaseSync(':memory:')`로 격리. createSchema 멱등성(2회 호출 안전), 컬럼 존재, articleId 포맷/유일성 검증.
+3. 테스트(`test/schema.test.js`, `test/articleId.test.js`): `new DatabaseSync(':memory:')`로 격리. createSchema 멱등성(2회 호출 안전), 4개 테이블 컬럼 존재(ReceiverConfig 포함), articleId 포맷/유일성 검증.
 
 ## Acceptance Criteria
 
