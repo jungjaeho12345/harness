@@ -4,6 +4,20 @@ out/
 next-env.d.ts
 tsconfig.tsbuildinfo
 
+# vite 빌드 산출물
+dist/
+web/dist/
+
+# 환경변수 (시크릿) / 런타임 DB
+.env
+news.db
+news.db-journal
+news.db-wal
+
 # phase execution outputs
 phases/**/phase*-output.json
 phases/**/step*-output.json
+
+# python 바이트코드 캐시 (하네스 실행기)
+__pycache__/
+*.pyc

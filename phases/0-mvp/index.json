@@ -2,19 +2,78 @@
   "project": "기사 작성기 (article production system)",
   "phase": "0-mvp",
   "steps": [
-    { "step": 0, "name": "project-setup", "status": "pending" },
-    { "step": 1, "name": "db-foundation", "status": "pending" },
-    { "step": 2, "name": "data-models", "status": "pending" },
-    { "step": 3, "name": "article-lifecycle-service", "status": "pending" },
-    { "step": 4, "name": "auth-session-services", "status": "pending" },
-    { "step": 5, "name": "collection-services", "status": "pending" },
-    { "step": 6, "name": "media-search-service", "status": "pending" },
-    { "step": 7, "name": "controllers", "status": "pending" },
-    { "step": 8, "name": "http-server", "status": "pending" },
-    { "step": 9, "name": "frontend-model", "status": "pending" },
-    { "step": 10, "name": "frontend-app-controllers", "status": "pending" },
-    { "step": 11, "name": "frontend-editor-views", "status": "pending" },
-    { "step": 12, "name": "frontend-pages-styles", "status": "pending" },
-    { "step": 13, "name": "seed-and-e2e", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "project-setup",
+      "status": "completed",
+      "started_at": "2026-06-13T17:25:33+0900",
+      "completed_at": "2026-06-13T17:31:18+0900",
+      "summary": "부트스트랩 스켈레톤 완성 — package.json(type:module, node>=22.5, scripts: dev/build/server/test/test:web/lint, deps 5 + devDeps 14), server/·src/{db,models,services,parsers,controllers}/·web/src/{app,model,view,controller,styles,test}/ 디렉토리(.gitkeep), web(index.html·main.jsx placeholder·vite/vitest config·setup.js), eslint flat config, test/smoke.test.js, .env.example. node:sqlite는 Node 24.16.0에서 플래그 불필요(no --experimental-sqlite). 단 `node --test test/`는 Node 24에서 디렉토리를 모듈로 취급해 실패하므로 test 스크립트를 따옴표 glob `node --test \"test/**/*.test.js\"`로 확정. AC(install/lint/build/test) 전부 통과."
+    {
+      "step": 1,
+      "name": "db-foundation",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "data-models",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "article-lifecycle-service",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "auth-session-services",
+      "status": "pending"
+    },
+    {
+      "step": 5,
+      "name": "collection-services",
+      "status": "pending"
+    },
+    {
+      "step": 6,
+      "name": "media-search-service",
+      "status": "pending"
+    },
+    {
+      "step": 7,
+      "name": "controllers",
+      "status": "pending"
+    },
+    {
+      "step": 8,
+      "name": "http-server",
+      "status": "pending"
+    },
+    {
+      "step": 9,
+      "name": "frontend-model",
+      "status": "pending"
+    },
+    {
+      "step": 10,
+      "name": "frontend-app-controllers",
+      "status": "pending"
+    },
+    {
+      "step": 11,
+      "name": "frontend-editor-views",
+      "status": "pending"
+    },
+    {
+      "step": 12,
+      "name": "frontend-pages-styles",
+      "status": "pending"
+    },
+    {
+      "step": 13,
+      "name": "seed-and-e2e",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-06-13T17:25:33+0900"
 }

@@ -1,0 +1,41 @@
+{
+  "name": "article-production-system",
+  "version": "0.0.0",
+  "description": "기사 작성기 (Article Production System)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "vite web",
+    "build": "vite build web",
+    "server": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:web": "vitest run --root web",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.8"
+  }
+}
