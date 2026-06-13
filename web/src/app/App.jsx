@@ -1,15 +1,32 @@
 // 앱 셸 — 라우트 스위치 + 세션 복원 게이트 + 컨텍스트 배선.
 // CRITICAL: 마운트 시 model.restoreSession()으로 서버 확인을 끝내기 전에는 login으로 보내지 않는다
-// (news.md 세션 정책 — F5 복원). 실제 페이지 컴포넌트/마크업은 step12에서 채운다.
+// (news.md 세션 정책 — F5 복원).
 
 import { useEffect, useState } from 'react';
 import { assertModel } from '../model/contract.js';
 import { AppContext } from './context.js';
 import { useRouter, resolveRoute } from './routing.js';
+import { TopBar } from '../view/TopBar.jsx';
+import { LoginPage } from '../view/LoginPage.jsx';
+import { WriterPage } from '../view/WriterPage.jsx';
+import { ListPage } from '../view/ListPage.jsx';
+import { RcvMgmtPage } from '../view/RcvMgmtPage.jsx';
+import { UserMgmtPage } from '../view/UserMgmtPage.jsx';
 
-// 라우트별 자리표시자 — 이 step은 라우팅·복원·컨텍스트까지만 책임진다(컴포넌트는 다음 step).
-function RoutePlaceholder({ route }) {
-  return <main data-testid="route" data-route={route}>{route}</main>;
+// 해석된 라우트 → 페이지 컴포넌트. login.do 외에는 공통 상단 헤더(TopBar)를 함께 그린다.
+function RouteView({ route }) {
+  let page = null;
+  if (route === 'login.do') page = <LoginPage />;
+  else if (route === 'writer.do') page = <WriterPage />;
+  else if (route === 'list.do') page = <ListPage />;
+  else if (route === 'rcvMgmt.do') page = <RcvMgmtPage />;
+  else if (route === 'userMgmt.do') page = <UserMgmtPage />;
+  return (
+    <div data-testid="route" data-route={route}>
+      {route !== 'login.do' && <TopBar />}
+      {page}
+    </div>
+  );
 }
 
 export default function App({ model }) {
@@ -44,7 +61,7 @@ export default function App({ model }) {
 
   return (
     <AppContext.Provider value={{ model, identity, navigate, replace, setSession: setIdentity }}>
-      <RoutePlaceholder route={route} />
+      <RouteView route={route} />
     </AppContext.Provider>
   );
 }

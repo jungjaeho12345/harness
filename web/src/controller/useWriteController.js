@@ -35,6 +35,7 @@ function blankTab() {
     id: nextTabId(),
     mode: 'new', // 편집 진입 컨텍스트: new / edit / revise / portalRevise (버튼 표시 규칙이 의존 — step12)
     articleId: null,
+    status: null, // 진입 상태(RDS/DDH/DPS…) — 송고/보류/KILL 버튼 표시 규칙이 사용한다(writerButtons).
     fields: { title: '', body: '', author: '', embargoAt: '', secondEmbargoAt: '' },
     readOnly: {},
   };
@@ -46,6 +47,7 @@ function tabFromArticle(article, mode, fallbackAuthor) {
     id: nextTabId(),
     mode,
     articleId: article.articleId,
+    status: article.status ?? null,
     fields: {
       title: article.title ?? '',
       body: article.body ?? article.markupVersion ?? article.content ?? '',

@@ -6,10 +6,20 @@ import { blocksToText, isEmbedBlock, isTextBlock } from './editorContent.js';
 import { classifyLines, colorForRole } from './editorColoring.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
 
+// contentEditable에서 입력된 본문 텍스트를 라인 div 기준으로 재구성한다(임베드 figure는 제외).
+// jsdom·브라우저 모두에서 안정적으로 개행을 보존한다(textContent는 블록 간 개행을 넣지 않으므로).
+function readEditorText(root) {
+  if (!root) return '';
+  const lines = root.querySelectorAll('.yh-editor__line');
+  if (!lines.length) return root.textContent ?? '';
+  return Array.from(lines).map((el) => el.textContent ?? '').join('\n');
+}
+
 export function Editor({
   blocks = [],
   onRemoveEmbed,
   onKeyDown,
+  onTextChange,
   spellcheck = false,
   readOnly = false,
 }) {
@@ -29,6 +39,7 @@ export function Editor({
       spellCheck={spellcheck}
       lang="ko"
       onKeyDown={onKeyDown}
+      onInput={onTextChange ? (e) => onTextChange(readEditorText(e.currentTarget)) : undefined}
     >
       {blocks.map((block, i) => {
         if (isEmbedBlock(block)) {
