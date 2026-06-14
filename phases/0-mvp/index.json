@@ -141,7 +141,9 @@
     {
       "step": 17,
       "name": "list-page-clamp",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-14T22:36:00+0900",
+      "summary": "목록 축소 시 page가 [1, totalPages]를 벗어나 빈 페이지에 갇히던 버그 수정 — useViewController.js에 items 변경 시 useEffect + 함수형 setPage(p => Math.min(p, max)) 클램프 추가(page 비의존성·동일값 단락으로 무한 루프 없음, selectMenu의 setPage(1)·정상 페이지 이동 보존). 재현 테스트(25→5건 축소 시 page 클램프·pageItems 비어있지 않음)와 회귀 방지 테스트(범위 내 page 2 미변경) 2개 추가. AC 전부 통과(lint·build OK, backend 178, web 204)."
     }
   ],
   "created_at": "2026-06-13T17:25:33+0900",
