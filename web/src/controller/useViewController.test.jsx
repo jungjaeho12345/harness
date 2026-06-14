@@ -51,6 +51,49 @@ describe('useViewController', () => {
     expect(result.current.pageItems).toHaveLength(5);
   });
 
+  it('clamps page into range when the list shrinks (no empty stuck page)', async () => {
+    // 25건 → totalPages 3, page 3에 머무름. 그 뒤 SSE 재조회로 5건만 남으면(totalPages 1)
+    // page가 1로 클램프되어 빈 화면에 갇히지 않아야 한다.
+    const model = createFakeModel({ articles: rds(25) });
+    let visible = rds(25);
+    const orig = model.queryArticles.bind(model);
+    vi.spyOn(model, 'queryArticles').mockImplementation((f) => {
+      const r = orig(f);
+      return { ...r, items: visible.slice() };
+    });
+    const navigate = vi.fn();
+    const wrapper = ({ children }) => (
+      <AppContext.Provider value={{ model, identity: { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, navigate, replace: vi.fn(), setSession: vi.fn() }}>
+        {children}
+      </AppContext.Provider>
+    );
+    const { result } = renderHook(() => useViewController(), { wrapper });
+
+    await waitFor(() => expect(result.current.items).toHaveLength(25));
+    expect(result.current.totalPages).toBe(3);
+    act(() => { result.current.setPage(3); });
+    expect(result.current.pageItems).toHaveLength(5);
+
+    // 목록이 5건으로 축소 → SSE 무효화 신호로 재조회 유발.
+    visible = rds(5);
+    await act(async () => { model.applyAction('AKR0', 'noop'); });
+
+    await waitFor(() => expect(result.current.items).toHaveLength(5));
+    expect(result.current.totalPages).toBe(1);
+    expect(result.current.page).toBeLessThanOrEqual(result.current.totalPages);
+    expect(result.current.pageItems.length).toBeGreaterThan(0);
+  });
+
+  it('does not clamp a page that is still within range', async () => {
+    // 회귀 방지: 25건/page 2는 유효 범위이므로 클램프가 page를 깎으면 안 된다.
+    const { result } = setup({ articles: rds(25) });
+    await waitFor(() => expect(result.current.items).toHaveLength(25));
+    act(() => { result.current.setPage(2); });
+    await waitFor(() => expect(result.current.page).toBe(2));
+    expect(result.current.page).toBe(2);
+    expect(result.current.pageItems).toHaveLength(PAGE_SIZE);
+  });
+
   it('selecting dept-send queries DPS only', async () => {
     const { result, model } = setup({ articles: [] });
     const spy = vi.spyOn(model, 'queryArticles');

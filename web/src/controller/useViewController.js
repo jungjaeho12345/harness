@@ -87,6 +87,15 @@ export function useViewController() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+
+  // 목록이 축소되면(SSE 재조회·필터 변경 등) page가 [1, totalPages]를 벗어나 빈 페이지에 갇힐 수 있다.
+  // items 변경 후 범위를 넘은 page만 끌어내린다. 함수형 업데이트로 동일값이면 React가 리렌더를 생략하므로
+  // page를 의존성에 넣지 않아 무한 루프가 없다(selectMenu의 setPage(1) 리셋·정상 페이지 이동은 보존).
+  useEffect(() => {
+    const max = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    setPage((p) => Math.min(p, max));
+  }, [items]);
+
   const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // 편집 진입 — 대상 기사·모드를 sessionStorage로 넘기고 writer.do로 이동(편집 탭 주소창엔 기사아이디).
