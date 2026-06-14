@@ -133,7 +133,10 @@
     {
       "step": 16,
       "name": "embed-security-cleanup",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-14T11:25:00+0900",
+      "completed_at": "2026-06-14T11:31:00+0900",
+      "summary": "임베드 렌더 시점 보안 방어 + 소규모 데드코드 제거 (생성 경로·normalizeBlocks·본문 contract·에디터 결선 무변경). [16-A] InlineEmbed.jsx video iframe: 역직렬화 블록의 임의 src를 그대로 넣지 않고 clipboardEmbed.parseYouTubeId를 재사용해 embed.videoId(우선)→embed.src→embed.url에서 11자리 video id를 추출, https://www.youtube.com/embed/<id> canonical src로 재구성. 추출 실패(비-YouTube/위조 https:·data:text/html 등)면 iframe 자체를 미렌더(body=null). sandbox='allow-scripts allow-same-origin allow-presentation' 추가, 기존 allowFullScreen 유지(SPA :5173 origin엔 API CSP 미적용 — ADR-001이므로 클라 렌더가 1차 방어선). [16-B] img: isAllowedImageSrc(src) 헬퍼(export — 단위테스트 가능)로 scheme allowlist 검사 — https:·data:image/·scheme 없는 상대경로만 허용, javascript:·data:text/...·http:·빈문자열·null 거부, 거부 시 img 미렌더. referrerPolicy='no-referrer' 추가. [16-C] TopBar.jsx 미사용 right prop·{right} 슬롯 제거(App.jsx는 이미 <TopBar/> prop 미전달, TopBar 테스트 파일 없음·right 참조 0건 grep 확인). [16-D] editorColoring.js export const ROLES 제거(web 전역 grep ROLES 참조 0건 확인, server/index.js ROLES는 별개 로컬 Set으로 무관, COLORS/classifyLines/colorForRole/colorLines/shouldRecolor/RECOLOR_TRIGGERS 무변경). 신규 테스트 9개(InlineEmbed.test.jsx: 위조 https:·data:text/html iframe 미렌더 2·videoId/watch URL canonical 재구성+sandbox 2·isAllowedImageSrc 허용/상대/거부 3·image 비허용 scheme 미렌더+허용 렌더 2). ④ 테스트 게이트에서 보안 커버리지 11개 추가 보강(video: youtu.be 단축 canonical·videoId 우선순위·url fallback·전부 부재 시 iframe 미렌더·빈 src·sandbox 최소권한 회귀가드; image: data:image/png 렌더 허용·data:text/html 거부·http: 거부·부재/빈 미렌더·referrerPolicy 검증). ⑤ 코드리뷰 게이트 pass(critical/high 0, low 3은 정보성·비차단: data:image/svg+xml은 img 컨텍스트라 스크립트 미실행·parseYouTubeId 비앵커지만 canonical 재구성으로 위조 host 폐기·sandbox 조합은 cross-origin이라 안전). AC(lint clean·build·backend 178 무변동·web 222(+20)) = 400 전부 통과, 기존 380개 무회귀."
     },
     {
       "step": 17,
