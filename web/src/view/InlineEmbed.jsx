@@ -1,7 +1,19 @@
 // 본문 임베드 블록 렌더 — 이미지/영상(유튜브)/기사 참조 카드. 각 임베드에 × 삭제 버튼이 있다.
 // 폭: 사진/영상 figure 612px, 기사 참조 카드 480px (clipboardEmbed EMBED_SIZE). transport 비의존(콜백만).
 
-import { EMBED_SIZE } from './clipboardEmbed.js';
+import { EMBED_SIZE, parseYouTubeId } from './clipboardEmbed.js';
+
+// 이미지 src 허용 scheme 검사 — https:/data:image/ 와 scheme 없는 상대경로만 허용.
+// javascript:/data:text/.../http: 등은 거부(트래킹·스푸핑 완화).
+export function isAllowedImageSrc(src) {
+  if (typeof src !== 'string' || src === '') return false;
+  const m = src.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (!m) return true; // scheme 없음 = 상대경로 → 허용
+  const scheme = m[1].toLowerCase();
+  if (scheme === 'https') return true;
+  if (scheme === 'data') return /^data:image\//i.test(src);
+  return false;
+}
 
 export function InlineEmbed({ embed, onRemove, readOnly = false }) {
   if (!embed) return null;
@@ -12,16 +24,31 @@ export function InlineEmbed({ embed, onRemove, readOnly = false }) {
 
   let body = null;
   if (type === 'image') {
-    body = <img src={embed.src} alt={embed.alt ?? ''} style={{ width: '100%' }} />;
+    // 16-B: 허용 scheme(https:/data:image/·상대경로)만 렌더. 그 외는 거부.
+    if (isAllowedImageSrc(embed.src)) {
+      body = (
+        <img
+          src={embed.src}
+          alt={embed.alt ?? ''}
+          style={{ width: '100%' }}
+          referrerPolicy="no-referrer"
+        />
+      );
+    }
   } else if (type === 'video') {
-    body = (
-      <iframe
-        src={embed.src}
-        title={embed.title || '영상'}
-        style={{ width: '100%', aspectRatio: '16 / 9', border: 0 }}
-        allowFullScreen
-      />
-    );
+    // 16-A: 렌더 시점에 YouTube canonical embed URL로 재구성. id 추출 실패 시 iframe 미렌더.
+    const videoId = embed.videoId || parseYouTubeId(embed.src) || parseYouTubeId(embed.url);
+    if (videoId) {
+      body = (
+        <iframe
+          src={`https://www.youtube.com/embed/${videoId}`}
+          title={embed.title || '영상'}
+          style={{ width: '100%', aspectRatio: '16 / 9', border: 0 }}
+          sandbox="allow-scripts allow-same-origin allow-presentation"
+          allowFullScreen
+        />
+      );
+    }
   } else if (type === 'article') {
     body = (
       <a className="yh-embed__article" href={`list.do?articleId=${encodeURIComponent(embed.articleId ?? '')}`}>

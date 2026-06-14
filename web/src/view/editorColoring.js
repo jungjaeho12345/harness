@@ -12,8 +12,6 @@ export const COLORS = Object.freeze({
   end: '#d4af37', // --yh-gold "(끝)"
 });
 
-export const ROLES = Object.freeze(['title', 'subtitle', 'body', 'end']);
-
 function isEndLine(line) {
   return String(line).trim() === END_MARKER;
 }

@@ -5,7 +5,7 @@
 import { useAppContext } from '../app/context.js';
 import { useLoginController } from '../controller/useLoginController.js';
 
-export function TopBar({ right = null }) {
+export function TopBar() {
   const { identity, navigate } = useAppContext();
   const { logout } = useLoginController();
 
@@ -21,7 +21,6 @@ export function TopBar({ right = null }) {
         <span>기사 작성기</span>
       </div>
       <div className="yh-topbar__right">
-        {right}
         <nav className="yh-topbar__nav">
           <button type="button" className="yh-btn" onClick={() => navigate('writer.do')}>기사작성</button>
           <button type="button" className="yh-btn" onClick={() => navigate('list.do')}>기사조회</button>
