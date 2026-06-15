@@ -18,7 +18,44 @@ import { createControllers } from '../src/controllers/index.js';
 import { createFtpWatcher } from './ftpWatcher.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 const ROLES = new Set(['R', 'D', 'Z']);
+
+// 세션 쿠키 transport (security-hardening step0).
+// 외부 의존성 최소화(ADR 철학) — cookie-parser 추가 대신 Cookie 헤더를 직접 파싱한다.
+export const SESSION_COOKIE_NAME = 'yh.sid';
+
+// 쿠키 옵션 빌더 — sameSite/secure는 env로 분기한다.
+// CRITICAL(cross-site): SPA(:5173)와 API(:3001)는 다른 origin = cross-site다(ADR-001).
+// 브라우저는 SameSite=Strict/Lax 쿠키를 cross-site fetch/EventSource에 첨부하지 않으므로,
+// 프로덕션(https)은 SameSite=None+Secure로 cross-site 전송을 허용한다.
+// 로컬/테스트(http)는 Secure를 켤 수 없고 SameSite=None은 Secure 없이 브라우저가 거부하므로
+// SameSite=Lax(Secure 없음)로 둔다(로컬은 동일 머신/프록시 운용·서버 테스트는 직접 Cookie 헤더).
+// 만료의 단일 진실은 서버 세션 스토어(sessionService)이며 maxAge는 보조일 뿐이다.
+export function sessionCookieOptions(env = process.env.NODE_ENV) {
+  const isProd = env === 'production';
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: ONE_HOUR_MS,
+    path: '/',
+  };
+}
+
+// Cookie 헤더 파서 — "a=1; b=2" → { a: '1', b: '2' }. 값은 첫 '=' 기준으로 분리.
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    if (!k) continue;
+    out[k] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return out;
+}
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
@@ -79,9 +116,11 @@ export function createApp({ controllers, sessionService }) {
     },
   }));
   app.use(cors({
+    // credentials 모드에서는 와일드카드 origin 금지 → 명시 allowlist가 필수.
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
+    credentials: true, // 프론트가 쿠키 세션을 주고받으려면 필요(step4 credentials:'include').
   }));
   app.use(express.json());
 
@@ -91,9 +130,16 @@ export function createApp({ controllers, sessionService }) {
   // 부트스트랩(watcher 등 HTTP 밖 경로)에서도 무효화를 알릴 수 있도록 노출한다.
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
-  // x-session-id → 검증된 신원. req.body.role은 절대 쓰지 않는다.
+  // 세션 토큰 도출 — 쿠키 우선, 헤더(x-session-id) 폴백(하위호환).
+  // SSE의 ?session= 폴백은 이 step에서 건드리지 않는다(step2 소관).
+  function sidFrom(req) {
+    const cookies = parseCookies(req.headers.cookie);
+    return cookies[SESSION_COOKIE_NAME] || req.get('x-session-id');
+  }
+
+  // 검증된 신원만 도출한다(ADR-004). req.body.role은 절대 쓰지 않는다.
   function sessionOf(req) {
-    const sid = req.get('x-session-id');
+    const sid = sidFrom(req);
     return { sid, me: sid ? sessionService.touchSession(sid) : undefined };
   }
 
@@ -112,19 +158,24 @@ export function createApp({ controllers, sessionService }) {
     try {
       const { userId, password } = req.body ?? {};
       const r = await controllers.auth.login(userId, password);
-      return r.ok ? res.json(r) : fail(res, r, 401);
+      if (!r.ok) return fail(res, r, 401);
+      // body shape { ok, sessionId, user }는 하위호환으로 유지하고, 세션을 쿠키에도 심는다.
+      res.cookie(SESSION_COOKIE_NAME, r.sessionId, sessionCookieOptions());
+      return res.json(r);
     } catch (e) { next(e); }
   });
 
   app.post('/api/logout', (req, res) => {
-    const sid = req.get('x-session-id') || req.body?.sessionId;
+    const sid = sidFrom(req) || req.body?.sessionId;
     controllers.auth.logout(sid);
+    // 세션 쿠키도 만료시킨다(set/clear는 옵션의 path/sameSite/secure가 정합해야 한다).
+    res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     return res.json({ ok: true });
   });
 
   // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(EventSource 폴백 호환 위해 ?session= 도 허용).
   app.get('/api/session', (req, res) => {
-    const sid = req.get('x-session-id') || req.query.session;
+    const sid = sidFrom(req) || req.query.session;
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });

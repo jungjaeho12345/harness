@@ -5,10 +5,11 @@
     {
       "step": 0,
       "name": "session-cookie-transport",
-      "status": "pending",
+      "status": "completed",
       "goal": "세션 토큰을 HttpOnly/Secure/SameSite 쿠키로도 발급·검증하도록 서버 transport를 전환한다. 헤더 x-session-id는 하위호환으로 계속 수락(쿠키 우선). 세션 스토어/도메인 로직은 무변경, CORS는 credentials 허용으로 확장.",
       "dependsOn": [],
-      "dbImpact": "none"
+      "dbImpact": "none",
+      "summary": "server/index.js transport만 전환. 쿠키명 SESSION_COOKIE_NAME='yh.sid'. sessionCookieOptions(env) 빌더: httpOnly 항상 true, maxAge 1h(보조 — 만료의 단일 진실은 sessionService), path '/'; env 분기 — production은 sameSite:'none'+secure:true(cross-site SPA:5173↔API:3001 전송 필수, None은 Secure 동반 필수), 그 외(dev/test http)는 sameSite:'lax'+secure:false(http localhost에서 쿠키 전송 보장, None은 Secure 없이 브라우저가 거부하므로 lax). cookie 파서는 cookie-parser 의존성 추가 대신 36줄짜리 parseCookies 헬퍼를 직접 구현(ADR 외부 의존성 최소화 철학 존중). sidFrom(req) 우선순위: 1)파싱 쿠키[yh.sid] 2)x-session-id 헤더(하위호환). sessionOf는 sidFrom→touchSession으로 검증된 세션에서만 신원/role 도출(req.body.role 불신 — ADR-004 유지). /api/login은 body {ok,sessionId,user} shape 그대로 유지하며 res.cookie 추가; /api/logout은 invalidate 후 clearCookie. CORS credentials:true + 명시 origin allowlist(localhost/127.0.0.1:5173) 유지, allowedHeaders에 x-session-id 하위호환 유지. SSE(/api/stream) ?session= 폴백은 무변경(step2 소관). 신규 test/session-cookie.test.js 8개 추가, 기존 server.test.js 14개 무회귀. dbImpact none."
     },
     {
       "step": 1,
