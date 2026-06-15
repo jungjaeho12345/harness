@@ -112,7 +112,10 @@ export function createApp({ controllers, sessionService }) {
     try {
       const { userId, password } = req.body ?? {};
       const r = await controllers.auth.login(userId, password);
-      return r.ok ? res.json(r) : fail(res, r, 401);
+      if (r.ok) return res.json(r);
+      // 로그인 전용 매핑: 계정 잠금은 423 Locked. STATUS_BY_REASON.locked(409, 기사 편집 잠금)는 건드리지 않는다.
+      if (r.reason === 'locked') return res.status(423).json(r);
+      return fail(res, r, 401);
     } catch (e) { next(e); }
   });
 

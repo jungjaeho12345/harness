@@ -93,6 +93,31 @@ test('로그인: 성공 시 세션 발급(비밀번호 미노출), 실패 시 40
   } finally { await ctx.close(); }
 });
 
+test('로그인: 임계치만큼 실패 후 올바른 자격도 잠금(423 Locked, 세션 미발급)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw1234' });
+
+    // step1 기본 임계치(5회) 만큼 잘못된 비밀번호로 실패 — 레이트리밋 한도(10) 안.
+    for (let i = 0; i < 5; i += 1) {
+      const r = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'wrong' } });
+      assert.equal(r.status, 401);
+      assert.equal(r.body.reason, 'invalid-credentials');
+    }
+
+    // 6번째 호출: 올바른 자격이어도 잠금 → 423, reason:'locked', 세션 미발급.
+    const locked = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw1234' } });
+    assert.equal(locked.status, 423);
+    assert.equal(locked.body.ok, false);
+    assert.equal(locked.body.reason, 'locked');
+    assert.equal(locked.body.sessionId, undefined);
+    // 내부 상태(잔여 시도/해제 시각) 비노출.
+    assert.equal(locked.body.failedLoginCount, undefined);
+    assert.equal(locked.body.lockedUntil, undefined);
+    assert.equal(locked.body.remaining, undefined);
+  } finally { await ctx.close(); }
+});
+
 test('action: acting role은 세션에서 도출하고 req.body.role은 무시한다', async () => {
   const ctx = await start();
   try {
