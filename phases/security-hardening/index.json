@@ -1,0 +1,46 @@
+{
+  "project": "기사 작성기 (article production system)",
+  "phase": "security-hardening",
+  "steps": [
+    {
+      "step": 0,
+      "name": "session-cookie-transport",
+      "status": "pending",
+      "goal": "세션 토큰을 HttpOnly/Secure/SameSite 쿠키로도 발급·검증하도록 서버 transport를 전환한다. 헤더 x-session-id는 하위호환으로 계속 수락(쿠키 우선). 세션 스토어/도메인 로직은 무변경, CORS는 credentials 허용으로 확장.",
+      "dependsOn": [],
+      "dbImpact": "none"
+    },
+    {
+      "step": 1,
+      "name": "https-enforcement",
+      "status": "pending",
+      "goal": "프로덕션에서 HTTPS를 강제한다(HSTS via helmet + http→https 리다이렉트 + trust proxy). step0의 Secure 쿠키와 정합. 로컬/테스트(NODE_ENV!=='production')는 무영향.",
+      "dependsOn": [0],
+      "dbImpact": "none"
+    },
+    {
+      "step": 2,
+      "name": "sse-cookie-auth",
+      "status": "pending",
+      "goal": "SSE(/api/stream)의 평문 ?session= 쿼리 토큰 폴백을 제거하고 쿠키(우선)+x-session-id 헤더로만 인증한다(sidFrom 재사용). 프론트 withCredentials 적용은 step4 후속.",
+      "dependsOn": [0],
+      "dbImpact": "none"
+    },
+    {
+      "step": 3,
+      "name": "account-lockout",
+      "status": "pending",
+      "goal": "로그인 실패 누적 시 계정 잠금. User 테이블에 additive 컬럼(failedLoginCount, lockedUntil) 추가. userService/userModel에서 잠금 판정·증가·리셋. 기존 IP 레이트리밋·bcrypt 타이밍 평준화·active='N' 차단과 공존, DB 비파괴.",
+      "dependsOn": [],
+      "dbImpact": "additive (User 테이블 컬럼 추가 — failedLoginCount, lockedUntil. 행 삭제/DROP 없음)"
+    },
+    {
+      "step": 4,
+      "name": "frontend-cookie-session",
+      "status": "pending",
+      "goal": "프론트엔드 Model/httpModel을 쿠키 세션과 정합하도록 전환한다(fetch credentials:'include', EventSource withCredentials, sessionStorage 토큰 의존 제거). 응답에서 sessionId를 더 이상 신뢰하지 않고 /api/session 신원으로 복원.",
+      "dependsOn": [0, 2],
+      "dbImpact": "none"
+    }
+  ]
+}
