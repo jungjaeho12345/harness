@@ -78,10 +78,26 @@ function pickFilters(query = {}) {
 }
 
 // cookieSecure: Secure 속성 토글. 프로덕션(HTTPS)에서만 true 권장 — dev/test(HTTP)는 false여야 쿠키가 실린다.
-export function createApp({ controllers, sessionService, cookieSecure = process.env.NODE_ENV === 'production' }) {
+// forceHttps: HTTPS 강제 토글(기본 false=dev/test no-op). true면 HSTS 적용 + 평문 HTTP를 https로 리다이렉트.
+//   토글 기준은 cookieSecure(step3 Secure 쿠키)와 동일한 환경(prod)을 권장 — Secure 쿠키의 전제이기 때문.
+export function createApp({
+  controllers,
+  sessionService,
+  cookieSecure = process.env.NODE_ENV === 'production',
+  forceHttps = false,
+}) {
   const app = express();
 
+  // 프록시(리버스 프록시 TLS 종단) 뒤 원 프로토콜은 X-Forwarded-Proto로 판정한다.
+  // trust proxy는 최소(첫 홉 1개만 신뢰) — true(무제한)는 X-Forwarded-Proto 스푸핑 우회를 허용하므로 금지.
+  if (forceHttps) app.set('trust proxy', 1);
+
   app.use(helmet({
+    // HSTS는 HTTPS 응답에서만 의미가 있다 — HTTP dev에 보내면 이후 접속이 깨질 수 있으므로 토글로 끈다(forceHttps).
+    // 운영(prod) 적합값: max-age 6개월 + includeSubDomains. preload는 무분별 등록 방지차 비활성.
+    strictTransportSecurity: forceHttps
+      ? { maxAge: 15552000, includeSubDomains: true, preload: false }
+      : false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -103,6 +119,19 @@ export function createApp({ controllers, sessionService, cookieSecure = process.
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
     credentials: true,
   }));
+
+  // HTTP→HTTPS 리다이렉트 — helmet/CORS 다음, 라우트보다 앞. 토글 OFF면 no-op(HTTP 그대로 통과).
+  // X-Forwarded-Proto가 https가 아니면 동일 host/경로의 https로 308(메서드·본문 보존) 리다이렉트한다.
+  // CORS preflight(OPTIONS)는 위 cors 미들웨어가 먼저 응답을 끝내므로 여기 도달하지 않는다(깨지지 않음).
+  if (forceHttps) {
+    app.use((req, res, next) => {
+      if (req.secure || req.get('x-forwarded-proto') === 'https') return next();
+      const host = req.get('host');
+      if (!host) return next(); // host 없는 비정상 요청은 강제 대상 외 — 라우트가 처리.
+      return res.redirect(308, `https://${host}${req.originalUrl}`);
+    });
+  }
+
   app.use(express.json());
 
   // 세션 쿠키 발급 — HttpOnly(XSS 토큰 탈취 차단), Path=/, 슬라이딩 만료 정합 Max-Age.
@@ -419,7 +448,11 @@ function bootstrap() {
 
   const sessionService = createSessionService();
   const controllers = createControllers(db, { sessionService });
-  const app = createApp({ controllers, sessionService });
+  // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
+  // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
+  const forceHttps = process.env.FORCE_HTTPS === 'true'
+    || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
+  const app = createApp({ controllers, sessionService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {
