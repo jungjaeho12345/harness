@@ -76,7 +76,9 @@ npm test
 ## 금지사항
 
 - `sessionService.js`를 수정하지 마라. 이유: 세션 저장/만료는 transport-agnostic해야 한다(ADR-004) — 이 step은 운반 수단만 추가한다.
-- `x-session-id` 헤더 경로를 제거하지 마라. 이유: 402개 기존 테스트와 현 클라이언트가 헤더로 인증한다 — 전환 기간 폴백을 끊으면 대량 회귀가 난다. (헤더 제거는 이 phase 범위 밖의 후속 과제다.)
+- `x-session-id` 헤더 경로를 제거하지 마라. 이유: 기존 전체 테스트 스위트와 현 클라이언트가 헤더로 인증한다 — 전환 기간 폴백을 끊으면 대량 회귀가 난다. (헤더 제거는 이 phase 범위 밖의 후속 과제다.)
+
+> dev 환경 참고: 프론트(:5173)·API(:3001) cross-origin에서 `SameSite=None; Secure` 쿠키는 HTTP dev에 안 실린다. dev에서 쿠키 인증을 살리려면 **same-origin(Vite proxy로 /api 프록시) 또는 헤더 폴백 유지** 중 하나를 전제해야 한다. 택한 전제를 summary에 한 줄로 기록하라(step5의 SSE 폴백 결정과 정합).
 - `cors`의 `origin`을 `*`로 바꾸지 마라. 이유: `credentials: true`와 `origin:*`는 브라우저가 거부하며, allowlist가 보안 경계다.
 - 쿠키에 권한/역할 정보를 담지 마라. 이유: news.md — 세션 토큰은 권한 정보를 담지 않는 무작위 토큰이다. 역할은 서버 세션에서만 도출한다(ADR-004).
 - 프론트엔드(web/)를 이 step에서 수정하지 마라. 이유: 클라이언트 전환은 step4의 scope다(scope 최소화).

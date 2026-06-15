@@ -32,8 +32,10 @@ SSE 인증을 **쿠키 기반**으로 강화해 **세션 토큰이 URL 쿼리(`?
    - 자동 재연결·`ready`/`change`/`error` 리스너·`unsubscribe` 동작은 유지한다(news.md: 끊기면 자동 재연결).
 3. **무효화 신호 불변식 유지**: SSE 페이로드는 여전히 **행 데이터 없는 무효화 신호**다(ADR-005). 인증만 강화하고 페이로드 형태는 바꾸지 마라.
 
+> dev 환경 주의: cross-origin(:5173↔:3001) HTTP dev에서는 `SameSite=None; Secure` 쿠키가 안 실리고 `EventSource`는 헤더도 못 보낸다. 즉 **쿼리 폴백을 제거하면 dev SSE 인증 수단이 사라진다.** 따라서 폴백 제거는 same-origin(Vite proxy) 배포/개발을 전제할 때만 택하고, 그렇지 않으면 쿼리 폴백을 유지(쿠키 우선)하라. 택한 전제를 step3 결정과 정합시켜 summary에 명시.
+
 테스트:
-- (`test/server.test.js`) 쿠키로 `/api/stream`에 연결하면 `ready` 신호를 받는다. 미인증은 401. (기존 `?session=` 테스트는 새 방식에 맞게 갱신하되, 폴백을 제거했다면 쿠키 버전으로 교체한다.)
+- (`test/server.test.js`) 쿠키로 `/api/stream`에 연결하면 `ready` 신호를 받는다. 미인증은 401. **`?session=` 쿼리 폴백을 제거하기로 택했다면, 기존 `?session=` 기반 stream 테스트(264행 부근 "세션 폴백(?session=)으로 ready" 테스트)를 쿠키 인증 버전으로 반드시 교체한다** — 안 고치면 그 테스트가 깨진다. 폴백을 유지하기로 했다면 쿠키 우선 검증을 추가한다.
 - (`web/src/model/httpModel.test.js`) `subscribe()`가 `withCredentials: true`로 EventSource를 만들고, URL에 세션 토큰이 노출되지 않는다(쿼리 폴백 제거 시).
 
 ## Acceptance Criteria
