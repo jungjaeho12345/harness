@@ -11,7 +11,7 @@
 - `/home/user/harness/src/services/userService.js` — `login(userId, password)`(22~31행): findById → bcrypt.compare → `{ok:false, reason:'invalid-credentials'}` / `{ok:false, reason:'inactive'}` / `{ok:true, user}`. `DUMMY_HASH` 타이밍 평준화(11행), `SAFE_FIELDS`(비밀번호 제외)
 - `/home/user/harness/src/models/userModel.js` — `COLUMNS` 화이트리스트(5행), `findById`/`update`(35~41행). 새 컬럼을 읽고/쓰려면 `COLUMNS`에 추가해야 한다
 - `/home/user/harness/src/controllers/index.js` — `auth.login`(44~49행): `userService.login` 성공 시 `session.createSession` → `{ ok, sessionId, user }`. **이 반환 shape 유지**
-- `/home/user/harness/server/index.js` — `/api/login`(111~117행), `STATUS_BY_REASON`(28~43행: 잠금 reason의 HTTP 코드 매핑 추가 필요), 로그인 레이트리밋(104~109행)
+- `/home/user/harness/server/index.js` — `/api/login`(111~117행), `STATUS_BY_REASON`(현재 65행~). **주의: `locked: 409`는 이미 정의돼 있다(server/index.js:73). 새로 추가할 필요 없다** — 기존 409 계약을 유지할지 변경할지만 결정한다(아래 작업4 참조). 로그인 레이트리밋(104~109행)
 - `/home/user/harness/src/services/sessionService.js` — `now` 주입 패턴(19행). 잠금 만료(lockedUntil) 판정도 **주입된 시계**로 결정적으로 한다(Date.now() 직접 호출 금지)
 
 ## 결정해야 할 사항 (구현 전 명확히, summary에 근거 기록)
@@ -27,11 +27,12 @@
 3. **서비스(`userService.login`)** — 핵심 로직. 순서가 중요하다:
    - findById로 행을 가져온다(없는 사용자도 기존처럼 `DUMMY_HASH`로 bcrypt 1회 — 타이밍 평준화 유지, news.md 136행).
    - **잠금 검사**: 행이 있고 `lockedUntil`이 미래(주입 시계 기준)면 **bcrypt 비교 여부와 무관하게** `{ok:false, reason:'locked'}`를 반환한다(타이밍 평준화를 위해 잠긴 경우에도 더미/실제 bcrypt를 1회 수행하는 것을 고려 — news.md 136행 정합).
-   - 비밀번호 불일치면 `failedLoginCount`를 증가시키고, 임계치 도달 시 `lockedUntil = now + 잠금시간`을 stamp한다(모델 update). 그래도 응답 reason은 **기존과 동일하게** `invalid-credentials`로 둔다(계정 존재/잠금 임박 여부를 노출하지 않음 — 정보 누출 방지). 잠금이 이미 걸린 상태면 `locked`.
+   - **`failedLoginCount` 타입 변환 규칙(CRITICAL)**: 저장은 `TEXT`지만 증가·비교는 반드시 `const n = Number(row.failedLoginCount ?? '0')`로 숫자 파싱한 뒤 `String(n + 1)`로 재저장한다. 문자열 그대로 `+ 1`을 쓰면 `'0' + 1 === '01'` 누적 버그가 난다(절대 금지). 임계치 비교도 파싱한 `n`(숫자)으로 한다.
+   - 비밀번호 불일치면 위 규칙으로 `failedLoginCount`를 증가시키고, 임계치 도달 시 `lockedUntil = now + 잠금시간`을 stamp한다(모델 update). 그래도 응답 reason은 **기존과 동일하게** `invalid-credentials`로 둔다(계정 존재/잠금 임박 여부를 노출하지 않음 — 정보 누출 방지). 잠금이 이미 걸린 상태면 `locked`.
    - 비밀번호 일치 + active='Y'면: `failedLoginCount`를 0으로 리셋하고 `lockedUntil`을 비운 뒤 `{ok:true, user: sanitize(row)}`. `active='N'`이면 기존대로 `inactive`.
    - **`lockedUntil`/`failedLoginCount`는 절대 `sanitize`/응답에 포함하지 마라**(SAFE_FIELDS에 넣지 않는다 — 비밀번호와 같은 내부 필드).
    - `now`는 주입한다(서비스 생성 시 `createUserService({ userModel, now })` 형태로 옵션 추가). Date.now() 직접 호출 금지.
-4. **transport**: `server/index.js`의 `STATUS_BY_REASON`에 `locked` → `423`(Locked) 또는 `429`(Too Many Requests) 매핑을 추가한다(택1·근거 기록; `403`도 가능). `/api/login`은 거부 reason을 그대로 매핑만 한다(로직 재구현 금지). IP 레이트리밋(15분/10회)은 **그대로 유지** — 계정 잠금과 IP 레이트리밋은 독립 방어층이다.
+4. **transport**: `server/index.js`의 `STATUS_BY_REASON.locked`는 **이미 `409`로 정의돼 있다(server/index.js:73)** — 매핑을 새로 추가하지 마라. 기존 `409` 계약을 그대로 유지할지(권장: 기존 계약·테스트 보존), `423`(Locked)/`429`(Too Many Requests)로 변경할지 결정한다. **변경을 택하면, `409`에 의존하는 기존 테스트(예: `test/server.test.js`의 `forbidden-transition`/`locked` 관련 단언)와 프론트의 영향 범위를 먼저 확인하고 근거를 summary에 기록하라.** `/api/login`은 거부 reason을 그대로 매핑만 한다(로직 재구현 금지). IP 레이트리밋(15분/10회)은 **그대로 유지** — 계정 잠금과 IP 레이트리밋은 독립 방어층이다.
 
 ## 테스트 계획
 - `test/userService.test.js` 보강(또는 신규 `test/account-lockout.test.js`): 가짜 시계(`now`)와 in-memory userModel 주입.
@@ -43,7 +44,7 @@
   - `active='N'`은 잠금 로직과 무관하게 `inactive`(기존 회귀).
   - 존재하지 않는 사용자도 더미 bcrypt 1회 수행(타이밍 평준화 회귀).
 - `test/schema.test.js` 보강: 새 User 컬럼이 `createSchema` 후 존재하고, **기존 행 데이터가 보존**되며(멱등 재실행 안전), 재실행이 에러 없이 통과한다.
-- `test/server.test.js` 보강: 잠긴 계정 로그인 시 선택한 HTTP 상태(423/429 등)와 `{ok:false, reason:'locked'}` 매핑. IP 레이트리밋(15분/10회)이 여전히 동작(회귀).
+- `test/server.test.js` 보강: 잠긴 계정 로그인 시 매핑된 HTTP 상태(기본 유지 시 `409`, 변경을 택했다면 그 코드)와 `{ok:false, reason:'locked'}` 매핑. `409` 변경을 택했다면 기존 `409` 단언이 깨지지 않게 함께 갱신. IP 레이트리밋(15분/10회)이 여전히 동작(회귀).
 
 ## Acceptance Criteria
 ```bash
@@ -55,7 +56,7 @@ npm test
 ## 검증 절차
 1. AC 실행. 기존 `test/userService.test.js`·`test/schema.test.js`·`test/server.test.js` 무회귀 통과 확인.
 2. 체크리스트: 컬럼이 additive로만 추가됐는가(DROP/DELETE 없음)? 잠금 판정이 주입 시계로 결정적인가? 잠금/실패 필드가 응답에 새지 않는가? 타이밍 평준화·`active='N'`·IP 레이트리밋이 보존되는가? acting role/세션은 변경하지 않았는가?
-3. index.json의 step 3을 completed + summary(추가 컬럼명·임계치/잠금시간 상수·`locked` HTTP 코드·자동해제 vs 영구잠금 결정 근거)로 갱신.
+3. index.json의 step 3을 completed + summary(추가 컬럼명·임계치/잠금시간 상수·`locked` HTTP 코드 유지/변경 결정·자동해제 vs 영구잠금 결정 근거)로 갱신.
 
 ## 금지사항 / 불변규칙 체크리스트
 - DB 행을 삭제하거나 컬럼을 DROP하지 마라. 잠금/해제는 **컬럼 값 업데이트만**. 이유: DB 비파괴 원칙(SCHEMA.md 11행).
@@ -65,3 +66,5 @@ npm test
 - `Date.now()`를 서비스에서 직접 호출하지 마라. 이유: 테스트 결정성 — `now` 주입 패턴(sessionService와 일관).
 - 기존 IP 레이트리밋·bcrypt 비교·타이밍 평준화·`active='N'` 차단을 제거/약화하지 마라. 이유: 회귀 방지 — 독립 방어층을 모두 보존한다.
 - transport(`/api/login`)에서 잠금 로직을 재구현하지 마라. 이유: ADR-006 — 도메인 로직은 서비스에, 라우트는 매핑만.
+- `failedLoginCount`(TEXT)를 문자열인 채로 `+ 1`하지 마라. 이유: `'0' + 1 === '01'`로 카운트가 깨져 잠금이 영영 트리거되지 않는다 — 반드시 `Number(...)` 파싱 후 `String(n+1)`.
+- `STATUS_BY_REASON`에 `locked` 매핑을 중복 추가하지 마라. 이유: 이미 `409`로 존재한다(server/index.js:73) — 중복 키는 혼란/회귀를 부른다.

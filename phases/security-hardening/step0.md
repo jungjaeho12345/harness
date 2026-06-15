@@ -31,13 +31,14 @@
 6. CORS: 프론트가 쿠키를 주고받으려면 `credentials: true`가 필요하다. `cors(...)`에 `credentials: true`를 추가한다. origin allowlist(`localhost:5173`/`127.0.0.1:5173`)는 유지(credentials 모드에서는 와일드카드 origin 금지이므로 명시 allowlist가 필수다). `allowedHeaders`의 `x-session-id`는 하위호환으로 유지.
 
 ## 테스트 계획 (`test/server.test.js` 또는 신규 `test/session-cookie.test.js`)
-- 로그인 성공 응답에 `Set-Cookie` 헤더가 있고, `HttpOnly`·`SameSite=Strict`가 포함된다(supertest 또는 기존 테스트 하네스 방식 그대로).
+- 비프로덕션(테스트 기본) 환경에서 로그인 성공 응답의 `Set-Cookie` 헤더에 `HttpOnly`가 있고 `SameSite`가 `Lax`이며 `Secure` 속성이 **없는지** 확인한다(supertest 또는 기존 테스트 하네스 방식 그대로). 주의: cross-site 제약(18~21행) 때문에 `Strict`는 어떤 분기에서도 발급되지 않는다 — `Strict`를 단언하지 마라.
+- 별도 단위 테스트로 `sessionCookieOptions('production')`이 `sameSite: 'none'` + `secure: true`를 반환하는지 검증한다(아래 secure env 분기 테스트와 통합).
 - 로그인 후 받은 쿠키만 다시 실어 보낸 보호 라우트(예: `GET /api/session`, `GET /api/articles`)가 **헤더 없이도** 인증 통과한다.
 - 헤더(`x-session-id`)만 실은 기존 방식 요청도 **여전히** 인증 통과한다(하위호환 회귀 가드).
 - 쿠키·헤더 둘 다 없으면 401.
 - `/api/logout`이 세션 무효화 + `Set-Cookie`로 쿠키 만료(clearCookie)를 내린다.
 - `req.body.role`을 위조해 보내도 acting role이 세션 신원에서만 도출됨(권한 상승 불가) — 기존 회귀 테스트가 깨지지 않는지 확인.
-- `secure` 옵션이 `NODE_ENV=production`에서만 true가 되는지(env 분기) 단위 검증.
+- `sessionCookieOptions`의 env 분기 단위 검증: 비프로덕션에서는 `secure:false`+`sameSite:'lax'`, `NODE_ENV=production`에서는 `secure:true`+`sameSite:'none'`이 되는지(위 production 단언과 통합 가능).
 
 ## Acceptance Criteria
 ```bash
