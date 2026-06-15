@@ -23,10 +23,11 @@
     {
       "step": 2,
       "name": "sse-cookie-auth",
-      "status": "pending",
+      "status": "completed",
       "goal": "SSE(/api/stream)의 평문 ?session= 쿼리 토큰 폴백을 제거하고 쿠키(우선)+x-session-id 헤더로만 인증한다(sidFrom 재사용). 프론트 withCredentials 적용은 step4 후속.",
       "dependsOn": [0],
-      "dbImpact": "none"
+      "dbImpact": "none",
+      "summary": "server/index.js의 /api/stream 라우트만 변경(transport). sid 도출을 인라인 'req.get('x-session-id') || req.query.session'에서 step0의 sessionOf(req)→sidFrom(req)(쿠키 yh.sid 우선→x-session-id 헤더 폴백)으로 교체하고 평문 ?session= 쿼리 인증 폴백을 제거. 인증 실패는 기존대로 401, 인증 통과 후 SSE 응답 헤더/ready 이벤트/bus.on('change') 무효화 배선·req.on('close') 정리는 무변경(ADR-005 무효화 신호 방식 유지 — 행 데이터 미포함). 보안 근거: 쿼리 토큰은 URL·서버/프록시 액세스 로그·브라우저 히스토리·Referer로 새는 표면이라 HttpOnly 쿠키로 대체해 그 표면을 닫음. 헤더(x-session-id) 폴백은 유지 — 하위호환. cross-origin EventSource의 쿠키 첨부(withCredentials:true)와 프론트 ?session= 제거는 step4 소관(이 step은 서버가 쿼리를 더 이상 신뢰하지 않게 만드는 것까지). 신규 test/sse-auth.test.js 6개(쿠키 통과/헤더 통과/쿼리 401/무인증 401/위조 401/슬라이딩 touchSession) — node:http.request로 쿠키·헤더 직접 제어, 첫 SSE 청크만 읽고 소켓 종료(step1 rawFetch 패턴). 기존 server.test.js의 ?session= 의존 stream 테스트는 x-session-id 헤더 방식으로 갱신(폴백 제거가 의도된 변경). AC(lint/build/test) 통과, 백엔드 무회귀 200 pass(194→200, +6). dbImpact none."
     },
     {
       "step": 3,

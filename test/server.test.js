@@ -261,7 +261,7 @@ test('수집 인제스트: 미등록 sourceId 거부(403), 등록 시 attribute=
   } finally { await ctx.close(); }
 });
 
-test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 보낸다', async () => {
+test('GET /api/stream: x-session-id 헤더로 ready 무효화 신호를 보낸다(쿠키 폴백은 sse-auth.test.js)', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
@@ -273,7 +273,10 @@ test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 
     await unauth.body?.cancel?.();
 
     const ac = new AbortController();
-    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const res = await fetch(`${ctx.base}/api/stream`, {
+      headers: { 'x-session-id': sid },
+      signal: ac.signal,
+    });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/event-stream/);
     const { value } = await res.body.getReader().read();

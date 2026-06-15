@@ -415,10 +415,13 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   });
 
   // --- SSE: 무효화 신호 스트림 ---
-  // EventSource가 헤더를 못 보내므로 이 라우트 한정으로 ?session= 쿼리 인증 폴백을 허용한다.
+  // 인증은 쿠키(우선)+x-session-id 헤더만 허용한다(sidFrom 재사용).
+  // 평문 ?session= 쿼리 폴백은 제거했다(security-hardening step2): 쿼리 토큰은 URL/서버·프록시
+  // 액세스 로그/브라우저 히스토리/Referer로 새는 표면이라 쿠키(HttpOnly)로 대체한다.
+  // cross-origin EventSource의 쿠키 첨부(withCredentials:true)는 프론트(step4) 소관이며,
+  // 그 전까지는 헤더(x-session-id) 폴백으로 SSE 인증이 끊기지 않는다.
   app.get('/api/stream', (req, res) => {
-    const sid = req.get('x-session-id') || req.query.session;
-    const me = sid ? sessionService.touchSession(sid) : undefined;
+    const { me } = sessionOf(req);
     if (!me) return res.status(401).json(UNAUTH);
 
     res.set({
