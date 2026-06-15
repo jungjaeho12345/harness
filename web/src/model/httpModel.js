@@ -1,8 +1,11 @@
 // httpModel — Model 계약(ADR-003)의 실제 REST/SSE 배선. 모든 transport(fetch/EventSource)는
 // 이 파일 안에만 있다. View/Controller는 절대 직접 fetch/EventSource를 호출하지 않는다.
 //
-// 세션 토큰(x-session-id)은 여기서 소유한다 — 로그인 응답의 sessionId를 sessionStorage에 보관하고
-// 모든 요청에 자동 첨부한다. F5(새로고침) 후에도 보관된 토큰으로 restoreSession이 동작한다.
+// 인증의 1차 수단은 서버가 발급한 HttpOnly 세션 쿠키(step3)다. 요청은 credentials:'include'로
+// 보내 브라우저가 쿠키를 자동 전송하게 한다. HttpOnly라 JS는 쿠키를 읽지 않으며, F5(새로고침)
+// 신원 복원은 서버 /api/session이 담당한다(쿠키 자동 전송 → user 반환).
+// x-session-id 헤더는 dev cross-origin(SameSite 제약)에서의 폴백으로 병행 유지한다 — 로그인 응답의
+// sessionId를 sessionStorage에 보관해 요청에 첨부하고, logout 시 비운다.
 // 응답 shape은 server/index.js(step8) 라우트와 1:1로 맞춘다.
 
 const SESSION_STORAGE_KEY = 'yh.sessionId';
@@ -43,7 +46,11 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     const headers = {};
     const sessionId = readSessionId();
     if (sessionId) headers['x-session-id'] = sessionId;
-    const init = { method, headers };
+    // 인증의 1차 수단은 HttpOnly 세션 쿠키(step3). credentials:'include'로 cross-origin 요청에도
+    // 브라우저가 쿠키를 자동 전송한다(CORS credentials:true). HttpOnly라 JS로 쿠키를 읽지 않으며,
+    // 신원 복원은 서버 /api/session에 위임한다. x-session-id 헤더는 dev cross-origin(SameSite 제약)
+    // 폴백으로 병행 유지한다.
+    const init = { method, headers, credentials: 'include' };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
