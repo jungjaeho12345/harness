@@ -176,6 +176,40 @@ test('req.body.role 위조는 무력화된다: 쿠키 세션의 role(R)로 처�
   } finally { await ctx.close(); }
 });
 
+test('malformed 쿠키(잘못된 퍼센트 인코딩)에도 500이 아니라 정상 처리된다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const login = await req(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw' } });
+    const sessionCookie = cookieHeaderFrom(findSessionCookie(login.setCookie));
+
+    // 무관한 쿠키 하나가 깨진 인코딩(%zz)이어도 decodeURIComponent가 500을 일으키지 않고,
+    // 유효한 세션 쿠키로 인증이 통과해야 한다.
+    const ok = await req(ctx.base, 'GET', '/api/session', { cookie: `bad=%zz; ${sessionCookie}` });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.user.userId, 'kim');
+
+    // 세션 없이 깨진 쿠키만 보내도 500이 아니라 401로 수렴.
+    const unauth = await req(ctx.base, 'GET', '/api/articles', { cookie: 'bad=%zz' });
+    assert.equal(unauth.status, 401);
+    assert.equal(unauth.body.reason, 'unauthenticated');
+  } finally { await ctx.close(); }
+});
+
+test('/api/session은 평문 ?session= 쿼리 토큰을 수용하지 않는다(401)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const login = await req(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw' } });
+    const sid = login.body.sessionId;
+
+    // 유효 토큰을 쿼리로 줘도 쿠키·헤더가 아니면 인증 거부(누출 표면 제거).
+    const r = await req(ctx.base, 'GET', `/api/session?session=${sid}`);
+    assert.equal(r.status, 401);
+    assert.equal(r.body.reason, 'unauthenticated');
+  } finally { await ctx.close(); }
+});
+
 test('sessionCookieOptions: production에서만 secure=true + SameSite=None', () => {
   const prod = sessionCookieOptions('production');
   assert.equal(prod.httpOnly, true);

@@ -52,7 +52,15 @@ function parseCookies(header) {
     if (idx === -1) continue;
     const k = part.slice(0, idx).trim();
     if (!k) continue;
-    out[k] = decodeURIComponent(part.slice(idx + 1).trim());
+    const raw = part.slice(idx + 1).trim();
+    // 무관한 쿠키 하나라도 잘못된 퍼센트 인코딩(예: %zz)이면 decodeURIComponent가
+    // URIError를 던진다 — 클라이언트 제어 입력이므로 500이 아니라 원본값으로 폴백한다
+    // (세션 sid는 hex라 디코딩 불필요, 인증 실패는 401로 수렴).
+    try {
+      out[k] = decodeURIComponent(raw);
+    } catch {
+      out[k] = raw;
+    }
   }
   return out;
 }
@@ -169,7 +177,7 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
   // 세션 토큰 도출 — 쿠키 우선, 헤더(x-session-id) 폴백(하위호환).
-  // SSE의 ?session= 폴백은 이 step에서 건드리지 않는다(step2 소관).
+  // 평문 ?session= 쿼리 토큰은 누출 표면(URL/로그/Referer)이라 수용하지 않는다.
   function sidFrom(req) {
     const cookies = parseCookies(req.headers.cookie);
     return cookies[SESSION_COOKIE_NAME] || req.get('x-session-id');
@@ -211,9 +219,9 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
     return res.json({ ok: true });
   });
 
-  // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(EventSource 폴백 호환 위해 ?session= 도 허용).
+  // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(쿠키 우선, x-session-id 헤더 폴백).
   app.get('/api/session', (req, res) => {
-    const sid = sidFrom(req) || req.query.session;
+    const sid = sidFrom(req);
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
