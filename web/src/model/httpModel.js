@@ -141,12 +141,14 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     },
 
     // --- 실시간 무효화 스트림 (SSE) ---
-    // EventSource는 커스텀 헤더를 못 보내므로 ?session= 쿼리로 인증한다(server 폴백).
-    // ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다. onChange는 "무효화 신호"만 받으며,
-    // filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
+    // 인증의 1차 수단은 HttpOnly 세션 쿠키 — EventSource는 헤더를 못 보내지만 withCredentials:true로
+    // cross-origin 쿠키를 자동 전송한다(step5, server는 쿠키 우선 readSessionToken으로 인증).
+    // dev cross-origin(SameSite 제약으로 쿠키 미적재)에서는 보관된 sessionId를 ?session= 쿼리 폴백으로만
+    // 붙인다(토큰 없으면 URL에 노출 안 함). ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다.
+    // onChange는 "무효화 신호"만 받으며, filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
     subscribe(filter, onChange) {
       const url = `${base}/api/stream${buildQuery({ session: readSessionId() })}`;
-      const source = new EventSource(url);
+      const source = new EventSource(url, { withCredentials: true });
       let connected = false;
       source.addEventListener('ready', () => { connected = true; });
       source.addEventListener('change', (event) => {

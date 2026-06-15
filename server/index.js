@@ -381,9 +381,11 @@ export function createApp({ controllers, sessionService, cookieSecure = process.
   });
 
   // --- SSE: 무효화 신호 스트림 ---
-  // EventSource가 헤더를 못 보내므로 이 라우트 한정으로 ?session= 쿼리 인증 폴백을 허용한다.
+  // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더). EventSource는 withCredentials로 쿠키를
+  // 싣지만, dev cross-origin(SameSite=None;Secure 미적재 + 헤더 불가)에서는 쿠키가 안 실린다 → 이 라우트
+  // 한정으로 ?session= 쿼리 폴백을 유지한다(step3 SameSite 결정 정합). 쿠키가 있으면 쿼리는 무시된다.
   app.get('/api/stream', (req, res) => {
-    const sid = req.get('x-session-id') || req.query.session;
+    const sid = readSessionToken(req) || req.query.session;
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
 
