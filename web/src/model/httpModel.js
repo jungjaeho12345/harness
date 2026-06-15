@@ -1,29 +1,11 @@
 // httpModel — Model 계약(ADR-003)의 실제 REST/SSE 배선. 모든 transport(fetch/EventSource)는
 // 이 파일 안에만 있다. View/Controller는 절대 직접 fetch/EventSource를 호출하지 않는다.
 //
-// 세션 토큰(x-session-id)은 여기서 소유한다 — 로그인 응답의 sessionId를 sessionStorage에 보관하고
-// 모든 요청에 자동 첨부한다. F5(새로고침) 후에도 보관된 토큰으로 restoreSession이 동작한다.
-// 응답 shape은 server/index.js(step8) 라우트와 1:1로 맞춘다.
-
-const SESSION_STORAGE_KEY = 'yh.sessionId';
-
-function readSessionId() {
-  try {
-    return globalThis.sessionStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
-  } catch {
-    // sessionStorage 접근 불가(SSR/프라이버시 모드 등) — 토큰 없음으로 취급.
-    return null;
-  }
-}
-
-function writeSessionId(sessionId) {
-  try {
-    if (sessionId) globalThis.sessionStorage?.setItem(SESSION_STORAGE_KEY, sessionId);
-    else globalThis.sessionStorage?.removeItem(SESSION_STORAGE_KEY);
-  } catch {
-    // sessionStorage 접근 불가 — 무시(이번 세션은 메모리 없이 진행).
-  }
-}
+// 세션은 서버가 발급한 HttpOnly 쿠키(yh.sid)가 보유한다. HttpOnly는 JS가 못 읽으므로 프론트는
+// 토큰을 다루지 않고, 브라우저가 자동 전송하도록 fetch는 credentials:'include', EventSource는
+// withCredentials:true로 쿠키를 첨부한다(cross-origin :5173↔:3001, 서버 CORS credentials:true와 짝).
+// F5(새로고침) 복원은 /api/session을 쿠키 신원으로 호출해 동작한다. 응답의 sessionId는 더 이상
+// 신뢰/저장하지 않는다. 응답 shape은 server/index.js 라우트와 1:1로 맞춘다.
 
 // 배열 값은 server의 반복 파라미터 파싱(status IN / departments IN)에 맞춰 같은 키를 여러 번 append한다.
 function buildQuery(params = {}) {
@@ -38,12 +20,10 @@ function buildQuery(params = {}) {
 }
 
 export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3001' } = {}) {
-  // 모든 REST 호출의 단일 통로 — 세션 헤더 자동 첨부 + JSON 직렬화/역직렬화.
+  // 모든 REST 호출의 단일 통로 — 쿠키 첨부(credentials:'include') + JSON 직렬화/역직렬화.
   async function request(path, { method = 'GET', body, query } = {}) {
     const headers = {};
-    const sessionId = readSessionId();
-    if (sessionId) headers['x-session-id'] = sessionId;
-    const init = { method, headers };
+    const init = { method, headers, credentials: 'include' };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
@@ -54,17 +34,16 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
 
   return {
     // --- 인증 / 세션 ---
-    async login(userId, password) {
-      const result = await request('/api/login', { method: 'POST', body: { userId, password } });
-      if (result?.ok && result.sessionId) writeSessionId(result.sessionId);
-      return result;
+    // 로그인 성공 시 서버가 Set-Cookie(yh.sid)로 세션을 발급한다. 프론트는 result.user만 상위로 흘리고
+    // sessionId는 저장하지 않는다(쿠키가 보유).
+    login(userId, password) {
+      return request('/api/login', { method: 'POST', body: { userId, password } });
     },
-    async logout() {
-      const result = await request('/api/logout', { method: 'POST' });
-      writeSessionId(null);
-      return result;
+    // 서버가 세션 무효화 + clearCookie로 처리한다. 프론트가 따로 토큰을 지울 것이 없다.
+    logout() {
+      return request('/api/logout', { method: 'POST' });
     },
-    // F5 복원 — 보관된 sessionId 헤더로 서버에 신원을 묻는다. 세션 없으면 throw가 아니라
+    // F5 복원 — 쿠키(credentials:'include')로 서버에 신원을 묻는다. 세션 없으면 throw가 아니라
     // 비로그인 응답({ ok:false, reason:'unauthenticated' })을 그대로 돌려준다.
     restoreSession() {
       return request('/api/session');
@@ -134,12 +113,12 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     },
 
     // --- 실시간 무효화 스트림 (SSE) ---
-    // EventSource는 커스텀 헤더를 못 보내므로 ?session= 쿼리로 인증한다(server 폴백).
+    // EventSource는 커스텀 헤더를 못 보내므로 withCredentials:true로 HttpOnly 쿠키를 첨부해 인증한다
+    // (step2: 서버가 ?session= 쿼리를 더 이상 신뢰하지 않으므로 쿼리 토큰을 제거).
     // ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다. onChange는 "무효화 신호"만 받으며,
     // filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
     subscribe(filter, onChange) {
-      const url = `${base}/api/stream${buildQuery({ session: readSessionId() })}`;
-      const source = new EventSource(url);
+      const source = new EventSource(`${base}/api/stream`, { withCredentials: true });
       let connected = false;
       source.addEventListener('ready', () => { connected = true; });
       source.addEventListener('change', (event) => {

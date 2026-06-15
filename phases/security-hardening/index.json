@@ -41,10 +41,11 @@
     {
       "step": 4,
       "name": "frontend-cookie-session",
-      "status": "pending",
+      "status": "completed",
       "goal": "프론트엔드 Model/httpModel을 쿠키 세션과 정합하도록 전환한다(fetch credentials:'include', EventSource withCredentials, sessionStorage 토큰 의존 제거). 응답에서 sessionId를 더 이상 신뢰하지 않고 /api/session 신원으로 복원.",
       "dependsOn": [0, 2],
-      "dbImpact": "none"
+      "dbImpact": "none",
+      "summary": "web/src/model/httpModel.js transport 계층만 변경(서버/DB/Controller/View 무변경, dbImpact none). [credentials] request()의 init에 credentials:'include'를 추가 — cross-origin(:5173↔:3001)에서 브라우저가 쿠키(yh.sid)를 자동 주고받게 함(서버 CORS credentials:true·step0과 짝). 모든 REST가 단일 request() 통로를 거치므로 한 줄 추가로 전 fetch에 적용된다. [토큰 의존 제거] HttpOnly 쿠키는 JS가 못 읽으므로 sessionStorage 토큰 경로 전체를 제거 — SESSION_STORAGE_KEY/readSessionId/writeSessionId 헬퍼 삭제(dead code 금지), login의 writeSessionId(result.sessionId) 저장 제거(쿠키가 세션 보유, result는 그대로 반환해 Controller가 user 사용), logout의 writeSessionId(null) 제거(서버 clearCookie가 처리), request의 x-session-id 헤더 자동첨부 제거. 근거: 토큰 출처(저장)가 사라지면 헤더 첨부 경로는 무의미해지므로 step 권고대로 제거(하위호환 헤더 미잔류 — 토큰 누출 표면 최소화). login/logout을 async+await에서 request 반환 직접 패스스루로 단순화하되 반환 shape({ok,sessionId,user}/{ok})은 불변 — Controller 의존 보존. [restoreSession] /api/session 호출은 그대로 두되 이제 credentials:'include' 쿠키로 인증됨. 반환 shape({ok,user}/{ok:false,reason:'unauthenticated'}) 유지 — news.md 119행 F5 복원 UX(복원 전 로그인 페이지로 안 보냄, App.test.jsx 5 pass)가 무변경 동작. [SSE] subscribe의 ?session=readSessionId() 쿼리 제거, new EventSource(`${base}/api/stream`, {withCredentials:true})로 쿠키 첨부(step2: 서버가 쿼리 인증 제거와 짝). ready/change/error 리스너·connected/unsubscribe 반환은 무변경(ADR-005 자동 재연결·무효화 신호 방식 유지). [계약] MODEL_KEYS(contract.js) 메서드 집합·시그니처·반환 shape 불변 — contract.test.js 9 pass. [테스트] httpModel.test.js 보강(11→12): 신규 'credentials:include on every request', login은 sessionStorage 미기록·헤더 미첨부, logout은 sessionStorage 무접촉, restoreSession은 credentials로 호출·헤더 없음, subscribe는 withCredentials:true·URL에 session= 없음·error→connected false 회귀가드. AC 전부 통과: lint clean, build OK, npm test 백엔드 211 pass(무회귀), npm run test:web 225 pass(30 files, httpModel 12·contract 9·App 5 포함). phase 0~4 전부 completed — 오케스트레이터가 phases/index.json의 security-hardening을 completed로 갱신 가능."
     }
   ]
 }
