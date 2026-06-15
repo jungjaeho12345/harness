@@ -56,6 +56,26 @@ function parseCookies(header) {
   }
   return out;
 }
+// HSTS max-age — 2년(초). HSTS는 https 응답에만 유효하므로 프로덕션 https 보장과 함께만 의미가 있다.
+const HSTS_MAX_AGE_SEC = 63072000;
+
+// HTTPS 강제 미들웨어 빌더 (security-hardening step1).
+// env로 분기한다 — 프로덕션이 아니면 no-op(로컬/테스트는 http로 띄우므로 강제가 꺼져야 한다).
+// 프로덕션: TLS 종단(리버스 프록시) 뒤에서 X-Forwarded-Proto/req.secure로 평문 여부를 판정해
+//   동일 경로의 https로 308 리다이렉트한다. 308은 메서드·바디를 보존하므로 GET/비-GET 모두 안전하다
+//   (301/302는 POST를 GET으로 바꿔 바디를 잃을 수 있다). trust proxy=1 신뢰는 createApp에서 설정한다.
+export function enforceHttps(env = process.env.NODE_ENV) {
+  if (env !== 'production') {
+    return (_req, _res, next) => next();
+  }
+  return (req, res, next) => {
+    // trust proxy 설정 시 req.secure는 X-Forwarded-Proto를 반영한다(직접 헤더 신뢰는 스푸핑 위험).
+    const proto = req.secure ? 'https' : req.get('x-forwarded-proto');
+    if (proto === 'https') return next();
+    const host = req.get('host');
+    return res.redirect(308, `https://${host}${req.originalUrl}`);
+  };
+}
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
@@ -97,10 +117,28 @@ function pickFilters(query = {}) {
   return f;
 }
 
-export function createApp({ controllers, sessionService }) {
+export function createApp({ controllers, sessionService, env = process.env.NODE_ENV }) {
   const app = express();
+  const isProd = env === 'production';
+
+  // TLS 종단 리버스 프록시 뒤에서만, 첫 프록시(1홉)의 X-Forwarded-Proto/IP를 신뢰한다.
+  // 'true'(무제한 신뢰)는 X-Forwarded-* 스푸핑으로 https 강제·레이트리밋이 우회되므로 쓰지 않는다.
+  // 비프로덕션은 프록시가 없으므로 미설정(기본 false) — 로컬/테스트 무영향.
+  if (isProd) app.set('trust proxy', 1);
+
+  // HTTPS 강제(평문→https 308 리다이렉트)는 helmet/cors/도메인 로직보다 앞에 둔다 —
+  // 평문 요청이 도메인 경로까지 도달하지 않게 한다. 비프로덕션이면 enforceHttps가 no-op이다.
+  // 헬스체크(/api/health)도 프로덕션에서는 https로 와야 한다 — 인프라 헬스체크는 보통 같은
+  // TLS 종단을 거치므로 별도 예외를 두지 않는다(예외는 평문 우회 표면을 넓힌다).
+  app.use(enforceHttps(env));
 
   app.use(helmet({
+    // HSTS는 helmet 기본으로 켜져 있으나 https 응답에만 유효하다 → 프로덕션(https 강제)에서만
+    // 의도적으로 긴 max-age + includeSubDomains로 명시하고, 비프로덕션(http)에서는 끈다
+    // (http에서 HSTS를 박으면 로컬 https 미사용 환경을 불필요하게 잠글 수 있다).
+    strictTransportSecurity: isProd
+      ? { maxAge: HSTS_MAX_AGE_SEC, includeSubDomains: true }
+      : false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],

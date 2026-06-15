@@ -14,10 +14,11 @@
     {
       "step": 1,
       "name": "https-enforcement",
-      "status": "pending",
+      "status": "completed",
       "goal": "프로덕션에서 HTTPS를 강제한다(HSTS via helmet + http→https 리다이렉트 + trust proxy). step0의 Secure 쿠키와 정합. 로컬/테스트(NODE_ENV!=='production')는 무영향.",
       "dependsOn": [0],
-      "dbImpact": "none"
+      "dbImpact": "none",
+      "summary": "server/index.js transport만 변경. enforceHttps(env) 빌더: 비프로덕션은 no-op 미들웨어(next 통과 — 로컬/테스트 http app.listen(0) 무영향), 프로덕션만 평문→https 308 리다이렉트(308은 메서드·바디 보존, GET/POST 모두 안전). proto 판정은 req.secure(trust proxy=1로 X-Forwarded-Proto 반영)로, 리다이렉트 Location의 host는 req.get('host')로 클라이언트 요청 Host 보존. createApp은 프로덕션에서만 trust proxy=1(첫 1홉만 신뢰 — 'true' 무제한 신뢰는 X-Forwarded-* 스푸핑으로 강제·레이트리밋 우회 위험이라 회피). HSTS는 helmet 기본이 https 응답에만 유효하므로 프로덕션에서만 의미. 미들웨어 순서: enforceHttps를 helmet/cors/도메인보다 앞에 둬 평문이 도메인까지 도달 못하게 함. test/https-enforcement.test.js 신규(env 분기 단위 + 프로덕션 리다이렉트/HSTS/인증 정상 + 비프로덕션 회귀가드). dbImpact none. 무회귀 백엔드 194 pass. (rawFetch를 fetch→node:http.request로 작성 — fetch가 Host를 금지 헤더로 무시해 프록시 뒤 임의 Host(example.com) 모사가 불가했던 테스트 결함을 수정, 리다이렉트의 Host 보존을 실제로 검증.)"
     },
     {
       "step": 2,
