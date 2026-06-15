@@ -2,7 +2,11 @@
 // 삭제 함수는 두지 않는다: 비활성화는 active='N' 업데이트로 처리한다 (DB 비파괴).
 // query는 비밀번호를 포함한 raw row를 반환한다 — 응답 정제는 서비스 계층 책임.
 
-const COLUMNS = ['userId', 'name', 'password', 'role', 'department', 'departmentCode', 'active'];
+const COLUMNS = [
+  'userId', 'name', 'password', 'role', 'department', 'departmentCode', 'active',
+  // 계정 잠금 상태(내부 필드 — 응답 정제는 서비스 SAFE_FIELDS가 제외한다).
+  'failedLoginCount', 'lockedUntil',
+];
 
 export function createUserModel(db) {
   function findById(userId) {

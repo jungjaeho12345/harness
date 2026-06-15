@@ -32,10 +32,11 @@
     {
       "step": 3,
       "name": "account-lockout",
-      "status": "pending",
+      "status": "completed",
       "goal": "로그인 실패 누적 시 계정 잠금. User 테이블에 additive 컬럼(failedLoginCount, lockedUntil) 추가. userService/userModel에서 잠금 판정·증가·리셋. 기존 IP 레이트리밋·bcrypt 타이밍 평준화·active='N' 차단과 공존, DB 비파괴.",
       "dependsOn": [],
-      "dbImpact": "additive (User 테이블 컬럼 추가 — failedLoginCount, lockedUntil. 행 삭제/DROP 없음)"
+      "dbImpact": "additive (User 테이블 컬럼 추가 — failedLoginCount, lockedUntil. 행 삭제/DROP 없음)",
+      "summary": "계정(userId) 단위 잠금을 IP 레이트리밋과 독립 방어층으로 추가. [스키마] src/db/schema.js SCHEMA.User에 additive 컬럼 2개만 추가 — failedLoginCount(TEXT DEFAULT '0'), lockedUntil(TEXT, ISO-8601 UTC 자동해제 시각). createSchema의 멱등 ALTER ADD COLUMN 패턴으로 기존 행 보존(DROP/DELETE 없음). Contents의 편집잠금 lockYN과 이름 충돌 회피(계정 전용 이름). [정책상수] userService.js에 LOCKOUT_THRESHOLD=5, LOCKOUT_DURATION_MS=15분. 근거: news.md에 계정 단위 구체 수치 없어 보수적 기본값 채택. 자동해제(시간경과) 방식 — 영구잠금은 관리자 해제경로가 필요해 범위를 키우므로 회피, lockedUntil 한 컬럼으로 단순화(별도 플래그 불요). [모델] userModel.COLUMNS 화이트리스트에 두 컬럼 추가 — 기존 findById가 읽고 update가 쓰며, 임의 컬럼 주입은 화이트리스트가 차단. 신규 메서드 없이 기존 update 재사용. [서비스] userService.login: findById→hash=row.password||DUMMY_HASH로 없는 사용자도 bcrypt 1회(타이밍 평준화 유지). 잠금검사(row && lockedUntil && now()<Date.parse)는 bcrypt 비교 후 수행해 잠긴 경로도 비교 1회 — locked 반환. 실패 시 n=Number(failedLoginCount??'0')+1 → String(n) 재저장(문자열 '0'+1 누적버그 회피), n>=임계치면 lockedUntil=now()+DURATION stamp. 단 응답 reason은 invalid-credentials로 일관(계정 존재/잠금 임박 미노출 — 사용자 열거 방어). 성공+active=Y면 카운터 0 리셋·lockedUntil 비움. active=N은 기존대로 inactive. now 주입(createUserService({userModel, now}) — Date.now() 직접 호출 금지, sessionService 패턴 일관). SAFE_FIELDS에 잠금필드 미포함(비밀번호와 동급 내부상태 — 응답 미노출). [transport] server/index.js 무변경 — STATUS_BY_REASON.locked=409 기존 계약 유지(중복 추가 안 함), /api/login은 fail()로 reason 매핑만(로직 재구현 없음), IP 레이트리밋 15분/10회 그대로. locked HTTP 코드 결정: 기존 409 유지(409 의존 테스트·프론트 영향범위 보존 — 423/429 변경은 회귀 위험으로 미채택). [테스트] 신규 test/account-lockout.test.js 8개(가짜 시계+in-memory userModel 주입: 임계치 미만 증가/임계치 도달 후 올바른 PW도 locked/시간경과 후 성공·리셋/성공 시 리셋/잠금필드·password 응답 미노출/active=N inactive 회귀/없는 사용자 미잠금·행 미생성/문자열 누적버그 회귀). schema.test.js +2(additive 컬럼 존재·lockYN 미존재, 기존 행 보존·기본값). server.test.js +1(409 locked 매핑·sessionId/user 미노출). dbImpact additive. AC lint/build/test 전부 통과, 백엔드 무회귀 211 pass(200→211)."
     },
     {
       "step": 4,

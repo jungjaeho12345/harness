@@ -93,6 +93,23 @@ test('로그인: 성공 시 세션 발급(비밀번호 미노출), 실패 시 40
   } finally { await ctx.close(); }
 });
 
+test('계정 잠금: 연속 실패 누적 후 잠긴 계정 로그인은 409 locked로 매핑된다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw1234' });
+    // 임계치(5회)까지 실패시켜 잠근다.
+    for (let i = 0; i < 5; i += 1) {
+      await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'wrong' } });
+    }
+    // 잠금 시간 내에는 올바른 비밀번호여도 409 locked.
+    const locked = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw1234' } });
+    assert.equal(locked.status, 409);
+    assert.equal(locked.body.reason, 'locked');
+    assert.equal(locked.body.sessionId, undefined);
+    assert.equal(locked.body.user, undefined);
+  } finally { await ctx.close(); }
+});
+
 test('action: acting role은 세션에서 도출하고 req.body.role은 무시한다', async () => {
   const ctx = await start();
   try {

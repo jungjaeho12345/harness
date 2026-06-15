@@ -13,6 +13,10 @@ const SCHEMA = {
     ['department', 'TEXT'],
     ['departmentCode', 'TEXT'],
     ['active', "TEXT DEFAULT 'Y'"],
+    // 계정 잠금(account-lockout) — Contents의 편집잠금(lockYN)과 무관한 별도 개념.
+    // 연속 실패 횟수(증가·비교는 Number 파싱 후 String 재저장)와 자동해제 시각(ISO-8601 UTC).
+    ['failedLoginCount', "TEXT DEFAULT '0'"],
+    ['lockedUntil', 'TEXT'],
   ],
   Article: [
     ['articleId', 'VARCHAR PRIMARY KEY'],
