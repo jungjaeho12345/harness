@@ -13,6 +13,10 @@ const SCHEMA = {
     ['department', 'TEXT'],
     ['departmentCode', 'TEXT'],
     ['active', "TEXT DEFAULT 'Y'"],
+    // 계정 잠금(account lockout) 상태 — 로그인 핸들러 내부 전용. SAFE_FIELDS에는 넣지 않는다.
+    ['failedLoginCount', "TEXT DEFAULT '0'"], // 연속 로그인 실패 횟수(문자열 정수)
+    ['lockedUntil', 'TEXT'], // 잠금 해제 시각(ISO-8601 UTC). 비어 있으면 미잠금
+    ['lastFailedLoginAt', 'TEXT'], // 마지막 실패 시각(ISO-8601 UTC)
   ],
   Article: [
     ['articleId', 'VARCHAR PRIMARY KEY'],

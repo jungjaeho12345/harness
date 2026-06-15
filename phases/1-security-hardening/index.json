@@ -2,7 +2,7 @@
   "project": "기사 작성기 (Article Production System)",
   "phase": "1-security-hardening",
   "steps": [
-    { "step": 0, "name": "account-lockout-schema", "status": "pending" },
+    { "step": 0, "name": "account-lockout-schema", "status": "completed", "summary": "SCHEMA.User에 계정 잠금 컬럼 3개를 additive 멱등 마이그레이션으로 추가: failedLoginCount(TEXT DEFAULT '0'), lockedUntil(TEXT), lastFailedLoginAt(TEXT). userModel.COLUMNS 화이트리스트에 동일 3개 추가(insert/update/query 가능). userService.SAFE_FIELDS는 미변경(잠금 상태 비노출). 신규 test/schema.lockout.test.js 5개(컬럼 생성·기본값·구버전 ADD COLUMN 행 보존·멱등). createSchema 본문은 미수정." },
     { "step": 1, "name": "account-lockout-service", "status": "pending" },
     { "step": 2, "name": "account-lockout-route", "status": "pending" },
     { "step": 3, "name": "cookie-session-server", "status": "pending" },
