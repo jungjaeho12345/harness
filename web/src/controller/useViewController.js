@@ -114,6 +114,10 @@ export function useViewController() {
     [enterEditor],
   );
 
+  // 매핑(mapping) — 기존 기사를 임베드 전용 제한 편집 모드로 writer.do에 연다(step11).
+  // 편집 진입과 동일한 채널(sessionStorage + navigate, 직접 fetch 없음 — ADR-003). 잠금/저장 인가는 서버가 강제.
+  const mapArticle = useCallback((article) => enterEditor(article, 'mapping'), [enterEditor]);
+
   // Lock해제(강제) — D/Z만, '해제하시겠습니까?' 확인 후. 권한 없으면 no-op(서버도 거부).
   const releaseLock = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -122,6 +126,44 @@ export function useViewController() {
     }
     return model.forceUnlockArticle(article.articleId);
   }, [model, identity]);
+
+  // 이력보기/송고이력보기 — 읽기 전용. 확인창 없이 model.queryHistory(ADR-003)로 이력 행을 가져온다.
+  // sendOnly면 송고 이력만(서버 도메인 필터). 이력이 없으면 빈 배열을 반환한다(오류 아님 — step0 전제).
+  const loadHistory = useCallback(async (article, { sendOnly = false } = {}) => {
+    const r = await model.queryHistory(article.articleId, { sendOnly });
+    return (r && r.items) || [];
+  }, [model]);
+
+  // 후속기사작성 — model.deriveArticle(id, 'followUp')로 새 기사를 만든 뒤 그 새 기사로 편집 진입(ADR-003).
+  // 원본은 비변경(서버 deriveArticle이 create 위임으로만 신규 행 생성). 새 기사는 RDS·미잠금이라 잠금 획득이 정상 동작.
+  const createFollowUp = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'followUp');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 계속기사작성 — 동일하되 'continue' 모드(본문 복사). 새 기사로 편집 진입.
+  const createContinue = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'continue');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 재송 — 이미 송고된 DPS 기사를 다시 송고. '재송하시겠습니까?' 확인 후 model.applyAction(id, 'send').
+  // role 미전송(ADR-004) — 서버가 DPS+권한·송고 '(끝)' 마커 가드를 강제. 취소 시 아무것도 전송하지 않는다(news.md 140행).
+  const resend = useCallback(async (article) => {
+    if (!globalThis.confirm || !globalThis.confirm('재송하시겠습니까?')) {
+      return { ok: false, reason: 'cancelled' };
+    }
+    return model.applyAction(article.articleId, 'send');
+  }, [model]);
+
+  // 번역 — model.translate(id, targetLang)로 서버가 DB 본문을 조회·번역(ADR-003, 직접 fetch 없음).
+  // 외부 실패/키 없음이면 서버가 throw 없이 graceful 객체({ ok:false, reason, translatedText:<원문> })를 준다 —
+  // 그대로 반환하고 표시는 View(ListPage)가 원문+안내로 처리한다(news.md degrade). 컨트롤러는 가공/throw하지 않는다.
+  const runTranslate = useCallback(async (article, targetLang = 'ko') => {
+    return model.translate(article.articleId, targetLang);
+  }, [model]);
 
   // 삭제요청 — DPS 기사 삭제 승인(approveDelete). D/Z만, '정말 삭제하시겠습니까?' 확인 후.
   const requestDelete = useCallback(async (article) => {
@@ -137,6 +179,7 @@ export function useViewController() {
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
-    editArticle, reviseArticle, releaseLock, requestDelete,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    createFollowUp, createContinue, resend, runTranslate, mapArticle,
   };
 }

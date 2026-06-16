@@ -219,3 +219,86 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
     expect(editorLines(container)).toContain('본문');
   });
 });
+
+// step11: 매핑(mapping) — 본문 텍스트 차단 + 공통정보 readOnly + 임베드 추가/삭제만 허용.
+describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 본문(markupVersion)을 가진 기사로 매핑 진입한 WriterPage를 띄운다.
+  async function openMapping(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { userId: 'kim', name: '김기자', role: 'D', department: '정치' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', author: '원작성자', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'DPS', lockYN: 'Y', author: '원작성자', markupVersion: body }] },
+    });
+    await waitFor(() => expect(screen.getByTestId('meta-common')).toBeInTheDocument());
+    return utils;
+  }
+
+  it('매핑은 송고/보류/KILL 액션바를 노출하지 않고 저장 버튼을 노출한다', async () => {
+    await openMapping([textBlock('제목'), textBlock('본문')]);
+    expect(actionBtn('송고')).toBeNull();
+    expect(actionBtn('보류')).toBeNull();
+    expect(actionBtn('KILL')).toBeNull();
+    expect(actionBtn('저장')).toBeInTheDocument();
+  });
+
+  it('저장 버튼은 PUT(saveArticle with articleId)를 호출하고 applyAction은 호출하지 않는다', async () => {
+    const { model } = await openMapping([textBlock('제목'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].articleId).toBe('AKR1');
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('본문에 텍스트를 입력해도 body가 바뀌지 않는다(onTextChange 무력화)', async () => {
+    const original = serialize([textBlock('제목'), textBlock('본문')]);
+    const { container, model } = await openMapping([textBlock('제목'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const box = container.querySelector('.yh-editor');
+    // 매핑 모드는 본문 텍스트 비편집 — contentEditable이 꺼져 있어야 한다.
+    expect(box.getAttribute('contenteditable')).toBe('false');
+    // 타이핑(input 이벤트)이 발생해도 본문 텍스트가 body에 커밋되지 않는다.
+    box.querySelector('.yh-editor__line').textContent = '해킹된 텍스트';
+    fireEvent.input(box);
+    // 저장 시 원본 body가 그대로 PUT된다(텍스트 변경이 반영되지 않음).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('공통정보 입력란(작성자/엠바고/2차엠바고)이 readOnly다', async () => {
+    await openMapping([textBlock('제목'), textBlock('본문')]);
+    expect(screen.getByLabelText('작성자')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('엠바고 시간')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('2차 엠바고 시간')).toHaveAttribute('readonly');
+  });
+
+  it('이미지 검색 결과를 클릭하면 임베드가 본문에 추가된다', async () => {
+    const { container, model } = await openMapping([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'searchMedia').mockResolvedValue({
+      ok: true, error: false, items: [{ type: 'image', src: 'https://img/x.png', title: '사진' }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.click(screen.getByPlaceholderText('검색어를 입력하세요'));
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    // 검색 결과 버튼 클릭 → 임베드 삽입.
+    const result = await screen.findByRole('img', { name: '사진' });
+    await userEvent.click(result.closest('button'));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+
+  it('임베드 × 삭제 버튼이 노출되고 클릭하면 임베드가 제거된다', async () => {
+    const { container } = await openMapping([
+      textBlock('제목'), textBlock('본문'), embedBlock({ embedType: 'image', src: 'https://img/x.png' }),
+    ]);
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy();
+    const removeBtn = screen.getByRole('button', { name: '임베드 삭제' });
+    await userEvent.click(removeBtn);
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeNull());
+  });
+});

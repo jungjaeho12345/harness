@@ -28,6 +28,32 @@ test('createSchema: User 컬럼 (TEXT)', () => {
   }
 });
 
+test('createSchema: User 계정잠금 컬럼 (additive — failedLoginCount, lockedUntil)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'User');
+  for (const c of ['failedLoginCount', 'lockedUntil']) {
+    assert.ok(cols.includes(c), `User.${c}`);
+  }
+  // 계정 잠금 컬럼이 Contents의 편집잠금(lockYN)과 이름이 겹치지 않는다.
+  assert.ok(!cols.includes('lockYN'), 'User에 Contents 편집잠금 컬럼(lockYN)을 두지 않는다');
+});
+
+test('createSchema: User 계정잠금 컬럼을 기존 행에 additive로 추가하고 데이터를 보존한다', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 버전: 계정잠금 컬럼이 없는 User + 기존 행
+  db.exec('CREATE TABLE User (userId TEXT PRIMARY KEY, name TEXT, password TEXT)');
+  db.prepare("INSERT INTO User (userId, name, password) VALUES ('old', '옛 사용자', 'h')").run();
+  createSchema(db);
+  const cols = columns(db, 'User');
+  assert.ok(cols.includes('failedLoginCount'), '누락된 failedLoginCount 컬럼이 추가되어야 함');
+  assert.ok(cols.includes('lockedUntil'), '누락된 lockedUntil 컬럼이 추가되어야 함');
+  const row = db.prepare("SELECT * FROM User WHERE userId='old'").get();
+  assert.equal(row.name, '옛 사용자', '기존 데이터는 보존되어야 함');
+  assert.equal(row.failedLoginCount, '0', '신규 컬럼은 기본값 0으로 채워진다');
+  assert.equal(row.lockedUntil, null, 'lockedUntil 기본값은 비어 있다');
+});
+
 test('createSchema: Article 컬럼', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
@@ -61,6 +87,50 @@ test('createSchema: ReceiverConfig 컬럼', () => {
     'password', 'apiEndpoint', 'apiKey', 'active', 'createdAt',
   ];
   for (const c of expected) assert.ok(cols.includes(c), `ReceiverConfig.${c}`);
+});
+
+test('createSchema: ArticleHistory 테이블을 생성한다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('ArticleHistory'), 'ArticleHistory 테이블이 있어야 함');
+  assert.ok(columns(db, 'ArticleHistory').length > 0, 'ArticleHistory 컬럼이 비어 있지 않아야 함');
+});
+
+test('createSchema: ArticleHistory 컬럼 (이벤트 로그)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'ArticleHistory');
+  const expected = [
+    'id', 'articleId', 'eventType', 'action',
+    'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
+  ];
+  for (const c of expected) assert.ok(cols.includes(c), `ArticleHistory.${c}`);
+});
+
+test('createSchema: ArticleHistory.id 는 INTEGER PRIMARY KEY (자동 증가 ROWID alias)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt) VALUES ('a1', 'edit', '2026-06-16T00:00:00Z')",
+  ).run();
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt) VALUES ('a1', 'status', '2026-06-16T00:01:00Z')",
+  ).run();
+  const ids = db.prepare('SELECT id FROM ArticleHistory ORDER BY id').all().map((r) => r.id);
+  assert.deepEqual(ids, [1, 2], 'id가 자동 증가해야 함');
+});
+
+test('createSchema: ArticleHistory — markupVersion 본문 스냅샷 컬럼이 없다 (범위 밖)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  assert.ok(
+    !columns(db, 'ArticleHistory').includes('markupVersion'),
+    'ArticleHistory에 markupVersion 컬럼이 없어야 함',
+  );
 });
 
 test('createSchema: 멱등 — 2회 호출해도 오류 없이 데이터를 보존한다', () => {
@@ -140,7 +210,7 @@ test('createSchema: 구버전 User 테이블(7컬럼)에서 마이그레이션 �
 test('createSchema: FK 제약을 선언하지 않는다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
-  for (const t of ['Article', 'Contents', 'ReceiverConfig', 'User']) {
+  for (const t of ['Article', 'ArticleHistory', 'Contents', 'ReceiverConfig', 'User']) {
     const fks = db.prepare(`PRAGMA foreign_key_list(${t})`).all();
     assert.equal(fks.length, 0, `${t}에 FK가 없어야 함`);
   }

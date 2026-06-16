@@ -13,10 +13,10 @@ const SCHEMA = {
     ['department', 'TEXT'],
     ['departmentCode', 'TEXT'],
     ['active', "TEXT DEFAULT 'Y'"],
-    // 계정 잠금(account lockout) 추적 — 읽기·증가·리셋 로직은 model/service 담당(ADR-006)
-    ['failedLoginCount', "TEXT DEFAULT '0'"], // 누적 로그인 실패 횟수
-    ['lockedUntil', 'TEXT'],                  // 잠금 해제 시각(ISO-8601 UTC). null이면 잠겨있지 않음
-    ['lastFailedLoginAt', 'TEXT'],             // 마지막 실패 시각(ISO-8601 UTC, 감사용)
+    // 계정 잠금(account lockout) 상태 — 로그인 핸들러 내부 전용. SAFE_FIELDS에는 넣지 않는다.
+    ['failedLoginCount', "TEXT DEFAULT '0'"], // 연속 로그인 실패 횟수(문자열 정수)
+    ['lockedUntil', 'TEXT'], // 잠금 해제 시각(ISO-8601 UTC). 비어 있으면 미잠금
+    ['lastFailedLoginAt', 'TEXT'], // 마지막 실패 시각(ISO-8601 UTC)
   ],
   Article: [
     ['articleId', 'VARCHAR PRIMARY KEY'],
@@ -53,6 +53,16 @@ const SCHEMA = {
     ['externalComment', 'VARCHAR'],
     ['attachmentFile', 'VARCHAR'],
     ['referenceFile', 'VARCHAR'],
+  ],
+  ArticleHistory: [
+    ['id', 'INTEGER PRIMARY KEY'],
+    ['articleId', 'VARCHAR'],
+    ['eventType', 'VARCHAR'],
+    ['action', 'VARCHAR'],
+    ['fromStatus', 'VARCHAR'],
+    ['toStatus', 'VARCHAR'],
+    ['actorUserId', 'VARCHAR'],
+    ['createdAt', 'VARCHAR'],
   ],
   ReceiverConfig: [
     ['id', 'INTEGER PRIMARY KEY'],

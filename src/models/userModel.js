@@ -4,6 +4,7 @@
 
 const COLUMNS = [
   'userId', 'name', 'password', 'role', 'department', 'departmentCode', 'active',
+  // 계정 잠금 상태 — 모델은 읽고/쓸 수 있지만 서비스 SAFE_FIELDS로는 노출하지 않는다.
   'failedLoginCount', 'lockedUntil', 'lastFailedLoginAt',
 ];
 

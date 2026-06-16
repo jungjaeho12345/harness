@@ -126,6 +126,16 @@ describe('useViewController', () => {
     expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('portalRevise');
   });
 
+  it('mapArticle stashes a pendingEdit in mapping mode and navigates to writer.do (step11)', async () => {
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    act(() => { result.current.mapArticle({ articleId: 'AKR0', title: 't0' }); });
+
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
+    expect(pending).toEqual({ article: { articleId: 'AKR0', title: 't0' }, mode: 'mapping' });
+  });
+
   it('requestDelete is D/Z only and confirms before approveDelete', async () => {
     // requestDelete는 전달된 기사 객체로 동작한다(목록 필터와 무관) — DPS는 기본 메뉴에 안 보임.
     // 권한 R → 거부.
@@ -140,6 +150,124 @@ describe('useViewController', () => {
     vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     await act(async () => { await d.result.current.requestDelete({ articleId: 'AKR9' }); });
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
+  });
+
+  it('loadHistory queries model.queryHistory and returns items', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', status: 'RDS' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: false });
+    expect(items).toHaveLength(2);
+  });
+
+  it('loadHistory with sendOnly filters to send events', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', status: 'RDS' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }, { sendOnly: true }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
+    expect(items).toHaveLength(1);
+    expect(items[0].action).toBe('send');
+  });
+
+  it('loadHistory returns an empty array when there is no history', async () => {
+    const { result } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS' }] });
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }); });
+    expect(items).toEqual([]);
+  });
+
+  it('createFollowUp derives a followUp article and enters editor with the new id', async () => {
+    const { result, model, navigate } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+
+    let r;
+    await act(async () => { r = await result.current.createFollowUp({ articleId: 'AKR9' }); });
+    expect(derive).toHaveBeenCalledWith('AKR9', 'followUp');
+    expect(r.ok).toBe(true);
+    // 파생된 새 기사로 편집 진입(원본 AKR9가 아닌 새 articleId).
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: r.articleId });
+    expect(r.articleId).not.toBe('AKR9');
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
+    expect(pending).toEqual({ article: { articleId: r.articleId }, mode: 'edit' });
+  });
+
+  it('createContinue derives in continue mode', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+    await act(async () => { await result.current.createContinue({ articleId: 'AKR9' }); });
+    expect(derive).toHaveBeenCalledWith('AKR9', 'continue');
+  });
+
+  it('resend confirms then applies the send action without a role', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    await act(async () => { await result.current.resend({ articleId: 'AKR9' }); });
+    expect(apply).toHaveBeenCalledWith('AKR9', 'send'); // role 미전송 — 서버 세션 도출(ADR-004).
+  });
+
+  it('resend does not send when the confirm is cancelled', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    let r;
+    await act(async () => { r = await result.current.resend({ articleId: 'AKR9' }); });
+    expect(apply).not.toHaveBeenCalled();
+    expect(r).toEqual({ ok: false, reason: 'cancelled' });
+  });
+
+  it('runTranslate calls model.translate and returns translatedText', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 'Hello', status: 'RDS' }],
+      translations: { AKR9: '안녕하세요' },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'translate');
+
+    let r;
+    await act(async () => { r = await result.current.runTranslate({ articleId: 'AKR9' }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', 'ko');
+    expect(r.ok).toBe(true);
+    expect(r.translatedText).toBe('안녕하세요');
+  });
+
+  it('runTranslate honors the targetLang argument', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 'Hi', status: 'RDS' }] });
+    const spy = vi.spyOn(model, 'translate');
+    await act(async () => { await result.current.runTranslate({ articleId: 'AKR9' }, 'en'); });
+    expect(spy).toHaveBeenCalledWith('AKR9', 'en');
+  });
+
+  it('runTranslate does not throw on graceful ok:false and returns the original text', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 'orig', status: 'RDS' }] });
+    // 키 없음/외부 실패 시 서버는 throw 없이 graceful 객체를 준다(step5/6).
+    vi.spyOn(model, 'translate').mockResolvedValue({ ok: false, reason: 'no-key', translatedText: 'orig' });
+
+    let r;
+    await act(async () => { r = await result.current.runTranslate({ articleId: 'AKR9' }); });
+    expect(r).toEqual({ ok: false, reason: 'no-key', translatedText: 'orig' });
   });
 
   it('releaseLock force-unlocks for D/Z after confirm', async () => {

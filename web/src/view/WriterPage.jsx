@@ -53,12 +53,15 @@ export function WriterPage() {
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
-    updateField, submit,
+    updateField, submit, save,
   } = useWriteController();
   const search = useSearchController();
 
   const [metaTab, setMetaTab] = useState('common');
   const [spell, setSpell] = useState(false);
+
+  // 매핑(mapping) — 임베드 전용 제한 편집. 본문 텍스트 비편집·공통정보 readOnly이되 임베드 추가/삭제는 허용(step11).
+  const isMapping = activeTab.mode === 'mapping';
 
   const body = activeTab.fields.body;
   const blocks = deserialize(body);
@@ -151,26 +154,33 @@ export function WriterPage() {
             key={activeTabId}
             blocks={blocks}
             spellcheck={spell}
-            onKeyDown={onKeyDown}
-            onTextChange={onTextChange}
+            textEditable={!isMapping}
+            onKeyDown={isMapping ? undefined : onKeyDown}
+            onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
           />
         </section>
 
         {/* 우측 40% — 메타데이터 */}
         <aside className="yh-writer__meta">
-          {/* 4개 탭 위 송고/보류/KILL 버튼 */}
+          {/* 4개 탭 위 송고/보류/KILL 버튼. 매핑은 전이 없음 → 저장 버튼만(임베드 변경을 PUT 저장). */}
           <div className="yh-actionbar" data-testid="action-bar">
-            {buttons.map((key) => (
-              <button
-                key={key}
-                type="button"
-                className={`yh-btn ${key === 'send' ? 'yh-btn--primary' : key === 'kill' ? 'yh-btn--danger' : ''}`}
-                onClick={() => onAction(key)}
-              >
-                {SUBMIT_LABELS[key]}
+            {isMapping ? (
+              <button type="button" className="yh-btn yh-btn--primary" onClick={() => save()}>
+                저장
               </button>
-            ))}
+            ) : (
+              buttons.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`yh-btn ${key === 'send' ? 'yh-btn--primary' : key === 'kill' ? 'yh-btn--danger' : ''}`}
+                  onClick={() => onAction(key)}
+                >
+                  {SUBMIT_LABELS[key]}
+                </button>
+              ))
+            )}
           </div>
 
           <div className="yh-tabs">
@@ -188,7 +198,7 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} />
+              <CommonInfo tab={activeTab} updateField={updateField} readOnly={isMapping} />
             )}
             {metaTab === 'image' && (
               <SearchPanel
@@ -222,22 +232,23 @@ export function WriterPage() {
 }
 
 // 공통정보 — 편집 가능(작성자/엠바고/2차엠바고) + 읽기전용 매핑 필드.
-function CommonInfo({ tab, updateField }) {
+// 매핑 모드(readOnly)에서는 작성자/엠바고/2차엠바고 입력란도 readOnly다(임베드만 변경 — step11).
+function CommonInfo({ tab, updateField, readOnly = false }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};
   return (
     <div data-testid="meta-common">
       <div className="yh-field">
         <label htmlFor="meta-author">작성자</label>
-        <input id="meta-author" value={f.author} onChange={(e) => updateField('author', e.target.value)} />
+        <input id="meta-author" value={f.author} readOnly={readOnly} onChange={(e) => updateField('author', e.target.value)} />
       </div>
       <div className="yh-field">
         <label htmlFor="meta-embargo">엠바고 시간</label>
-        <input id="meta-embargo" value={f.embargoAt} onChange={(e) => updateField('embargoAt', e.target.value)} />
+        <input id="meta-embargo" value={f.embargoAt} readOnly={readOnly} onChange={(e) => updateField('embargoAt', e.target.value)} />
       </div>
       <div className="yh-field">
         <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
-        <input id="meta-embargo2" value={f.secondEmbargoAt} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
+        <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
       </div>
 
       {READONLY_LABELS.some(([k]) => ro[k] != null) && (

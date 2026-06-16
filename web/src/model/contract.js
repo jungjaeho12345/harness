@@ -22,6 +22,10 @@ export const MODEL_KEYS = Object.freeze([
   'createReceiverConfig',
   'deleteReceiverConfig',
   'subscribe',
+  // 메뉴 액션(phase 1) — 이력보기/송고이력보기·후속/계속기사작성·번역. 백엔드 라우트와 1:1.
+  'queryHistory',
+  'deriveArticle',
+  'translate',
 ]);
 
 // 모든 계약 키가 함수로 구현되어 있는지 검증한다. 누락 시 어떤 키가 빠졌는지 알려주며 throw.
