@@ -1,0 +1,17 @@
+{
+  "project": "기사 작성기 (article production system)",
+  "phase": "1-menu-actions",
+  "steps": [
+    { "step": 0, "name": "history-schema", "status": "pending" },
+    { "step": 1, "name": "history-service", "status": "pending" },
+    { "step": 2, "name": "history-http", "status": "pending" },
+    { "step": 3, "name": "derive-article-service", "status": "pending" },
+    { "step": 4, "name": "derive-http", "status": "pending" },
+    { "step": 5, "name": "translate-service", "status": "pending" },
+    { "step": 6, "name": "translate-http", "status": "pending" },
+    { "step": 7, "name": "frontend-model-contract", "status": "pending" },
+    { "step": 8, "name": "frontend-history-view", "status": "pending" },
+    { "step": 9, "name": "frontend-derive-resend-wiring", "status": "pending" },
+    { "step": 10, "name": "frontend-translate-view", "status": "pending" }
+  ]
+}
