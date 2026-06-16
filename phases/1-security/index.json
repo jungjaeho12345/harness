@@ -31,7 +31,7 @@
       "name": "cookie-session",
       "status": "completed",
       "started_at": "2026-06-16T16:40:51+0900",
-      "completed_at": "2026-06-16T17:05:00+0900",
+      "completed_at": "2026-06-16T16:48:29+0900",
       "summary": "세션 전송을 HttpOnly 쿠키(yh.sid)로 전환. parseCookies/extractSid 헬퍼 추가(외부 의존성 없음); sessionOf·receiver-config·logout·/api/session 모두 쿠키 우선→x-session-id 헤더 폴백; 로그인 시 Set-Cookie(HttpOnly·SameSite=Lax·Secure=프로덕션 분기); 로그아웃 시 clearCookie; CORS credentials:true + 명시 origin allowlist; body.sessionId 전환기 호환 유지; x-session-id 헤더 폴백 TODO 주석 명시(step 6 제거 대상); 신규 테스트 4건(쿠키 속성·쿠키 전용 인증·로그아웃 만료·헤더 폴백 회귀) 추가; 기존 193건 전부 통과."
     },
     {
