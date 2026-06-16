@@ -1,11 +1,32 @@
 // httpModel — Model 계약(ADR-003)의 실제 REST/SSE 배선. 모든 transport(fetch/EventSource)는
 // 이 파일 안에만 있다. View/Controller는 절대 직접 fetch/EventSource를 호출하지 않는다.
 //
-// 세션은 서버가 발급한 HttpOnly 쿠키(yh.sid)가 보유한다. HttpOnly는 JS가 못 읽으므로 프론트는
-// 토큰을 다루지 않고, 브라우저가 자동 전송하도록 fetch는 credentials:'include', EventSource는
-// withCredentials:true로 쿠키를 첨부한다(cross-origin :5173↔:3001, 서버 CORS credentials:true와 짝).
-// F5(새로고침) 복원은 /api/session을 쿠키 신원으로 호출해 동작한다. 응답의 sessionId는 더 이상
-// 신뢰/저장하지 않는다. 응답 shape은 server/index.js 라우트와 1:1로 맞춘다.
+// 인증의 1차 수단은 서버가 발급한 HttpOnly 세션 쿠키(step3)다. 요청은 credentials:'include'로
+// 보내 브라우저가 쿠키를 자동 전송하게 한다. HttpOnly라 JS는 쿠키를 읽지 않으며, F5(새로고침)
+// 신원 복원은 서버 /api/session이 담당한다(쿠키 자동 전송 → user 반환).
+// x-session-id 헤더는 dev cross-origin(SameSite 제약)에서의 폴백으로 병행 유지한다 — 로그인 응답의
+// sessionId를 sessionStorage에 보관해 요청에 첨부하고, logout 시 비운다.
+// 응답 shape은 server/index.js(step8) 라우트와 1:1로 맞춘다.
+
+const SESSION_STORAGE_KEY = 'yh.sessionId';
+
+function readSessionId() {
+  try {
+    return globalThis.sessionStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
+  } catch {
+    // sessionStorage 접근 불가(SSR/프라이버시 모드 등) — 토큰 없음으로 취급.
+    return null;
+  }
+}
+
+function writeSessionId(sessionId) {
+  try {
+    if (sessionId) globalThis.sessionStorage?.setItem(SESSION_STORAGE_KEY, sessionId);
+    else globalThis.sessionStorage?.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // sessionStorage 접근 불가 — 무시(이번 세션은 메모리 없이 진행).
+  }
+}
 
 // 배열 값은 server의 반복 파라미터 파싱(status IN / departments IN)에 맞춰 같은 키를 여러 번 append한다.
 function buildQuery(params = {}) {
@@ -23,6 +44,12 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
   // 모든 REST 호출의 단일 통로 — 쿠키 첨부(credentials:'include') + JSON 직렬화/역직렬화.
   async function request(path, { method = 'GET', body, query } = {}) {
     const headers = {};
+    const sessionId = readSessionId();
+    if (sessionId) headers['x-session-id'] = sessionId;
+    // 인증의 1차 수단은 HttpOnly 세션 쿠키(step3). credentials:'include'로 cross-origin 요청에도
+    // 브라우저가 쿠키를 자동 전송한다(CORS credentials:true). HttpOnly라 JS로 쿠키를 읽지 않으며,
+    // 신원 복원은 서버 /api/session에 위임한다. x-session-id 헤더는 dev cross-origin(SameSite 제약)
+    // 폴백으로 병행 유지한다.
     const init = { method, headers, credentials: 'include' };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -113,12 +140,14 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     },
 
     // --- 실시간 무효화 스트림 (SSE) ---
-    // EventSource는 커스텀 헤더를 못 보내므로 withCredentials:true로 HttpOnly 쿠키를 첨부해 인증한다
-    // (step2: 서버가 ?session= 쿼리를 더 이상 신뢰하지 않으므로 쿼리 토큰을 제거).
-    // ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다. onChange는 "무효화 신호"만 받으며,
-    // filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
+    // 인증의 1차 수단은 HttpOnly 세션 쿠키 — EventSource는 헤더를 못 보내지만 withCredentials:true로
+    // cross-origin 쿠키를 자동 전송한다(step5, server는 쿠키 우선 readSessionToken으로 인증).
+    // dev cross-origin(SameSite 제약으로 쿠키 미적재)에서는 보관된 sessionId를 ?session= 쿼리 폴백으로만
+    // 붙인다(토큰 없으면 URL에 노출 안 함). ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다.
+    // onChange는 "무효화 신호"만 받으며, filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
     subscribe(filter, onChange) {
-      const source = new EventSource(`${base}/api/stream`, { withCredentials: true });
+      const url = `${base}/api/stream${buildQuery({ session: readSessionId() })}`;
+      const source = new EventSource(url, { withCredentials: true });
       let connected = false;
       source.addEventListener('ready', () => { connected = true; });
       source.addEventListener('change', (event) => {

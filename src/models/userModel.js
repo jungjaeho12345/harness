@@ -4,8 +4,8 @@
 
 const COLUMNS = [
   'userId', 'name', 'password', 'role', 'department', 'departmentCode', 'active',
-  // 계정 잠금 상태(내부 필드 — 응답 정제는 서비스 SAFE_FIELDS가 제외한다).
-  'failedLoginCount', 'lockedUntil',
+  // 계정 잠금 상태 — 모델은 읽고/쓸 수 있지만 서비스 SAFE_FIELDS로는 노출하지 않는다.
+  'failedLoginCount', 'lockedUntil', 'lastFailedLoginAt',
 ];
 
 export function createUserModel(db) {

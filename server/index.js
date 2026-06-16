@@ -111,6 +111,23 @@ function fail(res, result, fallback = 400) {
   return res.status(STATUS_BY_REASON[result.reason] ?? fallback).json(result);
 }
 
+// 세션 쿠키 이름. 토큰은 무작위 64-hex이며 권한/역할 정보를 담지 않는다(news.md, ADR-004).
+const SESSION_COOKIE = 'sid';
+const SESSION_COOKIE_MAX_AGE_S = 60 * 60; // 1시간 — 슬라이딩 만료 권위는 sessionService(쿠키는 보조).
+
+// Cookie 헤더에서 단일 쿠키 값을 파싱한다. 외부 의존성(cookie-parser) 없이 처리(ADR 최소 의존성).
+function parseCookie(header, name) {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    }
+  }
+  return undefined;
+}
+
 // GET /api/articles 에서 허용하는 조회 필터 — 화이트리스트만 모델로 전달한다.
 // (Express는 ?status=A&status=B 같은 반복 파라미터를 배열로 파싱 → status IN / departments IN.)
 const FILTER_KEYS = [
@@ -125,7 +142,15 @@ function pickFilters(query = {}) {
   return f;
 }
 
-export function createApp({ controllers, sessionService, env = process.env.NODE_ENV }) {
+// cookieSecure: Secure 속성 토글. 프로덕션(HTTPS)에서만 true 권장 — dev/test(HTTP)는 false여야 쿠키가 실린다.
+// forceHttps: HTTPS 강제 토글(기본 false=dev/test no-op). true면 HSTS 적용 + 평문 HTTP를 https로 리다이렉트.
+//   토글 기준은 cookieSecure(step3 Secure 쿠키)와 동일한 환경(prod)을 권장 — Secure 쿠키의 전제이기 때문.
+export function createApp({
+  controllers,
+  sessionService,
+  cookieSecure = process.env.NODE_ENV === 'production',
+  forceHttps = false,
+}) {
   const app = express();
   const isProd = env === 'production';
 
@@ -140,12 +165,15 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   // TLS 종단을 거치므로 별도 예외를 두지 않는다(예외는 평문 우회 표면을 넓힌다).
   app.use(enforceHttps(env));
 
+  // 프록시(리버스 프록시 TLS 종단) 뒤 원 프로토콜은 X-Forwarded-Proto로 판정한다.
+  // trust proxy는 최소(첫 홉 1개만 신뢰) — true(무제한)는 X-Forwarded-Proto 스푸핑 우회를 허용하므로 금지.
+  if (forceHttps) app.set('trust proxy', 1);
+
   app.use(helmet({
-    // HSTS는 helmet 기본으로 켜져 있으나 https 응답에만 유효하다 → 프로덕션(https 강제)에서만
-    // 의도적으로 긴 max-age + includeSubDomains로 명시하고, 비프로덕션(http)에서는 끈다
-    // (http에서 HSTS를 박으면 로컬 https 미사용 환경을 불필요하게 잠글 수 있다).
-    strictTransportSecurity: isProd
-      ? { maxAge: HSTS_MAX_AGE_SEC, includeSubDomains: true }
+    // HSTS는 HTTPS 응답에서만 의미가 있다 — HTTP dev에 보내면 이후 접속이 깨질 수 있으므로 토글로 끈다(forceHttps).
+    // 운영(prod) 적합값: max-age 6개월 + includeSubDomains. preload는 무분별 등록 방지차 비활성.
+    strictTransportSecurity: forceHttps
+      ? { maxAge: 15552000, includeSubDomains: true, preload: false }
       : false,
     contentSecurityPolicy: {
       directives: {
@@ -161,14 +189,55 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
       },
     },
   }));
+  // credentials:true — 쿠키를 cross-origin으로 주고받기 위함. allowlist 유지(origin:* 금지: 브라우저가 credentials와 함께 거부).
   app.use(cors({
     // credentials 모드에서는 와일드카드 origin 금지 → 명시 allowlist가 필수.
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
-    credentials: true, // 프론트가 쿠키 세션을 주고받으려면 필요(step4 credentials:'include').
+    credentials: true,
   }));
+
+  // HTTP→HTTPS 리다이렉트 — helmet/CORS 다음, 라우트보다 앞. 토글 OFF면 no-op(HTTP 그대로 통과).
+  // X-Forwarded-Proto가 https가 아니면 동일 host/경로의 https로 308(메서드·본문 보존) 리다이렉트한다.
+  // CORS preflight(OPTIONS)는 위 cors 미들웨어가 먼저 응답을 끝내므로 여기 도달하지 않는다(깨지지 않음).
+  if (forceHttps) {
+    app.use((req, res, next) => {
+      if (req.secure || req.get('x-forwarded-proto') === 'https') return next();
+      const host = req.get('host');
+      if (!host) return next(); // host 없는 비정상 요청은 강제 대상 외 — 라우트가 처리.
+      return res.redirect(308, `https://${host}${req.originalUrl}`);
+    });
+  }
+
   app.use(express.json());
+
+  // 세션 쿠키 발급 — HttpOnly(XSS 토큰 탈취 차단), Path=/, 슬라이딩 만료 정합 Max-Age.
+  // SameSite: Secure일 때(prod) None으로 cross-origin 허용, 아닐 때(dev/test) Lax(None은 Secure 필수라 거부됨 → dev는 헤더 폴백).
+  function setSessionCookie(res, sessionId) {
+    res.cookie(SESSION_COOKIE, sessionId, {
+      httpOnly: true,
+      secure: cookieSecure,
+      sameSite: cookieSecure ? 'none' : 'lax',
+      path: '/',
+      maxAge: SESSION_COOKIE_MAX_AGE_S * 1000,
+    });
+  }
+
+  function clearSessionCookie(res) {
+    res.cookie(SESSION_COOKIE, '', {
+      httpOnly: true,
+      secure: cookieSecure,
+      sameSite: cookieSecure ? 'none' : 'lax',
+      path: '/',
+      maxAge: 0,
+    });
+  }
+
+  // 요청에서 세션 토큰 판독 — 쿠키 우선, x-session-id 헤더 폴백(전환 기간 무회귀).
+  function readSessionToken(req) {
+    return parseCookie(req.get('cookie'), SESSION_COOKIE) || req.get('x-session-id');
+  }
 
   // SSE 무효화 버스 — 기사 create/update/status/lock 변경 시 신호만 브로드캐스트한다(행 데이터 없음).
   const bus = new EventEmitter();
@@ -176,16 +245,9 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   // 부트스트랩(watcher 등 HTTP 밖 경로)에서도 무효화를 알릴 수 있도록 노출한다.
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
-  // 세션 토큰 도출 — 쿠키 우선, 헤더(x-session-id) 폴백(하위호환).
-  // 평문 ?session= 쿼리 토큰은 누출 표면(URL/로그/Referer)이라 수용하지 않는다.
-  function sidFrom(req) {
-    const cookies = parseCookies(req.headers.cookie);
-    return cookies[SESSION_COOKIE_NAME] || req.get('x-session-id');
-  }
-
-  // 검증된 신원만 도출한다(ADR-004). req.body.role은 절대 쓰지 않는다.
+  // 쿠키(우선) 또는 x-session-id 헤더(폴백) → 검증된 신원. req.body.role은 절대 쓰지 않는다.
   function sessionOf(req) {
-    const sid = sidFrom(req);
+    const sid = readSessionToken(req);
     return { sid, me: sid ? sessionService.touchSession(sid) : undefined };
   }
 
@@ -204,24 +266,27 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
     try {
       const { userId, password } = req.body ?? {};
       const r = await controllers.auth.login(userId, password);
-      if (!r.ok) return fail(res, r, 401);
-      // body shape { ok, sessionId, user }는 하위호환으로 유지하고, 세션을 쿠키에도 심는다.
-      res.cookie(SESSION_COOKIE_NAME, r.sessionId, sessionCookieOptions());
-      return res.json(r);
+      if (r.ok) {
+        // 세션 토큰을 쿠키로도 운반(헤더 응답 sessionId는 전환 기간 폴백으로 유지).
+        setSessionCookie(res, r.sessionId);
+        return res.json(r);
+      }
+      // 로그인 전용 매핑: 계정 잠금은 423 Locked. STATUS_BY_REASON.locked(409, 기사 편집 잠금)는 건드리지 않는다.
+      if (r.reason === 'locked') return res.status(423).json(r);
+      return fail(res, r, 401);
     } catch (e) { next(e); }
   });
 
   app.post('/api/logout', (req, res) => {
-    const sid = sidFrom(req) || req.body?.sessionId;
+    const sid = readSessionToken(req) || req.body?.sessionId;
     controllers.auth.logout(sid);
-    // 세션 쿠키도 만료시킨다(set/clear는 옵션의 path/sameSite/secure가 정합해야 한다).
-    res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+    clearSessionCookie(res); // 세션 쿠키 만료(Max-Age=0).
     return res.json({ ok: true });
   });
 
   // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(쿠키 우선, x-session-id 헤더 폴백).
   app.get('/api/session', (req, res) => {
-    const sid = sidFrom(req);
+    const sid = readSessionToken(req) || req.query.session;
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
@@ -263,21 +328,21 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   // --- 수신 설정 (Z 전용 — 게이트는 receiverConfigService가 강제) ---
   app.get('/api/receiver-config', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.query(req.get('x-session-id'), req.query);
+      const r = controllers.receiverConfig.query(readSessionToken(req), req.query);
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });
 
   app.post('/api/receiver-config', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.create(req.get('x-session-id'), req.body ?? {});
+      const r = controllers.receiverConfig.create(readSessionToken(req), req.body ?? {});
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });
 
   app.delete('/api/receiver-config/:id', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.remove(req.get('x-session-id'), Number(req.params.id));
+      const r = controllers.receiverConfig.remove(readSessionToken(req), Number(req.params.id));
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });
@@ -423,13 +488,12 @@ export function createApp({ controllers, sessionService, env = process.env.NODE_
   });
 
   // --- SSE: 무효화 신호 스트림 ---
-  // 인증은 쿠키(우선)+x-session-id 헤더만 허용한다(sidFrom 재사용).
-  // 평문 ?session= 쿼리 폴백은 제거했다(security-hardening step2): 쿼리 토큰은 URL/서버·프록시
-  // 액세스 로그/브라우저 히스토리/Referer로 새는 표면이라 쿠키(HttpOnly)로 대체한다.
-  // cross-origin EventSource의 쿠키 첨부(withCredentials:true)는 프론트(step4) 소관이며,
-  // 그 전까지는 헤더(x-session-id) 폴백으로 SSE 인증이 끊기지 않는다.
+  // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더). EventSource는 withCredentials로 쿠키를
+  // 싣지만, dev cross-origin(SameSite=None;Secure 미적재 + 헤더 불가)에서는 쿠키가 안 실린다 → 이 라우트
+  // 한정으로 ?session= 쿼리 폴백을 유지한다(step3 SameSite 결정 정합). 쿠키가 있으면 쿼리는 무시된다.
   app.get('/api/stream', (req, res) => {
-    const { me } = sessionOf(req);
+    const sid = readSessionToken(req) || req.query.session;
+    const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
 
     res.set({
@@ -462,7 +526,11 @@ function bootstrap() {
 
   const sessionService = createSessionService();
   const controllers = createControllers(db, { sessionService });
-  const app = createApp({ controllers, sessionService });
+  // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
+  // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
+  const forceHttps = process.env.FORCE_HTTPS === 'true'
+    || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
+  const app = createApp({ controllers, sessionService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {
