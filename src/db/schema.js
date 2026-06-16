@@ -13,6 +13,10 @@ const SCHEMA = {
     ['department', 'TEXT'],
     ['departmentCode', 'TEXT'],
     ['active', "TEXT DEFAULT 'Y'"],
+    // 계정 잠금(account lockout) 추적 — 읽기·증가·리셋 로직은 model/service 담당(ADR-006)
+    ['failedLoginCount', "TEXT DEFAULT '0'"], // 누적 로그인 실패 횟수
+    ['lockedUntil', 'TEXT'],                  // 잠금 해제 시각(ISO-8601 UTC). null이면 잠겨있지 않음
+    ['lastFailedLoginAt', 'TEXT'],             // 마지막 실패 시각(ISO-8601 UTC, 감사용)
   ],
   Article: [
     ['articleId', 'VARCHAR PRIMARY KEY'],

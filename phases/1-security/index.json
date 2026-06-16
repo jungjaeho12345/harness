@@ -2,12 +2,43 @@
   "project": "기사 작성기 (Article Production System)",
   "phase": "1-security",
   "steps": [
-    { "step": 0, "name": "lockout-schema", "status": "pending" },
-    { "step": 1, "name": "lockout-model", "status": "pending" },
-    { "step": 2, "name": "lockout-service", "status": "pending" },
-    { "step": 3, "name": "cookie-session", "status": "pending" },
-    { "step": 4, "name": "sse-cookie-auth", "status": "pending" },
-    { "step": 5, "name": "prod-hardening", "status": "pending" },
-    { "step": 6, "name": "web-credentials", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "lockout-schema",
+      "status": "completed",
+      "started_at": "2026-06-16T16:31:03+0900",
+      "summary": "User 테이블에 계정잠금 컬럼 3개 additive 추가: failedLoginCount(TEXT DEFAULT '0' — 누적 실패 횟수), lockedUntil(TEXT — 잠금 해제 시각 ISO-8601 UTC), lastFailedLoginAt(TEXT — 마지막 실패 시각 감사용); 멱등 마이그레이션 회귀 테스트(구버전 7컬럼 테이블에서 기존 행 보존 확인) 포함."
+    },
+    {
+      "step": 1,
+      "name": "lockout-model",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "lockout-service",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "cookie-session",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "sse-cookie-auth",
+      "status": "pending"
+    },
+    {
+      "step": 5,
+      "name": "prod-hardening",
+      "status": "pending"
+    },
+    {
+      "step": 6,
+      "name": "web-credentials",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-06-16T16:31:03+0900"
 }
