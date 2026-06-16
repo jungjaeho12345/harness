@@ -4,7 +4,7 @@
   "steps": [
     { "step": 0, "name": "history-schema", "status": "completed", "summary": "src/db/schema.js SCHEMA에 additive ArticleHistory 테이블 추가 (id INTEGER PK / articleId / eventType / action / fromStatus / toStatus / actorUserId / createdAt VARCHAR), 멱등 마이그레이션·백필/보조인덱스/FK 없음. test/schema.test.js에 존재·컬럼·자동증가 PK·markupVersion 부재·FK 부재 테스트 추가." },
     { "step": 1, "name": "history-service", "status": "completed", "summary": "src/models/articleHistoryModel.js(insert/queryByArticle, id DESC 최신순, 직접 SQL·삭제 함수 없음) + articleService에 historyModel 옵셔널 주입·record() try/catch 격리 훅(update→edit, applyAction 전이 성공시에만 status, 거부시 미기록) + queryHistory(articleId,{sendOnly}) 도메인 필터 추가, controllers 결선. 신규 테스트 12건(model 5+service 7), 기존 포함 총 194 통과." },
-    { "step": 2, "name": "history-http", "status": "pending" },
+    { "step": 2, "name": "history-http", "status": "completed", "summary": "server/index.js에 GET /api/articles/:id/history 얇은 transport 라우트 추가 — 세션 게이트(미인증 401 UNAUTH), 읽기전용, sendOnly(=1/type=send, '0'/'false' 제외)→controllers.article.queryHistory 위임, {ok,items} shape(이력 없으면 빈 배열, 404 아님). /search·:id 뒤 하위 라우트 그룹에 배치. actor는 기존 PUT(modifier=me.userId)·action(userId=me.userId) stamp로 세션 userId에서 도출(ADR-004) — 추가 stamp 불필요 확인. test/server.test.js에 5건(401·빈배열·edit actor 세션도출·status/send·sendOnly 필터) 추가, 총 199 통과." },
     { "step": 3, "name": "derive-article-service", "status": "pending" },
     { "step": 4, "name": "derive-http", "status": "pending" },
     { "step": 5, "name": "translate-service", "status": "pending" },
