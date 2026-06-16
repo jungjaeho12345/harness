@@ -1,0 +1,13 @@
+{
+  "project": "기사 작성기 (Article Production System)",
+  "phase": "1-security",
+  "steps": [
+    { "step": 0, "name": "lockout-schema", "status": "pending" },
+    { "step": 1, "name": "lockout-model", "status": "pending" },
+    { "step": 2, "name": "lockout-service", "status": "pending" },
+    { "step": 3, "name": "cookie-session", "status": "pending" },
+    { "step": 4, "name": "sse-cookie-auth", "status": "pending" },
+    { "step": 5, "name": "prod-hardening", "status": "pending" },
+    { "step": 6, "name": "web-credentials", "status": "pending" }
+  ]
+}
