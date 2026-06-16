@@ -25,49 +25,51 @@ describe('createHttpModel', () => {
 
   const callAt = (i) => fetchMock.mock.calls[i];
 
-  it('login POSTs credentials and stores the session id for later requests', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-1', user: { userId: 'kim' } }));
+  it('login POSTs credentials and uses credentials:include — no x-session-id header', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, user: { userId: 'kim' } }));
     const model = createHttpModel({ base: BASE });
 
     const r = await model.login('kim', 'pw');
-    expect(r.sessionId).toBe('sid-1');
+    expect(r.ok).toBe(true);
 
     const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/login`);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ userId: 'kim', password: 'pw' });
-    expect(init.headers['x-session-id']).toBeUndefined(); // 로그인 시점엔 아직 토큰 없음
+    expect(init.credentials).toBe('include');
+    expect(init.headers['x-session-id']).toBeUndefined();
 
-    // 이후 요청에는 보관된 토큰이 자동 첨부된다.
+    // 이후 요청도 credentials:include — 쿠키 자동 전송, x-session-id 없음.
     await model.queryArticles();
-    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-1');
+    expect(callAt(1)[1].credentials).toBe('include');
+    expect(callAt(1)[1].headers['x-session-id']).toBeUndefined();
   });
 
-  it('logout POSTs then clears the stored session id', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-2', user: {} }));
+  it('logout POSTs to /api/logout with credentials:include — no sessionStorage side-effect', async () => {
     const model = createHttpModel({ base: BASE });
     await model.login('a', 'b');
 
     await model.logout();
     expect(callAt(1)[0]).toBe(`${BASE}/api/logout`);
     expect(callAt(1)[1].method).toBe('POST');
-    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-2'); // 무효화 대상 토큰을 보낸다
+    expect(callAt(1)[1].credentials).toBe('include');
+    expect(callAt(1)[1].headers['x-session-id']).toBeUndefined();
 
-    // 토큰이 제거되어 다음 요청엔 헤더가 없다.
+    // 로그아웃 후 후속 요청에도 x-session-id 없음 (쿠키는 서버가 만료).
     await model.queryArticles();
+    expect(callAt(2)[1].credentials).toBe('include');
     expect(callAt(2)[1].headers['x-session-id']).toBeUndefined();
   });
 
-  it('restoreSession GETs /api/session carrying the stored session id', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-7', user: {} }));
+  it('restoreSession GETs /api/session with credentials:include — no x-session-id', async () => {
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b');
 
     await model.restoreSession();
-    const [url, init] = callAt(1);
+    const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/session`);
     expect(init.method).toBe('GET');
-    expect(init.headers['x-session-id']).toBe('sid-7');
+    expect(init.credentials).toBe('include');
+    expect(init.headers['x-session-id']).toBeUndefined();
     expect(init.body).toBeUndefined();
   });
 
@@ -147,12 +149,12 @@ describe('createHttpModel', () => {
     expect(callAt(2)[0]).toBe(`${BASE}/api/articles/AKR1/force-unlock`);
   });
 
-  it('subscribe opens EventSource with the session query and routes change signals', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-5', user: {} }));
+  it('subscribe opens EventSource with withCredentials:true and no ?session= query', async () => {
     const instances = [];
     class FakeEventSource {
-      constructor(url) {
+      constructor(url, opts) {
         this.url = url;
+        this.opts = opts;
         this.listeners = {};
         this.closed = false;
         instances.push(this);
@@ -164,13 +166,13 @@ describe('createHttpModel', () => {
     globalThis.EventSource = FakeEventSource;
 
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b'); // stores sid-5
 
     const onChange = vi.fn();
     const sub = model.subscribe({ menu: 'desk' }, onChange);
 
     expect(instances).toHaveLength(1);
-    expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-5`);
+    expect(instances[0].url).toBe(`${BASE}/api/stream`); // ?session= 없음
+    expect(instances[0].opts).toEqual({ withCredentials: true });
     expect(sub.connected()).toBe(false);
 
     instances[0].emit('ready', '{"ok":true}');
