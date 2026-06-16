@@ -42,7 +42,7 @@ export function ListPage() {
     menu, selectMenu, departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
-    createFollowUp, createContinue, resend,
+    createFollowUp, createContinue, resend, runTranslate,
   } = ctrl;
 
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
@@ -50,6 +50,8 @@ export function ListPage() {
   const [showColModal, setShowColModal] = useState(false);
   // 이력보기/송고이력보기 모달 { title, items } — null이면 닫힘. (step8, 컬럼 설정 모달과 동일 패턴)
   const [historyModal, setHistoryModal] = useState(null);
+  // 번역 결과 모달 { text, ok, reason } — null이면 닫힘. (step10, in-app 모달 — React 자동 escape, 새 창 아님)
+  const [translateModal, setTranslateModal] = useState(null);
 
   // 메뉴별 컬럼 설정 로드(설정은 메뉴별로 저장 — columnConfig).
   useEffect(() => { setColConfig(loadColumnConfig(menu)); }, [menu]);
@@ -63,6 +65,13 @@ export function ListPage() {
     setHistoryModal({ title, items: rows });
   };
 
+  // 번역 — 컨트롤러로 model.translate(ADR-003)를 호출해 in-app 모달로 표시(이력 모달과 동일 패턴, React 자동 escape).
+  // graceful degrade(news.md): 키 없음/외부 실패(ok:false)면 throw·오류 모달이 아니라 원문(translatedText)+안내를 보여준다.
+  const showTranslate = async (article) => {
+    const r = await runTranslate(article);
+    setTranslateModal({ text: (r && r.translatedText) || '', ok: !!(r && r.ok), reason: r && r.reason });
+  };
+
   const onCtxSelect = async (key, article) => {
     switch (key) {
       case 'edit': editArticle(article); break;
@@ -73,6 +82,8 @@ export function ListPage() {
       case 'detail': openDetail(article); break;
       case 'history': showHistory(article, '이력보기', false); break;
       case 'sendHistory': showHistory(article, '송고이력보기', true); break;
+      // 번역 — 결과를 in-app 모달로 표시. 실패해도 throw 없이 원문+안내(showTranslate가 graceful 처리).
+      case 'translate': await showTranslate(article); break;
       // 후속/계속기사작성 — deriveArticle이 만든 새 기사로 편집 진입(컨트롤러). 원본 비파괴.
       case 'followUp': createFollowUp(article); break;
       case 'continue': createContinue(article); break;
@@ -246,6 +257,21 @@ export function ListPage() {
               </table>
             )}
             <button type="button" className="yh-btn yh-btn--primary" onClick={() => setHistoryModal(null)}>닫기</button>
+          </div>
+        </div>
+      )}
+
+      {translateModal && (
+        <div className="yh-modal__backdrop" onClick={() => setTranslateModal(null)}>
+          <div className="yh-modal" role="dialog" aria-label="번역" onClick={(e) => e.stopPropagation()}>
+            <h2>번역</h2>
+            {/* graceful degrade(news.md): 키 없음/외부 실패면 원문 표시 + 안내(오류 모달/throw 아님). */}
+            {!translateModal.ok && (
+              <p className="yh-translate__notice">번역을 사용할 수 없습니다(원문 표시).</p>
+            )}
+            {/* React가 자동 escape하므로 별도 HTML 이스케이프 불필요(새 창이 아닌 in-app 모달). */}
+            <pre className="yh-translate__text">{translateModal.text}</pre>
+            <button type="button" className="yh-btn yh-btn--primary" onClick={() => setTranslateModal(null)}>닫기</button>
           </div>
         </div>
       )}

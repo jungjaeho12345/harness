@@ -9,15 +9,17 @@
 //  - 후속/계속기사작성: 작성 권한(R/D/Z)에서 활성 — 파생은 새 기사 작성, 상태 게이트 없음. (step9)
 //  - 재송(resend): DPS 기사 + D/Z에서만 활성 — 재송고=데스크 송고 행위, 서버 applyAction이 최종 강제. (step9)
 //    (news.md 명세 부재 — 도출: followUp/continue=R/D/Z, resend=DPS+D/Z. 서버가 최종 권한 게이트.)
-//  - 번역/매핑: 표시만(아직 비활성 — 후속 step에서 활성화).
+//  - 번역(translate): 세션만 있으면 활성 — 권한/상태 게이트 없음, 서버가 세션 인증·graceful degrade. (step10)
+//  - 매핑(mapping): 표시만(아직 비활성 — step11에서 활성화).
 
 // 활성(읽기 전용) 항목 — 이력은 모든 기사에서 볼 수 있다(서버가 세션 인증 게이트). (step8)
 const HISTORY = Object.freeze({ key: 'history', label: '이력보기', enabled: true });
 const SEND_HISTORY = Object.freeze({ key: 'sendHistory', label: '송고이력보기', enabled: true });
+// 번역 — 세션만 있으면 활성(권한/상태 게이트 없음, 서버가 인증·외부 실패 graceful degrade). (step10)
+const TRANSLATE = Object.freeze({ key: 'translate', label: '번역', enabled: true });
 
 // 비활성(표시만) 항목 — 동작하지 않는다(각 후속 step이 자기 항목만 활성화).
 const INACTIVE_ITEMS = Object.freeze([
-  { key: 'translate', label: '번역' },
   { key: 'mapping', label: '매핑' },
 ]);
 
@@ -56,7 +58,7 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
       SEND_HISTORY,
       copyBody,
       copyTitle,
-      inactive('translate'),
+      TRANSLATE,
       inactive('mapping'),
       { key: 'followUp', label: '후속기사작성', enabled: canWrite },
       { key: 'continue', label: '계속기사작성', enabled: canWrite },

@@ -154,6 +154,13 @@ export function useViewController() {
     return model.applyAction(article.articleId, 'send');
   }, [model]);
 
+  // 번역 — model.translate(id, targetLang)로 서버가 DB 본문을 조회·번역(ADR-003, 직접 fetch 없음).
+  // 외부 실패/키 없음이면 서버가 throw 없이 graceful 객체({ ok:false, reason, translatedText:<원문> })를 준다 —
+  // 그대로 반환하고 표시는 View(ListPage)가 원문+안내로 처리한다(news.md degrade). 컨트롤러는 가공/throw하지 않는다.
+  const runTranslate = useCallback(async (article, targetLang = 'ko') => {
+    return model.translate(article.articleId, targetLang);
+  }, [model]);
+
   // 삭제요청 — DPS 기사 삭제 승인(approveDelete). D/Z만, '정말 삭제하시겠습니까?' 확인 후.
   const requestDelete = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -169,6 +176,6 @@ export function useViewController() {
     page, setPage, totalPages, pageItems, items,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
-    createFollowUp, createContinue, resend,
+    createFollowUp, createContinue, resend, runTranslate,
   };
 }

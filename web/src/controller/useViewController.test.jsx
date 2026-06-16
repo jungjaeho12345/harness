@@ -228,6 +228,38 @@ describe('useViewController', () => {
     expect(r).toEqual({ ok: false, reason: 'cancelled' });
   });
 
+  it('runTranslate calls model.translate and returns translatedText', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 'Hello', status: 'RDS' }],
+      translations: { AKR9: '안녕하세요' },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'translate');
+
+    let r;
+    await act(async () => { r = await result.current.runTranslate({ articleId: 'AKR9' }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', 'ko');
+    expect(r.ok).toBe(true);
+    expect(r.translatedText).toBe('안녕하세요');
+  });
+
+  it('runTranslate honors the targetLang argument', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 'Hi', status: 'RDS' }] });
+    const spy = vi.spyOn(model, 'translate');
+    await act(async () => { await result.current.runTranslate({ articleId: 'AKR9' }, 'en'); });
+    expect(spy).toHaveBeenCalledWith('AKR9', 'en');
+  });
+
+  it('runTranslate does not throw on graceful ok:false and returns the original text', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 'orig', status: 'RDS' }] });
+    // 키 없음/외부 실패 시 서버는 throw 없이 graceful 객체를 준다(step5/6).
+    vi.spyOn(model, 'translate').mockResolvedValue({ ok: false, reason: 'no-key', translatedText: 'orig' });
+
+    let r;
+    await act(async () => { r = await result.current.runTranslate({ articleId: 'AKR9' }); });
+    expect(r).toEqual({ ok: false, reason: 'no-key', translatedText: 'orig' });
+  });
+
   it('releaseLock force-unlocks for D/Z after confirm', async () => {
     const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS', lockYN: 'Y' }] }, { role: 'Z' });
     await waitFor(() => expect(result.current.items).toHaveLength(1));

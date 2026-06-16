@@ -28,10 +28,20 @@ describe('buildContextMenuItems — per-menu items', () => {
 
   it('inactive items are always disabled (표시만)', () => {
     const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    // step8: history/sendHistory 활성, step9: followUp/continue/resend 활성 — translate/mapping만 비활성 유지.
-    for (const k of ['translate', 'mapping']) {
-      expect(find(items, k).enabled).toBe(false);
+    // step8: history/sendHistory 활성, step9: followUp/continue/resend 활성, step10: translate 활성 — mapping만 비활성 유지.
+    expect(find(items, 'mapping').enabled).toBe(false);
+  });
+
+  it('번역(translate)은 세션만 있으면 활성이다 (step10)', () => {
+    // 권한/상태 게이트 없음 — 서버가 세션 인증 게이트. 부서별 작성/송고·개인별 수정에서 모두 활성.
+    for (const menu of ['deptWrite', 'deptSend', 'personal']) {
+      for (const role of ['R', 'D', 'Z']) {
+        const items = buildContextMenuItems(menu, { status: 'RDS' }, { role });
+        expect(find(items, 'translate').enabled).toBe(true);
+      }
     }
+    // mapping은 이 step에서 비활성 유지(step11 소관).
+    expect(find(buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' }), 'mapping').enabled).toBe(false);
   });
 
   it('후속/계속기사작성은 작성 권한(R/D/Z)에서 활성이다 (step9)', () => {
