@@ -28,10 +28,32 @@ describe('buildContextMenuItems — per-menu items', () => {
 
   it('inactive items are always disabled (표시만)', () => {
     const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    // step8에서 history/sendHistory는 활성화됨 — 나머지(translate/mapping/followUp/continue/resend)는 비활성 유지.
-    for (const k of ['translate', 'mapping', 'followUp', 'continue', 'resend']) {
+    // step8: history/sendHistory 활성, step9: followUp/continue/resend 활성 — translate/mapping만 비활성 유지.
+    for (const k of ['translate', 'mapping']) {
       expect(find(items, k).enabled).toBe(false);
     }
+  });
+
+  it('후속/계속기사작성은 작성 권한(R/D/Z)에서 활성이다 (step9)', () => {
+    for (const role of ['R', 'D', 'Z']) {
+      const items = buildContextMenuItems('deptWrite', { status: 'RDS' }, { role });
+      expect(find(items, 'followUp').enabled).toBe(true);
+      expect(find(items, 'continue').enabled).toBe(true);
+    }
+    // 권한 미정의(예: 빈 role)면 비활성.
+    const none = buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: undefined });
+    expect(find(none, 'followUp').enabled).toBe(false);
+    expect(find(none, 'continue').enabled).toBe(false);
+  });
+
+  it('재송(resend)은 DPS + D/Z에서만 활성이다 (step9)', () => {
+    // DPS + D/Z → 활성.
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'D' }), 'resend').enabled).toBe(true);
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'Z' }), 'resend').enabled).toBe(true);
+    // DPS지만 R 권한 → 비활성.
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'R' }), 'resend').enabled).toBe(false);
+    // 비-DPS(RDS) + D → 비활성.
+    expect(find(buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' }), 'resend').enabled).toBe(false);
   });
 
   it('이력보기/송고이력보기는 활성이다 (step8)', () => {

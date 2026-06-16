@@ -130,6 +130,30 @@ export function useViewController() {
     return (r && r.items) || [];
   }, [model]);
 
+  // 후속기사작성 — model.deriveArticle(id, 'followUp')로 새 기사를 만든 뒤 그 새 기사로 편집 진입(ADR-003).
+  // 원본은 비변경(서버 deriveArticle이 create 위임으로만 신규 행 생성). 새 기사는 RDS·미잠금이라 잠금 획득이 정상 동작.
+  const createFollowUp = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'followUp');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 계속기사작성 — 동일하되 'continue' 모드(본문 복사). 새 기사로 편집 진입.
+  const createContinue = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'continue');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 재송 — 이미 송고된 DPS 기사를 다시 송고. '재송하시겠습니까?' 확인 후 model.applyAction(id, 'send').
+  // role 미전송(ADR-004) — 서버가 DPS+권한·송고 '(끝)' 마커 가드를 강제. 취소 시 아무것도 전송하지 않는다(news.md 140행).
+  const resend = useCallback(async (article) => {
+    if (!globalThis.confirm || !globalThis.confirm('재송하시겠습니까?')) {
+      return { ok: false, reason: 'cancelled' };
+    }
+    return model.applyAction(article.articleId, 'send');
+  }, [model]);
+
   // 삭제요청 — DPS 기사 삭제 승인(approveDelete). D/Z만, '정말 삭제하시겠습니까?' 확인 후.
   const requestDelete = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -145,5 +169,6 @@ export function useViewController() {
     page, setPage, totalPages, pageItems, items,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    createFollowUp, createContinue, resend,
   };
 }

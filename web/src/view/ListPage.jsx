@@ -42,6 +42,7 @@ export function ListPage() {
     menu, selectMenu, departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    createFollowUp, createContinue, resend,
   } = ctrl;
 
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
@@ -62,7 +63,7 @@ export function ListPage() {
     setHistoryModal({ title, items: rows });
   };
 
-  const onCtxSelect = (key, article) => {
+  const onCtxSelect = async (key, article) => {
     switch (key) {
       case 'edit': editArticle(article); break;
       case 'reviseNoPortal': reviseArticle(article, false); break;
@@ -72,6 +73,17 @@ export function ListPage() {
       case 'detail': openDetail(article); break;
       case 'history': showHistory(article, '이력보기', false); break;
       case 'sendHistory': showHistory(article, '송고이력보기', true); break;
+      // 후속/계속기사작성 — deriveArticle이 만든 새 기사로 편집 진입(컨트롤러). 원본 비파괴.
+      case 'followUp': createFollowUp(article); break;
+      case 'continue': createContinue(article); break;
+      // 재송 — 확인 후 send 재송고. 실패 reason(no-end-marker 등)은 서버가 강제하므로 사용자에게 ALERT 안내(news.md 72행).
+      case 'resend': {
+        const r = await resend(article);
+        if (r && !r.ok && r.reason && r.reason !== 'cancelled') {
+          globalThis.alert?.(`재송에 실패했습니다: ${r.reason}`);
+        }
+        break;
+      }
       case 'copyBody': copyText(blocksToText(deserialize(article.markupVersion ?? article.body ?? article.content ?? ''))); break;
       case 'copyTitle': copyText(article.title); break;
       default: break; // 비활성(표시만) 항목은 onSelect로 오지 않는다.

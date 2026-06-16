@@ -146,6 +146,38 @@ describe('ListPage', () => {
     expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
   });
 
+  it('우클릭 후속기사작성 → deriveArticle(followUp) 후 새 기사로 편집 진입한다', async () => {
+    const navigate = vi.fn();
+    const model = createFakeModel({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+    const { container } = render(
+      <AppContext.Provider value={{ model, identity: { userId: 'kim', name: '김기자', role: 'D', department: '정치' }, navigate, replace: vi.fn(), setSession: vi.fn() }}>
+        <ListPage />
+      </AppContext.Provider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '후속기사작성' }));
+    await waitFor(() => expect(derive).toHaveBeenCalledWith('AKR9', 'followUp'));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('writer.do', expect.objectContaining({ articleId: expect.not.stringMatching('AKR9') })));
+  });
+
+  it('우클릭 재송(DPS+D/Z) → 확인 후 send 액션을 호출한다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model, container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '재송' }));
+    expect(apply).toHaveBeenCalledWith('AKR9', 'send');
+  });
+
   it('헤더 우클릭 시 컬럼 설정 모달이 열린다', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

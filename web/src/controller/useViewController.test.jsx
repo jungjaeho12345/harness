@@ -188,6 +188,46 @@ describe('useViewController', () => {
     expect(items).toEqual([]);
   });
 
+  it('createFollowUp derives a followUp article and enters editor with the new id', async () => {
+    const { result, model, navigate } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+
+    let r;
+    await act(async () => { r = await result.current.createFollowUp({ articleId: 'AKR9' }); });
+    expect(derive).toHaveBeenCalledWith('AKR9', 'followUp');
+    expect(r.ok).toBe(true);
+    // 파생된 새 기사로 편집 진입(원본 AKR9가 아닌 새 articleId).
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: r.articleId });
+    expect(r.articleId).not.toBe('AKR9');
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
+    expect(pending).toEqual({ article: { articleId: r.articleId }, mode: 'edit' });
+  });
+
+  it('createContinue derives in continue mode', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+    await act(async () => { await result.current.createContinue({ articleId: 'AKR9' }); });
+    expect(derive).toHaveBeenCalledWith('AKR9', 'continue');
+  });
+
+  it('resend confirms then applies the send action without a role', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    await act(async () => { await result.current.resend({ articleId: 'AKR9' }); });
+    expect(apply).toHaveBeenCalledWith('AKR9', 'send'); // role 미전송 — 서버 세션 도출(ADR-004).
+  });
+
+  it('resend does not send when the confirm is cancelled', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    let r;
+    await act(async () => { r = await result.current.resend({ articleId: 'AKR9' }); });
+    expect(apply).not.toHaveBeenCalled();
+    expect(r).toEqual({ ok: false, reason: 'cancelled' });
+  });
+
   it('releaseLock force-unlocks for D/Z after confirm', async () => {
     const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS', lockYN: 'Y' }] }, { role: 'Z' });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
