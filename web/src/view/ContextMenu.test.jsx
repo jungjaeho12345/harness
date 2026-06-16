@@ -10,7 +10,7 @@ describe('buildContextMenuItems — per-menu items', () => {
   it('desk-unsent: 편집/상세보기/이력보기/본문복사/제목만복사', () => {
     const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
     expect(keys(items)).toEqual(['edit', 'detail', 'history', 'copyBody', 'copyTitle']);
-    expect(find(items, 'history').enabled).toBe(false); // 표시만
+    expect(find(items, 'history').enabled).toBe(true); // 활성(새 창 이력 표시)
     expect(find(items, 'edit').enabled).toBe(true);
   });
 
@@ -28,9 +28,29 @@ describe('buildContextMenuItems — per-menu items', () => {
 
   it('inactive items are always disabled (표시만)', () => {
     const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    for (const k of ['history', 'sendHistory', 'translate', 'mapping', 'followUp', 'continue', 'resend']) {
+    for (const k of ['translate', 'mapping', 'followUp', 'continue', 'resend']) {
       expect(find(items, k).enabled).toBe(false);
     }
+  });
+
+  it('history/sendHistory are now active (이력보기/송고이력보기)', () => {
+    const items = buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'R' });
+    expect(find(items, 'history').enabled).toBe(true);
+    expect(find(items, 'sendHistory').enabled).toBe(true);
+    // 데스크 미송고는 history만, sendHistory 없음.
+    const desk = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'R' });
+    expect(find(desk, 'history').enabled).toBe(true);
+    expect(keys(desk)).not.toContain('sendHistory');
+  });
+
+  it('history click emits onSelect (활성 항목)', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR1', status: 'RDS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'R' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+    expect(onSelect).toHaveBeenCalledWith('history', article);
   });
 });
 

@@ -132,11 +132,23 @@ export function useViewController() {
     return model.applyAction(article.articleId, 'approveDelete');
   }, [model, identity]);
 
+  // 이력보기/송고이력보기 — Model 계약 경유로 이력을 조회한다(직접 fetch 금지, ADR-003).
+  // 반환은 Model 응답({ ok, items })을 그대로 — ListPage가 새 창에 렌더한다.
+  const viewHistory = useCallback(
+    (article) => model.getArticleHistory(article.articleId),
+    [model],
+  );
+  const viewSendHistory = useCallback(
+    (article) => model.getSendHistory(article.articleId),
+    [model],
+  );
+
   return {
     menu, selectMenu,
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete,
+    viewHistory, viewSendHistory,
   };
 }

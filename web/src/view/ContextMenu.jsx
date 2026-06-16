@@ -5,12 +5,11 @@
 //  - 고침(포털제외)/포털고침: 상태 DPS + 권한 D만 활성(writer.do 편집 진입).
 //  - 삭제요청: 상태 DPS + 권한 D/Z만 활성(approveDelete).
 //  - Lock해제: 잠긴 행(LockYN='Y')에만 나타나고 권한 D/Z만 활성(R은 비활성).
-//  - 이력보기/송고이력보기/번역/매핑/후속·계속기사작성/재송: 표시만(항상 비활성).
+//  - 이력보기/송고이력보기: 활성(새 창에 이력 표시 — phase 1-history).
+//  - 번역/매핑/후속·계속기사작성/재송: 표시만(항상 비활성, 다음 phase).
 
 // 비활성(표시만) 항목 — 동작하지 않는다(news.md MVP 제외).
 const INACTIVE_ITEMS = Object.freeze([
-  { key: 'history', label: '이력보기' },
-  { key: 'sendHistory', label: '송고이력보기' },
   { key: 'translate', label: '번역' },
   { key: 'mapping', label: '매핑' },
   { key: 'followUp', label: '후속기사작성' },
@@ -36,17 +35,19 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   const copyBody = { key: 'copyBody', label: '본문복사', enabled: true };
   const copyTitle = { key: 'copyTitle', label: '제목만복사', enabled: true };
   const edit = { key: 'edit', label: '편집', enabled: true };
+  const history = { key: 'history', label: '이력보기', enabled: true };
+  const sendHistory = { key: 'sendHistory', label: '송고이력보기', enabled: true };
 
   let items;
   if (menu === 'deskUnsent') {
     // 데스크 미송고: 편집 / 상세보기 / 이력보기 / 본문복사 / 제목만복사.
-    items = [edit, detail, inactive('history'), copyBody, copyTitle];
+    items = [edit, detail, history, copyBody, copyTitle];
   } else {
     // 부서별 작성·개인별 수정·부서별 송고 공통 항목.
     items = [
       detail,
-      inactive('history'),
-      inactive('sendHistory'),
+      history,
+      sendHistory,
       copyBody,
       copyTitle,
       inactive('translate'),

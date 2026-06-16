@@ -93,6 +93,25 @@ describe('ListPage', () => {
     expect(force).toHaveBeenCalledWith('AKR5');
   });
 
+  it('우클릭 이력보기 → 새 창(720×800)을 동기 오픈하고 이력을 write한다', async () => {
+    const write = vi.fn();
+    const open = vi.spyOn(window, 'open').mockReturnValue({ document: { write, close: vi.fn() } });
+    const histories = [
+      { articleId: 'AKR0', eventType: 'create', actorUserId: 'kim', actorRole: 'R', toStatus: 'RDS' },
+    ];
+    const { container } = setup({ articles: rds(1), histories });
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+
+    // 팝업 차단 회피 — window.open이 동기적으로 먼저 호출된다.
+    expect(open).toHaveBeenCalledWith('', '_blank', expect.stringContaining('width=720'));
+    await waitFor(() => expect(write).toHaveBeenCalled());
+    expect(write.mock.calls[0][0]).toContain('create');
+    expect(write.mock.calls[0][0]).toContain('kim');
+  });
+
   it('헤더 우클릭 시 컬럼 설정 모달이 열린다', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

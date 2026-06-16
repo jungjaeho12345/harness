@@ -142,6 +142,37 @@ describe('useViewController', () => {
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
   });
 
+  it('viewHistory delegates to model.getArticleHistory and returns items', async () => {
+    const histories = [
+      { articleId: 'AKR0', eventType: 'create', actorUserId: 'kim', toStatus: 'RDS' },
+      { articleId: 'AKR0', eventType: 'send', actorUserId: 'lee', fromStatus: 'RDS', toStatus: 'DPS' },
+    ];
+    const { result, model } = setup({ articles: rds(1), histories });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const spy = vi.spyOn(model, 'getArticleHistory');
+    let res;
+    await act(async () => { res = await result.current.viewHistory({ articleId: 'AKR0' }); });
+    expect(spy).toHaveBeenCalledWith('AKR0');
+    expect(res.ok).toBe(true);
+    expect(res.items).toHaveLength(2);
+  });
+
+  it('viewSendHistory delegates to model.getSendHistory (send events only)', async () => {
+    const histories = [
+      { articleId: 'AKR0', eventType: 'create', actorUserId: 'kim', toStatus: 'RDS' },
+      { articleId: 'AKR0', eventType: 'send', actorUserId: 'lee', fromStatus: 'RDS', toStatus: 'DPS' },
+    ];
+    const { result, model } = setup({ articles: rds(1), histories });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const spy = vi.spyOn(model, 'getSendHistory');
+    let res;
+    await act(async () => { res = await result.current.viewSendHistory({ articleId: 'AKR0' }); });
+    expect(spy).toHaveBeenCalledWith('AKR0');
+    expect(res.ok).toBe(true);
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0].eventType).toBe('send');
+  });
+
   it('releaseLock force-unlocks for D/Z after confirm', async () => {
     const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS', lockYN: 'Y' }] }, { role: 'Z' });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
