@@ -5,23 +5,21 @@
 //  - 고침(포털제외)/포털고침: 상태 DPS + 권한 D만 활성(writer.do 편집 진입).
 //  - 삭제요청: 상태 DPS + 권한 D/Z만 활성(approveDelete).
 //  - Lock해제: 잠긴 행(LockYN='Y')에만 나타나고 권한 D/Z만 활성(R은 비활성).
-//  - 이력보기/송고이력보기/번역/매핑/후속·계속기사작성/재송: 표시만(항상 비활성).
+//  - 이력보기/송고이력보기: 읽기 전용 — 모든 기사에서 활성(권한/상태 게이트 없음, 서버가 세션 인증). (step8)
+//  - 후속/계속기사작성: 작성 권한(R/D/Z)에서 활성 — 파생은 새 기사 작성, 상태 게이트 없음. (step9)
+//  - 재송(resend): DPS 기사 + D/Z에서만 활성 — 재송고=데스크 송고 행위, 서버 applyAction이 최종 강제. (step9)
+//    (news.md 명세 부재 — 도출: followUp/continue=R/D/Z, resend=DPS+D/Z. 서버가 최종 권한 게이트.)
+//  - 번역(translate): 세션만 있으면 활성 — 권한/상태 게이트 없음, 서버가 세션 인증·graceful degrade. (step10)
+//  - 매핑(mapping): 세션만 있으면 활성 — 임베드 전용 제한 편집 진입. 권한/상태 게이트 없음(news.md 매핑 권한/상태 제한 명시 없음),
+//    서버 POST :id/lock 게이트가 실제 인가를 강제(DPS는 D 전용). 합리적 도출 — 편집처럼 동작하되 잠금 필요. (step11)
 
-// 비활성(표시만) 항목 — 동작하지 않는다(news.md MVP 제외).
-const INACTIVE_ITEMS = Object.freeze([
-  { key: 'history', label: '이력보기' },
-  { key: 'sendHistory', label: '송고이력보기' },
-  { key: 'translate', label: '번역' },
-  { key: 'mapping', label: '매핑' },
-  { key: 'followUp', label: '후속기사작성' },
-  { key: 'continue', label: '계속기사작성' },
-  { key: 'resend', label: '재송' },
-]);
-
-function inactive(key) {
-  const it = INACTIVE_ITEMS.find((x) => x.key === key);
-  return { key, label: it.label, enabled: false };
-}
+// 활성(읽기 전용) 항목 — 이력은 모든 기사에서 볼 수 있다(서버가 세션 인증 게이트). (step8)
+const HISTORY = Object.freeze({ key: 'history', label: '이력보기', enabled: true });
+const SEND_HISTORY = Object.freeze({ key: 'sendHistory', label: '송고이력보기', enabled: true });
+// 번역 — 세션만 있으면 활성(권한/상태 게이트 없음, 서버가 인증·외부 실패 graceful degrade). (step10)
+const TRANSLATE = Object.freeze({ key: 'translate', label: '번역', enabled: true });
+// 매핑 — 세션만 있으면 활성(권한/상태 게이트 없음 — news.md 제한 명시 없음, 서버 잠금 게이트가 인가 강제). (step11)
+const MAPPING = Object.freeze({ key: 'mapping', label: '매핑', enabled: true });
 
 // 메뉴별 항목 구성. 각 항목 {key, label, enabled}.
 export function buildContextMenuItems(menu, article = {}, identity = {}) {
@@ -31,6 +29,10 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   const canRevise = isDPS && role === 'D'; // 고침/포털고침: DPS + D
   const canDelete = isDPS && (role === 'D' || role === 'Z'); // 삭제요청: DPS + D/Z
   const canUnlock = role === 'D' || role === 'Z'; // Lock해제: D/Z
+  // news.md 명세 부재 — 도출: 후속/계속기사작성은 작성 권한(R/D/Z)에서 활성(파생=새 기사 작성, 상태 게이트 없음).
+  const canWrite = role === 'R' || role === 'D' || role === 'Z';
+  // news.md 명세 부재 — 도출: 재송은 DPS + D/Z에서만 활성(재송고=데스크 송고). 서버 applyAction이 최종 강제.
+  const canResend = isDPS && (role === 'D' || role === 'Z');
 
   const detail = { key: 'detail', label: '상세보기', enabled: true };
   const copyBody = { key: 'copyBody', label: '본문복사', enabled: true };
@@ -40,23 +42,23 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   let items;
   if (menu === 'deskUnsent') {
     // 데스크 미송고: 편집 / 상세보기 / 이력보기 / 본문복사 / 제목만복사.
-    items = [edit, detail, inactive('history'), copyBody, copyTitle];
+    items = [edit, detail, HISTORY, copyBody, copyTitle];
   } else {
     // 부서별 작성·개인별 수정·부서별 송고 공통 항목.
     items = [
       detail,
-      inactive('history'),
-      inactive('sendHistory'),
+      HISTORY,
+      SEND_HISTORY,
       copyBody,
       copyTitle,
-      inactive('translate'),
-      inactive('mapping'),
-      inactive('followUp'),
-      inactive('continue'),
+      TRANSLATE,
+      MAPPING,
+      { key: 'followUp', label: '후속기사작성', enabled: canWrite },
+      { key: 'continue', label: '계속기사작성', enabled: canWrite },
       { key: 'reviseNoPortal', label: '고침(포털제외)', enabled: canRevise },
       { key: 'revisePortal', label: '포털고침', enabled: canRevise },
       { key: 'requestDelete', label: '삭제요청', enabled: canDelete },
-      inactive('resend'),
+      { key: 'resend', label: '재송', enabled: canResend },
     ];
     // 부서별 송고에는 편집 항목이 추가된다(news.md).
     if (menu === 'deptSend') items.push(edit);

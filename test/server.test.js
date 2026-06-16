@@ -22,11 +22,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-async function start({ fetchFn } = {}) {
+async function start({ fetchFn, env = ENV } = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService, env: ENV, fetchFn });
+  const controllers = createControllers(db, { sessionService, env, fetchFn });
   const app = createApp({ controllers, sessionService });
   const server = app.listen(0);
   await once(server, 'listening');
@@ -366,5 +366,231 @@ test('GET /api/media/search: 세션 게이트 + 이미지 검색 위임(주입 f
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.items, [{ id: 'img-1' }]);
     assert.match(calledUrl, /customsearch/);
+  } finally { await ctx.close(); }
+});
+
+test('derive: continue는 새 articleId·RDS를 반환하고 author는 세션 사용자로 stamp(body author 무시)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP, author: '원작자' },
+    })).body;
+
+    // body로 author='해커'·role='Z'·status를 보내도 무시되고 세션 사용자가 author가 되어야 한다.
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, {
+      sid, body: { mode: 'continue', author: '해커', role: 'Z', status: 'DPS', articleId: 'spoof' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.ok(r.body.articleId);
+    assert.notEqual(r.body.articleId, articleId);
+
+    // 새 기사 조회: status RDS, author는 세션 사용자(김기자), 본문 복사(continue).
+    const got = (await api(ctx.base, 'GET', `/api/articles/${r.body.articleId}`, { sid })).body;
+    assert.equal(got.contents.status, 'RDS');
+    assert.equal(got.contents.author, '김기자');
+    assert.equal(got.article.markupVersion, END_MARKUP);
+  } finally { await ctx.close(); }
+});
+
+test('derive: followUp은 본문 빈값으로 새 기사를 만든다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'followUp' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.notEqual(r.body.articleId, articleId);
+
+    const got = (await api(ctx.base, 'GET', `/api/articles/${r.body.articleId}`, { sid })).body;
+    assert.equal(got.contents.status, 'RDS');
+    assert.equal(got.article.markupVersion, '');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 원본 기사는 파생 후에도 불변이다(DB 비파괴)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP, author: '원작자' },
+    })).body;
+
+    const before = (await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'continue' } });
+    const after = (await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid })).body;
+
+    assert.deepEqual(after.article, before.article);
+    assert.deepEqual(after.contents, before.contents);
+  } finally { await ctx.close(); }
+});
+
+test('derive: 미인증은 401, 정의되지 않은 권한은 403', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'ghost', name: '유령', role: 'X', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const unauth = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { body: { mode: 'continue' } });
+    assert.equal(unauth.status, 401);
+    assert.equal(unauth.body.reason, 'unauthenticated');
+
+    const ghostSid = (await login(ctx.base, 'ghost', 'pw')).sessionId;
+    const forbidden = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, {
+      sid: ghostSid, body: { mode: 'continue' },
+    });
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.body.reason, 'forbidden');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 알 수 없는 mode는 400(unknown-mode), 원본 없으면 404(not-found)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const bad = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'translate' } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.reason, 'unknown-mode');
+
+    const missing = await api(ctx.base, 'POST', '/api/articles/NOPE/derive', { sid, body: { mode: 'continue' } });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.reason, 'not-found');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 성공 시 SSE change(create) 무효화 신호가 발생한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const ac = new AbortController();
+    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const reader = res.body.getReader();
+    await reader.read(); // ready 프레임 소비.
+
+    const derived = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'continue' } });
+    assert.equal(derived.status, 200);
+
+    const { value } = await reader.read();
+    const frame = Buffer.from(value).toString('utf8');
+    assert.match(frame, /event: change/);
+    assert.match(frame, /"kind":"create"/);
+    ac.abort();
+  } finally { await ctx.close(); }
+});
+
+// --- 번역 라우트 (POST /api/articles/:id/translate) ---
+// 형태 (A) 확정: 클라가 보낸 text가 아니라 서버가 DB에서 본문을 조회해 번역한다.
+test('translate: 미인증은 401 (POST /api/articles/:id/translate)', async () => {
+  const ctx = await start();
+  try {
+    const r = await api(ctx.base, 'POST', '/api/articles/NOPE/translate', { body: { targetLang: 'en' } });
+    assert.equal(r.status, 401);
+    assert.equal(r.body.reason, 'unauthenticated');
+  } finally { await ctx.close(); }
+});
+
+test('translate: 세션 게이트 후 서버가 DB 본문을 조회해 번역 위임(주입 fetchFn)', async () => {
+  // 가짜 Google v2 응답 — q 파라미터로 전송된 번역 대상 텍스트를 캡처한다.
+  let calledUrl;
+  const fetchFn = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ data: { translations: [{ translatedText: 'TITLE\nBODY', detectedSourceLanguage: 'ko' }] } }) };
+  };
+  const env = { ...ENV, GOOGLE_TRANSLATE_API_KEY: 'tk' };
+  const ctx = await start({ fetchFn, env });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, { sid, body: { targetLang: 'en' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.translatedText, 'TITLE\nBODY');
+    // 번역 대상 텍스트는 서버가 기사 본문에서 추출한다(클라가 보낸 text가 아님).
+    // END_MARKUP 블록 텍스트(제목/본문/(끝))가 q 파라미터로 전송되어야 한다.
+    assert.match(decodeURIComponent(calledUrl), /본문/);
+    assert.match(calledUrl, /target=en/);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 키 누락 환경에서도 500이 아니라 graceful(no-key, 원문) 응답을 그대로 내려준다', async () => {
+  // 기본 ENV에는 GOOGLE_TRANSLATE_API_KEY가 없다 — fetch 미호출 graceful degrade.
+  let fetched = false;
+  const fetchFn = async () => { fetched = true; return { ok: true, json: async () => ({}) }; };
+  const ctx = await start({ fetchFn });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, { sid, body: { targetLang: 'ko' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, false);
+    assert.equal(r.body.reason, 'no-key');
+    // 원문(서버가 추출한 본문)을 그대로 폴백으로 돌려준다.
+    assert.match(r.body.translatedText, /본문/);
+    assert.equal(fetched, false);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 클라가 보낸 text는 무시되고 서버 DB 본문을 신뢰한다(형태 A)', async () => {
+  let calledUrl;
+  const fetchFn = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ data: { translations: [{ translatedText: 'OK' }] } }) };
+  };
+  const env = { ...ENV, GOOGLE_TRANSLATE_API_KEY: 'tk' };
+  const ctx = await start({ fetchFn, env });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    // 악성 text를 보내도 서버는 DB 본문만 번역에 사용한다.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, {
+      sid, body: { targetLang: 'en', text: '위조된본문스파이' },
+    });
+    assert.doesNotMatch(decodeURIComponent(calledUrl), /위조된본문스파이/);
+    assert.match(decodeURIComponent(calledUrl), /본문/);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 존재하지 않는 기사는 404(not-found)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const r = await api(ctx.base, 'POST', '/api/articles/NOPE/translate', { sid, body: { targetLang: 'ko' } });
+    assert.equal(r.status, 404);
+    assert.equal(r.body.reason, 'not-found');
   } finally { await ctx.close(); }
 });

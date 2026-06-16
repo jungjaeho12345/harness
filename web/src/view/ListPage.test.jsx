@@ -93,6 +93,122 @@ describe('ListPage', () => {
     expect(force).toHaveBeenCalledWith('AKR5');
   });
 
+  it('우클릭 이력보기 → 이력 모달에 행을 렌더한다', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 't', status: 'RDS', lockYN: 'N' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', actorUserId: '김기자', createdAt: '2026-06-14T03:09:06Z' },
+        ],
+      },
+    };
+    const { container } = setup(seed);
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '이력보기' });
+    expect(dialog).toHaveTextContent('2026-06-14 03:09');
+    expect(dialog).toHaveTextContent('김기자');
+  });
+
+  it('우클릭 이력보기 → 이력이 없으면 안내를 보여준다', async () => {
+    const { container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'RDS', lockYN: 'N' }] });
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '이력보기' });
+    expect(dialog).toHaveTextContent('이력이 없습니다');
+  });
+
+  it('우클릭 송고이력보기 → sendOnly로 조회한다', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { model, container } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '송고이력보기' }));
+    await screen.findByRole('dialog', { name: '송고이력보기' });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
+  });
+
+  it('우클릭 후속기사작성 → deriveArticle(followUp) 후 새 기사로 편집 진입한다', async () => {
+    const navigate = vi.fn();
+    const model = createFakeModel({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
+    const derive = vi.spyOn(model, 'deriveArticle');
+    const { container } = render(
+      <AppContext.Provider value={{ model, identity: { userId: 'kim', name: '김기자', role: 'D', department: '정치' }, navigate, replace: vi.fn(), setSession: vi.fn() }}>
+        <ListPage />
+      </AppContext.Provider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '후속기사작성' }));
+    await waitFor(() => expect(derive).toHaveBeenCalledWith('AKR9', 'followUp'));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('writer.do', expect.objectContaining({ articleId: expect.not.stringMatching('AKR9') })));
+  });
+
+  it('우클릭 재송(DPS+D/Z) → 확인 후 send 액션을 호출한다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model, container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '재송' }));
+    expect(apply).toHaveBeenCalledWith('AKR9', 'send');
+  });
+
+  it('우클릭 번역 → 번역 결과 모달에 번역문을 보여준다', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 'Hello', status: 'RDS', lockYN: 'N' }],
+      translations: { AKR9: '안녕하세요' },
+    };
+    const { container } = setup(seed);
+    // 번역 항목은 부서별 작성/송고·개인별 메뉴에 노출된다(deskUnsent 제외).
+    await userEvent.click(screen.getByRole('button', { name: '부서별 작성' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '번역' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '번역' });
+    expect(dialog).toHaveTextContent('안녕하세요');
+  });
+
+  it('우클릭 번역 → 키 없음(graceful)이면 원문과 안내를 보여준다(throw 없음)', async () => {
+    const { model, container } = setup({ articles: [{ articleId: 'AKR9', title: 'orig', status: 'RDS', lockYN: 'N' }] });
+    vi.spyOn(model, 'translate').mockResolvedValue({ ok: false, reason: 'no-key', translatedText: 'orig' });
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 작성' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '번역' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '번역' });
+    expect(dialog).toHaveTextContent('orig'); // 원문 표시
+    expect(dialog).toHaveTextContent('번역을 사용할 수 없습니다'); // graceful 안내
+  });
+
   it('헤더 우클릭 시 컬럼 설정 모달이 열린다', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

@@ -22,6 +22,9 @@ function order(set) {
 }
 
 export function submitButtons({ mode, status, role, articleId } = {}) {
+  // 매핑(mapping) — 임베드 전용 제한 편집. 상태 전이 없음 → 송고/보류/KILL 액션바를 노출하지 않는다(step11).
+  if (mode === 'mapping') return [];
+
   // 신규(미저장, 기사아이디 없음) — 권한 무관 송고·보류만(KILL 숨김).
   if (!articleId || mode === 'new') {
     return order(['send', 'hold']);

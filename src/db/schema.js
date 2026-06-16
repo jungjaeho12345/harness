@@ -54,6 +54,16 @@ const SCHEMA = {
     ['attachmentFile', 'VARCHAR'],
     ['referenceFile', 'VARCHAR'],
   ],
+  ArticleHistory: [
+    ['id', 'INTEGER PRIMARY KEY'],
+    ['articleId', 'VARCHAR'],
+    ['eventType', 'VARCHAR'],
+    ['action', 'VARCHAR'],
+    ['fromStatus', 'VARCHAR'],
+    ['toStatus', 'VARCHAR'],
+    ['actorUserId', 'VARCHAR'],
+    ['createdAt', 'VARCHAR'],
+  ],
   ReceiverConfig: [
     ['id', 'INTEGER PRIMARY KEY'],
     ['sourceId', 'VARCHAR'],

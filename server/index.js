@@ -85,6 +85,7 @@ export function enforceHttps(env = process.env.NODE_ENV) {
   };
 }
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
+const DERIVE_MODE_SET = new Set(['followUp', 'continue']);
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
 const FORBIDDEN = { ok: false, reason: 'forbidden' };
@@ -103,6 +104,7 @@ const STATUS_BY_REASON = {
   'unknown-role': 403,
   'no-end-marker': 400,
   'unknown-action': 400,
+  'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
 };
@@ -376,6 +378,21 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // 이력 조회 — 편집/생애주기 이벤트 로그. 인증 세션 게이트, 읽기 전용(DB 비파괴).
+  // sendOnly(=1/type=send)면 송고 이력만(필터는 step1 서비스가 강제). 이력 없음은 빈 배열(404 아님).
+  // controllers.article.queryHistory에 위임만 한다(ADR-006). /search·:id 뒤, 하위 라우트 그룹.
+  app.get('/api/articles/:id/history', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const flag = req.query.sendOnly;
+      const sendOnly = (flag !== undefined && flag !== '0' && flag !== 'false')
+        || req.query.type === 'send';
+      const items = controllers.article.queryHistory(req.params.id, { sendOnly });
+      return res.json({ ok: true, items });
+    } catch (e) { next(e); }
+  });
+
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다. 신규는 항상 RDS로 저장(서비스).
   app.post('/api/articles', (req, res, next) => {
     try {
@@ -404,6 +421,43 @@ export function createApp({
       if (!r.ok) return fail(res, r, 409);
       app.notifyChange('status');
       return res.json(r);
+    } catch (e) { next(e); }
+  });
+
+  // 후속/계속기사작성 — 원본을 바탕으로 "새 기사"를 만든다(신규 작성과 동일 권한 R/D/Z).
+  // 얇은 transport(ADR-006): 세션 게이트 → author를 세션 사용자로 stamp → controllers.article.derive 위임 → shape 매핑.
+  // 파생 로직(필드 복사·articleId 발급·원본 비변경)은 step3 서비스가 강제한다 — 여기서 재구현하지 않는다.
+  // CRITICAL(ADR-004): author는 세션에서 stamp하고 클라가 보낸 author/role/status/articleId는 무시한다.
+  app.post('/api/articles/:id/derive', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      if (!ROLES.has(me.role)) return res.status(403).json(FORBIDDEN);
+      const mode = req.body?.mode;
+      if (!DERIVE_MODE_SET.has(mode)) return res.status(400).json({ ok: false, reason: 'unknown-mode' });
+      // author는 세션 사용자(부서 등 나머지 공통정보는 서비스가 원본에서 복사). 클라 author/role/status/articleId 무시.
+      const r = controllers.article.derive(req.params.id, mode, { author: me.name ?? me.userId });
+      if (!r.ok) return fail(res, r);
+      app.notifyChange('create');
+      return res.json(r);
+    } catch (e) { next(e); }
+  });
+
+  // 번역 — 기사 본문을 외부 번역 API로 번역한다(형태 (A) 확정, ADR-004 신뢰 경계).
+  // 얇은 transport(ADR-006): 세션 게이트 → 서버가 DB에서 본문 조회 → controllers.translation.run 위임 → graceful 객체 그대로 반환.
+  // CRITICAL: 번역 대상 본문은 서버 DB에서만 조회한다 — 클라가 보낸 text는 신뢰하지 않는다.
+  // graceful degrade(news.md): 키 누락/외부 실패는 500으로 감싸지 않고 서비스가 준 객체를 그대로 내려준다.
+  // 읽기 전용 — DB를 변경하지 않는다. /search·:id 뒤, 하위 라우트 그룹.
+  app.post('/api/articles/:id/translate', async (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const found = controllers.article.getById(req.params.id);
+      if (!found) return res.status(404).json({ ok: false, reason: 'not-found' });
+      const text = articleToText(found);
+      const targetLang = req.body?.targetLang ?? 'ko';
+      const r = await controllers.translation.run(text, targetLang);
+      return res.json(r); // graceful 객체 그대로(키 누락/실패도 500 아님).
     } catch (e) { next(e); }
   });
 

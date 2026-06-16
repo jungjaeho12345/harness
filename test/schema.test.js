@@ -89,6 +89,50 @@ test('createSchema: ReceiverConfig 컬럼', () => {
   for (const c of expected) assert.ok(cols.includes(c), `ReceiverConfig.${c}`);
 });
 
+test('createSchema: ArticleHistory 테이블을 생성한다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('ArticleHistory'), 'ArticleHistory 테이블이 있어야 함');
+  assert.ok(columns(db, 'ArticleHistory').length > 0, 'ArticleHistory 컬럼이 비어 있지 않아야 함');
+});
+
+test('createSchema: ArticleHistory 컬럼 (이벤트 로그)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'ArticleHistory');
+  const expected = [
+    'id', 'articleId', 'eventType', 'action',
+    'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
+  ];
+  for (const c of expected) assert.ok(cols.includes(c), `ArticleHistory.${c}`);
+});
+
+test('createSchema: ArticleHistory.id 는 INTEGER PRIMARY KEY (자동 증가 ROWID alias)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt) VALUES ('a1', 'edit', '2026-06-16T00:00:00Z')",
+  ).run();
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt) VALUES ('a1', 'status', '2026-06-16T00:01:00Z')",
+  ).run();
+  const ids = db.prepare('SELECT id FROM ArticleHistory ORDER BY id').all().map((r) => r.id);
+  assert.deepEqual(ids, [1, 2], 'id가 자동 증가해야 함');
+});
+
+test('createSchema: ArticleHistory — markupVersion 본문 스냅샷 컬럼이 없다 (범위 밖)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  assert.ok(
+    !columns(db, 'ArticleHistory').includes('markupVersion'),
+    'ArticleHistory에 markupVersion 컬럼이 없어야 함',
+  );
+});
+
 test('createSchema: 멱등 — 2회 호출해도 오류 없이 데이터를 보존한다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
@@ -135,7 +179,7 @@ test('createSchema: 보조 인덱스를 만들지 않는다 (PK 자동 인덱스
 test('createSchema: FK 제약을 선언하지 않는다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
-  for (const t of ['Article', 'Contents', 'ReceiverConfig', 'User']) {
+  for (const t of ['Article', 'ArticleHistory', 'Contents', 'ReceiverConfig', 'User']) {
     const fks = db.prepare(`PRAGMA foreign_key_list(${t})`).all();
     assert.equal(fks.length, 0, `${t}에 FK가 없어야 함`);
   }
