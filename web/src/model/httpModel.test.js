@@ -101,6 +101,28 @@ describe('createHttpModel', () => {
     expect(r.article.articleId).toBe('AKR1');
   });
 
+  it('getArticleHistory GETs /api/articles/:id/history and returns { ok, items }', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ eventType: 'create' }] }));
+    const model = createHttpModel({ base: BASE });
+    const r = await model.getArticleHistory('AKR1');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/history`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(r).toEqual({ ok: true, items: [{ eventType: 'create' }] });
+  });
+
+  it('getSendHistory GETs /api/articles/:id/send-history', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ eventType: 'send' }] }));
+    const model = createHttpModel({ base: BASE });
+    const r = await model.getSendHistory('AKR1');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/send-history`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(r.items[0].eventType).toBe('send');
+  });
+
   it('createUser POSTs /api/users and updateUser PUTs /api/users/:id', async () => {
     const model = createHttpModel({ base: BASE });
 

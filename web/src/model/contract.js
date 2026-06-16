@@ -21,6 +21,8 @@ export const MODEL_KEYS = Object.freeze([
   'queryReceiverConfig',
   'createReceiverConfig',
   'deleteReceiverConfig',
+  'getArticleHistory',
+  'getSendHistory',
   'subscribe',
 ]);
 

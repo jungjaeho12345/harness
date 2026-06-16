@@ -3,11 +3,11 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 19 contract methods', () => {
+  it('is frozen and lists the 21 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(19);
-    // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
-    for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
+    expect(MODEL_KEYS).toHaveLength(21);
+    // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회) + step1-history가 추가하는 이력 조회 2개.
+    for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'getArticleHistory', 'getSendHistory', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
     }
   });
@@ -75,5 +75,41 @@ describe('createFakeModel', () => {
     const fake = createFakeModel({ users: [{ userId: 'a', password: 'secret' }] });
     const { items } = await fake.queryUsers();
     expect(items[0].password).toBeUndefined();
+  });
+
+  it('getArticleHistory returns the seeded history for an article in { ok, items } shape', async () => {
+    const fake = createFakeModel({
+      histories: [
+        { articleId: 'AKR1', eventType: 'create', toStatus: 'RDS' },
+        { articleId: 'AKR1', eventType: 'send', actorRole: 'D' },
+        { articleId: 'AKR2', eventType: 'edit' },
+      ],
+    });
+    const r = await fake.getArticleHistory('AKR1');
+    expect(r.ok).toBe(true);
+    expect(r.items).toHaveLength(2);
+    expect(r.items.map((h) => h.eventType)).toEqual(['create', 'send']);
+  });
+
+  it('getArticleHistory returns an empty list when no history is seeded', async () => {
+    const fake = createFakeModel();
+    const r = await fake.getArticleHistory('AKRX');
+    expect(r).toEqual({ ok: true, items: [] });
+  });
+
+  it('getSendHistory returns only send events for the article', async () => {
+    const fake = createFakeModel({
+      histories: [
+        { articleId: 'AKR1', eventType: 'create' },
+        { articleId: 'AKR1', eventType: 'send' },
+        { articleId: 'AKR1', eventType: 'edit' },
+        { articleId: 'AKR1', eventType: 'send' },
+        { articleId: 'AKR2', eventType: 'send' },
+      ],
+    });
+    const r = await fake.getSendHistory('AKR1');
+    expect(r.ok).toBe(true);
+    expect(r.items).toHaveLength(2);
+    expect(r.items.every((h) => h.eventType === 'send')).toBe(true);
   });
 });

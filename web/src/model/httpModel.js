@@ -92,6 +92,13 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     searchArticles(q) {
       return request('/api/articles/search', { query: { q } });
     },
+    // 이력 조회(읽기 전용) — step3 라우트와 1:1, 응답 { ok, items } 그대로 반환.
+    getArticleHistory(articleId) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/history`);
+    },
+    getSendHistory(articleId) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/send-history`);
+    },
     searchMedia(query, type) {
       return request('/api/media/search', { query: { q: query, type } });
     },

@@ -14,6 +14,7 @@ export function createFakeModel(seed = {}) {
   const articles = [...(seed.articles ?? [])];
   const receiverConfigs = [...(seed.receiverConfigs ?? [])];
   const mediaItems = [...(seed.mediaItems ?? [])];
+  const histories = [...(seed.histories ?? [])];
   const listeners = new Set();
   let session = null; // { sessionId, user }
   let seq = 1;
@@ -70,6 +71,15 @@ export function createFakeModel(seed = {}) {
       const needle = String(q);
       const items = articles.filter((a) => (a.title ?? '').includes(needle));
       return { ok: true, items: items.map((a) => ({ ...a })) };
+    },
+    // 이력 조회(읽기 전용) — 서버 라우트와 같은 shape({ ok, items }). seed.histories에서 해당 기사 행만 비춘다.
+    getArticleHistory(articleId) {
+      const items = histories.filter((h) => h.articleId === articleId);
+      return { ok: true, items: items.map((h) => ({ ...h })) };
+    },
+    getSendHistory(articleId) {
+      const items = histories.filter((h) => h.articleId === articleId && h.eventType === 'send');
+      return { ok: true, items: items.map((h) => ({ ...h })) };
     },
     searchMedia(query, type) {
       const items = mediaItems.filter((m) => !type || m.type === type);
