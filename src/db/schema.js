@@ -64,6 +64,17 @@ const SCHEMA = {
     ['active', "VARCHAR DEFAULT 'Y'"],
     ['createdAt', 'VARCHAR'],
   ],
+  ArticleHistory: [
+    ['id', 'INTEGER PRIMARY KEY'],
+    ['articleId', 'VARCHAR'],
+    ['eventType', 'VARCHAR'],
+    ['actorUserId', 'VARCHAR'],
+    ['actorRole', 'VARCHAR'],
+    ['fromStatus', 'VARCHAR'],
+    ['toStatus', 'VARCHAR'],
+    ['title', 'VARCHAR'],
+    ['createdAt', 'VARCHAR'],
+  ],
 };
 
 // 테이블/컬럼을 생성한다. 이미 있으면 누락 컬럼만 additive하게 추가한다.

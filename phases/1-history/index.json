@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "1-history",
   "steps": [
-    { "step": 0, "name": "history-schema", "status": "pending" },
+    { "step": 0, "name": "history-schema", "status": "completed", "summary": "SCHEMA에 ArticleHistory 테이블 additive 추가 (id INTEGER PK 자동증가 + articleId/eventType/actorUserId/actorRole/fromStatus/toStatus/title/createdAt VARCHAR 8개). createSchema 본문 무변경(기존 멱등 루프가 자동 처리), 기존 4개 테이블 정의 무변경. schema.test.js에 컬럼·PK 자동증가·멱등 테스트 추가." },
     { "step": 1, "name": "history-model", "status": "pending" },
     { "step": 2, "name": "history-service-wiring", "status": "pending" },
     { "step": 3, "name": "history-controller-routes", "status": "pending" },
