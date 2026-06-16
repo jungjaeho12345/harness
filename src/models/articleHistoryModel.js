@@ -27,13 +27,13 @@ export function createArticleHistoryModel(db) {
 
   function findByArticleId(articleId) {
     return db.prepare(
-      'SELECT * FROM ArticleHistory WHERE articleId = ? ORDER BY createdAt ASC',
+      'SELECT * FROM ArticleHistory WHERE articleId = ? ORDER BY createdAt ASC, id ASC',
     ).all(articleId);
   }
 
   function findSendByArticleId(articleId) {
     return db.prepare(
-      "SELECT * FROM ArticleHistory WHERE articleId = ? AND eventType = 'send' ORDER BY createdAt ASC",
+      "SELECT * FROM ArticleHistory WHERE articleId = ? AND eventType = 'send' ORDER BY createdAt ASC, id ASC",
     ).all(articleId);
   }
 

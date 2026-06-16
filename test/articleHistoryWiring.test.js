@@ -163,7 +163,7 @@ test('하위호환: historyModel 미주입 시 create/update/applyAction은 기�
   assert.deepEqual(service.getSendHistory(articleId), []);
 });
 
-test('하위호향: articleModel에 historyModel 미주입이면 history 인자는 무시되고 기사만 저장', () => {
+test('하위호환: articleModel에 historyModel 미주입이면 history 인자는 무시되고 기사만 저장', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const articleModel = createArticleModel(db); // historyModel 미주입
