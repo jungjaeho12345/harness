@@ -2,7 +2,7 @@
   "project": "기사 작성기 (article production system)",
   "phase": "1-menu-actions",
   "steps": [
-    { "step": 0, "name": "history-schema", "status": "pending" },
+    { "step": 0, "name": "history-schema", "status": "completed", "summary": "src/db/schema.js SCHEMA에 additive ArticleHistory 테이블 추가 (id INTEGER PK / articleId / eventType / action / fromStatus / toStatus / actorUserId / createdAt VARCHAR), 멱등 마이그레이션·백필/보조인덱스/FK 없음. test/schema.test.js에 존재·컬럼·자동증가 PK·markupVersion 부재·FK 부재 테스트 추가." },
     { "step": 1, "name": "history-service", "status": "pending" },
     { "step": 2, "name": "history-http", "status": "pending" },
     { "step": 3, "name": "derive-article-service", "status": "pending" },
