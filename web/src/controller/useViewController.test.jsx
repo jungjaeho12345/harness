@@ -127,6 +127,32 @@ describe('useViewController', () => {
     expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('portalRevise');
   });
 
+  it('mapArticle stashes a pendingEdit {mode:mapping} and navigates with articleId (edit channel)', async () => {
+    // 매핑은 기존 기사 편집(잠금 필요) — 편집 채널(PENDING_EDIT_KEY)에 싣고 articleId 포함 navigate.
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const article = { articleId: 'AKR0', title: 't0' };
+    act(() => { result.current.mapArticle(article); });
+
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
+    expect(pending).toEqual({ article, mode: 'mapping' });
+    // 신규 채널(후속/계속)에는 쓰지 않는다.
+    expect(sessionStorage.getItem(PENDING_NEW_KEY)).toBeNull();
+  });
+
+  it('mapArticle enters without a permission gate or confirm even for reporters', async () => {
+    // 매핑은 일반 편집 진입 — 권한 게이트·confirm 없이 진입(서버 lock/PUT이 강제).
+    const { result, navigate } = setup({ articles: rds(1) }, { role: 'R' });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const confirmSpy = vi.spyOn(globalThis, 'confirm');
+    act(() => { result.current.mapArticle({ articleId: 'AKR0' }); });
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
+    expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('mapping');
+  });
+
   it('followUpArticle stashes a pendingNew {mode:followUp} and navigates without articleId', async () => {
     const { result, navigate } = setup({ articles: rds(1) });
     await waitFor(() => expect(result.current.items).toHaveLength(1));

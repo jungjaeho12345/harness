@@ -115,6 +115,11 @@ export function useViewController() {
     [enterEditor],
   );
 
+  // 매핑 진입 — 기존 기사에 임베드를 매핑하는 편집이다(신규 작성 아님). 고침/포털고침과 동일하게
+  // 편집 채널(PENDING_EDIT_KEY)에 mode 'mapping'을 싣고 articleId 포함으로 이동한다 — writer가 잠금을 획득한다.
+  // 일반 편집 진입이라 권한 게이트·confirm을 두지 않는다(서버 lock/PUT이 권한·동시성을 강제, ADR-004).
+  const mapArticle = useCallback((article) => enterEditor(article, 'mapping'), [enterEditor]);
+
   // 후속/계속 진입 — 원본에서 파생한 신규 기사 작성이다(편집 아님). 원본 행·mode를 신규 채널(PENDING_NEW_KEY)에
   // 싣고 writer.do로 이동하되 navigate에 articleId를 싣지 않는다 — 새 기사 탭 주소창엔 기사아이디가 없어야 하고
   // (news.md), 싣으면 writer가 편집 탭으로 오인해 원본을 잠근다. 본문 재조회·필드 복사는 writer(openFromSource) 책임.
@@ -177,7 +182,7 @@ export function useViewController() {
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
-    editArticle, reviseArticle, releaseLock, requestDelete, resendArticle,
+    editArticle, reviseArticle, mapArticle, releaseLock, requestDelete, resendArticle,
     followUpArticle, continueArticle,
     viewHistory, viewSendHistory,
   };
