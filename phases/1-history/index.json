@@ -1,0 +1,12 @@
+{
+  "project": "기사 작성기",
+  "phase": "1-history",
+  "steps": [
+    { "step": 0, "name": "history-schema", "status": "pending" },
+    { "step": 1, "name": "history-model", "status": "pending" },
+    { "step": 2, "name": "history-service-wiring", "status": "pending" },
+    { "step": 3, "name": "history-controller-routes", "status": "pending" },
+    { "step": 4, "name": "history-model-contract", "status": "pending" },
+    { "step": 5, "name": "history-view-wiring", "status": "pending" }
+  ]
+}
