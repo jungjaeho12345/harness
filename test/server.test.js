@@ -321,7 +321,10 @@ test('GET /api/stream: ?session= 쿼리 폴백은 유지된다(dev cross-origin)
     const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
 
     const ac = new AbortController();
-    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const res = await fetch(`${ctx.base}/api/stream`, {
+      headers: { 'x-session-id': sid },
+      signal: ac.signal,
+    });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/event-stream/);
     const { value } = await res.body.getReader().read();

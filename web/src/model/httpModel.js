@@ -41,7 +41,7 @@ function buildQuery(params = {}) {
 }
 
 export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3001' } = {}) {
-  // 모든 REST 호출의 단일 통로 — 세션 헤더 자동 첨부 + JSON 직렬화/역직렬화.
+  // 모든 REST 호출의 단일 통로 — 쿠키 첨부(credentials:'include') + JSON 직렬화/역직렬화.
   async function request(path, { method = 'GET', body, query } = {}) {
     const headers = {};
     const sessionId = readSessionId();
@@ -61,17 +61,16 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
 
   return {
     // --- 인증 / 세션 ---
-    async login(userId, password) {
-      const result = await request('/api/login', { method: 'POST', body: { userId, password } });
-      if (result?.ok && result.sessionId) writeSessionId(result.sessionId);
-      return result;
+    // 로그인 성공 시 서버가 Set-Cookie(yh.sid)로 세션을 발급한다. 프론트는 result.user만 상위로 흘리고
+    // sessionId는 저장하지 않는다(쿠키가 보유).
+    login(userId, password) {
+      return request('/api/login', { method: 'POST', body: { userId, password } });
     },
-    async logout() {
-      const result = await request('/api/logout', { method: 'POST' });
-      writeSessionId(null);
-      return result;
+    // 서버가 세션 무효화 + clearCookie로 처리한다. 프론트가 따로 토큰을 지울 것이 없다.
+    logout() {
+      return request('/api/logout', { method: 'POST' });
     },
-    // F5 복원 — 보관된 sessionId 헤더로 서버에 신원을 묻는다. 세션 없으면 throw가 아니라
+    // F5 복원 — 쿠키(credentials:'include')로 서버에 신원을 묻는다. 세션 없으면 throw가 아니라
     // 비로그인 응답({ ok:false, reason:'unauthenticated' })을 그대로 돌려준다.
     restoreSession() {
       return request('/api/session');

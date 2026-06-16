@@ -18,7 +18,72 @@ import { createControllers } from '../src/controllers/index.js';
 import { createFtpWatcher } from './ftpWatcher.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 const ROLES = new Set(['R', 'D', 'Z']);
+
+// 세션 쿠키 transport (security-hardening step0).
+// 외부 의존성 최소화(ADR 철학) — cookie-parser 추가 대신 Cookie 헤더를 직접 파싱한다.
+export const SESSION_COOKIE_NAME = 'yh.sid';
+
+// 쿠키 옵션 빌더 — sameSite/secure는 env로 분기한다.
+// CRITICAL(cross-site): SPA(:5173)와 API(:3001)는 다른 origin = cross-site다(ADR-001).
+// 브라우저는 SameSite=Strict/Lax 쿠키를 cross-site fetch/EventSource에 첨부하지 않으므로,
+// 프로덕션(https)은 SameSite=None+Secure로 cross-site 전송을 허용한다.
+// 로컬/테스트(http)는 Secure를 켤 수 없고 SameSite=None은 Secure 없이 브라우저가 거부하므로
+// SameSite=Lax(Secure 없음)로 둔다(로컬은 동일 머신/프록시 운용·서버 테스트는 직접 Cookie 헤더).
+// 만료의 단일 진실은 서버 세션 스토어(sessionService)이며 maxAge는 보조일 뿐이다.
+export function sessionCookieOptions(env = process.env.NODE_ENV) {
+  const isProd = env === 'production';
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: ONE_HOUR_MS,
+    path: '/',
+  };
+}
+
+// Cookie 헤더 파서 — "a=1; b=2" → { a: '1', b: '2' }. 값은 첫 '=' 기준으로 분리.
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    if (!k) continue;
+    const raw = part.slice(idx + 1).trim();
+    // 무관한 쿠키 하나라도 잘못된 퍼센트 인코딩(예: %zz)이면 decodeURIComponent가
+    // URIError를 던진다 — 클라이언트 제어 입력이므로 500이 아니라 원본값으로 폴백한다
+    // (세션 sid는 hex라 디코딩 불필요, 인증 실패는 401로 수렴).
+    try {
+      out[k] = decodeURIComponent(raw);
+    } catch {
+      out[k] = raw;
+    }
+  }
+  return out;
+}
+// HSTS max-age — 2년(초). HSTS는 https 응답에만 유효하므로 프로덕션 https 보장과 함께만 의미가 있다.
+const HSTS_MAX_AGE_SEC = 63072000;
+
+// HTTPS 강제 미들웨어 빌더 (security-hardening step1).
+// env로 분기한다 — 프로덕션이 아니면 no-op(로컬/테스트는 http로 띄우므로 강제가 꺼져야 한다).
+// 프로덕션: TLS 종단(리버스 프록시) 뒤에서 X-Forwarded-Proto/req.secure로 평문 여부를 판정해
+//   동일 경로의 https로 308 리다이렉트한다. 308은 메서드·바디를 보존하므로 GET/비-GET 모두 안전하다
+//   (301/302는 POST를 GET으로 바꿔 바디를 잃을 수 있다). trust proxy=1 신뢰는 createApp에서 설정한다.
+export function enforceHttps(env = process.env.NODE_ENV) {
+  if (env !== 'production') {
+    return (_req, _res, next) => next();
+  }
+  return (req, res, next) => {
+    // trust proxy 설정 시 req.secure는 X-Forwarded-Proto를 반영한다(직접 헤더 신뢰는 스푸핑 위험).
+    const proto = req.secure ? 'https' : req.get('x-forwarded-proto');
+    if (proto === 'https') return next();
+    const host = req.get('host');
+    return res.redirect(308, `https://${host}${req.originalUrl}`);
+  };
+}
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
@@ -87,6 +152,18 @@ export function createApp({
   forceHttps = false,
 }) {
   const app = express();
+  const isProd = env === 'production';
+
+  // TLS 종단 리버스 프록시 뒤에서만, 첫 프록시(1홉)의 X-Forwarded-Proto/IP를 신뢰한다.
+  // 'true'(무제한 신뢰)는 X-Forwarded-* 스푸핑으로 https 강제·레이트리밋이 우회되므로 쓰지 않는다.
+  // 비프로덕션은 프록시가 없으므로 미설정(기본 false) — 로컬/테스트 무영향.
+  if (isProd) app.set('trust proxy', 1);
+
+  // HTTPS 강제(평문→https 308 리다이렉트)는 helmet/cors/도메인 로직보다 앞에 둔다 —
+  // 평문 요청이 도메인 경로까지 도달하지 않게 한다. 비프로덕션이면 enforceHttps가 no-op이다.
+  // 헬스체크(/api/health)도 프로덕션에서는 https로 와야 한다 — 인프라 헬스체크는 보통 같은
+  // TLS 종단을 거치므로 별도 예외를 두지 않는다(예외는 평문 우회 표면을 넓힌다).
+  app.use(enforceHttps(env));
 
   // 프록시(리버스 프록시 TLS 종단) 뒤 원 프로토콜은 X-Forwarded-Proto로 판정한다.
   // trust proxy는 최소(첫 홉 1개만 신뢰) — true(무제한)는 X-Forwarded-Proto 스푸핑 우회를 허용하므로 금지.
@@ -114,6 +191,7 @@ export function createApp({
   }));
   // credentials:true — 쿠키를 cross-origin으로 주고받기 위함. allowlist 유지(origin:* 금지: 브라우저가 credentials와 함께 거부).
   app.use(cors({
+    // credentials 모드에서는 와일드카드 origin 금지 → 명시 allowlist가 필수.
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
@@ -206,7 +284,7 @@ export function createApp({
     return res.json({ ok: true });
   });
 
-  // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(EventSource 폴백 호환 위해 ?session= 도 허용).
+  // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(쿠키 우선, x-session-id 헤더 폴백).
   app.get('/api/session', (req, res) => {
     const sid = readSessionToken(req) || req.query.session;
     const me = sid ? sessionService.touchSession(sid) : undefined;

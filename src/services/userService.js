@@ -33,6 +33,7 @@ export function createUserService({
   async function login(userId, password) {
     const row = userModel.findById(userId);
     const hash = (row && row.password) || DUMMY_HASH;
+    // 잠긴 경우에도 bcrypt 비교를 1회 수행해 성공/실패/잠금 경로의 소요 시간 차이를 줄인다.
     const passwordOk = await bcrypt.compare(String(password ?? ''), hash);
 
     // 비활성 거부는 잠금 판정·카운트보다 우선한다(비활성 계정에 카운트를 올리지 않는다).

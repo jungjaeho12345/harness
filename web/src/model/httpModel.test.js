@@ -25,50 +25,60 @@ describe('createHttpModel', () => {
 
   const callAt = (i) => fetchMock.mock.calls[i];
 
-  it('login POSTs credentials and stores the session id for later requests', async () => {
+  it('sends credentials:include on every request (cookie transport)', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.queryArticles();
+    await model.saveArticle({ title: 'new' });
+    expect(callAt(0)[1].credentials).toBe('include');
+    expect(callAt(1)[1].credentials).toBe('include');
+  });
+
+  it('login POSTs credentials and does NOT store the session id (HttpOnly cookie holds it)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-1', user: { userId: 'kim' } }));
     const model = createHttpModel({ base: BASE });
 
     const r = await model.login('kim', 'pw');
-    expect(r.sessionId).toBe('sid-1');
+    expect(r.user).toEqual({ userId: 'kim' });
 
     const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/login`);
     expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
     expect(JSON.parse(init.body)).toEqual({ userId: 'kim', password: 'pw' });
-    expect(init.headers['x-session-id']).toBeUndefined(); // 로그인 시점엔 아직 토큰 없음
+    expect(init.headers['x-session-id']).toBeUndefined();
 
-    // 이후 요청에는 보관된 토큰이 자동 첨부된다.
+    // sessionStorage 토큰을 쓰지 않는다 — 쿠키가 세션을 보유한다.
+    expect(sessionStorage.getItem('yh.sessionId')).toBeNull();
+
+    // 이후 요청에도 x-session-id 헤더가 붙지 않는다(쿠키로 인증).
     await model.queryArticles();
-    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-1');
+    expect(callAt(1)[1].headers['x-session-id']).toBeUndefined();
+    expect(callAt(1)[1].credentials).toBe('include');
   });
 
-  it('logout POSTs then clears the stored session id', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-2', user: {} }));
+  it('logout POSTs with credentials and never touches sessionStorage', async () => {
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b');
 
     await model.logout();
-    expect(callAt(1)[0]).toBe(`${BASE}/api/logout`);
-    expect(callAt(1)[1].method).toBe('POST');
-    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-2'); // 무효화 대상 토큰을 보낸다
-
-    // 토큰이 제거되어 다음 요청엔 헤더가 없다.
-    await model.queryArticles();
-    expect(callAt(2)[1].headers['x-session-id']).toBeUndefined();
+    expect(callAt(0)[0]).toBe(`${BASE}/api/logout`);
+    expect(callAt(0)[1].method).toBe('POST');
+    expect(callAt(0)[1].credentials).toBe('include');
+    expect(callAt(0)[1].headers['x-session-id']).toBeUndefined();
+    expect(sessionStorage.getItem('yh.sessionId')).toBeNull();
   });
 
-  it('restoreSession GETs /api/session carrying the stored session id', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-7', user: {} }));
+  it('restoreSession GETs /api/session with credentials (cookie identity), no header token', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, user: { userId: 'kim' } }));
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b');
 
-    await model.restoreSession();
-    const [url, init] = callAt(1);
+    const r = await model.restoreSession();
+    const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/session`);
     expect(init.method).toBe('GET');
-    expect(init.headers['x-session-id']).toBe('sid-7');
+    expect(init.credentials).toBe('include');
+    expect(init.headers['x-session-id']).toBeUndefined();
     expect(init.body).toBeUndefined();
+    expect(r).toEqual({ ok: true, user: { userId: 'kim' } });
   });
 
   it('restoreSession returns the (non-throwing) unauthenticated body when there is no session', async () => {
@@ -218,7 +228,6 @@ describe('createHttpModel', () => {
     installFakeEventSource(instances);
 
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b'); // stores sid-5
 
     const onChange = vi.fn();
     const sub = model.subscribe({ menu: 'desk' }, onChange);
@@ -233,6 +242,9 @@ describe('createHttpModel', () => {
 
     instances[0].emit('change', '{"kind":"status"}');
     expect(onChange).toHaveBeenCalledWith({ kind: 'status' }, { menu: 'desk' });
+
+    instances[0].emit('error', null);
+    expect(sub.connected()).toBe(false);
 
     sub.unsubscribe();
     expect(instances[0].closed).toBe(true);

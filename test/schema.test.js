@@ -28,6 +28,32 @@ test('createSchema: User 컬럼 (TEXT)', () => {
   }
 });
 
+test('createSchema: User 계정잠금 컬럼 (additive — failedLoginCount, lockedUntil)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'User');
+  for (const c of ['failedLoginCount', 'lockedUntil']) {
+    assert.ok(cols.includes(c), `User.${c}`);
+  }
+  // 계정 잠금 컬럼이 Contents의 편집잠금(lockYN)과 이름이 겹치지 않는다.
+  assert.ok(!cols.includes('lockYN'), 'User에 Contents 편집잠금 컬럼(lockYN)을 두지 않는다');
+});
+
+test('createSchema: User 계정잠금 컬럼을 기존 행에 additive로 추가하고 데이터를 보존한다', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 버전: 계정잠금 컬럼이 없는 User + 기존 행
+  db.exec('CREATE TABLE User (userId TEXT PRIMARY KEY, name TEXT, password TEXT)');
+  db.prepare("INSERT INTO User (userId, name, password) VALUES ('old', '옛 사용자', 'h')").run();
+  createSchema(db);
+  const cols = columns(db, 'User');
+  assert.ok(cols.includes('failedLoginCount'), '누락된 failedLoginCount 컬럼이 추가되어야 함');
+  assert.ok(cols.includes('lockedUntil'), '누락된 lockedUntil 컬럼이 추가되어야 함');
+  const row = db.prepare("SELECT * FROM User WHERE userId='old'").get();
+  assert.equal(row.name, '옛 사용자', '기존 데이터는 보존되어야 함');
+  assert.equal(row.failedLoginCount, '0', '신규 컬럼은 기본값 0으로 채워진다');
+  assert.equal(row.lockedUntil, null, 'lockedUntil 기본값은 비어 있다');
+});
+
 test('createSchema: Article 컬럼', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
