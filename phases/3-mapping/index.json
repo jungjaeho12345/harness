@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "3-mapping",
+  "steps": [
+    { "step": 0, "name": "mapping-writer-mode", "status": "completed", "summary": "useWriteController에 mode:'mapping' 추가 — 진입은 기존 openArticle(getArticle 재조회+lockArticle 'revise', PENDING_EDIT_KEY useEffect가 req.mode 그대로 전달해 무변경)을 재사용해 편집 잠금 획득·articleId 유지. 전이 없는 저장 콜백 saveMapping() 신설: saveArticle(toSaveDto, PUT/articleId 포함)→성공 시 unlockArticle+resetTabToBlank, applyAction 미호출. toSaveDto가 tab.fields.body를 그대로 markupVersion으로 실어 텍스트 블록 비파괴(appendEmbedToBody로 추가된 embed만 저장, mergeTextIntoBody 미사용). 백엔드/contract/httpModel 무변경. 신규 테스트 4개(blocksToText 불변 포함). backend 204 + web 259 통과." },
+    { "step": 1, "name": "mapping-button", "status": "pending" },
+    { "step": 2, "name": "mapping-view-entry", "status": "pending" },
+    { "step": 3, "name": "writer-page-mapping-ui", "status": "pending" },
+    { "step": 4, "name": "context-menu-activation", "status": "pending" }
+  ]
+}

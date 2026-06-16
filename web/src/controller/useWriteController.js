@@ -226,6 +226,20 @@ export function useWriteController() {
     return r;
   }, [model]);
 
+  // 매핑 저장 — 본문 텍스트는 그대로(readOnly) 두고 추가된 임베드만 PUT으로 저장한다. 생애주기 전이가 없으므로
+  // applyAction을 호출하지 않는다(전이는 submit 전용). 저장(PUT, articleId 포함) 성공 시 잠금 해제 + 빈 새 기사 탭으로 전환.
+  // body는 toSaveDto가 tab.fields.body를 그대로 markupVersion으로 싣는다 — 텍스트 블록 재조립 없음(appendEmbedToBody로 들어온 값 보존).
+  const saveMapping = useCallback(async () => {
+    const tab = tabsRef.current.find((t) => t.id === activeRef.current);
+    if (!tab) return { ok: false, reason: 'no-tab' };
+    const r = await model.saveArticle(toSaveDto(tab)); // PUT(articleId 포함) — 원본 미삭제(DB 비파괴).
+    if (r && r.ok) {
+      if (tab.articleId) await Promise.resolve(model.unlockArticle(tab.articleId)).catch(() => {});
+      resetTabToBlank(tab.id);
+    }
+    return r;
+  }, [model, resetTabToBlank]);
+
   // 송고/보류/KILL/삭제승인. 신규(편집 컨텍스트 아님)는 전이 없이 RDS로 저장만 한다(news.md).
   // 편집 컨텍스트는 현재 편집 내용을 저장(PUT)한 뒤 생애주기 전이 → 성공 시 잠금 해제 + 빈 새 기사 탭으로 전환.
   const submit = useCallback(async (action) => {
@@ -320,6 +334,6 @@ export function useWriteController() {
   return {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab, openArticle, openFromSource,
-    updateField, save, submit,
+    updateField, save, submit, saveMapping,
   };
 }
