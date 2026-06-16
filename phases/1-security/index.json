@@ -1,0 +1,64 @@
+{
+  "project": "기사 작성기 (Article Production System)",
+  "phase": "1-security",
+  "steps": [
+    {
+      "step": 0,
+      "name": "lockout-schema",
+      "status": "completed",
+      "started_at": "2026-06-16T16:31:03+0900",
+      "summary": "User 테이블에 계정잠금 컬럼 3개 additive 추가: failedLoginCount(TEXT DEFAULT '0' — 누적 실패 횟수), lockedUntil(TEXT — 잠금 해제 시각 ISO-8601 UTC), lastFailedLoginAt(TEXT — 마지막 실패 시각 감사용); 멱등 마이그레이션 회귀 테스트(구버전 7컬럼 테이블에서 기존 행 보존 확인) 포함.",
+      "completed_at": "2026-06-16T16:33:22+0900"
+    },
+    {
+      "step": 1,
+      "name": "lockout-model",
+      "status": "completed",
+      "started_at": "2026-06-16T16:33:22+0900",
+      "completed_at": "2026-06-16T16:34:54+0900",
+      "summary": "COLUMNS 화이트리스트에 failedLoginCount·lockedUntil·lastFailedLoginAt 추가; 기존 update(userId, fields)로 잠금 컬럼 패치 가능 확인; 신규 테스트 4개(갱신 후 findById 읽기·기존 컬럼 보존·query raw row 반환) 추가; 비즈니스 규칙(임계치·시각 비교)은 model에 두지 않음."
+    },
+    {
+      "step": 2,
+      "name": "lockout-service",
+      "status": "completed",
+      "started_at": "2026-06-16T16:34:54+0900",
+      "completed_at": "2026-06-16T16:40:51+0900",
+      "summary": "createUserService에 now/maxFailedAttempts(5)/lockDurationMs(15분) 주입 추가; login 흐름: 사용자 부재→invalid-credentials, 잠금 우선 검사(locked), inactive 검사, 실패 시 failedLoginCount 증가·임계치 도달 시 lockedUntil 설정, 성공 시 failedLoginCount='0'·lockedUntil=null 리셋; 잠금 메타 3개(failedLoginCount·lockedUntil·lastFailedLoginAt)는 SAFE_FIELDS 제외로 응답 미노출; createControllers에 lockoutPolicy 옵션 추가(기존 호출부 호환); server STATUS_BY_REASON locked=401(인증 실패); userService 테스트 5건·server 통합 1건 추가; 기존 189개 통과."
+    },
+    {
+      "step": 3,
+      "name": "cookie-session",
+      "status": "completed",
+      "started_at": "2026-06-16T16:40:51+0900",
+      "completed_at": "2026-06-16T16:48:29+0900",
+      "summary": "세션 전송을 HttpOnly 쿠키(yh.sid)로 전환. parseCookies/extractSid 헬퍼 추가(외부 의존성 없음); sessionOf·receiver-config·logout·/api/session 모두 쿠키 우선→x-session-id 헤더 폴백; 로그인 시 Set-Cookie(HttpOnly·SameSite=Lax·Secure=프로덕션 분기); 로그아웃 시 clearCookie; CORS credentials:true + 명시 origin allowlist; body.sessionId 전환기 호환 유지; x-session-id 헤더 폴백 TODO 주석 명시(step 6 제거 대상); 신규 테스트 4건(쿠키 속성·쿠키 전용 인증·로그아웃 만료·헤더 폴백 회귀) 추가; 기존 193건 전부 통과."
+    },
+    {
+      "step": 4,
+      "name": "sse-cookie-auth",
+      "status": "completed",
+      "started_at": "2026-06-16T16:48:29+0900",
+      "completed_at": "2026-06-16T16:57:29+0900",
+      "summary": "SSE(/api/stream)·/api/session에서 ?session= 쿼리 폴백 제거(로그/Referer 유출 방지, ADR-005); 두 라우트 모두 extractSid(쿠키 yh.sid 우선→x-session-id 헤더 폴백)로 인증 통일; 신규 테스트 3건 추가(쿠키 SSE ready·?session= 401 거부·/api/session 쿠키/쿼리 비교) + 기존 SSE 테스트 헤더 인증으로 갱신; 전체 22건 통과. step 6에서 프론트 EventSource를 withCredentials로 전환해야 쿠키가 자동 전송된다."
+    },
+    {
+      "step": 5,
+      "name": "prod-hardening",
+      "status": "completed",
+      "started_at": "2026-06-16T16:57:29+0900",
+      "completed_at": "2026-06-16T17:03:22+0900",
+      "summary": "createApp에 nodeEnv 주입 추가(테스트에서 'production' 주입 가능); isProd=(nodeEnv??process.env.NODE_ENV)==='production' 파생; helmet에 hsts 프로덕션 분기(maxAge=31536000·includeSubDomains, 개발에서 false); cookieSecure를 isProd로 통일(step 3 Secure 분기 보강); 프로덕션에서 app.set('trust proxy',1) 활성; 리버스 프록시/HTTPS 종단/X-Forwarded-Proto 가정을 주석으로 문서화; 신규 테스트 3건(dev HSTS 없음·prod HSTS+Secure 쿠키·CSP 유지) 추가; 전체 199건 통과."
+    },
+    {
+      "step": 6,
+      "name": "web-credentials",
+      "status": "completed",
+      "started_at": "2026-06-16T17:03:22+0900",
+      "completed_at": "2026-06-16T17:07:15+0900",
+      "summary": "httpModel을 쿠키 기반 세션으로 전환: SESSION_STORAGE_KEY·readSessionId·writeSessionId·x-session-id 헤더 완전 제거; fetch init에 credentials:'include' 추가(모든 요청); login/logout의 sessionStorage 저장·제거 코드 삭제; subscribe를 EventSource(url, { withCredentials: true }) + ?session= 쿼리 없는 /api/stream URL로 전환; httpModel.test.js 갱신(credentials:include·x-session-id 미사용·EventSource withCredentials 단언); web 224건·서버 199건 전부 통과."
+    }
+  ],
+  "created_at": "2026-06-16T16:31:03+0900",
+  "completed_at": "2026-06-16T17:07:16+0900"
+}

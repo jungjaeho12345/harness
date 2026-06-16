@@ -1,6 +1,7 @@
 // 사용자 서비스 — 로그인/조회 도메인 로직 (HTTP 비의존, ADR-006). 의존성은 주입(userModel).
 // 비밀번호(평문/해시)는 어떤 반환값에도 포함하지 않는다(news.md 보안).
 // 로그인은 사용자 존재 여부와 무관하게 항상 bcrypt 비교를 1회 수행해 타이밍 차이를 줄인다.
+// now는 주입 가능한 시계(sessionService 패턴) — Date.now() 직접 호출 금지(테스트 결정성).
 
 import bcrypt from 'bcryptjs';
 

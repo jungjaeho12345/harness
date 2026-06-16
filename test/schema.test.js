@@ -176,6 +176,37 @@ test('createSchema: 보조 인덱스를 만들지 않는다 (PK 자동 인덱스
   assert.equal(explicit.length, 0, '명시적 보조 인덱스가 없어야 함');
 });
 
+test('createSchema: User 계정잠금 컬럼 3개 (failedLoginCount·lockedUntil·lastFailedLoginAt)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'User');
+  for (const c of ['failedLoginCount', 'lockedUntil', 'lastFailedLoginAt']) {
+    assert.ok(cols.includes(c), `User.${c} 컬럼이 있어야 함`);
+  }
+});
+
+test('createSchema: 구버전 User 테이블(7컬럼)에서 마이그레이션 시 기존 행 보존 + 3개 컬럼 추가', () => {
+  const db = new DatabaseSync(':memory:');
+  // 구버전: lockout 컬럼 없이 기존 7개 컬럼만 있는 테이블
+  db.exec(
+    'CREATE TABLE User (userId TEXT PRIMARY KEY, name TEXT, password TEXT, role TEXT, department TEXT, departmentCode TEXT, active TEXT DEFAULT \'Y\')',
+  );
+  db.prepare("INSERT INTO User (userId, name, role) VALUES ('u_old', '기존사용자', 'R')").run();
+
+  createSchema(db);
+
+  // 기존 행이 보존되어야 함
+  const row = db.prepare("SELECT name, role FROM User WHERE userId='u_old'").get();
+  assert.equal(row.name, '기존사용자', '기존 행의 name이 보존되어야 함');
+  assert.equal(row.role, 'R', '기존 행의 role이 보존되어야 함');
+
+  // 누락 컬럼이 추가되어야 함
+  const cols = columns(db, 'User');
+  for (const c of ['failedLoginCount', 'lockedUntil', 'lastFailedLoginAt']) {
+    assert.ok(cols.includes(c), `마이그레이션 후 User.${c} 컬럼이 있어야 함`);
+  }
+});
+
 test('createSchema: FK 제약을 선언하지 않는다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);

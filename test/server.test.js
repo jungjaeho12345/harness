@@ -54,6 +54,30 @@ async function login(base, userId, password) {
   return (await api(base, 'POST', '/api/login', { body: { userId, password } })).body;
 }
 
+// 로그인 후 응답 헤더(Set-Cookie 포함)를 같이 반환한다.
+async function loginFull(base, userId, password) {
+  const res = await fetch(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId, password }),
+  });
+  const body = await res.json();
+  return { status: res.status, body, setCookie: res.headers.get('set-cookie'), headers: res.headers };
+}
+
+// Cookie 헤더로 요청하는 헬퍼 (쿠키 기반 인증 테스트용).
+async function apiCk(base, method, path, { cookie, body } = {}) {
+  const headers = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (cookie) headers['cookie'] = cookie;
+  const res = await fetch(`${base}${path}`, {
+    method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let json;
+  try { json = await res.json(); } catch { json = undefined; }
+  return { status: res.status, body: json, headers: res.headers };
+}
+
 test('GET /api/health → 200 ok', async () => {
   const ctx = await start();
   try {

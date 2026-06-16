@@ -24,6 +24,7 @@ export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
+  lockoutPolicy = {},
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
