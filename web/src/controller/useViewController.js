@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppContext } from '../app/context.js';
+import { PENDING_NEW_KEY } from './useWriteController.js';
 
 // list.do 우클릭에서 writer.do로 편집 진입할 때 대상 기사·진입 모드를 넘기는 sessionStorage 채널.
 // 모드는 URL에 싣지 않는다(편집 탭 주소창엔 기사아이디만) — useWriteController가 읽고 소비한다.
@@ -114,6 +115,22 @@ export function useViewController() {
     [enterEditor],
   );
 
+  // 후속/계속 진입 — 원본에서 파생한 신규 기사 작성이다(편집 아님). 원본 행·mode를 신규 채널(PENDING_NEW_KEY)에
+  // 싣고 writer.do로 이동하되 navigate에 articleId를 싣지 않는다 — 새 기사 탭 주소창엔 기사아이디가 없어야 하고
+  // (news.md), 싣으면 writer가 편집 탭으로 오인해 원본을 잠근다. 본문 재조회·필드 복사는 writer(openFromSource) 책임.
+  // 일반 신규 작성이라 권한 게이트·confirm을 두지 않는다(파괴적 동작 아님).
+  const enterFromSource = useCallback((article, mode) => {
+    try {
+      sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({ article, mode }));
+    } catch {
+      // sessionStorage 불가 — pendingNew 없이 이동(writer가 빈 탭으로 시작).
+    }
+    navigate('writer.do', {});
+  }, [navigate]);
+
+  const followUpArticle = useCallback((article) => enterFromSource(article, 'followUp'), [enterFromSource]);
+  const continueArticle = useCallback((article) => enterFromSource(article, 'continue'), [enterFromSource]);
+
   // Lock해제(강제) — D/Z만, '해제하시겠습니까?' 확인 후. 권한 없으면 no-op(서버도 거부).
   const releaseLock = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -161,6 +178,7 @@ export function useViewController() {
     page, setPage, totalPages, pageItems, items,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete, resendArticle,
+    followUpArticle, continueArticle,
     viewHistory, viewSendHistory,
   };
 }

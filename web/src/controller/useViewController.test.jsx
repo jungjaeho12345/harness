@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
 import { useViewController, buildMenuFilter, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
+import { PENDING_NEW_KEY } from './useWriteController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }) {
@@ -124,6 +125,32 @@ describe('useViewController', () => {
     await waitFor(() => expect(result.current.items).toHaveLength(1));
     act(() => { result.current.reviseArticle({ articleId: 'AKR0' }, true); });
     expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('portalRevise');
+  });
+
+  it('followUpArticle stashes a pendingNew {mode:followUp} and navigates without articleId', async () => {
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const article = { articleId: 'AKR0', title: 't0' };
+    act(() => { result.current.followUpArticle(article); });
+
+    // 신규 작성 진입 — 주소창에 articleId를 싣지 않는다(편집 탭 오인·원본 잠금 방지).
+    expect(navigate).toHaveBeenCalledWith('writer.do', {});
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_NEW_KEY));
+    expect(pending).toEqual({ article, mode: 'followUp' });
+    // 편집 채널에는 쓰지 않는다(편집과 분리).
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull();
+  });
+
+  it('continueArticle stashes a pendingNew {mode:continue}', async () => {
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const article = { articleId: 'AKR0', title: 't0' };
+    act(() => { result.current.continueArticle(article); });
+
+    expect(navigate).toHaveBeenCalledWith('writer.do', {});
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_NEW_KEY));
+    expect(pending).toEqual({ article, mode: 'continue' });
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull();
   });
 
   it('requestDelete is D/Z only and confirms before approveDelete', async () => {
