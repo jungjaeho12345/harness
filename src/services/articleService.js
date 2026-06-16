@@ -53,7 +53,15 @@ function isStale(lockedAt) {
   return (Date.now() - t) > LOCK_TTL_MS;
 }
 
-export function createArticleService({ articleModel, db }) {
+export function createArticleService({ articleModel, db, historyModel }) {
+  // 이력 기록 헬퍼 — 부가 기록이므로 본 기능(편집/전이)을 막지 않는다.
+  // historyModel 미주입 시 건너뛰고, insert 실패는 try/catch로 격리한다.
+  function record(rec) {
+    if (!historyModel) return;
+    try { historyModel.insert({ ...rec, createdAt: nowISO() }); }
+    catch { /* 이력 기록 실패는 본 기능을 막지 않는다 */ }
+  }
+
   // 신규 기사 — articleId 생성, status RDS, Article+Contents 트랜잭션 저장.
   function create(dto = {}) {
     const articleId = generateArticleId(db);
@@ -75,6 +83,8 @@ export function createArticleService({ articleModel, db }) {
       article: pick(fields, ARTICLE_FIELDS),
       contents: { ...pick(fields, CONTENTS_FIELDS), editedAt: nowISO() },
     });
+    // 편집 성공 후 이력 기록. actor는 호출자가 stamp한 modifier(세션 userId — step2).
+    record({ articleId, eventType: 'edit', actorUserId: fields.modifier });
     return { ok: true, changes };
   }
 
@@ -110,7 +120,24 @@ export function createArticleService({ articleModel, db }) {
       contents.sentAt = nowISO();
     }
     articleModel.update(articleId, { contents });
+    // 전이 성공 직후 이력 기록(거부/no-end-marker 경로는 이미 위에서 반환됨).
+    record({
+      articleId,
+      eventType: 'status',
+      action,
+      fromStatus: row.contents.status,
+      toStatus: result.status,
+      actorUserId: userId ?? null,
+    });
     return { ok: true, status: result.status };
+  }
+
+  // 이력 조회 — 모델에 얇게 위임. 송고이력 필터(sendOnly)는 도메인 규칙이므로 서비스에서 처리.
+  function queryHistory(articleId, { sendOnly = false } = {}) {
+    if (!historyModel) return [];
+    const rows = historyModel.queryByArticle(articleId);
+    if (!sendOnly) return rows;
+    return rows.filter((r) => r.eventType === 'status' && r.action === 'send');
   }
 
   // 편집 잠금 — 보유자는 세션 id. 잠겨 있어도 stale(30분 무갱신)이면 가져갈 수 있다.
@@ -163,7 +190,7 @@ export function createArticleService({ articleModel, db }) {
   }
 
   return {
-    create, update, getById, query, search, applyAction,
+    create, update, getById, query, search, applyAction, queryHistory,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };
 }
