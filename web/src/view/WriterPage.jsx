@@ -53,12 +53,16 @@ export function WriterPage() {
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
-    updateField, submit,
+    updateField, submit, saveMapping,
   } = useWriteController();
   const search = useSearchController();
 
   const [metaTab, setMetaTab] = useState('common');
   const [spell, setSpell] = useState(false);
+
+  // 매핑 진입 — 본문 텍스트는 건드리지 않고(에디터 readOnly) 임베드만 추가하는 PUT 모드.
+  // 텍스트 편집(타이핑/"(끝)"/라인삭제/붙여넣기)은 Editor readOnly로 차단, 메타 탭 임베드 추가는 활성 유지.
+  const isMapping = activeTab.mode === 'mapping';
 
   const body = activeTab.fields.body;
   const blocks = deserialize(body);
@@ -122,6 +126,12 @@ export function WriterPage() {
     await submit(action);
   };
 
+  // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
+  const onSaveMapping = async () => {
+    if (!window.confirm('저장하시겠습니까?')) return;
+    await saveMapping();
+  };
+
   const buttons = submitButtons({
     mode: activeTab.mode,
     status: activeTab.status,
@@ -151,6 +161,7 @@ export function WriterPage() {
             key={activeTabId}
             blocks={blocks}
             spellcheck={spell}
+            readOnly={isMapping}
             onKeyDown={onKeyDown}
             onTextChange={onTextChange}
             onRemoveEmbed={onRemoveEmbed}
@@ -166,7 +177,7 @@ export function WriterPage() {
                 key={key}
                 type="button"
                 className={`yh-btn ${key === 'send' ? 'yh-btn--primary' : key === 'kill' ? 'yh-btn--danger' : ''}`}
-                onClick={() => onAction(key)}
+                onClick={() => (key === 'save' ? onSaveMapping() : onAction(key))}
               >
                 {SUBMIT_LABELS[key]}
               </button>
