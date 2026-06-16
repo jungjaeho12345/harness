@@ -12,6 +12,7 @@
     { "step": 7, "name": "frontend-model-contract", "status": "pending" },
     { "step": 8, "name": "frontend-history-view", "status": "pending" },
     { "step": 9, "name": "frontend-derive-resend-wiring", "status": "pending" },
-    { "step": 10, "name": "frontend-translate-view", "status": "pending" }
+    { "step": 10, "name": "frontend-translate-view", "status": "pending" },
+    { "step": 11, "name": "mapping-embed-mode", "status": "pending" }
   ]
 }

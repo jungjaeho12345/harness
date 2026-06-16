@@ -2,7 +2,7 @@
 
 우클릭 메뉴의 **번역(translate)** 백엔드 도메인 로직을 구현한다. 기사 본문/제목을 외부 번역 API로 번역한다. 외부 의존성이므로 **mediaSearch와 동일한 추상화 패턴**(주입 `fetchFn` + env API 키)을 따르고, **키가 없거나 호출이 실패하면 예외 대신 graceful degrade**(원문 또는 빈 결과 반환)한다. 이 step은 백엔드 도메인 레이어(service)만 다룬다.
 
-> ⚠️ **blocked 위험:** 번역 provider/API 키는 미해결 결정사항이다(이 phase의 미해결 항목 — 권장: DeepL 또는 Google Cloud Translation). **provider 선택과 키 주입은 운영 결정이므로, 키가 없으면 이 step은 graceful degrade 경로(키 없음→원문 그대로 반환)까지 구현·테스트하고 `completed`로 둔다.** 실제 외부 번역 호출의 라이브 검증은 키가 필요하므로, 키 없이 검증 불가한 부분이 있으면 그 부분만 명확히 적고 진행하라(단위 테스트는 가짜 fetchFn으로 전부 가능 — blocked가 되면 안 된다).
+> ⚠️ **blocked 위험:** 번역 provider는 **Google Cloud Translation v2로 확정**(운영 결정 — 사용자 승인)이다. API 키는 주입 env `GOOGLE_TRANSLATE_API_KEY`(Google Cloud Translation API용 키 — `mediaSearch`의 `GOOGLE_API_KEY`와 같은 프로젝트 키일 수 있으나 Translation API 별도 활성화가 필요하므로 별도 env 이름으로 둔다)에서 읽는다. **키가 없으면 이 step은 graceful degrade 경로(키 없음→원문 그대로 반환)까지 구현·테스트하고 `completed`로 둔다.** 실제 외부 번역 호출의 라이브 검증은 키가 필요하므로, 키 없이 검증 불가한 부분이 있으면 그 부분만 명확히 적고 진행하라(단위 테스트는 가짜 fetchFn으로 전부 가능 — blocked가 되면 안 된다).
 
 ## 읽어야 할 파일
 
@@ -35,7 +35,7 @@
 `createTranslate({ fetchFn, env })`를 만들고 `{ translate }`를 반환하라. **mediaSearch.js 구조를 그대로 본떠라**:
 
 ```
-const ENDPOINT = <provider 엔드포인트 상수>;  // 권장: DeepL https://api-free.deepl.com/v2/translate 또는 Google translation
+const ENDPOINT = 'https://translation.googleapis.com/language/translate/v2';  // 확정: Google Cloud Translation v2 (운영 결정 — 사용자 승인)
 function buildRequest(text, targetLang, env)  // 키 없으면 undefined 반환
 async function translate(text, targetLang = 'ko')
   // 1) text 비면 빈 결과
@@ -46,10 +46,10 @@ async function translate(text, targetLang = 'ko')
 ```
 
 **핵심 규칙:**
-- API 키는 **주입 `env`에서만** 읽는다(예: `env.TRANSLATE_API_KEY`). 소스 하드코딩 금지(news.md 보안·CLAUDE.md UTF-8/보안).
+- API 키는 **주입 `env`에서만** 읽는다(`env.GOOGLE_TRANSLATE_API_KEY`). 소스 하드코딩 금지(news.md 보안·CLAUDE.md UTF-8/보안). Google v2는 키를 쿼리파라미터 `?key=<키>`로 전달한다(`encodeURIComponent`).
 - 외부 호출은 **주입 `fetchFn`으로만**. `globalThis.fetch` 직접 호출 금지(테스트 결정성).
 - **실패·키 누락은 예외로 전파하지 않는다.** 항상 객체 반환. 프론트가 원문 또는 "번역 불가" 안내를 표시할 수 있도록 `translatedText`에 원문을 폴백으로 담는다(news.md: 외부 실패 시 graceful degrade).
-- provider 선택은 **미해결 결정사항**이다. 합리적 기본(DeepL Free 또는 Google)을 선택하되, provider 종속 부분(엔드포인트·요청 shape·응답 파싱)을 한 곳(`buildRequest`/파싱 함수)에 격리하고 주석으로 "provider 미확정 — 교체 가능 seam"을 남겨라.
+- provider는 **Google Cloud Translation v2로 확정**되었다. 다만 provider 종속 부분(엔드포인트·요청 shape·응답 파싱: Google은 `data.translations[0].translatedText`/`detectedSourceLanguage`)을 한 곳(`buildRequest`/파싱 함수)에 격리하고 주석으로 "provider 교체 가능 seam"을 남겨라(후일 교체 대비).
 
 ### 결선(controllers)
 
@@ -75,7 +75,7 @@ npm test
    - provider 종속부가 한 곳에 격리됐는가?
 3. 결과에 따라 `phases/1-menu-actions/index.json`의 step 5를 업데이트한다:
    - 성공(단위 테스트 전부 통과) → `"status": "completed"`, `"summary": "...(provider·env 키 이름 명시)"`
-   - 단, **실제 외부 번역 호출의 라이브 검증이 필요해 진행 불가하면** → `"status": "blocked"`, `"blocked_reason": "번역 provider 미확정/API 키 미주입 — TRANSLATE_API_KEY 등 운영 결정 필요"`. (단위 테스트만으로 graceful 경로가 검증되면 blocked가 아니라 completed로 둔다.)
+   - 단, **실제 외부 번역 호출의 라이브 검증이 필요해 진행 불가하면** → `"status": "blocked"`, `"blocked_reason": "Google Cloud Translation API 키(GOOGLE_TRANSLATE_API_KEY) 미주입 — 라이브 번역 검증 불가"`. (단위 테스트만으로 graceful 경로가 검증되면 blocked가 아니라 completed로 둔다.)
 
 ## 금지사항
 

@@ -21,20 +21,21 @@
 `test/server.test.js`(또는 신규 `test/translate.http.test.js`, 실제 `createApp` + `:memory:` db, **번역 서비스는 가짜 fetchFn/env 주입**으로 결정적) 시나리오:
 
 1. 미인증(`x-session-id` 없음)은 401 `unauthenticated`.
-2. 로그인 후 `POST /api/articles/:id/translate`(또는 `POST /api/translate`) body `{ targetLang }` → 세션 게이트 통과·`controllers.translate.run`에 위임된 결과를 `{ ok, translatedText, ... }`로 반환.
+2. 로그인 후 `POST /api/articles/:id/translate` body `{ targetLang }` → 세션 게이트 통과·서버가 DB에서 본문 조회·`controllers.translate.run`에 위임된 결과를 `{ ok, translatedText, ... }`로 반환.
 3. **키 누락 환경**(가짜 env에 키 없음)에서도 라우트가 500이 아니라 graceful 응답(`ok:false, reason:'no-key', translatedText:<원문>`)을 그대로 내려준다.
-4. 라우트는 번역할 텍스트를 **서버에서 기사 본문으로부터 조회**하는지, **클라이언트가 보낸 text를 받는지** 결정하라(아래 구현 참조).
+4. 번역 대상 텍스트는 **서버에서 기사 본문으로부터 조회**한다(클라이언트가 보낸 text를 신뢰하지 않는다 — 형태 (A) 확정).
 
 먼저 실패를 확인한 뒤 구현한다.
 
 ### 구현: 번역 라우트
 
-`server/index.js`에 라우트를 추가하라. **권장 형태(둘 중 택1, 주석으로 근거 명시):**
+`server/index.js`에 라우트를 추가하라. **라우트 형태는 (A) 기사 기준으로 확정**(plan-reviewer 권고 반영 — step7 httpModel·step10 컨트롤러가 이 형태에 의존하므로 임의로 바꾸지 마라):
 
-- **(A) 기사 기준** `POST /api/articles/:id/translate` — 세션 게이트 후 `controllers.article.getById(req.params.id)`로 **서버에서 본문을 조회**해 번역 대상 텍스트를 구성(예: 제목+본문 블록 텍스트)하고 `controllers.translate.run(text, targetLang)` 위임. 장점: 본문 신뢰 원천이 DB(클라가 본문을 위조 전송 불가). 단점: 본문 블록→텍스트 변환이 필요(기존 `blocksToText`는 프론트 모듈 — 서버는 `articleService.hasEndMarker`가 쓰는 블록 파싱 방식 참조해 제목/텍스트만 추출).
-- **(B) 텍스트 기준** `POST /api/translate` — 세션 게이트 후 body `{ text, targetLang }`를 그대로 `translate.run`에 위임. 장점: 단순(프론트가 이미 화면의 본문 텍스트를 보유). 단점: 임의 텍스트 번역 프록시가 됨.
+- **(A) 기사 기준 — 확정** `POST /api/articles/:id/translate` — 세션 게이트 후 `controllers.article.getById(req.params.id)`로 **서버에서 본문을 조회**해 번역 대상 텍스트를 구성(제목+본문 블록 텍스트)하고 `controllers.translate.run(text, targetLang)` 위임. 본문 신뢰 원천이 DB이므로 클라가 본문을 위조 전송할 수 없다(ADR-004). 본문 블록→텍스트 변환은 `articleService`가 쓰는 블록 파싱 방식(`markupVersion` JSON의 `blocks` 중 텍스트 블록만)을 참조해 제목/텍스트만 최소 추출하라(`blocksToText`는 프론트 모듈이므로 서버에서 재사용 불가 — 서버에 최소 추출 헬퍼를 두되 과한 재구현 금지).
 
-**권장: (A) 기사 기준** — 본문 신뢰 원천을 서버 DB로 두는 편이 보안 경계(ADR-004) 정신에 맞다. 단 본문 텍스트 추출이 부담되면 (B)를 택하되 입력 길이를 합리적으로 제한하라(프록시 남용 방지). 어느 쪽이든:
+> (B) `POST /api/translate`(클라가 보낸 text 그대로 번역) 형태는 **채택하지 않는다**. 이유: 본문 신뢰 원천을 서버 DB에 두는 (A)가 보안 경계 정신에 맞고, step7/10이 (A) 시그니처에 맞춰 설계되었다.
+
+확정 형태 (A)에서:
 
 - 세션 게이트: `me` 없으면 401(`UNAUTH`).
 - `targetLang`은 body에서, 기본 `'ko'`.
@@ -62,7 +63,7 @@ npm test
    - 외부 키 누락 시 500이 아니라 graceful 응답을 내려주는가? (news.md degrade)
    - (A)를 택했다면 본문이 서버 DB에서 조회되는가(클라 위조 불가)? 읽기 전용인가?
    - 미인증 401인가?
-3. 결과에 따라 `phases/1-menu-actions/index.json`의 step 6을 업데이트한다(완료/error/blocked 양식 동일). 외부 라이브 검증이 필요해 진행 불가하면 step5와 동일하게 blocked 사유를 남긴다(단위/통합 테스트가 가짜 fetchFn으로 통과하면 completed).
+3. 결과에 따라 `phases/1-menu-actions/index.json`의 step 6을 업데이트한다(완료/error/blocked 양식 동일). **`summary`에 확정 라우트의 정확한 path·method·body 키(`POST /api/articles/:id/translate`, body `{ targetLang }`)를 명시하라** — step7 httpModel·step10 컨트롤러가 이 시그니처에 의존한다(plan-reviewer 권고). 외부 라이브 검증이 필요해 진행 불가하면 step5와 동일하게 blocked 사유를 남긴다(단위/통합 테스트가 가짜 fetchFn으로 통과하면 completed).
 
 ## 금지사항
 
