@@ -231,6 +231,18 @@ describe('WriterPage — 매핑 모드(mode:mapping)', () => {
     expect(alert).not.toHaveBeenCalled();
   });
 
+  it("'저장' 확인창에서 취소하면 saveMapping(PUT)을 호출하지 않는다(DB 비파괴)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const { model } = await openMapping([textBlock('헤드라인'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('저장'));
+
+    expect(save).not.toHaveBeenCalled(); // 취소 → PUT 미전송(원본 본문 무변경)
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it('일반 편집(edit) 모드는 무회귀 — 에디터 편집 가능 + 송고/보류 버튼', async () => {
     setup({
       identity: { role: 'R' },
