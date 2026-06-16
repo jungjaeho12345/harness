@@ -147,6 +147,51 @@ describe('createHttpModel', () => {
     expect(callAt(2)[0]).toBe(`${BASE}/api/articles/AKR1/force-unlock`);
   });
 
+  it('queryHistory GETs /api/articles/:id/history with no body and adds sendOnly only when requested', async () => {
+    const model = createHttpModel({ base: BASE });
+
+    await model.queryHistory('AKR1');
+    let [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/history`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+
+    await model.queryHistory('AKR1', { sendOnly: true });
+    [url, init] = callAt(1);
+    const u = new URL(url);
+    expect(u.pathname).toBe('/api/articles/AKR1/history');
+    expect(u.searchParams.get('sendOnly')).toBe('1');
+    expect(init.method).toBe('GET');
+  });
+
+  it('deriveArticle POSTs /api/articles/:id/derive with { mode } and no role', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.deriveArticle('AKR1', 'followUp');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/derive`);
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(init.body);
+    expect(body).toEqual({ mode: 'followUp' });
+    expect(body.role).toBeUndefined();
+  });
+
+  it('translate POSTs /api/articles/:id/translate with { targetLang } (default ko) and no role', async () => {
+    const model = createHttpModel({ base: BASE });
+
+    await model.translate('AKR1');
+    let [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/translate`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ targetLang: 'ko' });
+
+    await model.translate('AKR1', 'en');
+    [url, init] = callAt(1);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/translate`);
+    const body = JSON.parse(init.body);
+    expect(body).toEqual({ targetLang: 'en' });
+    expect(body.role).toBeUndefined();
+  });
+
   it('subscribe opens EventSource with the session query and routes change signals', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-5', user: {} }));
     const instances = [];

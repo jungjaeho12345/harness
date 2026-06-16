@@ -3,11 +3,17 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 19 contract methods', () => {
+  it('is frozen and lists the 22 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(19);
+    expect(MODEL_KEYS).toHaveLength(22);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
+  });
+
+  it('includes the step7 history/derive/translate keys', () => {
+    for (const key of ['queryHistory', 'deriveArticle', 'translate']) {
       expect(MODEL_KEYS).toContain(key);
     }
   });
@@ -75,5 +81,56 @@ describe('createFakeModel', () => {
     const fake = createFakeModel({ users: [{ userId: 'a', password: 'secret' }] });
     const { items } = await fake.queryUsers();
     expect(items[0].password).toBeUndefined();
+  });
+
+  it('queryHistory returns seeded items and filters sendOnly', async () => {
+    const fake = createFakeModel({
+      histories: {
+        AKR1: [
+          { id: 2, articleId: 'AKR1', eventType: 'status', action: 'send' },
+          { id: 1, articleId: 'AKR1', eventType: 'edit', action: null },
+        ],
+      },
+    });
+    const all = await fake.queryHistory('AKR1');
+    expect(all.ok).toBe(true);
+    expect(all.items).toHaveLength(2);
+
+    const sent = await fake.queryHistory('AKR1', { sendOnly: true });
+    expect(sent.ok).toBe(true);
+    expect(sent.items).toHaveLength(1);
+    expect(sent.items[0].action).toBe('send');
+
+    const none = await fake.queryHistory('NOPE');
+    expect(none.ok).toBe(true);
+    expect(none.items).toEqual([]);
+  });
+
+  it('deriveArticle creates a new article without mutating the source', async () => {
+    const fake = createFakeModel({ articles: [{ articleId: 'AKR1', title: '원본', status: 'DPS' }] });
+    const onChange = vi.fn();
+    fake.subscribe({}, onChange);
+
+    const r = await fake.deriveArticle('AKR1', 'continue');
+    expect(r.ok).toBe(true);
+    expect(r.articleId).toBeTruthy();
+    expect(r.articleId).not.toBe('AKR1');
+    expect(onChange).toHaveBeenCalled();
+
+    // 원본은 변경되지 않는다(비파괴).
+    const src = (await fake.getArticle('AKR1')).article;
+    expect(src.title).toBe('원본');
+    expect(src.status).toBe('DPS');
+  });
+
+  it('translate returns translated text and is graceful when seeded without one', async () => {
+    const seeded = createFakeModel({ translations: { AKR1: '번역문' } });
+    const r = await seeded.translate('AKR1', 'ko');
+    expect(r.ok).toBe(true);
+    expect(r.translatedText).toBe('번역문');
+
+    const fallback = createFakeModel({ articles: [{ articleId: 'AKR2', title: '원문' }] });
+    const g = await fallback.translate('AKR2');
+    expect(g.translatedText).toBeTruthy();
   });
 });

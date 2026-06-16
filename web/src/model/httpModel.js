@@ -110,6 +110,28 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
       return request('/api/articles', { method: 'POST', body: dto });
     },
 
+    // --- 메뉴 액션: 이력 / 파생 / 번역 (role은 서버 세션에서 도출 — body로 보내지 않는다, ADR-004) ---
+    // 이력보기/송고이력보기 — 읽기 전용. sendOnly일 때만 쿼리에 sendOnly=1을 싣는다.
+    queryHistory(articleId, { sendOnly } = {}) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/history`, {
+        query: sendOnly ? { sendOnly: 1 } : {},
+      });
+    },
+    // 후속(followUp)/계속(continue)기사작성 — author는 서버가 세션에서 stamp한다.
+    deriveArticle(articleId, mode) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/derive`, {
+        method: 'POST',
+        body: { mode },
+      });
+    },
+    // 번역 — 서버가 DB 본문을 조회·번역한다(text를 클라가 싣지 않음). 기본 대상 언어 ko.
+    translate(articleId, targetLang = 'ko') {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/translate`, {
+        method: 'POST',
+        body: { targetLang },
+      });
+    },
+
     // --- 편집 잠금 ---
     lockArticle(articleId, action) {
       const body = action ? { action } : {};
