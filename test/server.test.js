@@ -22,11 +22,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-async function start({ fetchFn } = {}) {
+async function start({ fetchFn, env = ENV } = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService, env: ENV, fetchFn });
+  const controllers = createControllers(db, { sessionService, env, fetchFn });
   const app = createApp({ controllers, sessionService });
   const server = app.listen(0);
   await once(server, 'listening');
@@ -515,5 +515,100 @@ test('derive: 성공 시 SSE change(create) 무효화 신호가 발생한다', a
     assert.match(frame, /event: change/);
     assert.match(frame, /"kind":"create"/);
     ac.abort();
+  } finally { await ctx.close(); }
+});
+
+// --- 번역 라우트 (POST /api/articles/:id/translate) ---
+// 형태 (A) 확정: 클라가 보낸 text가 아니라 서버가 DB에서 본문을 조회해 번역한다.
+test('translate: 미인증은 401 (POST /api/articles/:id/translate)', async () => {
+  const ctx = await start();
+  try {
+    const r = await api(ctx.base, 'POST', '/api/articles/NOPE/translate', { body: { targetLang: 'en' } });
+    assert.equal(r.status, 401);
+    assert.equal(r.body.reason, 'unauthenticated');
+  } finally { await ctx.close(); }
+});
+
+test('translate: 세션 게이트 후 서버가 DB 본문을 조회해 번역 위임(주입 fetchFn)', async () => {
+  // 가짜 Google v2 응답 — q 파라미터로 전송된 번역 대상 텍스트를 캡처한다.
+  let calledUrl;
+  const fetchFn = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ data: { translations: [{ translatedText: 'TITLE\nBODY', detectedSourceLanguage: 'ko' }] } }) };
+  };
+  const env = { ...ENV, GOOGLE_TRANSLATE_API_KEY: 'tk' };
+  const ctx = await start({ fetchFn, env });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, { sid, body: { targetLang: 'en' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.translatedText, 'TITLE\nBODY');
+    // 번역 대상 텍스트는 서버가 기사 본문에서 추출한다(클라가 보낸 text가 아님).
+    // END_MARKUP 블록 텍스트(제목/본문/(끝))가 q 파라미터로 전송되어야 한다.
+    assert.match(decodeURIComponent(calledUrl), /본문/);
+    assert.match(calledUrl, /target=en/);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 키 누락 환경에서도 500이 아니라 graceful(no-key, 원문) 응답을 그대로 내려준다', async () => {
+  // 기본 ENV에는 GOOGLE_TRANSLATE_API_KEY가 없다 — fetch 미호출 graceful degrade.
+  let fetched = false;
+  const fetchFn = async () => { fetched = true; return { ok: true, json: async () => ({}) }; };
+  const ctx = await start({ fetchFn });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, { sid, body: { targetLang: 'ko' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, false);
+    assert.equal(r.body.reason, 'no-key');
+    // 원문(서버가 추출한 본문)을 그대로 폴백으로 돌려준다.
+    assert.match(r.body.translatedText, /본문/);
+    assert.equal(fetched, false);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 클라가 보낸 text는 무시되고 서버 DB 본문을 신뢰한다(형태 A)', async () => {
+  let calledUrl;
+  const fetchFn = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ data: { translations: [{ translatedText: 'OK' }] } }) };
+  };
+  const env = { ...ENV, GOOGLE_TRANSLATE_API_KEY: 'tk' };
+  const ctx = await start({ fetchFn, env });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '제목', markupVersion: END_MARKUP },
+    })).body;
+
+    // 악성 text를 보내도 서버는 DB 본문만 번역에 사용한다.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/translate`, {
+      sid, body: { targetLang: 'en', text: '위조된본문스파이' },
+    });
+    assert.doesNotMatch(decodeURIComponent(calledUrl), /위조된본문스파이/);
+    assert.match(decodeURIComponent(calledUrl), /본문/);
+  } finally { await ctx.close(); }
+});
+
+test('translate: 존재하지 않는 기사는 404(not-found)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const r = await api(ctx.base, 'POST', '/api/articles/NOPE/translate', { sid, body: { targetLang: 'ko' } });
+    assert.equal(r.status, 404);
+    assert.equal(r.body.reason, 'not-found');
   } finally { await ctx.close(); }
 });

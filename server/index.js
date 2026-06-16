@@ -62,6 +62,31 @@ function pickFilters(query = {}) {
   return f;
 }
 
+// 번역 대상 텍스트를 기사에서 최소 추출한다(제목 + 본문 텍스트 블록).
+// 본문은 Article.markupVersion에 블록 JSON({...,"blocks":[{text}...]})으로 저장된다(articleService 동일 규약).
+// blocksToText는 프론트 모듈이라 서버에서 재사용 불가 — 여기서 텍스트 블록만 최소 추출한다(과한 재구현 금지).
+function articleToText({ article, contents } = {}) {
+  const title = (article && article.title) || (contents && contents.title) || '';
+  const raw = article && article.markupVersion;
+  let body = '';
+  if (raw) {
+    try {
+      const doc = JSON.parse(raw);
+      if (doc && Array.isArray(doc.blocks)) {
+        body = doc.blocks
+          .map((b) => (b && typeof b.text === 'string' ? b.text : ''))
+          .filter(Boolean)
+          .join('\n');
+      } else {
+        body = String(raw);
+      }
+    } catch {
+      body = String(raw); // 평문 레거시.
+    }
+  }
+  return [title, body].filter(Boolean).join('\n');
+}
+
 export function createApp({ controllers, sessionService }) {
   const app = express();
 
@@ -278,6 +303,24 @@ export function createApp({ controllers, sessionService }) {
       if (!r.ok) return fail(res, r);
       app.notifyChange('create');
       return res.json(r);
+    } catch (e) { next(e); }
+  });
+
+  // 번역 — 기사 본문을 외부 번역 API로 번역한다(형태 (A) 확정, ADR-004 신뢰 경계).
+  // 얇은 transport(ADR-006): 세션 게이트 → 서버가 DB에서 본문 조회 → controllers.translation.run 위임 → graceful 객체 그대로 반환.
+  // CRITICAL: 번역 대상 본문은 서버 DB에서만 조회한다 — 클라가 보낸 text는 신뢰하지 않는다.
+  // graceful degrade(news.md): 키 누락/외부 실패는 500으로 감싸지 않고 서비스가 준 객체를 그대로 내려준다.
+  // 읽기 전용 — DB를 변경하지 않는다. /search·:id 뒤, 하위 라우트 그룹.
+  app.post('/api/articles/:id/translate', async (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const found = controllers.article.getById(req.params.id);
+      if (!found) return res.status(404).json({ ok: false, reason: 'not-found' });
+      const text = articleToText(found);
+      const targetLang = req.body?.targetLang ?? 'ko';
+      const r = await controllers.translation.run(text, targetLang);
+      return res.json(r); // graceful 객체 그대로(키 누락/실패도 500 아님).
     } catch (e) { next(e); }
   });
 
