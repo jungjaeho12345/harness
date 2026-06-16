@@ -11,6 +11,11 @@ import { PENDING_EDIT_KEY } from './useViewController.js';
 
 const TABS_KEY = 'yh.writer.tabs';
 
+// 후속/계속(원본에서 파생한 신규 기사 작성)을 list.do→writer.do로 넘기는 sessionStorage 채널.
+// 페이로드 shape: { article, mode }(mode ∈ 'followUp'|'continue'). 편집 채널(PENDING_EDIT_KEY)과 분리한다
+// — 원본 잠금·편집 탭 오인을 막기 위함이다. useViewController(step2)가 쓰고, 여기서 마운트 시 1회 소비한다.
+export const PENDING_NEW_KEY = 'yh.pendingNew';
+
 // 편집 진입 시 입력란에 채우는(편집 가능) 필드 vs 읽기전용으로 보존하는 필드 (news.md 매핑).
 const EDITABLE_FIELDS = ['title', 'body', 'author', 'embargoAt', 'secondEmbargoAt'];
 const READONLY_FIELDS = [
@@ -67,6 +72,22 @@ function tabFromArticle(article, mode, fallbackAuthor) {
     },
     readOnly: pick(article, READONLY_FIELDS),
   };
+}
+
+// 후속/계속 진입 — 원본에서 파생한 신규 기사 탭. 복사(입력란): 제목/본문/작성자/엠바고/2차엠바고.
+// 초기화(비움): articleId(신규 발번 유도)/status(서버 RDS)/송고자·송고시간·수정자 등 원본 메타는
+// 끌어오지 않는다(새 기사는 미송고·미발번 draft). 잠금은 획득하지 않는다 — 신규 생성이지 원본 편집이 아니다.
+function tabFromSource(article, mode, fallbackAuthor) {
+  const t = blankTab();
+  t.mode = mode; // 'followUp' | 'continue' — articleId가 null이라 writerButtons는 이미 신규로 분류.
+  t.fields = {
+    title: article.title ?? '',
+    body: article.markupVersion ?? article.body ?? article.content ?? '',
+    author: article.author ?? fallbackAuthor ?? '',
+    embargoAt: article.embargoAt ?? '',
+    secondEmbargoAt: article.secondEmbargoAt ?? '',
+  };
+  return t; // articleId:null / status:null / readOnly:{} 는 blankTab 기본값 유지.
 }
 
 // sessionStorage에서 탭 목록을 복원한다(페이지 이동 후에도 유지). 비어 있으면 빈 새 기사 탭 1개.
@@ -171,6 +192,21 @@ export function useWriteController() {
     return tab.id;
   }, [identity, model]);
 
+  // 후속/계속 진입 — 원본에서 파생한 신규 기사 탭을 push+활성화한다. 잠금은 획득하지 않는다(원본 미잠금).
+  // 목록행에는 본문이 없으므로 model.getArticle로 단건 재조회해 markupVersion을 본문으로 채운다(조회 실패 시 폴백).
+  const openFromSource = useCallback(async (article, mode) => {
+    let full = article;
+    try {
+      const r = await model.getArticle(article.articleId);
+      if (r && r.ok) full = { ...article, ...r.article, ...r.contents };
+    } catch { /* 조회 실패 — 폴백 */ }
+
+    const tab = tabFromSource(full, mode, identity && identity.name);
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+    return tab.id; // 잠금 획득 없음 — 신규 생성이며 원본은 손대지 않는다.
+  }, [identity, model]);
+
   // 편집 가능 필드만 갱신한다(읽기전용 매핑 필드는 변경 불가).
   const updateField = useCallback((field, value) => {
     if (!EDITABLE_FIELDS.includes(field)) return;
@@ -227,6 +263,24 @@ export function useWriteController() {
     }
   }, [openArticle]);
 
+  // 마운트 시 1회 — list.do에서 넘어온 pendingNew(후속/계속)를 소비해 원본 파생 신규 탭을 연다.
+  // 편집 채널과 분리된 별도 채널 — 원본 잠금/편집 오인 없이 신규 생성 경로로 진입한다.
+  useEffect(() => {
+    let raw = null;
+    try { raw = sessionStorage.getItem(PENDING_NEW_KEY); }
+    catch { raw = null; }
+    if (!raw) return;
+    try { sessionStorage.removeItem(PENDING_NEW_KEY); }
+    catch { /* 무시 */ }
+    let req = null;
+    try { req = JSON.parse(raw); }
+    catch { req = null; }
+    if (req && req.article && req.article.articleId
+      && (req.mode === 'followUp' || req.mode === 'continue')) {
+      openFromSource(req.article, req.mode);
+    }
+  }, [openFromSource]);
+
   // SSE 무효화(lock) 수신 → 내 편집 탭이 강제 해제됐는지 확인 후 자동 종료(잠금 해제 요청은 보내지 않음).
   useEffect(() => {
     const sub = model.subscribe({ scope: 'writer' }, async (signal) => {
@@ -265,7 +319,7 @@ export function useWriteController() {
 
   return {
     tabs, activeTabId, activeTab,
-    addTab, closeTab, selectTab, openArticle,
+    addTab, closeTab, selectTab, openArticle, openFromSource,
     updateField, save, submit,
   };
 }

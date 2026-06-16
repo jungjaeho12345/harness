@@ -3,7 +3,7 @@
   "phase": "2-followup-resend",
   "steps": [
     { "step": 0, "name": "resend-action", "status": "completed", "summary": "useViewController.js에 resendArticle(article) 콜백 추가(반환 객체 노출). 재송=기존 send 전이 재사용 — model.applyAction(articleId,'send') 한 번으로 DPS→DPS 재송고. requestDelete 패턴대로 canManage(D/Z) UX 가드 + '재송하시겠습니까?' confirm, 취소 시 {ok:false,reason:'cancelled'}, R이면 {ok:false,reason:'forbidden'}. role 미포함(ADR-004), '(끝)' 마커는 서버 강제(프론트 미검사) — 서버 응답 그대로 반환. 신규 Model 키 없음. web 테스트 4건 추가(238→242)." },
-    { "step": 1, "name": "followup-continue-writer", "status": "pending" },
+    { "step": 1, "name": "followup-continue-writer", "status": "completed", "summary": "useWriteController.js에 원본 파생 신규 진입 추가. 신규 sessionStorage 채널 PENDING_NEW_KEY('yh.pendingNew', export, shape {article,mode}) 도입 — 편집 채널과 분리(원본 잠금/편집 오인 방지). tabFromSource(article,mode,fallbackAuthor): blankTab 기반으로 복사(입력란) title/body(원본 markupVersion)/author(원본 또는 로그인명 fallback)/embargoAt/secondEmbargoAt만 채우고 articleId:null/status:null/readOnly:{} 유지(sender/sentAt/modifier/createdAt/editedAt/status 등 원본 메타는 비움). openFromSource(article,mode): getArticle 단건 재조회로 본문 채우고 새 탭 push+활성화, lockArticle 미호출(원본 미잠금). 마운트 useEffect에서 PENDING_NEW_KEY 1회 소비(removeItem)해 openFromSource 호출(기존 PENDING_EDIT 소비 로직 무변경). 후속/계속은 mode('followUp'/'continue')로 구분. articleId null이라 toSaveDto가 신규 POST(create) 경로로 보내 원본 미수정 — writerButtons.js는 !articleId로 이미 신규 분류라 무변경(확인만). web 테스트 4건 추가(242→246), backend 204 무회귀." },
     { "step": 2, "name": "followup-continue-controller", "status": "pending" },
     { "step": 3, "name": "context-menu-activation", "status": "pending" }
   ]

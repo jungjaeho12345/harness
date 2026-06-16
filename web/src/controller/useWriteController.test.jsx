@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
-import { useWriteController } from './useWriteController.js';
+import { useWriteController, PENDING_NEW_KEY } from './useWriteController.js';
 import { PENDING_EDIT_KEY } from './useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
@@ -173,5 +173,71 @@ describe('useWriteController', () => {
     const { result } = setup({ articles: [{ ...FULL }] });
     await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true));
     expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // 소비됨
+  });
+
+  // ── 후속/계속(신규 기사 파생) 진입 ─────────────────────────────────────────
+  it('consumes a pendingNew(followUp) on mount → opens a NEW tab (articleId:null) with copied fields + re-fetched body', async () => {
+    // 목록행에는 본문이 없다. 단건 재조회(getArticle)로 markupVersion을 본문으로 채운다.
+    const markup = JSON.stringify({ format: 'yh-editor', version: 1, blocks: [{ type: 'text', text: '본문라인' }] });
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: {
+        articleId: 'AKR1', title: '제목', author: '원작성자',
+        embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
+        sender: 'park', sentAt: '2026-01-01T02:00:00Z', modifier: 'lee', status: 'DPS',
+      },
+      mode: 'followUp',
+    }));
+    const { result } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: markup, status: 'DPS' }] });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+    expect(sessionStorage.getItem(PENDING_NEW_KEY)).toBeNull(); // 소비됨
+
+    const tab = result.current.tabs.find((t) => t.mode === 'followUp');
+    expect(tab.articleId).toBeNull(); // 신규 발번을 위해 null
+    expect(tab.status).toBeNull(); // 서버가 RDS 부여
+    // 채널 페이로드엔 본문이 없었다 → body가 markup이면 getArticle 단건 재조회가 일어난 것.
+    expect(tab.fields.title).toBe('제목');
+    expect(tab.fields.author).toBe('원작성자');
+    expect(tab.fields.embargoAt).toBe('2026-01-01T00:00:00Z');
+    expect(tab.fields.secondEmbargoAt).toBe('2026-01-02T00:00:00Z');
+    expect(tab.fields.body).toBe(markup); // 원본 markupVersion이 본문으로 복사됨
+    // 원본 메타(송고자/송고시간/수정자/기사아이디)는 신규 탭으로 끌어오지 않는다.
+    expect(tab.readOnly).toEqual({});
+  });
+
+  it('followUp entry does NOT acquire a lock on the source article (신규 생성이지 원본 편집 아님)', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'followUp',
+    }));
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+    expect(lock).not.toHaveBeenCalled(); // 원본 미잠금
+  });
+
+  it('saving a followUp tab goes through the new POST path (no source articleId in dto → 원본 미수정)', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'followUp',
+    }));
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+
+    await act(async () => { await result.current.submit('send'); });
+    expect(save).toHaveBeenCalled();
+    const dto = save.mock.calls[0][0];
+    expect(dto.articleId).toBeUndefined(); // 신규 POST — 원본 articleId 미포함
+    expect(dto.markupVersion).toBe('본문'); // 본문은 markupVersion으로 실린다
+    expect(dto.role).toBeUndefined(); // role 미포함(ADR-004)
+  });
+
+  it('consumes a pendingNew(continue) on mount → opens a NEW tab with mode continue', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'continue',
+    }));
+    const { result } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'continue')).toBe(true));
+    const tab = result.current.tabs.find((t) => t.mode === 'continue');
+    expect(tab.articleId).toBeNull();
   });
 });
