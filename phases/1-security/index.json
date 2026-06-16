@@ -39,7 +39,7 @@
       "name": "sse-cookie-auth",
       "status": "completed",
       "started_at": "2026-06-16T16:48:29+0900",
-      "completed_at": "2026-06-16T17:10:00+0900",
+      "completed_at": "2026-06-16T16:57:29+0900",
       "summary": "SSE(/api/stream)·/api/session에서 ?session= 쿼리 폴백 제거(로그/Referer 유출 방지, ADR-005); 두 라우트 모두 extractSid(쿠키 yh.sid 우선→x-session-id 헤더 폴백)로 인증 통일; 신규 테스트 3건 추가(쿠키 SSE ready·?session= 401 거부·/api/session 쿠키/쿼리 비교) + 기존 SSE 테스트 헤더 인증으로 갱신; 전체 22건 통과. step 6에서 프론트 EventSource를 withCredentials로 전환해야 쿠키가 자동 전송된다."
     },
     {
