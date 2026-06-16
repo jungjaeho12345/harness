@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "2-followup-resend",
+  "steps": [
+    { "step": 0, "name": "resend-action", "status": "completed", "summary": "useViewController.js에 resendArticle(article) 콜백 추가(반환 객체 노출). 재송=기존 send 전이 재사용 — model.applyAction(articleId,'send') 한 번으로 DPS→DPS 재송고. requestDelete 패턴대로 canManage(D/Z) UX 가드 + '재송하시겠습니까?' confirm, 취소 시 {ok:false,reason:'cancelled'}, R이면 {ok:false,reason:'forbidden'}. role 미포함(ADR-004), '(끝)' 마커는 서버 강제(프론트 미검사) — 서버 응답 그대로 반환. 신규 Model 키 없음. web 테스트 4건 추가(238→242)." },
+    { "step": 1, "name": "followup-continue-writer", "status": "pending" },
+    { "step": 2, "name": "followup-continue-controller", "status": "pending" },
+    { "step": 3, "name": "context-menu-activation", "status": "pending" }
+  ]
+}

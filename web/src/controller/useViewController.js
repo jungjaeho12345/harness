@@ -132,6 +132,18 @@ export function useViewController() {
     return model.applyAction(article.articleId, 'approveDelete');
   }, [model, identity]);
 
+  // 재송(재송고) — 기존 send 전이의 재사용이다(news.md line 217: DPS 기사 송고 시 DPS 유지).
+  // 별도 백엔드 동작이 아니라 applyAction('send') 한 번. D/Z만 의미 있고(R은 lifecycle상 DPS 전이 불가),
+  // role은 싣지 않는다(ADR-004 — 서버가 세션에서 도출·강제). '(끝)' 마커 가드도 서버 applyAction이 강제하므로
+  // 목록행 본문을 프론트에서 재검사하지 않고 서버 응답을 그대로 반환한다.
+  const resendArticle = useCallback(async (article) => {
+    if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
+    if (!globalThis.confirm || !globalThis.confirm('재송하시겠습니까?')) {
+      return { ok: false, reason: 'cancelled' };
+    }
+    return model.applyAction(article.articleId, 'send');
+  }, [model, identity]);
+
   // 이력보기/송고이력보기 — Model 계약 경유로 이력을 조회한다(직접 fetch 금지, ADR-003).
   // 반환은 Model 응답({ ok, items })을 그대로 — ListPage가 새 창에 렌더한다.
   const viewHistory = useCallback(
@@ -148,7 +160,7 @@ export function useViewController() {
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
-    editArticle, reviseArticle, releaseLock, requestDelete,
+    editArticle, reviseArticle, releaseLock, requestDelete, resendArticle,
     viewHistory, viewSendHistory,
   };
 }

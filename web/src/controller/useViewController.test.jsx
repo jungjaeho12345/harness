@@ -142,6 +142,49 @@ describe('useViewController', () => {
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
   });
 
+  it('resendArticle is D/Z only, confirms, and re-sends via applyAction(send)', async () => {
+    // 재송 = 기존 send 전이 재사용(DPS→DPS). D 권한 + 확인 → applyAction('send'), {ok:true} 반환.
+    const d = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] }, { role: 'D' });
+    const apply = vi.spyOn(d.model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    let res;
+    await act(async () => { res = await d.result.current.resendArticle({ articleId: 'AKR9' }); });
+    expect(globalThis.confirm).toHaveBeenCalledWith('재송하시겠습니까?');
+    expect(apply).toHaveBeenCalledWith('AKR9', 'send');
+    expect(res).toEqual({ ok: true, articleId: 'AKR9' });
+  });
+
+  it('resendArticle does nothing when confirm is cancelled', async () => {
+    const d = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] }, { role: 'D' });
+    const apply = vi.spyOn(d.model, 'applyAction');
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    let res;
+    await act(async () => { res = await d.result.current.resendArticle({ articleId: 'AKR9' }); });
+    expect(apply).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: false, reason: 'cancelled' });
+  });
+
+  it('resendArticle is forbidden for reporters (no applyAction)', async () => {
+    const r = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] }, { role: 'R' });
+    const apply = vi.spyOn(r.model, 'applyAction');
+    const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    let res;
+    await act(async () => { res = await r.result.current.resendArticle({ articleId: 'AKR9' }); });
+    expect(apply).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: false, reason: 'forbidden' });
+  });
+
+  it('resendArticle passes through a server rejection (e.g. no-end-marker)', async () => {
+    // "(끝)" 마커 가드는 서버 applyAction이 강제한다. 프론트는 서버 응답을 그대로 전달한다.
+    const d = setup({ articles: [{ articleId: 'AKR9', status: 'DPS' }] }, { role: 'D' });
+    vi.spyOn(d.model, 'applyAction').mockReturnValue({ ok: false, reason: 'no-end-marker' });
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    let res;
+    await act(async () => { res = await d.result.current.resendArticle({ articleId: 'AKR9' }); });
+    expect(res).toEqual({ ok: false, reason: 'no-end-marker' });
+  });
+
   it('viewHistory delegates to model.getArticleHistory and returns items', async () => {
     const histories = [
       { articleId: 'AKR0', eventType: 'create', actorUserId: 'kim', toStatus: 'RDS' },
