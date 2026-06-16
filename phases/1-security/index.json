@@ -7,7 +7,8 @@
       "name": "lockout-schema",
       "status": "completed",
       "started_at": "2026-06-16T16:31:03+0900",
-      "summary": "User 테이블에 계정잠금 컬럼 3개 additive 추가: failedLoginCount(TEXT DEFAULT '0' — 누적 실패 횟수), lockedUntil(TEXT — 잠금 해제 시각 ISO-8601 UTC), lastFailedLoginAt(TEXT — 마지막 실패 시각 감사용); 멱등 마이그레이션 회귀 테스트(구버전 7컬럼 테이블에서 기존 행 보존 확인) 포함."
+      "summary": "User 테이블에 계정잠금 컬럼 3개 additive 추가: failedLoginCount(TEXT DEFAULT '0' — 누적 실패 횟수), lockedUntil(TEXT — 잠금 해제 시각 ISO-8601 UTC), lastFailedLoginAt(TEXT — 마지막 실패 시각 감사용); 멱등 마이그레이션 회귀 테스트(구버전 7컬럼 테이블에서 기존 행 보존 확인) 포함.",
+      "completed_at": "2026-06-16T16:33:22+0900"
     },
     {
       "step": 1,
