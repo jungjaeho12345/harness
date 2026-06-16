@@ -282,6 +282,94 @@ test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 
   } finally { await ctx.close(); }
 });
 
+test('history: 미인증 요청은 401 unauthenticated', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`);
+    assert.equal(r.status, 401);
+    assert.equal(r.body.reason, 'unauthenticated');
+  } finally { await ctx.close(); }
+});
+
+test('history: 이력 없는 기사는 404가 아니라 빈 배열을 반환한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // 잠금/편집/액션 없이 생성만 → 이력 0건.
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.deepEqual(r.body.items, []);
+  } finally { await ctx.close(); }
+});
+
+test('history: 편집 이력의 actorUserId는 세션 사용자(req.body.modifier 무시)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: '원제목', markupVersion: '{}' } })).body;
+
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+    // 클라가 modifier='spoof'를 보내도 무시되고 세션 userId(kim)가 actor가 되어야 한다.
+    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '수정제목', modifier: 'spoof' } });
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    const edits = r.body.items.filter((it) => it.eventType === 'edit');
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].actorUserId, 'kim');
+  } finally { await ctx.close(); }
+});
+
+test('history: 송고 액션 후 status/send 이력이 포함된다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    const sends = r.body.items.filter((it) => it.eventType === 'status' && it.action === 'send');
+    assert.equal(sends.length, 1);
+    assert.equal(sends[0].actorUserId, 'desk');
+  } finally { await ctx.close(); }
+});
+
+test('history: sendOnly=1은 송고 이력만 반환한다(편집 이력 제외)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+
+    // 편집 이력 1건 생성.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: 't2' } });
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/unlock`, { sid });
+    // 송고 이력 1건 생성.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    const all = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.ok(all.body.items.length >= 2);
+
+    const sendOnly = await api(ctx.base, 'GET', `/api/articles/${articleId}/history?sendOnly=1`, { sid });
+    assert.equal(sendOnly.status, 200);
+    assert.ok(sendOnly.body.items.length >= 1);
+    assert.ok(sendOnly.body.items.every((it) => it.eventType === 'status' && it.action === 'send'));
+  } finally { await ctx.close(); }
+});
+
 test('GET /api/media/search: 세션 게이트 + 이미지 검색 위임(주입 fetchFn)', async () => {
   let calledUrl;
   const fetchFn = async (url) => { calledUrl = url; return { ok: true, json: async () => ({ items: [{ id: 'img-1' }] }) }; };

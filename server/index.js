@@ -214,6 +214,21 @@ export function createApp({ controllers, sessionService }) {
     } catch (e) { next(e); }
   });
 
+  // 이력 조회 — 편집/생애주기 이벤트 로그. 인증 세션 게이트, 읽기 전용(DB 비파괴).
+  // sendOnly(=1/type=send)면 송고 이력만(필터는 step1 서비스가 강제). 이력 없음은 빈 배열(404 아님).
+  // controllers.article.queryHistory에 위임만 한다(ADR-006). /search·:id 뒤, 하위 라우트 그룹.
+  app.get('/api/articles/:id/history', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const flag = req.query.sendOnly;
+      const sendOnly = (flag !== undefined && flag !== '0' && flag !== 'false')
+        || req.query.type === 'send';
+      const items = controllers.article.queryHistory(req.params.id, { sendOnly });
+      return res.json({ ok: true, items });
+    } catch (e) { next(e); }
+  });
+
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다. 신규는 항상 RDS로 저장(서비스).
   app.post('/api/articles', (req, res, next) => {
     try {
