@@ -53,27 +53,53 @@ function isStale(lockedAt) {
   return (Date.now() - t) > LOCK_TTL_MS;
 }
 
-export function createArticleService({ articleModel, db }) {
+// articleHistoryModel은 선택 주입 — 주입되면 기사 저장과 같은 tx로 이력을 기록하고,
+// 조회 메서드(getHistory/getSendHistory)를 제공한다. 미주입이면 이력은 건너뛰되
+// 나머지 동작은 동일하다(하위호환). role/userId는 항상 인자에서만 도출한다(ADR-004).
+export function createArticleService({ articleModel, db, articleHistoryModel } = {}) {
+  // 이력이 주입됐을 때만 history 엔트리를 만든다(미주입이면 undefined → 모델이 무시).
+  function historyEntry(entry) {
+    return articleHistoryModel ? entry : undefined;
+  }
+
   // 신규 기사 — articleId 생성, status RDS, Article+Contents 트랜잭션 저장.
   function create(dto = {}) {
     const articleId = generateArticleId(db);
     const article = { articleId, ...pick(dto, ARTICLE_FIELDS) };
+    const createdAt = nowISO();
     const contents = {
       articleId,
       ...pick(dto, CONTENTS_FIELDS),
       status: 'RDS',
-      createdAt: nowISO(),
+      createdAt,
     };
-    articleModel.insert({ article, contents });
+    const history = historyEntry({
+      articleId,
+      eventType: 'create',
+      actorUserId: dto.modifier ?? dto.author ?? null,
+      title: dto.title ?? null,
+      toStatus: 'RDS',
+      createdAt,
+    });
+    articleModel.insert({ article, contents, history });
     return { ok: true, articleId };
   }
 
   // 부분 업데이트(트랜잭션). status 전이는 다루지 않는다(applyAction 전용).
   // 잠금 보유 검증은 호출자(HTTP) 책임.
   function update(articleId, fields = {}) {
+    const editedAt = nowISO();
+    const history = historyEntry({
+      articleId,
+      eventType: 'edit',
+      actorUserId: fields.modifier ?? null,
+      title: fields.title ?? null,
+      createdAt: editedAt,
+    });
     const changes = articleModel.update(articleId, {
       article: pick(fields, ARTICLE_FIELDS),
-      contents: { ...pick(fields, CONTENTS_FIELDS), editedAt: nowISO() },
+      contents: { ...pick(fields, CONTENTS_FIELDS), editedAt },
+      history,
     });
     return { ok: true, changes };
   }
@@ -109,8 +135,27 @@ export function createArticleService({ articleModel, db }) {
       contents.sender = userId ?? null;
       contents.sentAt = nowISO();
     }
-    articleModel.update(articleId, { contents });
+    // 전이가 성공해 실제로 저장되는 경로에서만 이력을 같은 tx로 기록한다.
+    const history = historyEntry({
+      articleId,
+      eventType: action,
+      actorUserId: userId ?? null,
+      actorRole: role,
+      fromStatus: row.contents.status,
+      toStatus: result.status,
+      createdAt: nowISO(),
+    });
+    articleModel.update(articleId, { contents, history });
     return { ok: true, status: result.status };
+  }
+
+  // 이력 조회(읽기 전용, 위임만). historyModel 미주입이면 빈 배열.
+  function getHistory(articleId) {
+    return articleHistoryModel ? articleHistoryModel.findByArticleId(articleId) : [];
+  }
+
+  function getSendHistory(articleId) {
+    return articleHistoryModel ? articleHistoryModel.findSendByArticleId(articleId) : [];
   }
 
   // 편집 잠금 — 보유자는 세션 id. 잠겨 있어도 stale(30분 무갱신)이면 가져갈 수 있다.
@@ -164,6 +209,7 @@ export function createArticleService({ articleModel, db }) {
 
   return {
     create, update, getById, query, search, applyAction,
+    getHistory, getSendHistory,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };
 }
