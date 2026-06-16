@@ -26,10 +26,16 @@ describe('buildContextMenuItems — per-menu items', () => {
     expect(keys(items)).toContain('edit');
   });
 
-  it('inactive items are always disabled (표시만)', () => {
-    const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    // step8: history/sendHistory 활성, step9: followUp/continue/resend 활성, step10: translate 활성 — mapping만 비활성 유지.
-    expect(find(items, 'mapping').enabled).toBe(false);
+  it('매핑(mapping)은 세션만 있으면 활성이다 (step11)', () => {
+    // 권한/상태 게이트 없음 — 서버가 세션 인증·잠금 게이트. 부서별 작성/송고·개인별 수정에서 모두 활성.
+    for (const menu of ['deptWrite', 'deptSend', 'personal']) {
+      for (const role of ['R', 'D', 'Z']) {
+        const items = buildContextMenuItems(menu, { status: 'RDS' }, { role });
+        expect(find(items, 'mapping').enabled).toBe(true);
+      }
+    }
+    // 데스크 미송고 메뉴에는 매핑이 노출되지 않는다(news.md 85행 — 부서별 작성/송고·개인별 수정만).
+    expect(keys(buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' }))).not.toContain('mapping');
   });
 
   it('번역(translate)은 세션만 있으면 활성이다 (step10)', () => {
@@ -40,8 +46,6 @@ describe('buildContextMenuItems — per-menu items', () => {
         expect(find(items, 'translate').enabled).toBe(true);
       }
     }
-    // mapping은 이 step에서 비활성 유지(step11 소관).
-    expect(find(buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' }), 'mapping').enabled).toBe(false);
   });
 
   it('후속/계속기사작성은 작성 권한(R/D/Z)에서 활성이다 (step9)', () => {

@@ -126,6 +126,16 @@ describe('useViewController', () => {
     expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('portalRevise');
   });
 
+  it('mapArticle stashes a pendingEdit in mapping mode and navigates to writer.do (step11)', async () => {
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    act(() => { result.current.mapArticle({ articleId: 'AKR0', title: 't0' }); });
+
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
+    expect(pending).toEqual({ article: { articleId: 'AKR0', title: 't0' }, mode: 'mapping' });
+  });
+
   it('requestDelete is D/Z only and confirms before approveDelete', async () => {
     // requestDelete는 전달된 기사 객체로 동작한다(목록 필터와 무관) — DPS는 기본 메뉴에 안 보임.
     // 권한 R → 거부.

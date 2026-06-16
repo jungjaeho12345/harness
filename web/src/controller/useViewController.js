@@ -114,6 +114,10 @@ export function useViewController() {
     [enterEditor],
   );
 
+  // 매핑(mapping) — 기존 기사를 임베드 전용 제한 편집 모드로 writer.do에 연다(step11).
+  // 편집 진입과 동일한 채널(sessionStorage + navigate, 직접 fetch 없음 — ADR-003). 잠금/저장 인가는 서버가 강제.
+  const mapArticle = useCallback((article) => enterEditor(article, 'mapping'), [enterEditor]);
+
   // Lock해제(강제) — D/Z만, '해제하시겠습니까?' 확인 후. 권한 없으면 no-op(서버도 거부).
   const releaseLock = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -176,6 +180,6 @@ export function useViewController() {
     page, setPage, totalPages, pageItems, items,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
-    createFollowUp, createContinue, resend, runTranslate,
+    createFollowUp, createContinue, resend, runTranslate, mapArticle,
   };
 }

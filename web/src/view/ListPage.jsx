@@ -42,7 +42,7 @@ export function ListPage() {
     menu, selectMenu, departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
-    createFollowUp, createContinue, resend, runTranslate,
+    createFollowUp, createContinue, resend, runTranslate, mapArticle,
   } = ctrl;
 
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
@@ -87,6 +87,8 @@ export function ListPage() {
       // 후속/계속기사작성 — deriveArticle이 만든 새 기사로 편집 진입(컨트롤러). 원본 비파괴.
       case 'followUp': createFollowUp(article); break;
       case 'continue': createContinue(article); break;
+      // 매핑 — 임베드 전용 제한 편집 모드로 writer.do 진입(컨트롤러). 잠금/저장 인가는 서버가 강제.
+      case 'mapping': mapArticle(article); break;
       // 재송 — 확인 후 send 재송고. 실패 reason(no-end-marker 등)은 서버가 강제하므로 사용자에게 ALERT 안내(news.md 72행).
       case 'resend': {
         const r = await resend(article);
