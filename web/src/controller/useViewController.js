@@ -123,6 +123,13 @@ export function useViewController() {
     return model.forceUnlockArticle(article.articleId);
   }, [model, identity]);
 
+  // 이력보기/송고이력보기 — 읽기 전용. 확인창 없이 model.queryHistory(ADR-003)로 이력 행을 가져온다.
+  // sendOnly면 송고 이력만(서버 도메인 필터). 이력이 없으면 빈 배열을 반환한다(오류 아님 — step0 전제).
+  const loadHistory = useCallback(async (article, { sendOnly = false } = {}) => {
+    const r = await model.queryHistory(article.articleId, { sendOnly });
+    return (r && r.items) || [];
+  }, [model]);
+
   // 삭제요청 — DPS 기사 삭제 승인(approveDelete). D/Z만, '정말 삭제하시겠습니까?' 확인 후.
   const requestDelete = useCallback(async (article) => {
     if (!canManage(identity)) return { ok: false, reason: 'forbidden' };
@@ -137,6 +144,6 @@ export function useViewController() {
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
-    editArticle, reviseArticle, releaseLock, requestDelete,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
   };
 }

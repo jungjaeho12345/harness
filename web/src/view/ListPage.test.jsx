@@ -93,6 +93,59 @@ describe('ListPage', () => {
     expect(force).toHaveBeenCalledWith('AKR5');
   });
 
+  it('우클릭 이력보기 → 이력 모달에 행을 렌더한다', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 't', status: 'RDS', lockYN: 'N' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', actorUserId: '김기자', createdAt: '2026-06-14T03:09:06Z' },
+        ],
+      },
+    };
+    const { container } = setup(seed);
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '이력보기' });
+    expect(dialog).toHaveTextContent('2026-06-14 03:09');
+    expect(dialog).toHaveTextContent('김기자');
+  });
+
+  it('우클릭 이력보기 → 이력이 없으면 안내를 보여준다', async () => {
+    const { container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'RDS', lockYN: 'N' }] });
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '이력보기' });
+    expect(dialog).toHaveTextContent('이력이 없습니다');
+  });
+
+  it('우클릭 송고이력보기 → sendOnly로 조회한다', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { model, container } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '송고이력보기' }));
+    await screen.findByRole('dialog', { name: '송고이력보기' });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
+  });
+
   it('헤더 우클릭 시 컬럼 설정 모달이 열린다', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

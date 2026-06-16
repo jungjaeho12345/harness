@@ -13,6 +13,7 @@ import {
 } from './columnConfig.js';
 import { renderDetailHtml } from './articleDetail.js';
 import { blocksToText, deserialize } from './editorContent.js';
+import { formatDateTime } from './listFormat.js';
 
 const MENU_LABELS = {
   deskUnsent: '데스크 미송고',
@@ -40,17 +41,26 @@ export function ListPage() {
   const {
     menu, selectMenu, departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems,
-    editArticle, reviseArticle, releaseLock, requestDelete,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
   } = ctrl;
 
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
   const [colConfig, setColConfig] = useState(() => loadColumnConfig(menu));
   const [showColModal, setShowColModal] = useState(false);
+  // 이력보기/송고이력보기 모달 { title, items } — null이면 닫힘. (step8, 컬럼 설정 모달과 동일 패턴)
+  const [historyModal, setHistoryModal] = useState(null);
 
   // 메뉴별 컬럼 설정 로드(설정은 메뉴별로 저장 — columnConfig).
   useEffect(() => { setColConfig(loadColumnConfig(menu)); }, [menu]);
 
   const cols = visibleColumns(colConfig);
+
+  // 이력보기/송고이력보기 — 컨트롤러로 이력을 조회(model.queryHistory 경유, ADR-003)해 모달로 표시.
+  // 모달 렌더는 React가 escape하므로 별도 HTML 이스케이프 불필요(새 창이 아닌 in-app 모달).
+  const showHistory = async (article, title, sendOnly) => {
+    const rows = await loadHistory(article, { sendOnly });
+    setHistoryModal({ title, items: rows });
+  };
 
   const onCtxSelect = (key, article) => {
     switch (key) {
@@ -60,6 +70,8 @@ export function ListPage() {
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
       case 'detail': openDetail(article); break;
+      case 'history': showHistory(article, '이력보기', false); break;
+      case 'sendHistory': showHistory(article, '송고이력보기', true); break;
       case 'copyBody': copyText(blocksToText(deserialize(article.markupVersion ?? article.body ?? article.content ?? ''))); break;
       case 'copyTitle': copyText(article.title); break;
       default: break; // 비활성(표시만) 항목은 onSelect로 오지 않는다.
@@ -189,6 +201,39 @@ export function ListPage() {
               />
             </div>
             <button type="button" className="yh-btn yh-btn--primary" onClick={() => setShowColModal(false)}>닫기</button>
+          </div>
+        </div>
+      )}
+
+      {historyModal && (
+        <div className="yh-modal__backdrop" onClick={() => setHistoryModal(null)}>
+          <div className="yh-modal" role="dialog" aria-label={historyModal.title} onClick={(e) => e.stopPropagation()}>
+            <h2>{historyModal.title}</h2>
+            {historyModal.items.length === 0 ? (
+              <p className="yh-history__empty">이력이 없습니다.</p>
+            ) : (
+              <table className="yh-table yh-history__table">
+                <thead>
+                  <tr>
+                    <th>시각</th>
+                    <th>종류</th>
+                    <th>전이</th>
+                    <th>작성자</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyModal.items.map((h, i) => (
+                    <tr key={h.id ?? i}>
+                      <td>{formatDateTime(h.createdAt)}</td>
+                      <td>{h.eventType ?? h.action ?? ''}</td>
+                      <td>{h.fromStatus || h.toStatus ? `${h.fromStatus ?? ''}→${h.toStatus ?? ''}` : ''}</td>
+                      <td>{h.actorUserId ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <button type="button" className="yh-btn yh-btn--primary" onClick={() => setHistoryModal(null)}>닫기</button>
           </div>
         </div>
       )}

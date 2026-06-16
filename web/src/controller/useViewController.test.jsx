@@ -142,6 +142,52 @@ describe('useViewController', () => {
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
   });
 
+  it('loadHistory queries model.queryHistory and returns items', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', status: 'RDS' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: false });
+    expect(items).toHaveLength(2);
+  });
+
+  it('loadHistory with sendOnly filters to send events', async () => {
+    const seed = {
+      articles: [{ articleId: 'AKR9', status: 'RDS' }],
+      histories: {
+        AKR9: [
+          { eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z' },
+          { eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z' },
+        ],
+      },
+    };
+    const { result, model } = setup(seed);
+    const spy = vi.spyOn(model, 'queryHistory');
+
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }, { sendOnly: true }); });
+    expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
+    expect(items).toHaveLength(1);
+    expect(items[0].action).toBe('send');
+  });
+
+  it('loadHistory returns an empty array when there is no history', async () => {
+    const { result } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS' }] });
+    let items;
+    await act(async () => { items = await result.current.loadHistory({ articleId: 'AKR9' }); });
+    expect(items).toEqual([]);
+  });
+
   it('releaseLock force-unlocks for D/Z after confirm', async () => {
     const { result, model } = setup({ articles: [{ articleId: 'AKR9', status: 'RDS', lockYN: 'Y' }] }, { role: 'Z' });
     await waitFor(() => expect(result.current.items).toHaveLength(1));

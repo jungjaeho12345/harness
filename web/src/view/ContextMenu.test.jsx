@@ -10,7 +10,7 @@ describe('buildContextMenuItems — per-menu items', () => {
   it('desk-unsent: 편집/상세보기/이력보기/본문복사/제목만복사', () => {
     const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
     expect(keys(items)).toEqual(['edit', 'detail', 'history', 'copyBody', 'copyTitle']);
-    expect(find(items, 'history').enabled).toBe(false); // 표시만
+    expect(find(items, 'history').enabled).toBe(true); // step8: 이력보기 활성
     expect(find(items, 'edit').enabled).toBe(true);
   });
 
@@ -28,8 +28,23 @@ describe('buildContextMenuItems — per-menu items', () => {
 
   it('inactive items are always disabled (표시만)', () => {
     const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    for (const k of ['history', 'sendHistory', 'translate', 'mapping', 'followUp', 'continue', 'resend']) {
+    // step8에서 history/sendHistory는 활성화됨 — 나머지(translate/mapping/followUp/continue/resend)는 비활성 유지.
+    for (const k of ['translate', 'mapping', 'followUp', 'continue', 'resend']) {
       expect(find(items, k).enabled).toBe(false);
+    }
+  });
+
+  it('이력보기/송고이력보기는 활성이다 (step8)', () => {
+    // 데스크 미송고: 이력보기만 활성(송고이력보기 항목 없음).
+    const desk = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'R' });
+    expect(find(desk, 'history').enabled).toBe(true);
+    expect(keys(desk)).not.toContain('sendHistory');
+
+    // 부서별 작성/송고·개인별 수정: 이력보기·송고이력보기 둘 다 활성(권한/상태 무관).
+    for (const menu of ['deptWrite', 'deptSend', 'personal']) {
+      const items = buildContextMenuItems(menu, { status: 'RDS' }, { role: 'R' });
+      expect(find(items, 'history').enabled).toBe(true);
+      expect(find(items, 'sendHistory').enabled).toBe(true);
     }
   });
 });
