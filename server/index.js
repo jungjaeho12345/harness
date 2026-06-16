@@ -214,6 +214,24 @@ export function createApp({ controllers, sessionService }) {
     } catch (e) { next(e); }
   });
 
+  // 이력 조회 — 읽기 전용(DB 비파괴, notify 없음). 인증된 R/D/Z 모두 허용(별도 역할 게이트 없음).
+  // 비즈니스 로직(필터/정렬)은 서비스/모델에 위임하고 라우트는 세션 게이트→위임→shape 매핑만 한다.
+  app.get('/api/articles/:id/history', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      return res.json({ ok: true, items: controllers.article.getHistory(req.params.id) });
+    } catch (e) { next(e); }
+  });
+
+  app.get('/api/articles/:id/send-history', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      return res.json({ ok: true, items: controllers.article.getSendHistory(req.params.id) });
+    } catch (e) { next(e); }
+  });
+
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다. 신규는 항상 RDS로 저장(서비스).
   app.post('/api/articles', (req, res, next) => {
     try {

@@ -8,6 +8,7 @@
 
 import { createUserModel } from '../models/userModel.js';
 import { createArticleModel } from '../models/articleModel.js';
+import { createArticleHistoryModel } from '../models/articleHistoryModel.js';
 import { createReceiverConfigModel } from '../models/receiverConfigModel.js';
 
 import { createSessionService } from '../services/sessionService.js';
@@ -25,7 +26,9 @@ export function createControllers(db, {
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
-  const articleModel = createArticleModel(db);
+  // 이력 모델을 만들어 articleModel·articleService에 주입 — 저장과 같은 tx로 이력을 기록/조회한다.
+  const articleHistoryModel = createArticleHistoryModel(db);
+  const articleModel = createArticleModel(db, { articleHistoryModel });
   const receiverConfigModel = createReceiverConfigModel(db);
 
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
@@ -33,7 +36,7 @@ export function createControllers(db, {
 
   // 서비스 결선.
   const userService = createUserService({ userModel });
-  const articleService = createArticleService({ articleModel, db });
+  const articleService = createArticleService({ articleModel, db, articleHistoryModel });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel });
@@ -65,6 +68,8 @@ export function createControllers(db, {
     create: (dto) => articleService.create(dto),
     update: (articleId, fields) => articleService.update(articleId, fields),
     getById: (articleId) => articleService.getById(articleId),
+    getHistory: (articleId) => articleService.getHistory(articleId),
+    getSendHistory: (articleId) => articleService.getSendHistory(articleId),
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
     acquireEditLock: (articleId, opts) => articleService.acquireEditLock(articleId, opts),
     releaseEditLock: (articleId, opts) => articleService.releaseEditLock(articleId, opts),
