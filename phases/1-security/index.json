@@ -55,7 +55,7 @@
       "name": "web-credentials",
       "status": "completed",
       "started_at": "2026-06-16T17:03:22+0900",
-      "completed_at": "2026-06-16T17:10:00+0900",
+      "completed_at": "2026-06-16T17:07:15+0900",
       "summary": "httpModel을 쿠키 기반 세션으로 전환: SESSION_STORAGE_KEY·readSessionId·writeSessionId·x-session-id 헤더 완전 제거; fetch init에 credentials:'include' 추가(모든 요청); login/logout의 sessionStorage 저장·제거 코드 삭제; subscribe를 EventSource(url, { withCredentials: true }) + ?session= 쿼리 없는 /api/stream URL로 전환; httpModel.test.js 갱신(credentials:include·x-session-id 미사용·EventSource withCredentials 단언); web 224건·서버 199건 전부 통과."
     }
   ],
