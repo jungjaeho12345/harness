@@ -20,6 +20,7 @@ import { createFtpWatcher } from './ftpWatcher.js';
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const ROLES = new Set(['R', 'D', 'Z']);
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
+const DERIVE_MODE_SET = new Set(['followUp', 'continue']);
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
 const FORBIDDEN = { ok: false, reason: 'forbidden' };
@@ -38,6 +39,7 @@ const STATUS_BY_REASON = {
   'unknown-role': 403,
   'no-end-marker': 400,
   'unknown-action': 400,
+  'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
 };
@@ -256,6 +258,25 @@ export function createApp({ controllers, sessionService }) {
       const r = controllers.article.applyAction(req.params.id, me.role, action, { userId: me.userId });
       if (!r.ok) return fail(res, r, 409);
       app.notifyChange('status');
+      return res.json(r);
+    } catch (e) { next(e); }
+  });
+
+  // 후속/계속기사작성 — 원본을 바탕으로 "새 기사"를 만든다(신규 작성과 동일 권한 R/D/Z).
+  // 얇은 transport(ADR-006): 세션 게이트 → author를 세션 사용자로 stamp → controllers.article.derive 위임 → shape 매핑.
+  // 파생 로직(필드 복사·articleId 발급·원본 비변경)은 step3 서비스가 강제한다 — 여기서 재구현하지 않는다.
+  // CRITICAL(ADR-004): author는 세션에서 stamp하고 클라가 보낸 author/role/status/articleId는 무시한다.
+  app.post('/api/articles/:id/derive', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      if (!ROLES.has(me.role)) return res.status(403).json(FORBIDDEN);
+      const mode = req.body?.mode;
+      if (!DERIVE_MODE_SET.has(mode)) return res.status(400).json({ ok: false, reason: 'unknown-mode' });
+      // author는 세션 사용자(부서 등 나머지 공통정보는 서비스가 원본에서 복사). 클라 author/role/status/articleId 무시.
+      const r = controllers.article.derive(req.params.id, mode, { author: me.name ?? me.userId });
+      if (!r.ok) return fail(res, r);
+      app.notifyChange('create');
       return res.json(r);
     } catch (e) { next(e); }
   });

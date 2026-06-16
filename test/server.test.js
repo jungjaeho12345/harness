@@ -386,3 +386,134 @@ test('GET /api/media/search: 세션 게이트 + 이미지 검색 위임(주입 f
     assert.match(calledUrl, /customsearch/);
   } finally { await ctx.close(); }
 });
+
+test('derive: continue는 새 articleId·RDS를 반환하고 author는 세션 사용자로 stamp(body author 무시)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP, author: '원작자' },
+    })).body;
+
+    // body로 author='해커'·role='Z'·status를 보내도 무시되고 세션 사용자가 author가 되어야 한다.
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, {
+      sid, body: { mode: 'continue', author: '해커', role: 'Z', status: 'DPS', articleId: 'spoof' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.ok(r.body.articleId);
+    assert.notEqual(r.body.articleId, articleId);
+
+    // 새 기사 조회: status RDS, author는 세션 사용자(김기자), 본문 복사(continue).
+    const got = (await api(ctx.base, 'GET', `/api/articles/${r.body.articleId}`, { sid })).body;
+    assert.equal(got.contents.status, 'RDS');
+    assert.equal(got.contents.author, '김기자');
+    assert.equal(got.article.markupVersion, END_MARKUP);
+  } finally { await ctx.close(); }
+});
+
+test('derive: followUp은 본문 빈값으로 새 기사를 만든다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP },
+    })).body;
+
+    const r = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'followUp' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.notEqual(r.body.articleId, articleId);
+
+    const got = (await api(ctx.base, 'GET', `/api/articles/${r.body.articleId}`, { sid })).body;
+    assert.equal(got.contents.status, 'RDS');
+    assert.equal(got.article.markupVersion, '');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 원본 기사는 파생 후에도 불변이다(DB 비파괴)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: '원본제목', markupVersion: END_MARKUP, author: '원작자' },
+    })).body;
+
+    const before = (await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'continue' } });
+    const after = (await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid })).body;
+
+    assert.deepEqual(after.article, before.article);
+    assert.deepEqual(after.contents, before.contents);
+  } finally { await ctx.close(); }
+});
+
+test('derive: 미인증은 401, 정의되지 않은 권한은 403', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'ghost', name: '유령', role: 'X', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const unauth = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { body: { mode: 'continue' } });
+    assert.equal(unauth.status, 401);
+    assert.equal(unauth.body.reason, 'unauthenticated');
+
+    const ghostSid = (await login(ctx.base, 'ghost', 'pw')).sessionId;
+    const forbidden = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, {
+      sid: ghostSid, body: { mode: 'continue' },
+    });
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.body.reason, 'forbidden');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 알 수 없는 mode는 400(unknown-mode), 원본 없으면 404(not-found)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const bad = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'translate' } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.reason, 'unknown-mode');
+
+    const missing = await api(ctx.base, 'POST', '/api/articles/NOPE/derive', { sid, body: { mode: 'continue' } });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.reason, 'not-found');
+  } finally { await ctx.close(); }
+});
+
+test('derive: 성공 시 SSE change(create) 무효화 신호가 발생한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    const ac = new AbortController();
+    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const reader = res.body.getReader();
+    await reader.read(); // ready 프레임 소비.
+
+    const derived = await api(ctx.base, 'POST', `/api/articles/${articleId}/derive`, { sid, body: { mode: 'continue' } });
+    assert.equal(derived.status, 200);
+
+    const { value } = await reader.read();
+    const frame = Buffer.from(value).toString('utf8');
+    assert.match(frame, /event: change/);
+    assert.match(frame, /"kind":"create"/);
+    ac.abort();
+  } finally { await ctx.close(); }
+});
