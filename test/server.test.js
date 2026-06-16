@@ -93,6 +93,31 @@ test('로그인: 성공 시 세션 발급(비밀번호 미노출), 실패 시 40
   } finally { await ctx.close(); }
 });
 
+test('로그인: 임계치만큼 실패 후 올바른 자격도 잠금(423 Locked, 세션 미발급)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw1234' });
+
+    // step1 기본 임계치(5회) 만큼 잘못된 비밀번호로 실패 — 레이트리밋 한도(10) 안.
+    for (let i = 0; i < 5; i += 1) {
+      const r = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'wrong' } });
+      assert.equal(r.status, 401);
+      assert.equal(r.body.reason, 'invalid-credentials');
+    }
+
+    // 6번째 호출: 올바른 자격이어도 잠금 → 423, reason:'locked', 세션 미발급.
+    const locked = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw1234' } });
+    assert.equal(locked.status, 423);
+    assert.equal(locked.body.ok, false);
+    assert.equal(locked.body.reason, 'locked');
+    assert.equal(locked.body.sessionId, undefined);
+    // 내부 상태(잔여 시도/해제 시각) 비노출.
+    assert.equal(locked.body.failedLoginCount, undefined);
+    assert.equal(locked.body.lockedUntil, undefined);
+    assert.equal(locked.body.remaining, undefined);
+  } finally { await ctx.close(); }
+});
+
 test('action: acting role은 세션에서 도출하고 req.body.role은 무시한다', async () => {
   const ctx = await start();
   try {
@@ -261,7 +286,10 @@ test('수집 인제스트: 미등록 sourceId 거부(403), 등록 시 attribute=
   } finally { await ctx.close(); }
 });
 
-test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 보낸다', async () => {
+// step5: SSE 인증을 쿠키 우선으로 강화한다(readSessionToken 경유). 세션 토큰 URL 노출을 줄이되,
+// dev cross-origin(SameSite 제약으로 쿠키 미적재 + EventSource는 헤더 불가)을 위해 ?session= 쿼리
+// 폴백은 유지한다(step3 결정 정합: prod None;Secure / dev·test Lax+폴백). 쿠키가 있으면 쿼리는 무시.
+test('GET /api/stream: 쿠키로 인증하면 ready 무효화 신호를 보낸다(미인증 401)', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
@@ -270,12 +298,51 @@ test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 
     // 미인증 스트림은 거부.
     const unauth = await fetch(`${ctx.base}/api/stream`);
     assert.equal(unauth.status, 401);
-    await unauth.body?.cancel?.();
+    assert.equal((await unauth.json()).reason, 'unauthenticated');
+
+    // 쿠키만으로(?session= 없이) 인증되어 ready 신호를 받는다 — 토큰이 URL에 노출되지 않는다.
+    const ac = new AbortController();
+    const res = await fetch(`${ctx.base}/api/stream`, {
+      headers: { cookie: `sid=${sid}` },
+      signal: ac.signal,
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/event-stream/);
+    const { value } = await res.body.getReader().read();
+    assert.match(Buffer.from(value).toString('utf8'), /event: ready/);
+    ac.abort();
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/stream: ?session= 쿼리 폴백은 유지된다(dev cross-origin)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
 
     const ac = new AbortController();
     const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/event-stream/);
+    const { value } = await res.body.getReader().read();
+    assert.match(Buffer.from(value).toString('utf8'), /event: ready/);
+    ac.abort();
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/stream: 쿠키가 ?session= 쿼리보다 우선한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+
+    // 유효 쿠키 + 무효 쿼리 → 쿠키로 인증되어 통과한다.
+    const ac = new AbortController();
+    const res = await fetch(`${ctx.base}/api/stream?session=deadbeef`, {
+      headers: { cookie: `sid=${sid}` },
+      signal: ac.signal,
+    });
+    assert.equal(res.status, 200);
     const { value } = await res.body.getReader().read();
     assert.match(Buffer.from(value).toString('utf8'), /event: ready/);
     ac.abort();
