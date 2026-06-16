@@ -22,11 +22,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-async function start({ fetchFn } = {}) {
+async function start({ fetchFn, lockoutPolicy } = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService, env: ENV, fetchFn });
+  const controllers = createControllers(db, { sessionService, env: ENV, fetchFn, lockoutPolicy });
   const app = createApp({ controllers, sessionService });
   const server = app.listen(0);
   await once(server, 'listening');
@@ -258,6 +258,31 @@ test('수집 인제스트: 미등록 sourceId 거부(403), 등록 시 attribute=
     const rows = ctx.controllers.article.query({ articleId: ok.body.articleId });
     assert.equal(rows[0].attribute, '자동기사');
     assert.equal(rows[0].status, 'RDS');
+  } finally { await ctx.close(); }
+});
+
+test('로그인: 반복 실패 → 잠금(locked 401), 잠긴 상태에서 올바른 비밀번호도 거부', async () => {
+  let t = 0;
+  const ctx = await start({ lockoutPolicy: { maxFailedAttempts: 3, lockDurationMs: 900000, now: () => t } });
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw1234' });
+
+    // 3회 실패 → invalid-credentials (임계치 미만)
+    for (let i = 0; i < 3; i++) {
+      const r = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'wrong' } });
+      assert.equal(r.status, 401);
+      assert.equal(r.body.reason, 'invalid-credentials', `${i + 1}번째 실패`);
+    }
+
+    // 4번째(잠금 기간 내) → locked
+    const locked = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'wrong' } });
+    assert.equal(locked.status, 401);
+    assert.equal(locked.body.reason, 'locked');
+
+    // 잠긴 상태에서 올바른 비밀번호도 locked
+    const alsoLocked = await api(ctx.base, 'POST', '/api/login', { body: { userId: 'kim', password: 'pw1234' } });
+    assert.equal(alsoLocked.status, 401);
+    assert.equal(alsoLocked.body.reason, 'locked');
   } finally { await ctx.close(); }
 });
 

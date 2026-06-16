@@ -22,6 +22,7 @@ export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
+  lockoutPolicy = {},
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -32,7 +33,7 @@ export function createControllers(db, {
   const session = sessionService ?? createSessionService();
 
   // 서비스 결선.
-  const userService = createUserService({ userModel });
+  const userService = createUserService({ userModel, ...lockoutPolicy });
   const articleService = createArticleService({ articleModel, db });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });

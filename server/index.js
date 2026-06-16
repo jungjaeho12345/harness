@@ -33,7 +33,7 @@ const STATUS_BY_REASON = {
   'not-holder': 403,
   'not-dps': 403,
   'not-found': 404,
-  locked: 409,
+  locked: 401,
   'forbidden-transition': 409,
   'unknown-role': 403,
   'no-end-marker': 400,

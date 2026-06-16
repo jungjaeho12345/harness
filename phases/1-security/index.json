@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "lockout-service",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-16T16:34:54+0900",
+      "completed_at": "2026-06-16T17:00:00+0900",
+      "summary": "createUserService에 now/maxFailedAttempts(5)/lockDurationMs(15분) 주입 추가; login 흐름: 사용자 부재→invalid-credentials, 잠금 우선 검사(locked), inactive 검사, 실패 시 failedLoginCount 증가·임계치 도달 시 lockedUntil 설정, 성공 시 failedLoginCount='0'·lockedUntil=null 리셋; 잠금 메타 3개(failedLoginCount·lockedUntil·lastFailedLoginAt)는 SAFE_FIELDS 제외로 응답 미노출; createControllers에 lockoutPolicy 옵션 추가(기존 호출부 호환); server STATUS_BY_REASON locked=401(인증 실패); userService 테스트 5건·server 통합 1건 추가; 기존 189개 통과."
     },
     {
       "step": 3,
