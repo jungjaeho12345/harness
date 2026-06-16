@@ -158,9 +158,10 @@ export function createApp({ controllers, sessionService }) {
     return res.json({ ok: true });
   });
 
-  // F5 복원 — 쿠키(우선)/헤더에서 sid를 도출해 신원 복원. ?session= 쿼리 폴백은 호환 유지.
+  // F5 복원 — 쿠키(yh.sid) 우선→x-session-id 헤더 순으로 sid를 도출해 신원 복원.
+  // ?session= 쿼리 폴백은 step 4에서 제거했다 (로그/Referer 유출 표면 제거, ADR-005).
   app.get('/api/session', (req, res) => {
-    const sid = extractSid(req) || req.query.session;
+    const sid = extractSid(req);
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
@@ -362,9 +363,11 @@ export function createApp({ controllers, sessionService }) {
   });
 
   // --- SSE: 무효화 신호 스트림 ---
-  // EventSource가 헤더를 못 보내므로 이 라우트 한정으로 ?session= 쿼리 인증 폴백을 허용한다.
+  // SSE 인증: 쿠키(yh.sid) 우선 → x-session-id 헤더 폴백 (extractSid 재사용, ADR-004).
+  // ?session= 쿼리 폴백은 step 4에서 제거했다 — 로그/Referer/브라우저 히스토리로의 sid 유출 방지(ADR-005).
+  // EventSource는 withCredentials=true 시 same-site 쿠키를 자동 전송한다 — 프론트 전환은 step 6.
   app.get('/api/stream', (req, res) => {
-    const sid = req.get('x-session-id') || req.query.session;
+    const sid = extractSid(req);
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
 

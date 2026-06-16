@@ -310,7 +310,7 @@ test('로그인: 반복 실패 → 잠금(locked 401), 잠긴 상태에서 올�
   } finally { await ctx.close(); }
 });
 
-test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 보낸다', async () => {
+test('GET /api/stream: x-session-id 헤더로 ready 무효화 신호를 받는다', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
@@ -322,7 +322,7 @@ test('GET /api/stream: 세션 폴백(?session=)으로 ready 무효화 신호를 
     await unauth.body?.cancel?.();
 
     const ac = new AbortController();
-    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const res = await fetch(`${ctx.base}/api/stream`, { headers: { 'x-session-id': sid }, signal: ac.signal });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/event-stream/);
     const { value } = await res.body.getReader().read();
@@ -418,5 +418,61 @@ test('x-session-id 헤더 폴백: 헤더만으로도 인증된다 (회귀)', asy
     const r = await api(ctx.base, 'GET', '/api/articles', { sid });
     assert.equal(r.status, 200);
     assert.equal(r.body.ok, true);
+  } finally { await ctx.close(); }
+});
+
+// ── SSE 쿠키 인증 테스트 (step 4) ──────────────────────────────────────────
+
+test('GET /api/stream: 쿠키(yh.sid)로 인증 시 ready 이벤트 수신', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const { setCookie } = await loginFull(ctx.base, 'kim', 'pw');
+    const cookieHeader = setCookie.split(';')[0].trim();
+
+    const ac = new AbortController();
+    const res = await fetch(`${ctx.base}/api/stream`, {
+      headers: { cookie: cookieHeader },
+      signal: ac.signal,
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/event-stream/);
+    const { value } = await res.body.getReader().read();
+    assert.match(Buffer.from(value).toString('utf8'), /event: ready/);
+    ac.abort();
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/stream: ?session= 쿼리만으로는 인증되지 않는다 (401)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+
+    // 쿠키/헤더 없이 ?session= 쿼리만 → 401 (로그/Referer 유출 방지를 위해 제거)
+    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`);
+    assert.equal(res.status, 401);
+    await res.body?.cancel?.();
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/session: 쿠키로 복원되고 ?session= 쿼리만으로는 인증 안 된다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const { setCookie, body } = await loginFull(ctx.base, 'kim', 'pw');
+    const cookieHeader = setCookie.split(';')[0].trim();
+    const sid = body.sessionId;
+
+    // 쿠키로 복원 → ok
+    const ck = await apiCk(ctx.base, 'GET', '/api/session', { cookie: cookieHeader });
+    assert.equal(ck.status, 200);
+    assert.equal(ck.body.ok, true);
+
+    // ?session= 쿼리만 (쿠키/헤더 없음) → 401
+    const res = await fetch(`${ctx.base}/api/session?session=${sid}`);
+    const qBody = await res.json();
+    assert.equal(res.status, 401);
+    assert.equal(qBody.ok, false);
   } finally { await ctx.close(); }
 });
