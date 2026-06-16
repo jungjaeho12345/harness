@@ -81,8 +81,19 @@ function extractSid(req) {
   return parseCookies(req.headers.cookie)['yh.sid'] || req.get('x-session-id');
 }
 
-export function createApp({ controllers, sessionService }) {
+export function createApp({ controllers, sessionService, nodeEnv }) {
   const app = express();
+
+  // 프로덕션 판별 — nodeEnv 주입 우선(테스트에서 'production' 주입 가능), 없으면 process.env.NODE_ENV.
+  // 이 값으로 HSTS·Secure 쿠키 등 프로덕션 전용 보안 설정을 분기한다.
+  const isProd = (nodeEnv ?? process.env.NODE_ENV) === 'production';
+
+  // 프로덕션은 리버스 프록시(예: nginx) 뒤 HTTPS 종단을 가정한다.
+  // 서버 자체는 127.0.0.1 http로 바인딩하고 TLS는 프록시가 담당하며,
+  // 프록시는 X-Forwarded-Proto를 전달한다.
+  // Secure 쿠키가 프록시 뒤에서도 동작하려면 'trust proxy' 설정이 필요하다.
+  // 개발에서는 비활성 — 불필요하고 로컬 환경에서 부작용을 일으킬 수 있다.
+  if (isProd) app.set('trust proxy', 1);
 
   // 쿠키 속성 — Secure는 프로덕션에서만 켠다(로컬 http 개발에서 쿠키 전송이 막히지 않도록).
   // SameSite 트레이드오프: 프론트(:5173)와 API(:3001)는 포트가 달라 cross-site로 취급될 수 있다.
@@ -90,11 +101,15 @@ export function createApp({ controllers, sessionService }) {
   // (localhost) 다른 포트라 브라우저 정책에 따라 동작이 갈린다. 사내 도구(동일 사이트 배포 가정)에서
   // Lax를 기본으로 하되, cross-origin credentialed 요청이 필요하면 SameSite=None; Secure
   // (프로덕션 https)가 필요하다. SESSION_SAMESITE 환경변수로 오버라이드 가능.
-  const cookieSecure = process.env.NODE_ENV === 'production';
+  const cookieSecure = isProd;
   const cookieSameSite = process.env.SESSION_SAMESITE || 'Lax';
   const cookieOpts = { httpOnly: true, sameSite: cookieSameSite, path: '/', secure: cookieSecure };
 
   app.use(helmet({
+    // HSTS(Strict-Transport-Security): 프로덕션에서만 활성화한다.
+    // 개발(http)에서 HSTS를 켜면 브라우저가 이후 http 접근을 강제로 https로 업그레이드해
+    // 로컬 개발 환경이 막힌다. 프로덕션은 리버스 프록시가 HTTPS를 처리하므로 안전하다.
+    hsts: isProd ? { maxAge: 31536000, includeSubDomains: true } : false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],

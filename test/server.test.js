@@ -22,12 +22,12 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-async function start({ fetchFn, lockoutPolicy } = {}) {
+async function start({ fetchFn, lockoutPolicy, nodeEnv } = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
   const controllers = createControllers(db, { sessionService, env: ENV, fetchFn, lockoutPolicy });
-  const app = createApp({ controllers, sessionService });
+  const app = createApp({ controllers, sessionService, nodeEnv });
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -475,4 +475,54 @@ test('GET /api/session: 쿠키로 복원되고 ?session= 쿼리만으로는 인�
     assert.equal(res.status, 401);
     assert.equal(qBody.ok, false);
   } finally { await ctx.close(); }
+});
+
+// ── HSTS / 프로덕션 하드닝 테스트 (step 5) ────────────────────────────────────
+
+test('HSTS: 개발 환경에서 Strict-Transport-Security 헤더가 없다', async () => {
+  const ctx = await start(); // nodeEnv 미주입 → 개발 모드
+  try {
+    const res = await fetch(`${ctx.base}/api/health`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('strict-transport-security'), null,
+      '개발(http)에서 HSTS 헤더가 없어야 한다');
+  } finally { await ctx.close(); }
+});
+
+test('HSTS: 프로덕션 환경에서 Strict-Transport-Security 헤더가 있고 쿠키에 Secure가 붙는다', async () => {
+  const ctx = await start({ nodeEnv: 'production' });
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+
+    // HSTS 헤더 검증
+    const health = await fetch(`${ctx.base}/api/health`);
+    const hsts = health.headers.get('strict-transport-security');
+    assert.ok(hsts, 'HSTS 헤더가 존재해야 한다');
+    assert.match(hsts, /max-age=\d+/i, 'max-age 지시어가 있어야 한다');
+    assert.match(hsts, /includeSubDomains/i, 'includeSubDomains 지시어가 있어야 한다');
+
+    // 프로덕션 쿠키에 Secure 속성 검증
+    const loginRes = await fetch(`${ctx.base}/api/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'kim', password: 'pw' }),
+    });
+    const setCookie = loginRes.headers.get('set-cookie');
+    assert.ok(setCookie, 'Set-Cookie 헤더가 존재해야 한다');
+    assert.match(setCookie, /;\s*Secure\b/i, '프로덕션 쿠키에 Secure 속성이 있어야 한다');
+  } finally { await ctx.close(); }
+});
+
+test('CSP: 개발/프로덕션 모두 기존 directives(scriptSrc·frameSrc 등)가 유지된다', async () => {
+  for (const nodeEnv of [undefined, 'production']) {
+    const ctx = await start({ nodeEnv });
+    try {
+      const res = await fetch(`${ctx.base}/api/health`);
+      const csp = res.headers.get('content-security-policy');
+      assert.ok(csp, `CSP 헤더가 존재해야 한다 (nodeEnv=${nodeEnv})`);
+      assert.match(csp, /script-src/, 'scriptSrc 지시어 포함');
+      assert.match(csp, /frame-src/, 'frameSrc 지시어 포함');
+      assert.match(csp, /youtube\.com/, 'YouTube frameSrc 포함');
+    } finally { await ctx.close(); }
+  }
 });

@@ -45,7 +45,10 @@
     {
       "step": 5,
       "name": "prod-hardening",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-16T16:57:29+0900",
+      "completed_at": "2026-06-16T17:10:00+0900",
+      "summary": "createApp에 nodeEnv 주입 추가(테스트에서 'production' 주입 가능); isProd=(nodeEnv??process.env.NODE_ENV)==='production' 파생; helmet에 hsts 프로덕션 분기(maxAge=31536000·includeSubDomains, 개발에서 false); cookieSecure를 isProd로 통일(step 3 Secure 분기 보강); 프로덕션에서 app.set('trust proxy',1) 활성; 리버스 프록시/HTTPS 종단/X-Forwarded-Proto 가정을 주석으로 문서화; 신규 테스트 3건(dev HSTS 없음·prod HSTS+Secure 쿠키·CSP 유지) 추가; 전체 199건 통과."
     },
     {
       "step": 6,
