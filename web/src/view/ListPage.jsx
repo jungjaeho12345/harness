@@ -59,6 +59,7 @@ export function ListPage() {
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete,
     viewHistory, viewSendHistory,
+    resendArticle, followUpArticle, continueArticle,
   } = ctrl;
 
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
@@ -77,6 +78,9 @@ export function ListPage() {
       case 'revisePortal': reviseArticle(article, true); break;
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
+      case 'followUp': followUpArticle(article); break;
+      case 'continue': continueArticle(article); break;
+      case 'resend': resendArticle(article); break;
       case 'detail': openDetail(article); break;
       case 'history': openHistory(article, 'history', viewHistory); break;
       case 'sendHistory': openHistory(article, 'sendHistory', viewSendHistory); break;

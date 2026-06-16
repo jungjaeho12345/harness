@@ -6,15 +6,14 @@
 //  - 삭제요청: 상태 DPS + 권한 D/Z만 활성(approveDelete).
 //  - Lock해제: 잠긴 행(LockYN='Y')에만 나타나고 권한 D/Z만 활성(R은 비활성).
 //  - 이력보기/송고이력보기: 활성(새 창에 이력 표시 — phase 1-history).
-//  - 번역/매핑/후속·계속기사작성/재송: 표시만(항상 비활성, 다음 phase).
+//  - 후속기사작성/계속기사작성: 항상 활성(일반 신규 작성 진입 — 권한·상태 제한 없음).
+//  - 재송: 상태 DPS + 권한 D/Z만 활성(DPS 재송고=send 전이는 D/Z만 통과, R 거부).
+//  - 번역/매핑: 표시만(항상 비활성, 다음 phase).
 
-// 비활성(표시만) 항목 — 동작하지 않는다(news.md MVP 제외).
+// 비활성(표시만) 항목 — 동작하지 않는다(news.md MVP 제외, 다음 phase 소관).
 const INACTIVE_ITEMS = Object.freeze([
   { key: 'translate', label: '번역' },
   { key: 'mapping', label: '매핑' },
-  { key: 'followUp', label: '후속기사작성' },
-  { key: 'continue', label: '계속기사작성' },
-  { key: 'resend', label: '재송' },
 ]);
 
 function inactive(key) {
@@ -30,6 +29,7 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   const canRevise = isDPS && role === 'D'; // 고침/포털고침: DPS + D
   const canDelete = isDPS && (role === 'D' || role === 'Z'); // 삭제요청: DPS + D/Z
   const canUnlock = role === 'D' || role === 'Z'; // Lock해제: D/Z
+  const canResend = isDPS && (role === 'D' || role === 'Z'); // 재송(DPS 재송고): DPS + D/Z
 
   const detail = { key: 'detail', label: '상세보기', enabled: true };
   const copyBody = { key: 'copyBody', label: '본문복사', enabled: true };
@@ -52,12 +52,12 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
       copyTitle,
       inactive('translate'),
       inactive('mapping'),
-      inactive('followUp'),
-      inactive('continue'),
+      { key: 'followUp', label: '후속기사작성', enabled: true },
+      { key: 'continue', label: '계속기사작성', enabled: true },
       { key: 'reviseNoPortal', label: '고침(포털제외)', enabled: canRevise },
       { key: 'revisePortal', label: '포털고침', enabled: canRevise },
       { key: 'requestDelete', label: '삭제요청', enabled: canDelete },
-      inactive('resend'),
+      { key: 'resend', label: '재송', enabled: canResend },
     ];
     // 부서별 송고에는 편집 항목이 추가된다(news.md).
     if (menu === 'deptSend') items.push(edit);
