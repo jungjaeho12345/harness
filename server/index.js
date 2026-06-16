@@ -60,8 +60,39 @@ function pickFilters(query = {}) {
   return f;
 }
 
+// raw Cookie 헤더를 키→값 맵으로 파싱한다. 외부 의존성 없이 node:http 표준만 사용.
+function parseCookies(cookieHeader = '') {
+  const out = {};
+  for (const pair of String(cookieHeader || '').split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx < 0) continue;
+    const k = pair.slice(0, idx).trim();
+    const v = pair.slice(idx + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+// sid 추출 — 쿠키(yh.sid) 우선, 없으면 x-session-id 헤더.
+// x-session-id 헤더 폴백은 전환기 호환을 위해 한시적으로 유지한다.
+// TODO(step 6): 프론트가 credentials 전환 완료 후 헤더 폴백 제거 검토.
+// 보안: 헤더 폴백은 XSS로 토큰 탈취 표면이 남으므로 최종 제거가 목표.
+function extractSid(req) {
+  return parseCookies(req.headers.cookie)['yh.sid'] || req.get('x-session-id');
+}
+
 export function createApp({ controllers, sessionService }) {
   const app = express();
+
+  // 쿠키 속성 — Secure는 프로덕션에서만 켠다(로컬 http 개발에서 쿠키 전송이 막히지 않도록).
+  // SameSite 트레이드오프: 프론트(:5173)와 API(:3001)는 포트가 달라 cross-site로 취급될 수 있다.
+  // Lax는 cross-site fetch(credentials)에서 쿠키가 붙지 않을 수 있으나, 로컬은 동일 호스트
+  // (localhost) 다른 포트라 브라우저 정책에 따라 동작이 갈린다. 사내 도구(동일 사이트 배포 가정)에서
+  // Lax를 기본으로 하되, cross-origin credentialed 요청이 필요하면 SameSite=None; Secure
+  // (프로덕션 https)가 필요하다. SESSION_SAMESITE 환경변수로 오버라이드 가능.
+  const cookieSecure = process.env.NODE_ENV === 'production';
+  const cookieSameSite = process.env.SESSION_SAMESITE || 'Lax';
+  const cookieOpts = { httpOnly: true, sameSite: cookieSameSite, path: '/', secure: cookieSecure };
 
   app.use(helmet({
     contentSecurityPolicy: {
@@ -82,6 +113,7 @@ export function createApp({ controllers, sessionService }) {
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
+    credentials: true, // credentials 모드 활성화 — origin 와일드카드 금지, 명시 allowlist 필수.
   }));
   app.use(express.json());
 
@@ -91,9 +123,9 @@ export function createApp({ controllers, sessionService }) {
   // 부트스트랩(watcher 등 HTTP 밖 경로)에서도 무효화를 알릴 수 있도록 노출한다.
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
-  // x-session-id → 검증된 신원. req.body.role은 절대 쓰지 않는다.
+  // 쿠키(yh.sid) → x-session-id 헤더 순으로 sid를 도출해 신원 반환. req.body.role은 절대 쓰지 않는다.
   function sessionOf(req) {
-    const sid = req.get('x-session-id');
+    const sid = extractSid(req);
     return { sid, me: sid ? sessionService.touchSession(sid) : undefined };
   }
 
@@ -112,19 +144,23 @@ export function createApp({ controllers, sessionService }) {
     try {
       const { userId, password } = req.body ?? {};
       const r = await controllers.auth.login(userId, password);
-      return r.ok ? res.json(r) : fail(res, r, 401);
+      if (!r.ok) return fail(res, r, 401);
+      // HttpOnly 쿠키 발급. body.sessionId는 전환기 호환을 위해 유지(step 6 프론트 전환 후 제거 검토).
+      res.cookie('yh.sid', r.sessionId, cookieOpts);
+      return res.json(r);
     } catch (e) { next(e); }
   });
 
   app.post('/api/logout', (req, res) => {
-    const sid = req.get('x-session-id') || req.body?.sessionId;
+    const sid = extractSid(req) || req.body?.sessionId;
     controllers.auth.logout(sid);
+    res.clearCookie('yh.sid', { path: '/', secure: cookieSecure });
     return res.json({ ok: true });
   });
 
-  // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(EventSource 폴백 호환 위해 ?session= 도 허용).
+  // F5 복원 — 쿠키(우선)/헤더에서 sid를 도출해 신원 복원. ?session= 쿼리 폴백은 호환 유지.
   app.get('/api/session', (req, res) => {
-    const sid = req.get('x-session-id') || req.query.session;
+    const sid = extractSid(req) || req.query.session;
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
@@ -166,21 +202,21 @@ export function createApp({ controllers, sessionService }) {
   // --- 수신 설정 (Z 전용 — 게이트는 receiverConfigService가 강제) ---
   app.get('/api/receiver-config', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.query(req.get('x-session-id'), req.query);
+      const r = controllers.receiverConfig.query(extractSid(req), req.query);
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });
 
   app.post('/api/receiver-config', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.create(req.get('x-session-id'), req.body ?? {});
+      const r = controllers.receiverConfig.create(extractSid(req), req.body ?? {});
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });
 
   app.delete('/api/receiver-config/:id', (req, res, next) => {
     try {
-      const r = controllers.receiverConfig.remove(req.get('x-session-id'), Number(req.params.id));
+      const r = controllers.receiverConfig.remove(extractSid(req), Number(req.params.id));
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });

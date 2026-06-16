@@ -54,6 +54,30 @@ async function login(base, userId, password) {
   return (await api(base, 'POST', '/api/login', { body: { userId, password } })).body;
 }
 
+// 로그인 후 응답 헤더(Set-Cookie 포함)를 같이 반환한다.
+async function loginFull(base, userId, password) {
+  const res = await fetch(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId, password }),
+  });
+  const body = await res.json();
+  return { status: res.status, body, setCookie: res.headers.get('set-cookie'), headers: res.headers };
+}
+
+// Cookie 헤더로 요청하는 헬퍼 (쿠키 기반 인증 테스트용).
+async function apiCk(base, method, path, { cookie, body } = {}) {
+  const headers = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (cookie) headers['cookie'] = cookie;
+  const res = await fetch(`${base}${path}`, {
+    method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let json;
+  try { json = await res.json(); } catch { json = undefined; }
+  return { status: res.status, body: json, headers: res.headers };
+}
+
 test('GET /api/health → 200 ok', async () => {
   const ctx = await start();
   try {
@@ -321,5 +345,78 @@ test('GET /api/media/search: 세션 게이트 + 이미지 검색 위임(주입 f
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.items, [{ id: 'img-1' }]);
     assert.match(calledUrl, /customsearch/);
+  } finally { await ctx.close(); }
+});
+
+// ── 쿠키 세션 테스트 (step 3) ──────────────────────────────────────────────
+
+test('로그인: Set-Cookie에 yh.sid·HttpOnly·SameSite=Lax 포함, dev 환경에서 Secure 없음', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const { status, body, setCookie } = await loginFull(ctx.base, 'kim', 'pw');
+    assert.equal(status, 200);
+    assert.ok(setCookie, 'Set-Cookie 헤더가 존재해야 한다');
+    assert.match(setCookie, /yh\.sid=/);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /SameSite=Lax/i);
+    assert.doesNotMatch(setCookie, /;\s*Secure\b/i); // dev → Secure 없음
+    // body.sessionId는 전환기 호환을 위해 유지되어야 한다
+    assert.match(body.sessionId, /^[0-9a-f]{64}$/);
+  } finally { await ctx.close(); }
+});
+
+test('쿠키만으로 보호 라우트에 접근할 수 있다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const { setCookie } = await loginFull(ctx.base, 'kim', 'pw');
+    // Set-Cookie 첫 번째 지시어만 추출(name=value 부분)
+    const cookieHeader = setCookie.split(';')[0].trim();
+
+    const r = await apiCk(ctx.base, 'GET', '/api/articles', { cookie: cookieHeader });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+  } finally { await ctx.close(); }
+});
+
+test('로그아웃: 쿠키가 만료되고 이후 쿠키 접근이 401이 된다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const { setCookie } = await loginFull(ctx.base, 'kim', 'pw');
+    const cookieHeader = setCookie.split(';')[0].trim();
+
+    // 로그아웃 — 쿠키로 요청
+    const logoutRes = await fetch(`${ctx.base}/api/logout`, {
+      method: 'POST',
+      headers: { cookie: cookieHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(logoutRes.status, 200);
+    const logoutSetCookie = logoutRes.headers.get('set-cookie');
+    assert.ok(logoutSetCookie, '로그아웃 응답에 Set-Cookie가 있어야 한다');
+    // Expires가 과거(1970)이거나 Max-Age=0으로 쿠키가 만료되어야 한다
+    const isExpired = /Expires=[^;]*1970/i.test(logoutSetCookie) || /Max-Age=0/i.test(logoutSetCookie);
+    assert.ok(isExpired, `쿠키가 만료 처리되어야 한다. 실제: ${logoutSetCookie}`);
+
+    // 로그아웃 후 쿠키로 접근 → 세션이 무효화되어 401
+    const afterLogout = await apiCk(ctx.base, 'GET', '/api/articles', { cookie: cookieHeader });
+    assert.equal(afterLogout.status, 401);
+  } finally { await ctx.close(); }
+});
+
+test('x-session-id 헤더 폴백: 헤더만으로도 인증된다 (회귀)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    // loginFull을 써서 sid 추출 (body.sessionId 유지 확인)
+    const { body } = await loginFull(ctx.base, 'kim', 'pw');
+    const sid = body.sessionId;
+
+    // 쿠키 없이 x-session-id 헤더만으로 접근 → 폴백 동작
+    const r = await api(ctx.base, 'GET', '/api/articles', { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
   } finally { await ctx.close(); }
 });
