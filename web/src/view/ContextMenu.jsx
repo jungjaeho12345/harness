@@ -8,12 +8,12 @@
 //  - 이력보기/송고이력보기: 활성(새 창에 이력 표시 — phase 1-history).
 //  - 후속기사작성/계속기사작성: 항상 활성(일반 신규 작성 진입 — 권한·상태 제한 없음).
 //  - 재송: 상태 DPS + 권한 D/Z만 활성(DPS 재송고=send 전이는 D/Z만 통과, R 거부).
-//  - 번역/매핑: 표시만(항상 비활성, 다음 phase).
+//  - 매핑: 항상 활성(일반 편집 진입 — 권한·상태 제한 없음, 후속/계속과 동일. 잠금·권한은 서버 lock/PUT이 강제).
+//  - 번역: 표시만(항상 비활성, provider 미결정 — 다음 과제).
 
-// 비활성(표시만) 항목 — 동작하지 않는다(news.md MVP 제외, 다음 phase 소관).
+// 비활성(표시만) 항목 — 동작하지 않는다(번역: provider 미결정, 다음 과제 소관).
 const INACTIVE_ITEMS = Object.freeze([
   { key: 'translate', label: '번역' },
-  { key: 'mapping', label: '매핑' },
 ]);
 
 function inactive(key) {
@@ -51,7 +51,7 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
       copyBody,
       copyTitle,
       inactive('translate'),
-      inactive('mapping'),
+      { key: 'mapping', label: '매핑', enabled: true },
       { key: 'followUp', label: '후속기사작성', enabled: true },
       { key: 'continue', label: '계속기사작성', enabled: true },
       { key: 'reviseNoPortal', label: '고침(포털제외)', enabled: canRevise },

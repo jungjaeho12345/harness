@@ -146,6 +146,16 @@ describe('ListPage', () => {
     expect(apply).toHaveBeenCalledWith('AKR8', 'send');
   });
 
+  it('우클릭 매핑 → 편집 채널로 기사작성 페이지 이동(mapArticle)', async () => {
+    const { navigate, container } = setup({ articles: [{ articleId: 'AKR2', title: 't', status: 'RDS', lockYN: 'N' }] });
+    await userEvent.click(screen.getByRole('button', { name: '부서별 작성' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '매핑' }));
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR2' });
+  });
+
   it('헤더 우클릭 시 컬럼 설정 모달이 열린다', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

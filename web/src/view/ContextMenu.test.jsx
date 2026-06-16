@@ -26,11 +26,52 @@ describe('buildContextMenuItems — per-menu items', () => {
     expect(keys(items)).toContain('edit');
   });
 
-  it('translate/mapping are always disabled (표시만, 다음 phase)', () => {
-    const items = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
-    for (const k of ['translate', 'mapping']) {
-      expect(find(items, k).enabled).toBe(false);
+  it('translate is always disabled (표시만, provider 미결정 — 다음 과제)', () => {
+    // 권한·상태를 다양화해도 번역은 비활성 그대로다.
+    for (const [status, role] of [['DPS', 'D'], ['RDS', 'R'], ['DPS', 'Z']]) {
+      const items = buildContextMenuItems('deptWrite', { status }, { role });
+      expect(find(items, 'translate').enabled).toBe(false);
     }
+  });
+
+  it('mapping is always active (매핑=일반 편집 진입, 권한·상태 제한 없음)', () => {
+    // 권한 R·D·Z, 상태 DPS·RDS 다양화 — 매핑은 항상 활성.
+    for (const menu of ['deptWrite', 'deptSend', 'personal']) {
+      for (const [status, role] of [['DPS', 'D'], ['RDS', 'R'], ['DPS', 'Z'], ['RDS', 'D']]) {
+        const items = buildContextMenuItems(menu, { status }, { role });
+        expect(find(items, 'mapping')).toBeTruthy();
+        expect(find(items, 'mapping').enabled).toBe(true);
+        expect(find(items, 'mapping').label).toBe('매핑');
+      }
+    }
+  });
+
+  it('deskUnsent 메뉴에는 매핑/번역 항목이 없다 (회귀)', () => {
+    const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
+    expect(keys(items)).not.toContain('mapping');
+    expect(keys(items)).not.toContain('translate');
+  });
+
+  it('활성 매핑 클릭 시 onSelect(mapping, article) 호출', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR7', status: 'RDS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'R' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '매핑' }));
+    expect(onSelect).toHaveBeenCalledWith('mapping', article);
+  });
+
+  it('비활성 번역 클릭은 onSelect를 호출하지 않는다', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR6', status: 'DPS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'D' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    const tr = screen.getByRole('menuitem', { name: '번역' });
+    expect(tr).toBeDisabled();
+    await userEvent.click(tr);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('followUp/continue are always active (일반 신규 작성 진입)', () => {

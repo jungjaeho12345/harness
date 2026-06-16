@@ -57,7 +57,7 @@ export function ListPage() {
   const {
     menu, selectMenu, departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems,
-    editArticle, reviseArticle, releaseLock, requestDelete,
+    editArticle, reviseArticle, mapArticle, releaseLock, requestDelete,
     viewHistory, viewSendHistory,
     resendArticle, followUpArticle, continueArticle,
   } = ctrl;
@@ -76,6 +76,7 @@ export function ListPage() {
       case 'edit': editArticle(article); break;
       case 'reviseNoPortal': reviseArticle(article, false); break;
       case 'revisePortal': reviseArticle(article, true); break;
+      case 'mapping': mapArticle(article); break;
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
       case 'followUp': followUpArticle(article); break;
