@@ -23,13 +23,8 @@ function order(set) {
 }
 
 export function submitButtons({ mode, status, role, articleId } = {}) {
-  // 매핑 진입 — 최우선 분기. 매핑은 상태 전이가 아니라 임베드 추가 PUT이므로
-  // 송고/보류/KILL이 아닌 '저장' 단일 버튼만 표시한다.
-  // 매핑 탭은 articleId·원본 status(예: DPS)를 가지므로, 이 분기를 뒤에 두면
-  // 기존 edit/revise 규칙에 먼저 걸려 송고/보류가 떠버린다 → 반드시 최우선.
-  if (mode === 'mapping') {
-    return ['save'];
-  }
+  // 매핑(mapping) — 임베드 전용 제한 편집. 상태 전이 없음 → 송고/보류/KILL 액션바를 노출하지 않는다(step11).
+  if (mode === 'mapping') return [];
 
   // 신규(미저장, 기사아이디 없음) — 권한 무관 송고·보류만(KILL 숨김).
   if (!articleId || mode === 'new') {

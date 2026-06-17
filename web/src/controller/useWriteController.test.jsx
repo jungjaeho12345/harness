@@ -170,6 +170,57 @@ describe('useWriteController', () => {
     expect(unlock).toHaveBeenCalledWith('AKR1');
   });
 
+  // step11: 매핑(mapping) — 임베드 전용 제한 편집 모드.
+  it('openArticle(mapping) opens a mapping tab, fills body, and acquires the (revise) lock without applyAction', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+
+    const tab = result.current.activeTab;
+    expect(tab.mode).toBe('mapping');
+    expect(tab.articleId).toBe('AKR1');
+    expect(tab.fields.body).toBe('본문'); // getArticle로 본문 채움(편집 진입과 동일)
+    // 매핑은 전이 없는 잠금(revise)을 재사용한다 — 서버 게이트가 실제 인가를 강제.
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise');
+    expect(apply).not.toHaveBeenCalled(); // 순수 편집 진입 — 상태 전이 없음
+  });
+
+  it('updateField in mapping mode rejects common-info fields but allows body (embed path)', async () => {
+    const { result } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+
+    // 공통정보 필드(제목/작성자/엠바고/2차엠바고) 변경 시도 → 거부(변화 없음).
+    act(() => { result.current.updateField('title', '해킹 제목'); });
+    act(() => { result.current.updateField('author', '해킹 작성자'); });
+    act(() => { result.current.updateField('embargoAt', 'HACK'); });
+    act(() => { result.current.updateField('secondEmbargoAt', 'HACK'); });
+    expect(result.current.activeTab.fields.title).toBe('제목');
+    expect(result.current.activeTab.fields.author).toBe('원작성자');
+    expect(result.current.activeTab.fields.embargoAt).toBe('2026-01-01T00:00:00Z');
+    expect(result.current.activeTab.fields.secondEmbargoAt).toBe('2026-01-02T00:00:00Z');
+
+    // body 갱신(임베드 추가/삭제 경로)은 매핑 모드에서도 허용된다.
+    act(() => { result.current.updateField('body', '본문\n[임베드]'); });
+    expect(result.current.activeTab.fields.body).toBe('본문\n[임베드]');
+  });
+
+  it('save in mapping mode does a PUT (saveArticle with articleId) and never applyAction', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+    act(() => { result.current.updateField('body', '본문\n[임베드]'); });
+    await act(async () => { await result.current.save(); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.articleId).toBe('AKR1'); // PUT — 기사아이디 포함
+    expect(dto.markupVersion).toBe('본문\n[임베드]');
+    expect(dto.body).toBeUndefined();
+    expect(dto.role).toBeUndefined(); // 인가는 서버 세션(ADR-004)
+    expect(apply).not.toHaveBeenCalled(); // 상태 전이 없음
+  });
+
   it('consumes a pendingEdit from list.do on mount (opens an edit tab)', async () => {
     sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify({ article: { ...FULL }, mode: 'edit' }));
     const { result } = setup({ articles: [{ ...FULL }] });

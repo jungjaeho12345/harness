@@ -10,99 +10,69 @@ function setup() {
   return { db, history: createArticleHistoryModel(db) };
 }
 
-test('articleHistoryModel: record로 넣은 행이 findByArticleId로 조회되고 컬럼 값이 보존된다', () => {
-  const { history } = setup();
-  history.record({
+test('articleHistoryModel: insert가 ArticleHistory에 1행을 적재한다', () => {
+  const { db, history } = setup();
+  history.insert({
     articleId: 'AKR1',
-    eventType: 'send',
-    actorUserId: 'kim',
-    actorRole: 'reporter',
+    eventType: 'status',
+    action: 'send',
     fromStatus: 'RDS',
-    toStatus: 'SND',
-    title: '제목',
-    createdAt: '2026-06-14T00:00:00.000Z',
+    toStatus: 'DPS',
+    actorUserId: 'desk',
+    createdAt: '2026-06-16T00:00:00.000Z',
   });
-  const rows = history.findByArticleId('AKR1');
+  const rows = db.prepare('SELECT * FROM ArticleHistory').all();
   assert.equal(rows.length, 1);
-  const r = rows[0];
-  assert.equal(r.articleId, 'AKR1');
-  assert.equal(r.eventType, 'send');
-  assert.equal(r.actorUserId, 'kim');
-  assert.equal(r.actorRole, 'reporter');
-  assert.equal(r.fromStatus, 'RDS');
-  assert.equal(r.toStatus, 'SND');
-  assert.equal(r.title, '제목');
-  assert.equal(r.createdAt, '2026-06-14T00:00:00.000Z');
-  assert.ok(Number.isInteger(r.id));
+  assert.equal(rows[0].articleId, 'AKR1');
+  assert.equal(rows[0].eventType, 'status');
+  assert.equal(rows[0].action, 'send');
+  assert.equal(rows[0].fromStatus, 'RDS');
+  assert.equal(rows[0].toStatus, 'DPS');
+  assert.equal(rows[0].actorUserId, 'desk');
+  assert.equal(rows[0].createdAt, '2026-06-16T00:00:00.000Z');
+  assert.ok(rows[0].id, 'id 자동 증가');
 });
 
-test('articleHistoryModel: 선택 컬럼을 빼도 INSERT되고 NULL로 조회된다', () => {
-  const { history } = setup();
-  history.record({
-    articleId: 'AKR2',
+test('articleHistoryModel: insert는 정의되지 않은 키를 컬럼에서 제외한다(edit는 action null)', () => {
+  const { db, history } = setup();
+  history.insert({
+    articleId: 'AKR1',
     eventType: 'edit',
-    createdAt: '2026-06-14T01:00:00.000Z',
+    actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:00.000Z',
   });
-  const rows = history.findByArticleId('AKR2');
+  const row = db.prepare('SELECT * FROM ArticleHistory WHERE articleId = ?').get('AKR1');
+  assert.equal(row.eventType, 'edit');
+  assert.equal(row.action, null);
+  assert.equal(row.fromStatus, null);
+  assert.equal(row.toStatus, null);
+  assert.equal(row.actorUserId, 'kim');
+});
+
+test('articleHistoryModel: queryByArticle가 해당 기사 이력을 최신순(id DESC)으로 반환한다', () => {
+  const { history } = setup();
+  history.insert({ articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim', createdAt: '2026-06-16T00:00:01.000Z' });
+  history.insert({ articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'desk', createdAt: '2026-06-16T00:00:02.000Z' });
+  history.insert({ articleId: 'AKR1', eventType: 'status', action: 'hold', fromStatus: 'DPS', toStatus: 'DRH', actorUserId: 'desk', createdAt: '2026-06-16T00:00:03.000Z' });
+
+  const rows = history.queryByArticle('AKR1');
+  assert.equal(rows.length, 3);
+  // id DESC — 가장 최근(마지막 insert)이 먼저.
+  assert.deepEqual(rows.map((r) => r.action), ['hold', 'send', null]);
+});
+
+test('articleHistoryModel: queryByArticle는 다른 기사의 이력을 섞지 않는다', () => {
+  const { history } = setup();
+  history.insert({ articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim', createdAt: '2026-06-16T00:00:01.000Z' });
+  history.insert({ articleId: 'AKR2', eventType: 'edit', actorUserId: 'lee', createdAt: '2026-06-16T00:00:02.000Z' });
+
+  const rows = history.queryByArticle('AKR1');
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].actorUserId, null);
-  assert.equal(rows[0].fromStatus, null);
-  assert.equal(rows[0].title, null);
+  assert.equal(rows[0].articleId, 'AKR1');
 });
 
-test('articleHistoryModel: findByArticleId는 createdAt 오름차순(과거→현재)으로 반환한다', () => {
+test('articleHistoryModel: 행 삭제 함수를 노출하지 않는다 (DB 비파괴)', () => {
   const { history } = setup();
-  history.record({ articleId: 'AKR3', eventType: 'edit', createdAt: '2026-06-14T03:00:00.000Z' });
-  history.record({ articleId: 'AKR3', eventType: 'send', createdAt: '2026-06-14T01:00:00.000Z' });
-  history.record({ articleId: 'AKR3', eventType: 'hold', createdAt: '2026-06-14T02:00:00.000Z' });
-  const rows = history.findByArticleId('AKR3');
-  assert.deepEqual(
-    rows.map((r) => r.createdAt),
-    ['2026-06-14T01:00:00.000Z', '2026-06-14T02:00:00.000Z', '2026-06-14T03:00:00.000Z'],
-  );
-});
-
-test('articleHistoryModel: findSendByArticleId는 eventType=send만 오름차순으로 반환한다', () => {
-  const { history } = setup();
-  history.record({ articleId: 'AKR4', eventType: 'edit', createdAt: '2026-06-14T01:00:00.000Z' });
-  history.record({ articleId: 'AKR4', eventType: 'send', createdAt: '2026-06-14T02:00:00.000Z' });
-  history.record({ articleId: 'AKR4', eventType: 'hold', createdAt: '2026-06-14T03:00:00.000Z' });
-  history.record({ articleId: 'AKR4', eventType: 'send', createdAt: '2026-06-14T04:00:00.000Z' });
-  const rows = history.findSendByArticleId('AKR4');
-  assert.equal(rows.length, 2);
-  assert.ok(rows.every((r) => r.eventType === 'send'));
-  assert.deepEqual(
-    rows.map((r) => r.createdAt),
-    ['2026-06-14T02:00:00.000Z', '2026-06-14T04:00:00.000Z'],
-  );
-});
-
-test('articleHistoryModel: 존재하지 않는 articleId면 빈 배열을 반환한다', () => {
-  const { history } = setup();
-  assert.deepEqual(history.findByArticleId('NOPE'), []);
-  assert.deepEqual(history.findSendByArticleId('NOPE'), []);
-});
-
-test('articleHistoryModel: recordWithDb는 외부 트랜잭션 안에서 동작한다 (자체 BEGIN 없음)', () => {
-  const { db, history } = setup();
-  db.exec('BEGIN');
-  history.recordWithDb(db, {
-    articleId: 'AKR5',
-    eventType: 'send',
-    createdAt: '2026-06-14T00:00:00.000Z',
-  });
-  db.exec('COMMIT');
-  assert.equal(history.findByArticleId('AKR5').length, 1);
-});
-
-test('articleHistoryModel: recordWithDb는 외부 롤백 시 행이 남지 않는다 (원자성 계약)', () => {
-  const { db, history } = setup();
-  db.exec('BEGIN');
-  history.recordWithDb(db, {
-    articleId: 'AKR6',
-    eventType: 'send',
-    createdAt: '2026-06-14T00:00:00.000Z',
-  });
-  db.exec('ROLLBACK');
-  assert.deepEqual(history.findByArticleId('AKR6'), []);
+  assert.equal(history.delete, undefined);
+  assert.equal(history.remove, undefined);
 });

@@ -71,3 +71,49 @@ test('userModel: 삭제(delete/remove) 함수를 노출하지 않는다 (DB 비�
   assert.equal(users.remove, undefined);
   assert.deepEqual(Object.keys(users).sort(), ['findById', 'insert', 'query', 'update']);
 });
+
+test('userModel: update로 잠금 컬럼(failedLoginCount/lockedUntil/lastFailedLoginAt)을 갱신하고 findById로 읽힌다', () => {
+  const users = setup();
+  users.insert({ userId: 'kim', name: '김기자', role: 'R', active: 'Y' });
+
+  const lockedUntil = '2026-06-16T10:00:00.000Z';
+  const lastFailed = '2026-06-16T09:45:00.000Z';
+  const changes = users.update('kim', {
+    failedLoginCount: '3',
+    lockedUntil,
+    lastFailedLoginAt: lastFailed,
+  });
+  assert.equal(changes, 1);
+
+  const row = users.findById('kim');
+  assert.equal(row.failedLoginCount, '3');
+  assert.equal(row.lockedUntil, lockedUntil);
+  assert.equal(row.lastFailedLoginAt, lastFailed);
+});
+
+test('userModel: 잠금 컬럼 갱신 시 기존 컬럼(name/role 등)이 보존된다', () => {
+  const users = setup();
+  users.insert({ userId: 'park', name: '박데스크', role: 'D', department: '경제부', active: 'Y' });
+
+  users.update('park', { failedLoginCount: '1', lastFailedLoginAt: '2026-06-16T08:00:00.000Z' });
+
+  const row = users.findById('park');
+  assert.equal(row.name, '박데스크', '이름 보존');
+  assert.equal(row.role, 'D', '권한 보존');
+  assert.equal(row.department, '경제부', '부서 보존');
+  assert.equal(row.active, 'Y', 'active 보존');
+  assert.equal(row.failedLoginCount, '1', '새 컬럼 갱신됨');
+});
+
+test('userModel: query 결과는 잠금 컬럼을 포함한 raw row를 반환한다 (정제는 서비스 책임)', () => {
+  const users = setup();
+  users.insert({ userId: 'lee', name: '이기자', password: 'hash#2', role: 'R', active: 'Y' });
+  users.update('lee', { failedLoginCount: '2', lockedUntil: '2026-06-16T12:00:00.000Z' });
+
+  const rows = users.query({ userId: 'lee' });
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.password, 'hash#2', 'query도 raw row이므로 비밀번호를 포함한다');
+  assert.equal(row.failedLoginCount, '2', 'query가 새 컬럼도 반환한다');
+  assert.equal(row.lockedUntil, '2026-06-16T12:00:00.000Z');
+});

@@ -53,15 +53,14 @@ export function WriterPage() {
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
-    updateField, submit, saveMapping,
+    updateField, submit, save,
   } = useWriteController();
   const search = useSearchController();
 
   const [metaTab, setMetaTab] = useState('common');
   const [spell, setSpell] = useState(false);
 
-  // 매핑 진입 — 본문 텍스트는 건드리지 않고(에디터 readOnly) 임베드만 추가하는 PUT 모드.
-  // 텍스트 편집(타이핑/"(끝)"/라인삭제/붙여넣기)은 Editor readOnly로 차단, 메타 탭 임베드 추가는 활성 유지.
+  // 매핑(mapping) — 임베드 전용 제한 편집. 본문 텍스트 비편집·공통정보 readOnly이되 임베드 추가/삭제는 허용(step11).
   const isMapping = activeTab.mode === 'mapping';
 
   const body = activeTab.fields.body;
@@ -161,27 +160,33 @@ export function WriterPage() {
             key={activeTabId}
             blocks={blocks}
             spellcheck={spell}
-            readOnly={isMapping}
-            onKeyDown={onKeyDown}
-            onTextChange={onTextChange}
+            textEditable={!isMapping}
+            onKeyDown={isMapping ? undefined : onKeyDown}
+            onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
           />
         </section>
 
         {/* 우측 40% — 메타데이터 */}
         <aside className="yh-writer__meta">
-          {/* 4개 탭 위 송고/보류/KILL 버튼 */}
+          {/* 4개 탭 위 송고/보류/KILL 버튼. 매핑은 전이 없음 → 저장 버튼만(임베드 변경을 PUT 저장). */}
           <div className="yh-actionbar" data-testid="action-bar">
-            {buttons.map((key) => (
-              <button
-                key={key}
-                type="button"
-                className={`yh-btn ${key === 'send' ? 'yh-btn--primary' : key === 'kill' ? 'yh-btn--danger' : ''}`}
-                onClick={() => (key === 'save' ? onSaveMapping() : onAction(key))}
-              >
-                {SUBMIT_LABELS[key]}
+            {isMapping ? (
+              <button type="button" className="yh-btn yh-btn--primary" onClick={() => save()}>
+                저장
               </button>
-            ))}
+            ) : (
+              buttons.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`yh-btn ${key === 'send' ? 'yh-btn--primary' : key === 'kill' ? 'yh-btn--danger' : ''}`}
+                  onClick={() => onAction(key)}
+                >
+                  {SUBMIT_LABELS[key]}
+                </button>
+              ))
+            )}
           </div>
 
           <div className="yh-tabs">
@@ -233,7 +238,7 @@ export function WriterPage() {
 }
 
 // 공통정보 — 편집 가능(작성자/엠바고/2차엠바고) + 읽기전용 매핑 필드.
-// readOnly=true(매핑 모드)면 작성자/엠바고 입력도 잠근다 — 매핑은 본문 임베드만 추가하고 메타는 건드리지 않는다.
+// 매핑 모드(readOnly)에서는 작성자/엠바고/2차엠바고 입력란도 readOnly다(임베드만 변경 — step11).
 function CommonInfo({ tab, updateField, readOnly = false }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};

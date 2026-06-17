@@ -187,6 +187,8 @@ export function useWriteController() {
     setActiveTabId(tab.id);
 
     // 잠금 획득 — 고침/포털고침은 lock action으로 구분(서버 editDps D 게이트). 단순 편집 진입이며 전이 없음.
+    // 매핑(mapping)도 임베드 전용 편집이므로 전이 없는 잠금('revise')을 재사용한다 — 별도 분기 불필요.
+    // 서버 POST :id/lock 게이트(DPS는 D 전용)가 실제 인가를 강제한다(신뢰경계=서버, ADR-004).
     const lockAction = mode === 'portalRevise' ? 'portalRevise' : 'revise';
     await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => {});
     return tab.id;
@@ -208,11 +210,15 @@ export function useWriteController() {
   }, [identity, model]);
 
   // 편집 가능 필드만 갱신한다(읽기전용 매핑 필드는 변경 불가).
+  // 매핑(mapping) 모드는 임베드 전용 제한 편집 — 공통정보(title/author/embargoAt/secondEmbargoAt)는 거부하고
+  // 'body' 갱신만 허용한다(임베드 추가/삭제가 이 경로로 흐른다 — 본문 텍스트 타이핑은 WriterPage가 onTextChange 미연결로 별도 차단).
   const updateField = useCallback((field, value) => {
-    if (!EDITABLE_FIELDS.includes(field)) return;
-    setTabs((prev) => prev.map((t) => (t.id === activeRef.current
-      ? { ...t, fields: { ...t.fields, [field]: value } }
-      : t)));
+    setTabs((prev) => prev.map((t) => {
+      if (t.id !== activeRef.current) return t;
+      const allowed = t.mode === 'mapping' ? ['body'] : EDITABLE_FIELDS;
+      if (!allowed.includes(field)) return t;
+      return { ...t, fields: { ...t.fields, [field]: value } };
+    }));
   }, []);
 
   // 저장 — 신규는 생성(POST), 편집은 잠금 보유자 부분 수정(PUT). Model이 articleId 유무로 분기한다.

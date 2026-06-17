@@ -115,26 +115,9 @@ export function useViewController() {
     [enterEditor],
   );
 
-  // 매핑 진입 — 기존 기사에 임베드를 매핑하는 편집이다(신규 작성 아님). 고침/포털고침과 동일하게
-  // 편집 채널(PENDING_EDIT_KEY)에 mode 'mapping'을 싣고 articleId 포함으로 이동한다 — writer가 잠금을 획득한다.
-  // 일반 편집 진입이라 권한 게이트·confirm을 두지 않는다(서버 lock/PUT이 권한·동시성을 강제, ADR-004).
+  // 매핑(mapping) — 기존 기사를 임베드 전용 제한 편집 모드로 writer.do에 연다(step11).
+  // 편집 진입과 동일한 채널(sessionStorage + navigate, 직접 fetch 없음 — ADR-003). 잠금/저장 인가는 서버가 강제.
   const mapArticle = useCallback((article) => enterEditor(article, 'mapping'), [enterEditor]);
-
-  // 후속/계속 진입 — 원본에서 파생한 신규 기사 작성이다(편집 아님). 원본 행·mode를 신규 채널(PENDING_NEW_KEY)에
-  // 싣고 writer.do로 이동하되 navigate에 articleId를 싣지 않는다 — 새 기사 탭 주소창엔 기사아이디가 없어야 하고
-  // (news.md), 싣으면 writer가 편집 탭으로 오인해 원본을 잠근다. 본문 재조회·필드 복사는 writer(openFromSource) 책임.
-  // 일반 신규 작성이라 권한 게이트·confirm을 두지 않는다(파괴적 동작 아님).
-  const enterFromSource = useCallback((article, mode) => {
-    try {
-      sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({ article, mode }));
-    } catch {
-      // sessionStorage 불가 — pendingNew 없이 이동(writer가 빈 탭으로 시작).
-    }
-    navigate('writer.do', {});
-  }, [navigate]);
-
-  const followUpArticle = useCallback((article) => enterFromSource(article, 'followUp'), [enterFromSource]);
-  const continueArticle = useCallback((article) => enterFromSource(article, 'continue'), [enterFromSource]);
 
   // Lock해제(강제) — D/Z만, '해제하시겠습니까?' 확인 후. 권한 없으면 no-op(서버도 거부).
   const releaseLock = useCallback(async (article) => {
@@ -144,6 +127,44 @@ export function useViewController() {
     }
     return model.forceUnlockArticle(article.articleId);
   }, [model, identity]);
+
+  // 이력보기/송고이력보기 — 읽기 전용. 확인창 없이 model.queryHistory(ADR-003)로 이력 행을 가져온다.
+  // sendOnly면 송고 이력만(서버 도메인 필터). 이력이 없으면 빈 배열을 반환한다(오류 아님 — step0 전제).
+  const loadHistory = useCallback(async (article, { sendOnly = false } = {}) => {
+    const r = await model.queryHistory(article.articleId, { sendOnly });
+    return (r && r.items) || [];
+  }, [model]);
+
+  // 후속기사작성 — model.deriveArticle(id, 'followUp')로 새 기사를 만든 뒤 그 새 기사로 편집 진입(ADR-003).
+  // 원본은 비변경(서버 deriveArticle이 create 위임으로만 신규 행 생성). 새 기사는 RDS·미잠금이라 잠금 획득이 정상 동작.
+  const createFollowUp = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'followUp');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 계속기사작성 — 동일하되 'continue' 모드(본문 복사). 새 기사로 편집 진입.
+  const createContinue = useCallback(async (article) => {
+    const r = await model.deriveArticle(article.articleId, 'continue');
+    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    return r;
+  }, [model, enterEditor]);
+
+  // 재송 — 이미 송고된 DPS 기사를 다시 송고. '재송하시겠습니까?' 확인 후 model.applyAction(id, 'send').
+  // role 미전송(ADR-004) — 서버가 DPS+권한·송고 '(끝)' 마커 가드를 강제. 취소 시 아무것도 전송하지 않는다(news.md 140행).
+  const resend = useCallback(async (article) => {
+    if (!globalThis.confirm || !globalThis.confirm('재송하시겠습니까?')) {
+      return { ok: false, reason: 'cancelled' };
+    }
+    return model.applyAction(article.articleId, 'send');
+  }, [model]);
+
+  // 번역 — model.translate(id, targetLang)로 서버가 DB 본문을 조회·번역(ADR-003, 직접 fetch 없음).
+  // 외부 실패/키 없음이면 서버가 throw 없이 graceful 객체({ ok:false, reason, translatedText:<원문> })를 준다 —
+  // 그대로 반환하고 표시는 View(ListPage)가 원문+안내로 처리한다(news.md degrade). 컨트롤러는 가공/throw하지 않는다.
+  const runTranslate = useCallback(async (article, targetLang = 'ko') => {
+    return model.translate(article.articleId, targetLang);
+  }, [model]);
 
   // 삭제요청 — DPS 기사 삭제 승인(approveDelete). D/Z만, '정말 삭제하시겠습니까?' 확인 후.
   const requestDelete = useCallback(async (article) => {
@@ -182,8 +203,7 @@ export function useViewController() {
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
     refresh,
-    editArticle, reviseArticle, mapArticle, releaseLock, requestDelete, resendArticle,
-    followUpArticle, continueArticle,
-    viewHistory, viewSendHistory,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    createFollowUp, createContinue, resend, runTranslate, mapArticle,
   };
 }

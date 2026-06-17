@@ -18,17 +18,18 @@ import { createAuthorization } from '../services/authorization.js';
 import { createReceiverConfigService } from '../services/receiverConfigService.js';
 import { createCollectionService } from '../services/collectionService.js';
 import { createMediaSearch } from '../services/mediaSearch.js';
+import { createTranslate } from '../services/translate.js';
 
 export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
+  lockoutPolicy = {},
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
-  // 이력 모델을 만들어 articleModel·articleService에 주입 — 저장과 같은 tx로 이력을 기록/조회한다.
+  const articleModel = createArticleModel(db);
   const articleHistoryModel = createArticleHistoryModel(db);
-  const articleModel = createArticleModel(db, { articleHistoryModel });
   const receiverConfigModel = createReceiverConfigModel(db);
 
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
@@ -36,11 +37,12 @@ export function createControllers(db, {
 
   // 서비스 결선.
   const userService = createUserService({ userModel });
-  const articleService = createArticleService({ articleModel, db, articleHistoryModel });
+  const articleService = createArticleService({ articleModel, db, historyModel: articleHistoryModel });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel });
   const mediaSearch = createMediaSearch({ fetchFn, env });
+  const translate = createTranslate({ fetchFn, env });
 
   // 인증/세션 — 로그인은 자격 검증(userService) → 세션 발급(sessionService) 오케스트레이션.
   const auth = {
@@ -71,6 +73,8 @@ export function createControllers(db, {
     getHistory: (articleId) => articleService.getHistory(articleId),
     getSendHistory: (articleId) => articleService.getSendHistory(articleId),
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
+    derive: (sourceId, mode, overrides) => articleService.deriveArticle(sourceId, mode, overrides),
+    queryHistory: (articleId, opts) => articleService.queryHistory(articleId, opts),
     acquireEditLock: (articleId, opts) => articleService.acquireEditLock(articleId, opts),
     releaseEditLock: (articleId, opts) => articleService.releaseEditLock(articleId, opts),
     forceReleaseEditLock: (articleId) => articleService.forceReleaseEditLock(articleId),
@@ -79,6 +83,10 @@ export function createControllers(db, {
 
   const media = {
     search: (query, type) => mediaSearch.search(query, type),
+  };
+
+  const translation = {
+    run: (text, targetLang) => translate.translate(text, targetLang),
   };
 
   const receiverConfig = {
@@ -91,5 +99,5 @@ export function createControllers(db, {
     receive: (sourceId, payload) => collectionService.receive(sourceId, payload),
   };
 
-  return { auth, user, article, media, receiverConfig, collection };
+  return { auth, user, article, media, translation, receiverConfig, collection };
 }

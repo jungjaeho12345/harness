@@ -50,6 +50,10 @@ function isInsertionKey(e) {
   return typeof e.key === 'string' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
+// readOnly: 완전 읽기전용(텍스트 비편집 + 임베드 × 버튼 숨김 — 상세보기 등).
+// textEditable: 본문 텍스트 편집 가능 여부. false면 본문 텍스트 타이핑이 body에 반영되지 않는다.
+//   단 임베드 × 삭제 버튼은 그대로 노출된다(매핑 모드 — 텍스트 비편집 + 임베드 추가/삭제 허용).
+//   ※ "임베드 × 버튼 노출"과 "텍스트 contentEditable"을 같은 불리언에 묶지 않는다(매핑의 핵심 차이).
 export function Editor({
   blocks = [],
   onRemoveEmbed,
@@ -57,7 +61,10 @@ export function Editor({
   onTextChange,
   spellcheck = false,
   readOnly = false,
+  textEditable = true,
 }) {
+  // 본문 텍스트 편집 차단 — readOnly(완전 잠금)이거나 textEditable=false(매핑)면 텍스트 입력을 body에 반영하지 않는다.
+  const textLocked = readOnly || !textEditable;
   // 텍스트 라인 역할(색상)은 텍스트 블록 전체 기준으로 판정한다(임베드 제외 — editorColoring).
   const lineRoles = classifyLines(blocksToText(blocks).split('\n'));
 
@@ -89,14 +96,14 @@ export function Editor({
   // 조합 완료 → 본문 반영 + 재색칠(re-render). shouldRecolor로 게이트(RECOLOR_TRIGGERS: compositionend).
   const handleCompositionEnd = (e) => {
     composingRef.current = false;
-    if (onTextChange && shouldRecolor('compositionend', { composing: composingRef.current })) {
+    if (!textLocked && onTextChange && shouldRecolor('compositionend', { composing: composingRef.current })) {
       onTextChange(readEditorText(e.currentTarget));
     }
   };
 
   // 포커스 이탈 시 재색칠(news.md: 색 적용은 조합 완료/포커스 이탈/로드 시점). 조합 중 blur면 재색칠하지 않는다.
   const handleBlur = (e) => {
-    if (onTextChange && shouldRecolor('blur', { composing: composingRef.current })) {
+    if (!textLocked && onTextChange && shouldRecolor('blur', { composing: composingRef.current })) {
       onTextChange(readEditorText(e.currentTarget));
     }
   };
@@ -109,7 +116,7 @@ export function Editor({
       role="textbox"
       aria-label="본문"
       aria-multiline="true"
-      contentEditable={!readOnly}
+      contentEditable={!textLocked}
       suppressContentEditableWarning
       spellCheck={spellcheck}
       lang="ko"
@@ -118,7 +125,7 @@ export function Editor({
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onBlur={handleBlur}
-      onInput={onTextChange ? handleInput : undefined}
+      onInput={(!textLocked && onTextChange) ? handleInput : undefined}
     >
       {blocks.map((block, i) => {
         if (isEmbedBlock(block)) {

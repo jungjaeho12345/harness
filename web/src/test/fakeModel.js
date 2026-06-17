@@ -14,7 +14,10 @@ export function createFakeModel(seed = {}) {
   const articles = [...(seed.articles ?? [])];
   const receiverConfigs = [...(seed.receiverConfigs ?? [])];
   const mediaItems = [...(seed.mediaItems ?? [])];
-  const histories = [...(seed.histories ?? [])];
+  // articleId -> 이력 배열(최신순). 컨트롤러 테스트가 seed로 주입한다.
+  const histories = { ...(seed.histories ?? {}) };
+  // articleId -> 번역문(seed). 없으면 원문 모사로 graceful 폴백.
+  const translations = { ...(seed.translations ?? {}) };
   const listeners = new Set();
   let session = null; // { sessionId, user }
   let seq = 1;
@@ -113,6 +116,34 @@ export function createFakeModel(seed = {}) {
       articles.push({ ...persist, articleId, status: 'RDS' });
       notify('create');
       return { ok: true, articleId };
+    },
+
+    // --- 메뉴 액션: 이력 / 파생 / 번역 ---
+    // 이력보기/송고이력보기 — seed의 이력 배열을 반환. sendOnly면 송고(action==='send') 항목만 필터.
+    queryHistory(articleId, { sendOnly } = {}) {
+      const items = (histories[articleId] ?? []).map((h) => ({ ...h }));
+      const filtered = sendOnly ? items.filter((h) => h.action === 'send') : items;
+      return { ok: true, items: filtered };
+    },
+    // 후속/계속기사작성 — saveArticle처럼 새 articleId를 만들어 push. 원본은 변경하지 않는다(비파괴 모사).
+    deriveArticle(articleId, mode) {
+      const src = findArticle(articleId);
+      if (!src) return { ok: false, reason: 'not-found' };
+      const newId = `AKRFAKE${String(seq++).padStart(9, '0')}`;
+      // continue는 본문 복사·followUp은 빈 본문(서버 deriveArticle 도메인 모사). 원본 객체는 건드리지 않는다.
+      const derived = { ...src, articleId: newId, status: 'RDS' };
+      if (mode === 'followUp') delete derived.body;
+      articles.push(derived);
+      notify('create');
+      return { ok: true, articleId: newId };
+    },
+    // 번역 — seed의 번역문, 없으면 원문(title) 모사로 graceful 폴백.
+    translate(articleId, targetLang = 'ko') { // eslint-disable-line no-unused-vars
+      if (translations[articleId] !== undefined) {
+        return { ok: true, translatedText: translations[articleId] };
+      }
+      const a = findArticle(articleId);
+      return { ok: true, translatedText: a?.title ?? '' };
     },
 
     lockArticle(articleId) {
