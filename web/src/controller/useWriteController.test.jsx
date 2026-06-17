@@ -71,7 +71,10 @@ describe('useWriteController', () => {
       articleId: 'AKR1', modifier: 'lee', sender: 'park', department: '경제', departmentCode: 'EC',
     });
     expect(tab.readOnly.title).toBeUndefined();
-    expect(lock).toHaveBeenCalledWith('AKR1', 'revise');
+    // 잠금 획득 시 편집 탭별 clientId가 x-edit-client로 함께 전달된다(편집 잠금 계약).
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise', expect.stringMatching(/^c-/));
+    // 발급된 clientId는 이 편집 탭에 보관돼 저장/해제에서 동일하게 쓰인다.
+    expect(tab.clientId).toEqual(expect.stringMatching(/^c-/));
   });
 
   it('reopening an already-open article activates the same tab (dedup, no second lock)', async () => {
@@ -100,6 +103,55 @@ describe('useWriteController', () => {
     // 편집 탭이 열리지 않는다 — 빈 새 기사 탭만 유지된다.
     expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false);
     expect(result.current.activeTab.articleId).toBeNull();
+  });
+
+  // ── 편집 탭별 clientId(x-edit-client) ─────────────────────────────────────
+  it('generates a per-edit-tab clientId on open and reuses it for save and unlock', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+    const save = vi.spyOn(model, 'saveArticle');
+    const unlock = vi.spyOn(model, 'unlockArticle');
+
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    const clientId = result.current.activeTab.clientId;
+    expect(clientId).toEqual(expect.stringMatching(/^c-/));
+    // 획득 시 보낸 clientId가 탭에 보관됐다.
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise', clientId);
+
+    // 저장(PUT)·해제는 같은 탭의 clientId를 그대로 사용한다(보유 탭 식별 — 2번째 탭 차단/보유자 해제).
+    await act(async () => { await result.current.save(); });
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ articleId: 'AKR1' }), clientId);
+
+    await act(async () => { await result.current.submit('hold'); });
+    expect(unlock).toHaveBeenCalledWith('AKR1', clientId);
+  });
+
+  it('gives different edit tabs different clientIds (one-tab-per-session enforcement on the server)', async () => {
+    const { result } = setup({
+      articles: [{ ...FULL }, { ...FULL, articleId: 'AKR2' }],
+    });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    const first = result.current.tabs.find((t) => t.articleId === 'AKR1').clientId;
+    await act(async () => { await result.current.openArticle({ ...FULL, articleId: 'AKR2' }, 'edit'); });
+    const second = result.current.tabs.find((t) => t.articleId === 'AKR2').clientId;
+
+    expect(first).toEqual(expect.stringMatching(/^c-/));
+    expect(second).toEqual(expect.stringMatching(/^c-/));
+    expect(first).not.toBe(second); // 탭마다 고유 — 서버가 탭 단위로 잠금을 식별한다.
+  });
+
+  it('on lock conflict it still alerts "편집중입니다." and does not open (PR #20 behavior preserved)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    // 다른 탭/세션이 잠금 보유 — 새 clientId로는 acquire가 locked로 거부된다.
+    vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: false, reason: 'locked' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    let returned;
+    await act(async () => { returned = await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    expect(alert).toHaveBeenCalledWith('편집중입니다.');
+    expect(returned).toBeNull();
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false);
   });
 
   it('updateField only mutates editable fields', async () => {
@@ -150,7 +202,8 @@ describe('useWriteController', () => {
     const id = result.current.activeTab.id;
     await act(async () => { result.current.closeTab(id); });
 
-    expect(unlock).toHaveBeenCalledWith('AKR1');
+    // 닫을 때 해제 요청은 이 탭의 clientId를 함께 보낸다(보유 탭만 해제 — not-holder 차단).
+    expect(unlock).toHaveBeenCalledWith('AKR1', expect.stringMatching(/^c-/));
     expect(result.current.tabs).toHaveLength(1);
     expect(result.current.activeTab.articleId).toBeNull();
   });
@@ -162,7 +215,8 @@ describe('useWriteController', () => {
     act(() => { result.current.updateField('body', '제목\n본문\n(끝)'); });
 
     await act(async () => { await result.current.save(); });
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ markupVersion: '제목\n본문\n(끝)' }));
+    // 신규 탭은 잠금이 없어 clientId가 null로 동행한다(서버 POST는 헤더 무시 — 무해).
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ markupVersion: '제목\n본문\n(끝)' }), null);
     const dto = save.mock.calls[0][0];
     expect(dto.body).toBeUndefined(); // body 키는 서버가 버리므로 보내지 않는다(contract 일치).
     expect(dto.role).toBeUndefined(); // role은 서버 세션에서 도출(ADR-004).
@@ -221,7 +275,8 @@ describe('useWriteController', () => {
     const unlock = vi.spyOn(model, 'unlockArticle');
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
     act(() => { window.dispatchEvent(new Event('pagehide')); });
-    expect(unlock).toHaveBeenCalledWith('AKR1');
+    // 브라우저 닫힘 해제도 편집 탭의 clientId를 함께 보낸다.
+    expect(unlock).toHaveBeenCalledWith('AKR1', expect.stringMatching(/^c-/));
   });
 
   // step11: 매핑(mapping) — 임베드 전용 제한 편집 모드.
@@ -235,8 +290,8 @@ describe('useWriteController', () => {
     expect(tab.mode).toBe('mapping');
     expect(tab.articleId).toBe('AKR1');
     expect(tab.fields.body).toBe('본문'); // getArticle로 본문 채움(편집 진입과 동일)
-    // 매핑은 전이 없는 잠금(revise)을 재사용한다 — 서버 게이트가 실제 인가를 강제.
-    expect(lock).toHaveBeenCalledWith('AKR1', 'revise');
+    // 매핑은 전이 없는 잠금(revise)을 재사용한다 — 서버 게이트가 실제 인가를 강제. clientId 동행.
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise', expect.stringMatching(/^c-/));
     expect(apply).not.toHaveBeenCalled(); // 순수 편집 진입 — 상태 전이 없음
   });
 
@@ -368,7 +423,7 @@ describe('useWriteController', () => {
     const tab = result.current.tabs.find((t) => t.mode === 'mapping');
     expect(tab.articleId).toBe('AKR1'); // 기존 기사 편집 — articleId 유지
     expect(tab.fields.body).toBe(MAPPING_MARKUP); // 재조회로 원본 본문이 채워짐
-    await waitFor(() => expect(lock).toHaveBeenCalledWith('AKR1', 'revise')); // 편집 잠금 획득(일반 편집과 동일)
+    await waitFor(() => expect(lock).toHaveBeenCalledWith('AKR1', 'revise', expect.stringMatching(/^c-/))); // 편집 잠금 획득(clientId 동행)
   });
 
   it('openArticle(mapping) re-uses the edit path: getArticle + lockArticle, keeps articleId', async () => {
@@ -382,7 +437,7 @@ describe('useWriteController', () => {
     expect(tab.articleId).toBe('AKR1');
     expect(tab.fields.body).toBe(MAPPING_MARKUP);
     expect(getArticle).toHaveBeenCalledWith('AKR1');
-    expect(lock).toHaveBeenCalledWith('AKR1', 'revise');
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise', expect.stringMatching(/^c-/));
   });
 
   it('saveMapping persists body via PUT(markupVersion) preserving text blocks, adding only the embed; no applyAction', async () => {
@@ -423,7 +478,7 @@ describe('useWriteController', () => {
 
     await act(async () => { await result.current.saveMapping(); });
 
-    expect(unlock).toHaveBeenCalledWith('AKR1'); // 저장 성공 후 잠금 해제
+    expect(unlock).toHaveBeenCalledWith('AKR1', expect.stringMatching(/^c-/)); // 저장 성공 후 잠금 해제(보유 탭 clientId)
     expect(apply).not.toHaveBeenCalled(); // 전이 없음
     // 매핑 탭은 빈 새 기사 탭으로 정리된다 — 더 이상 편집 컨텍스트(articleId)가 남지 않는다.
     await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));

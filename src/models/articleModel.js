@@ -8,7 +8,7 @@ const CONTENTS_COLS = [
   'articleId', 'title', 'content', 'author', 'modifier', 'sender',
   'department', 'departmentCode', 'createdAt', 'editedAt', 'sentAt',
   'distributedAt', 'embargoAt', 'secondEmbargoAt', 'status',
-  'lockYN', 'lockerUserId', 'lockerSessionId', 'lockedAt',
+  'lockYN', 'lockerUserId', 'lockerSessionId', 'lockerClientId', 'lockedAt',
   'coAuthor', 'region', 'attribute', 'keyword',
   'internalComment', 'externalComment', 'attachmentFile', 'referenceFile',
 ];
@@ -147,15 +147,15 @@ export function createArticleModel(db) {
     ).all(like, like, like);
   }
 
-  function setLock(articleId, { lockerUserId, lockerSessionId, lockedAt } = {}) {
+  function setLock(articleId, { lockerUserId, lockerSessionId, lockerClientId, lockedAt } = {}) {
     return db.prepare(
-      "UPDATE Contents SET lockYN = 'Y', lockerUserId = ?, lockerSessionId = ?, lockedAt = ? WHERE articleId = ?",
-    ).run(lockerUserId ?? null, lockerSessionId ?? null, lockedAt ?? null, articleId).changes;
+      "UPDATE Contents SET lockYN = 'Y', lockerUserId = ?, lockerSessionId = ?, lockerClientId = ?, lockedAt = ? WHERE articleId = ?",
+    ).run(lockerUserId ?? null, lockerSessionId ?? null, lockerClientId ?? null, lockedAt ?? null, articleId).changes;
   }
 
   function clearLock(articleId) {
     return db.prepare(
-      "UPDATE Contents SET lockYN = 'N', lockerUserId = NULL, lockerSessionId = NULL, lockedAt = NULL WHERE articleId = ?",
+      "UPDATE Contents SET lockYN = 'N', lockerUserId = NULL, lockerSessionId = NULL, lockerClientId = NULL, lockedAt = NULL WHERE articleId = ?",
     ).run(articleId).changes;
   }
 

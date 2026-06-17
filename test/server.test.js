@@ -38,10 +38,12 @@ function seedUser(db, user) {
   createUserModel(db).insert({ active: 'Y', ...user, password: bcrypt.hashSync(user.password, 10) });
 }
 
-async function api(base, method, path, { sid, body } = {}) {
+async function api(base, method, path, { sid, body, clientId } = {}) {
   const headers = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (sid) headers['x-session-id'] = sid;
+  // 편집 탭 식별자(per-tab) — lock/save/unlock에서 보유자 판정에 쓰인다.
+  if (clientId) headers['x-edit-client'] = clientId;
   const res = await fetch(`${base}${path}`, {
     method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -238,24 +240,50 @@ test('GET /api/articles/:id/history: 이벤트 없는 기사는 빈 items, 단�
   } finally { await ctx.close(); }
 });
 
-test('PUT /api/articles/:id: 잠금 보유자만 수정할 수 있다', async () => {
+test('PUT /api/articles/:id: 잠금 보유 탭(clientId)만 수정할 수 있다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const cid = 'tab-1';
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: '원제목', markupVersion: '{}' } })).body;
+
+    // 잠금 없이 수정 → 403 not-holder.
+    const denied = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { title: '수정제목' } });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.reason, 'not-holder');
+
+    // 잠금 획득 후 같은 탭(clientId)으로 수정 → ok.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: cid });
+    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { title: '수정제목' } });
+    assert.equal(ok.status, 200);
+    const rows = await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid });
+    assert.equal(rows.body.items[0].title, '수정제목');
+  } finally { await ctx.close(); }
+});
+
+test('PUT /api/articles/:id: 같은 세션의 2번째 탭(다른 clientId)은 lock·save가 차단된다 [c]', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
     const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
     const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: '원제목', markupVersion: '{}' } })).body;
 
-    // 잠금 없이 수정 → 403 not-holder.
-    const denied = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '수정제목' } });
-    assert.equal(denied.status, 403);
-    assert.equal(denied.body.reason, 'not-holder');
+    // 1번째 탭이 잠금을 보유한다.
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab-1' })).status, 200);
 
-    // 잠금 획득 후 수정 → ok.
-    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
-    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '수정제목' } });
-    assert.equal(ok.status, 200);
-    const rows = await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid });
-    assert.equal(rows.body.items[0].title, '수정제목');
+    // 같은 세션의 2번째 탭은 잠금 획득 실패(locked).
+    const lock2 = await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab-2' });
+    assert.equal(lock2.status, 401, '같은 세션 다른 탭 잠금은 locked(401)');
+    assert.equal(lock2.body.reason, 'locked');
+
+    // 2번째 탭은 저장도 차단(not-holder).
+    const save2 = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: 'tab-2', body: { title: '탈취제목' } });
+    assert.equal(save2.status, 403);
+    assert.equal(save2.body.reason, 'not-holder');
+
+    // 1번째 탭은 여전히 보유자로 저장 가능.
+    assert.equal((await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: 'tab-1', body: { title: '정상제목' } })).status, 200);
   } finally { await ctx.close(); }
 });
 
@@ -264,12 +292,13 @@ test('PUT /api/articles/:id: 부서를 빈 값으로 저장하면 세션 부서�
   try {
     seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', departmentCode: 'SOC', password: 'pw' });
     const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const cid = 'tab-1';
     // POST 자동입력을 피하려 다른 부서(경제부)로 명시 저장.
     const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', department: '경제부', departmentCode: 'ECO' } })).body;
-    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: cid });
 
     // 편집 저장에서 부서를 빈 값으로 전송 → 세션 부서(사회부)로 보정.
-    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { department: '', departmentCode: '' } });
+    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { department: '', departmentCode: '' } });
     assert.equal(ok.status, 200);
     const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
     assert.equal(row.department, '사회부', '빈 부서는 세션 부서로 보정');
@@ -282,11 +311,12 @@ test('PUT /api/articles/:id: 부서 키를 보내지 않으면 기존 부서를 
   try {
     seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', departmentCode: 'SOC', password: 'pw' });
     const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const cid = 'tab-1';
     const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', department: '경제부', departmentCode: 'ECO' } })).body;
-    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: cid });
 
     // 부서 키 없이 제목만 수정 → 기존 부서(경제부) 보존.
-    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '새제목' } });
+    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { title: '새제목' } });
     assert.equal(ok.status, 200);
     const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
     assert.equal(row.department, '경제부', '부서 미전송 시 기존 부서 보존');

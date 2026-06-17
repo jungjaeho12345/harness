@@ -181,32 +181,45 @@ export function createArticleService({ articleModel, db, historyModel }) {
     return rows.filter((r) => r.eventType === 'status' && r.action === 'send');
   }
 
-  // 편집 잠금 — 보유자는 세션 id. 잠겨 있어도 stale(30분 무갱신)이면 가져갈 수 있다.
+  // 편집 잠금 — 보유자는 편집 탭(clientId)이다. 잠겨 있어도 stale(30분 무갱신)이면 가져갈 수 있다.
   // 획득 실패 시 누가 잠갔는지는 노출하지 않는다.
-  function acquireEditLock(articleId, { userId, sessionId } = {}) {
+  // 일관된 a/b/c 모델:
+  //  - 같은 탭(clientId)의 재획득(F5 새로고침)은 허용한다.
+  //  - (b) 같은 사용자가 다른 세션으로 재로그인하면(이전 세션 만료) takeover를 허용한다.
+  //  - (c) 같은 세션의 "다른 탭"은 차단한다(서로 다른 clientId — 한 사용자가 여러 탭에서 동시 편집 금지).
+  //  - 그 외 다른 사용자는 차단한다.
+  function acquireEditLock(articleId, { userId, sessionId, clientId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
-    const heldByOther = c.lockYN === 'Y' && c.lockerSessionId && c.lockerSessionId !== sessionId;
-    if (heldByOther && !isStale(c.lockedAt)) return { ok: false, reason: 'locked' };
+    const held = c.lockYN === 'Y' && c.lockerClientId;
+    if (held && !isStale(c.lockedAt)) {
+      // 같은 탭(clientId)이면 재획득(F5 새로고침) — 허용.
+      const sameClient = c.lockerClientId === clientId;
+      // (b) 같은 사용자가 다른 세션으로 재로그인 — 이전 세션은 만료된 것으로 보고 takeover 허용.
+      const sameUserReLogin = c.lockerUserId === userId && c.lockerSessionId !== sessionId;
+      // (c) 같은 세션의 다른 탭 등 그 외는 차단(다른 사용자 포함).
+      if (!sameClient && !sameUserReLogin) return { ok: false, reason: 'locked' };
+    }
 
     articleModel.setLock(articleId, {
       lockerUserId: userId ?? null,
       lockerSessionId: sessionId ?? null,
+      lockerClientId: clientId ?? null,
       lockedAt: nowISO(),
     });
     return { ok: true };
   }
 
-  // 보유 세션만 해제한다. 이미 해제된 잠금 해제는 멱등(ok).
-  function releaseEditLock(articleId, { sessionId } = {}) {
+  // 보유 탭(clientId)만 해제한다. 이미 해제된 잠금 해제는 멱등(ok).
+  function releaseEditLock(articleId, { clientId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
     if (c.lockYN !== 'Y') return { ok: true };
-    if (c.lockerSessionId && c.lockerSessionId !== sessionId) return { ok: false, reason: 'not-holder' };
+    if (c.lockerClientId && c.lockerClientId !== clientId) return { ok: false, reason: 'not-holder' };
 
     articleModel.clearLock(articleId);
     return { ok: true };
@@ -220,13 +233,14 @@ export function createArticleService({ articleModel, db, historyModel }) {
     return { ok: true };
   }
 
-  // 해당 세션이 잠금 보유자인지 — 편집 저장 권한 검증에 쓴다.
-  function assertLockHolder(articleId, { sessionId } = {}) {
+  // 해당 편집 탭(clientId)이 잠금 보유자인지 — 편집 저장 권한 검증에 쓴다.
+  // 보유 탭만 저장할 수 있다(같은 세션의 2번째 탭은 저장 차단).
+  function assertLockHolder(articleId, { clientId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
-    if (c.lockYN === 'Y' && c.lockerSessionId === sessionId) return { ok: true };
+    if (c.lockYN === 'Y' && c.lockerClientId === clientId) return { ok: true };
     return { ok: false, reason: 'not-holder' };
   }
 

@@ -213,7 +213,7 @@ export function createApp({
     // credentials 모드에서는 와일드카드 origin 금지 → 명시 allowlist가 필수.
     origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token'],
+    allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token', 'x-edit-client'],
     credentials: true,
   }));
 
@@ -493,9 +493,11 @@ export function createApp({
   // 부분 수정 — 편집 잠금 보유자(세션)만 가능.
   app.put('/api/articles/:id', (req, res, next) => {
     try {
-      const { sid, me } = sessionOf(req);
+      const { me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
-      const hold = controllers.article.assertLockHolder(req.params.id, { sessionId: sid });
+      // 편집 탭(clientId) 기준으로 보유자를 검증한다 — 같은 세션의 2번째 탭은 저장 차단.
+      const clientId = req.get('x-edit-client');
+      const hold = controllers.article.assertLockHolder(req.params.id, { clientId });
       if (!hold.ok) return fail(res, hold);
       const fields = { ...(req.body ?? {}), modifier: me.userId };
       delete fields.role;
@@ -522,7 +524,9 @@ export function createApp({
       const probe = controllers.auth.editDps(sid, req.params.id, action);
       if (probe.reason === 'not-found') return res.status(404).json(probe);
       if (!probe.ok && probe.reason !== 'not-dps') return fail(res, probe); // DPS인데 비-D 등 → forbidden
-      const r = controllers.article.acquireEditLock(req.params.id, { userId: me.userId, sessionId: sid });
+      // 편집 탭(clientId)을 보유자 식별자로 함께 전달한다(같은 탭 재획득·재로그인 takeover·다른 탭 차단의 근거).
+      const clientId = req.get('x-edit-client');
+      const r = controllers.article.acquireEditLock(req.params.id, { userId: me.userId, sessionId: sid, clientId });
       if (r.ok) app.notifyChange('lock');
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
@@ -530,9 +534,11 @@ export function createApp({
 
   app.post('/api/articles/:id/unlock', (req, res, next) => {
     try {
-      const { sid, me } = sessionOf(req);
+      const { me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
-      const r = controllers.article.releaseEditLock(req.params.id, { sessionId: sid });
+      // 보유 탭(clientId)만 해제한다(비보유 탭 → not-holder).
+      const clientId = req.get('x-edit-client');
+      const r = controllers.article.releaseEditLock(req.params.id, { clientId });
       if (r.ok) app.notifyChange('lock');
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }

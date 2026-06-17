@@ -25,10 +25,12 @@ async function start() {
   return { db, base, close: () => new Promise((r) => server.close(r)) };
 }
 
-async function api(base, method, path, { sid, body } = {}) {
+async function api(base, method, path, { sid, body, clientId } = {}) {
   const headers = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (sid) headers['x-session-id'] = sid;
+  // 편집 탭(per-tab) 식별자 — lock/save 보유자 판정에 쓰인다.
+  if (clientId) headers['x-edit-client'] = clientId;
   const res = await fetch(`${base}${path}`, {
     method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -63,14 +65,15 @@ test('본문 계약: create→lock→PUT 후 단건조회(GET /api/articles/:id)
     assert.equal(created.body.ok, true);
     const { articleId } = created.body;
 
-    // 편집 잠금 획득 후 PUT으로 본문 수정.
-    const lock = await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, body: {} });
+    // 편집 잠금 획득 후 같은 탭(clientId)으로 PUT 본문 수정.
+    const cid = 'tab-1';
+    const lock = await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: cid, body: {} });
     assert.equal(lock.body.ok, true);
     const m2 = JSON.stringify({
       format: 'yh-editor', version: 1,
       blocks: [{ type: 'text', text: '수정 제목' }, { type: 'text', text: '수정 본문' }, { type: 'text', text: '(끝)' }],
     });
-    const put = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '수정 제목', markupVersion: m2 } });
+    const put = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { title: '수정 제목', markupVersion: m2 } });
     assert.equal(put.body.ok, true);
 
     // 단건 조회로 본문 보존 확인 — null/빈 문자열이 아니라 저장한 블록 JSON과 동일해야 한다.
@@ -94,8 +97,9 @@ test('본문 계약: 편집 후 송고가 (끝) 보존으로 no-end-marker 거�
     const created = await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: '제목', markupVersion: markup() } });
     const { articleId } = created.body;
 
-    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, body: {} });
-    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '제목', markupVersion: markup() } });
+    const cid = 'tab-1';
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: cid, body: {} });
+    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, clientId: cid, body: { title: '제목', markupVersion: markup() } });
 
     const send = await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
     assert.equal(send.status, 200);

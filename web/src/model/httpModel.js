@@ -45,10 +45,13 @@ function buildQuery(params = {}) {
 // (cross-origin로 띄우려면 VITE_API_BASE를 vite.config 프록시 target으로 주거나 base를 명시 주입한다.)
 export function createHttpModel({ base = '' } = {}) {
   // 모든 REST 호출의 단일 통로 — 쿠키 첨부(credentials:'include') + JSON 직렬화/역직렬화.
-  async function request(path, { method = 'GET', body, query } = {}) {
+  // clientId: 편집 탭(EDIT TAB)별 고유 식별자 — 잠금/저장/해제 시 x-edit-client 헤더로 실어 서버가
+  // 한 세션 내 1탭만 편집 가능(다른 탭은 차단)·같은 사용자 재로그인 takeover를 강제하게 한다(편집 잠금 계약).
+  async function request(path, { method = 'GET', body, query, clientId } = {}) {
     const headers = {};
     const sessionId = readSessionId();
     if (sessionId) headers['x-session-id'] = sessionId;
+    if (clientId) headers['x-edit-client'] = clientId;
     // 인증의 1차 수단은 HttpOnly 세션 쿠키(step3). credentials:'include'로 cross-origin 요청에도
     // 브라우저가 쿠키를 자동 전송한다(CORS credentials:true). HttpOnly라 JS로 쿠키를 읽지 않으며,
     // 신원 복원은 서버 /api/session에 위임한다. x-session-id 헤더는 dev cross-origin(SameSite 제약)
@@ -117,11 +120,13 @@ export function createHttpModel({ base = '' } = {}) {
       });
     },
     // articleId 유무로 신규 생성(POST)/부분 수정(PUT, 잠금 보유자)을 한 메서드가 분기한다.
-    saveArticle(dto = {}) {
+    // clientId(편집 탭 식별자)는 x-edit-client 헤더로 실어 PUT 저장 시 서버가 잠금 보유 탭인지 검증하게 한다
+    // (assertLockHolder — 2번째 탭의 저장을 차단). 신규(POST)에도 무해하게 동행한다.
+    saveArticle(dto = {}, clientId) {
       if (dto.articleId) {
-        return request(`/api/articles/${encodeURIComponent(dto.articleId)}`, { method: 'PUT', body: dto });
+        return request(`/api/articles/${encodeURIComponent(dto.articleId)}`, { method: 'PUT', body: dto, clientId });
       }
-      return request('/api/articles', { method: 'POST', body: dto });
+      return request('/api/articles', { method: 'POST', body: dto, clientId });
     },
 
     // --- 메뉴 액션: 이력 / 파생 / 번역 (role은 서버 세션에서 도출 — body로 보내지 않는다, ADR-004) ---
@@ -165,12 +170,14 @@ export function createHttpModel({ base = '' } = {}) {
     },
 
     // --- 편집 잠금 ---
-    lockArticle(articleId, action) {
+    // clientId(편집 탭 식별자)를 x-edit-client 헤더로 실어 서버 acquire/release가 보유 탭을 식별하게 한다.
+    // 같은 탭 새로고침은 재획득 허용, 같은 세션 다른 탭은 차단, 같은 사용자 재로그인은 takeover(편집 잠금 계약).
+    lockArticle(articleId, action, clientId) {
       const body = action ? { action } : {};
-      return request(`/api/articles/${encodeURIComponent(articleId)}/lock`, { method: 'POST', body });
+      return request(`/api/articles/${encodeURIComponent(articleId)}/lock`, { method: 'POST', body, clientId });
     },
-    unlockArticle(articleId) {
-      return request(`/api/articles/${encodeURIComponent(articleId)}/unlock`, { method: 'POST' });
+    unlockArticle(articleId, clientId) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/unlock`, { method: 'POST', clientId });
     },
     forceUnlockArticle(articleId) {
       return request(`/api/articles/${encodeURIComponent(articleId)}/force-unlock`, { method: 'POST' });
