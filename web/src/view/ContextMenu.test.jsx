@@ -26,6 +26,15 @@ describe('buildContextMenuItems — per-menu items', () => {
     expect(keys(items)).toContain('edit');
   });
 
+  it('데스크 미송고 편집은 D(데스크)/Z(관리자)만 활성이다', () => {
+    // D/Z → 활성.
+    expect(find(buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' }), 'edit').enabled).toBe(true);
+    expect(find(buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'Z' }), 'edit').enabled).toBe(true);
+    // R(기자)·권한 미정의 → 비활성(항목은 노출하되 disabled).
+    expect(find(buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'R' }), 'edit').enabled).toBe(false);
+    expect(find(buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: undefined }), 'edit').enabled).toBe(false);
+  });
+
   it('매핑(mapping)은 세션만 있으면 활성이다 (step11)', () => {
     // 권한/상태 게이트 없음 — 서버가 세션 인증·잠금 게이트. 부서별 작성/송고·개인별 수정에서 모두 활성.
     for (const menu of ['deptWrite', 'deptSend', 'personal']) {
