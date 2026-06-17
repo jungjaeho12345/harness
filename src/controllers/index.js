@@ -40,7 +40,7 @@ export function createControllers(db, {
   const articleService = createArticleService({ articleModel, db, historyModel: articleHistoryModel });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
-  const collectionService = createCollectionService({ articleService, receiverConfigModel });
+  const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });
   const mediaSearch = createMediaSearch({ fetchFn, env });
   const translate = createTranslate({ fetchFn, env });
 
@@ -95,6 +95,7 @@ export function createControllers(db, {
 
   const collection = {
     receive: (sourceId, payload) => collectionService.receive(sourceId, payload),
+    pull: (sourceId) => collectionService.pull(sourceId),
   };
 
   return { auth, user, article, media, translation, receiverConfig, collection };

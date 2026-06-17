@@ -56,6 +56,25 @@ export function RcvMgmtPage() {
           <label htmlFor="rcv-endpoint">API 엔드포인트</label>
           <input id="rcv-endpoint" value={form.apiEndpoint} onChange={(e) => set('apiEndpoint', e.target.value)} />
         </div>
+        <div className="yh-field">
+          <label htmlFor="rcv-username">사용자명</label>
+          <input id="rcv-username" value={form.username} onChange={(e) => set('username', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="rcv-password">비밀번호</label>
+          <input id="rcv-password" type="password" value={form.password} onChange={(e) => set('password', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="rcv-apikey">API 키</label>
+          <input id="rcv-apikey" type="password" value={form.apiKey} onChange={(e) => set('apiKey', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="rcv-active">활성</label>
+          <select id="rcv-active" value={form.active} onChange={(e) => set('active', e.target.value)}>
+            <option value="Y">Y</option>
+            <option value="N">N</option>
+          </select>
+        </div>
         <button type="submit" className="yh-btn yh-btn--primary">설정 생성</button>
       </form>
 

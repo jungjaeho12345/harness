@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { createSchema } from '../src/db/schema.js';
+import { createSchema, backfillEmptyDepartments } from '../src/db/schema.js';
 
 function columns(db, table) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -218,6 +218,51 @@ test('createSchema: 구버전 User 테이블(7컬럼)에서 마이그레이션 �
   for (const c of ['failedLoginCount', 'lockedUntil', 'lastFailedLoginAt']) {
     assert.ok(cols.includes(c), `마이그레이션 후 User.${c} 컬럼이 있어야 함`);
   }
+});
+
+test('createSchema: 레거시 대소문자 컬럼(LockYN)을 중복 추가하지 않고 보존한다 (대소문자 보정)', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 DB: 편집잠금 컬럼이 'LockYN'(대문자 L) 표기로 존재 + 기존 행.
+  db.exec("CREATE TABLE Contents (articleId VARCHAR PRIMARY KEY, LockYN VARCHAR DEFAULT 'N')");
+  db.prepare("INSERT INTO Contents (articleId, LockYN) VALUES ('a1', 'Y')").run();
+
+  // 대소문자만 다른 기존 컬럼에 ADD COLUMN을 시도하면 SQLite가 'duplicate column' 오류를 낸다 → 보정으로 회피.
+  assert.doesNotThrow(() => createSchema(db));
+
+  // lockYN이 케이스 무시로 정확히 하나만 존재해야 한다(중복 컬럼 없음).
+  const lockCols = columns(db, 'Contents').filter((c) => c.toLowerCase() === 'lockyn');
+  assert.equal(lockCols.length, 1, 'lockYN 컬럼이 케이스 무시로 하나만 있어야 함');
+  // 기존 데이터·누락 컬럼 추가도 정상 동작.
+  assert.equal(db.prepare("SELECT LockYN FROM Contents WHERE articleId='a1'").get().LockYN, 'Y', '기존 데이터 보존');
+  assert.ok(columns(db, 'Contents').includes('status'), '누락 컬럼은 그대로 추가된다');
+});
+
+test('backfillEmptyDepartments: 빈 부서를 작성자의 User 부서로 채운다 (비파괴 — 빈 값만)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  db.prepare("INSERT INTO User (userId, name, department, departmentCode) VALUES ('u1','김기자','사회부','SOC')").run();
+  // a1: 빈 부서(작성자 김기자) → 보정 / a2: 기존 부서 → 보존 / a3: 매칭 사용자 없음 → 그대로.
+  db.prepare("INSERT INTO Contents (articleId, author, department) VALUES ('a1','김기자','')").run();
+  db.prepare("INSERT INTO Contents (articleId, author, department) VALUES ('a2','김기자','문화부')").run();
+  db.prepare("INSERT INTO Contents (articleId, author) VALUES ('a3','이름없는기자')").run();
+
+  const changed = backfillEmptyDepartments(db);
+
+  assert.equal(db.prepare("SELECT department FROM Contents WHERE articleId='a1'").get().department, '사회부');
+  assert.equal(db.prepare("SELECT departmentCode FROM Contents WHERE articleId='a1'").get().departmentCode, 'SOC');
+  assert.equal(db.prepare("SELECT department FROM Contents WHERE articleId='a2'").get().department, '문화부', '기존 부서는 보존');
+  const a3 = db.prepare("SELECT department FROM Contents WHERE articleId='a3'").get().department;
+  assert.ok(a3 === null || a3 === '', '매칭 사용자 없으면 빈 채로 둔다');
+  assert.equal(changed, 1, '빈 부서 1건만 보정한다');
+});
+
+test('backfillEmptyDepartments: 멱등 — 두 번째 호출은 보정할 행이 없다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  db.prepare("INSERT INTO User (userId, name, department) VALUES ('u1','김기자','사회부')").run();
+  db.prepare("INSERT INTO Contents (articleId, author, department) VALUES ('a1','김기자','')").run();
+  assert.equal(backfillEmptyDepartments(db), 1, '첫 호출은 1건 보정');
+  assert.equal(backfillEmptyDepartments(db), 0, '두 번째 호출은 0건(멱등)');
 });
 
 test('createSchema: FK 제약을 선언하지 않는다', () => {
