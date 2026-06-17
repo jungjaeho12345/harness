@@ -475,7 +475,7 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     fireEvent(box, pasteImageEvent(box));
 
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
-    expect(blockTypes(container)).toEqual(['text', 'embed', 'text']); // 제목 → [이미지] → 본문
+    expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']); // 제목 → [이미지] → 빈 줄 → 본문
   });
 
   it('붙여넣은 이미지는 이후 타이핑(input)에도 커서 위치에 보존된다(끝으로 밀리지 않음)', async () => {
@@ -483,11 +483,117 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     caretAtLine(container, 0);
     const box = container.querySelector('.yh-editor');
     fireEvent(box, pasteImageEvent(box));
-    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text']));
+    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']));
 
     // 본문을 수정(input)해도 임베드는 제목과 본문 사이에 그대로 남는다.
     fireEvent.input(box);
-    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text']));
+    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']));
+  });
+});
+
+// 검색패널(이미지/영상/글기사) 임베드 — 마지막 커서 텍스트 줄 "뒤"에 삽입 + 빈 줄 + 커서를 빈 줄로 이동(edit 모드, news.md 156행).
+describe('WriterPage — 검색패널 임베드: 커서 줄 뒤 삽입 + 개행 + 커서 이동', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  const blockTypes = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
+  ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 에디터(.yh-editor)에 focus()가 호출됐는지 기록한다(임베드 삽입 후 커서가 에디터로 이동 = focusLineStart 실행).
+  // jsdom은 contentEditable의 native caret/selection을 신뢰성 있게 반영하지 않으므로(기존 Editor 테스트도 focus 스파이로 검증),
+  // 커서 이동은 "에디터에 focus()가 걸렸는지"로 확인한다. 실제 빈 줄 캐럿 배치는 Editor.test.jsx의 pendingCaretLine 단위테스트가 보증.
+  function spyEditorFocus() {
+    const realFocus = HTMLElement.prototype.focus;
+    const calls = [];
+    vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function focusImpl(...args) {
+      if (this.classList && this.classList.contains('yh-editor')) calls.push(this);
+      return realFocus.apply(this, args);
+    });
+    return calls;
+  }
+
+  // 에디터 캐럿을 줄에 두고 caret 이벤트를 발생시켜 onCaretChange로 lastCaret을 갱신한다(검색패널 클릭 전 상태 모사).
+  function focusCaretAtLine(container, lineIndex) {
+    caretAtLine(container, lineIndex);
+    fireEvent.keyUp(container.querySelector('.yh-editor')); // onCaretChange({lineIndex}) → lastCaretRef 갱신
+  }
+
+  async function openWith(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function searchAndInsertImage(model) {
+    vi.spyOn(model, 'searchMedia').mockResolvedValue({
+      ok: true, error: false, items: [{ type: 'image', src: 'https://img/x.png', title: '사진' }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.click(screen.getByPlaceholderText('검색어를 입력하세요'));
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    const result = await screen.findByRole('img', { name: '사진' });
+    await userEvent.click(result.closest('button'));
+  }
+
+  it('마지막 캐럿 줄 다음에 임베드 + 빈 줄을 삽입하고 커서를 빈 줄로 옮긴다', async () => {
+    const { container, model } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1); // "본문" 줄에 캐럿
+    const editorFocuses = spyEditorFocus();
+
+    await searchAndInsertImage(model);
+
+    // 본문 줄 다음에 임베드 + 빈 줄: [헤드라인, 본문, embed, 빈 줄]
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed', 'text']);
+    const lines = container.querySelectorAll('.yh-editor__line');
+    expect(lines[lines.length - 1].textContent).toBe(''); // 임베드 뒤 빈 줄
+    await waitFor(() => expect(editorFocuses.length).toBeGreaterThanOrEqual(1)); // 커서가 에디터(새 빈 줄)로 이동
+  });
+
+  it('캐럿이 없으면(에디터 미포커스) 끝에만 추가한다(빈 줄/커서 이동 없음)', async () => {
+    const { container, model } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    // 캐럿 이벤트를 발생시키지 않음 → lastCaretRef=null → append 폴백.
+    await searchAndInsertImage(model);
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed']); // 끝에 임베드만(빈 줄 없음)
+  });
+
+  it('같은 줄로 연속 2회 삽입해도 매번 임베드+빈 줄이 더해지고 커서가 빈 줄에 위치한다', async () => {
+    const { container, model } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const editorFocuses = spyEditorFocus();
+
+    // 글기사는 검색 결과(버튼 '삽입')와 임베드(링크)가 구분돼 역할 충돌이 없다.
+    vi.spyOn(model, 'searchArticles').mockResolvedValue({
+      ok: true, items: [{ articleId: 'AKR100', title: '연합뉴스속보', status: 'DPS' }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: '글기사' }));
+    await userEvent.type(screen.getByLabelText('article 검색어'), '연합');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+
+    await userEvent.click(await screen.findByRole('button', { name: '삽입' }));
+    await waitFor(() => expect(container.querySelectorAll('[data-embed-type="article"]').length).toBe(1));
+
+    // lastCaretRef는 첫 삽입 후에도 같은 줄(1) — 두 번째도 같은 줄 뒤에 삽입(검색 결과 '삽입' 버튼은 유지됨).
+    await userEvent.click(screen.getByRole('button', { name: '삽입' }));
+    await waitFor(() => expect(container.querySelectorAll('[data-embed-type="article"]').length).toBe(2));
+    await waitFor(() => expect(editorFocuses.length).toBeGreaterThanOrEqual(2)); // 2회 모두 커서가 에디터(빈 줄)로 이동
   });
 });
 
