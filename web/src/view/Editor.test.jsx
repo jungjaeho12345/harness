@@ -67,6 +67,42 @@ describe('Editor', () => {
   });
 });
 
+// 타이핑 중 재렌더로 캐럿이 초기화되지 않도록(uncontrolled 편집) — 회귀 방지.
+// 부모가 매 입력마다 같은 텍스트로 blocks를 갱신(echo)해도 편집 div가 remount되면 안 된다(캐럿 튐·크래시 원인).
+describe('Editor — 타이핑 중 편집 div 안정(캐럿 보존)', () => {
+  it('타이핑 echo(같은 텍스트로 blocks 갱신)는 편집 div를 remount하지 않는다', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('헤')]} onTextChange={() => {}} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    // 사용자가 '헤드'까지 친 상황 모사: 라인 DOM 텍스트를 바꾸고 input 발생(→ 내부 lastEmitted='헤드').
+    container.querySelector('.yh-editor__line').textContent = '헤드';
+    fireEvent.input(before);
+    // 부모가 같은 텍스트로 blocks를 갱신(echo).
+    rerender(<Editor blocks={[textBlock('헤드')]} onTextChange={() => {}} />);
+
+    await waitFor(() => {
+      const after = container.querySelector('.yh-editor');
+      expect(after).toBe(before); // 동일 노드 → remount 없음 → 브라우저 캐럿/입력 보존
+    });
+    expect(container.querySelector('.yh-editor__line').textContent).toBe('헤드'); // DOM 입력 보존
+  });
+
+  it('외부/구조 변경(다른 텍스트로 blocks 갱신)은 편집 div를 remount해 내용을 갱신한다', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문')]} onTextChange={() => {}} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    // 타이핑 echo가 아닌 외부 변경(예: 라인 삭제)으로 blocks가 바뀜.
+    rerender(<Editor blocks={[textBlock('제목')]} onTextChange={() => {}} />);
+
+    await waitFor(() => expect(
+      Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent),
+    ).toEqual(['제목']));
+    expect(container.querySelector('.yh-editor')).not.toBe(before); // remount(새 노드) → 깨끗한 DOM 재구성
+  });
+});
+
 // 15-A: "(끝)" 마커 뒤 삽입 차단 결선(isInputBlocked). 삭제/이동/선택은 차단하지 않는다(news.md 162행).
 describe('Editor — "(끝)" 마커 뒤 입력 차단 결선', () => {
   const markered = [textBlock('헤드'), textBlock('본문'), textBlock('(끝)')];
