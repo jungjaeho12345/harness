@@ -4,7 +4,7 @@
 
 import {
   deserialize, serialize, textBlock,
-  isEmbedBlock, blocksToText, END_MARKER,
+  blocksToText, END_MARKER,
 } from './editorContent.js';
 
 // 본문 문자열에서 첫 줄(=제목)을 도출한다(블록 → 텍스트 → 첫 줄).
@@ -13,17 +13,28 @@ export function bodyTitle(body) {
   return (text.split('\n')[0] ?? '').trim();
 }
 
-// 타이핑된 텍스트 + 기존 본문의 임베드 → 정규 순서 본문 문자열.
-// "(끝)" 마커는 텍스트 중 어디에 있든 항상 임베드 뒤 최종 블록으로 보낸다(news.md 최종 시각 순서).
-export function mergeTextIntoBody(currentBody, newText) {
-  const embeds = deserialize(currentBody).filter(isEmbedBlock);
-  const lines = String(newText ?? '').split('\n');
-  const hasEnd = lines.some((l) => l.trim() === END_MARKER);
-  const textLines = lines.filter((l) => l.trim() !== END_MARKER);
-  const out = textLines.map((l) => textBlock(l));
-  out.push(...embeds);
-  if (hasEnd) out.push(textBlock(END_MARKER));
-  return serialize(out);
+// 에디터가 읽어 보낸 블록(텍스트 + 임베드)을 본문 문자열로 직렬화한다.
+// 임베드는 커서/DOM 순서를 그대로 보존하고(news.md 156·167행), "(끝)" 마커만 항상 최종 블록으로 보낸다(news.md 159행).
+export function serializeBodyFromBlocks(blocks) {
+  const list = deserialize(blocks); // 배열/문자열/객체 모두 정규화
+  const isEnd = (b) => b.type === 'text' && String(b.text).trim() === END_MARKER;
+  const hasEnd = list.some(isEnd);
+  const rest = list.filter((b) => !isEnd(b));
+  if (hasEnd) rest.push(textBlock(END_MARKER));
+  return serialize(rest);
+}
+
+// 임베드를 본문 블록 배열의 blockIndex 위치에 삽입한다(커서 위치 임베딩 — news.md 156행).
+// blockIndex가 유효 범위를 벗어나면 끝(끝 마커 앞)에 덧붙인다. "(끝)"은 항상 최종 블록으로 유지.
+export function insertEmbedIntoBody(currentBody, embed, blockIndex) {
+  if (!embed) return currentBody;
+  const blocks = deserialize(currentBody);
+  if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex > blocks.length) {
+    return appendEmbedToBody(currentBody, embed);
+  }
+  const next = blocks.slice();
+  next.splice(blockIndex, 0, embed);
+  return serializeBodyFromBlocks(next);
 }
 
 // 검색 결과 임베드를 본문에 덧붙인다(텍스트 뒤, "(끝)" 앞). embed가 없으면 본문 그대로.

@@ -167,12 +167,55 @@ describe('Editor — IME 조합 중 재색칠 금지 결선', () => {
     expect(onTextChange).toHaveBeenCalled();
   });
 
-  it('조합이 아니면 input이 본문을 동기화한다(정상 타이핑 경로)', () => {
+  it('조합이 아니면 input이 본문을 동기화한다(정상 타이핑 경로 — 텍스트 + 블록 전달)', () => {
     const onTextChange = vi.fn();
     render(<Editor blocks={[textBlock('헤드')]} onTextChange={onTextChange} />);
     const box = screen.getByRole('textbox', { name: '본문' });
     fireEvent.input(box);
-    expect(onTextChange).toHaveBeenCalledWith('헤드');
+    // 1번째 인자: 본문 텍스트, 2번째 인자: 커서 위치 보존용 인터리브 블록.
+    expect(onTextChange).toHaveBeenCalledWith('헤드', [{ type: 'text', text: '헤드' }]);
+  });
+});
+
+// 임베드 위치 보존: 텍스트 사이에 임베드가 있어도 타이핑 input은 임베드를 그 자리에 둔 블록을 내보낸다.
+describe('Editor — 임베드 위치 보존(타이핑 시 인터리브 블록 emit)', () => {
+  it('input은 텍스트 사이의 임베드를 끝으로 옮기지 않고 DOM 순서대로 내보낸다', () => {
+    const onTextChange = vi.fn();
+    render(
+      <Editor
+        blocks={[textBlock('제목'), embedBlock({ embedType: 'image', src: 'data:image/png;base64,AAA' }), textBlock('본문')]}
+        onTextChange={onTextChange}
+      />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent.input(box);
+    const blocks = onTextChange.mock.calls[0][1];
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']);
+    expect(blocks[1].src).toBe('data:image/png;base64,AAA');
+  });
+
+  // 회귀: 임베드 2개 중 하나를 인라인으로(× 버튼 아닌 경로) 삭제해도, 남은 임베드에 엉뚱한 데이터가
+  // 매칭되지 않아야 한다(data-embed-key 안정적 매칭). 등장 순서 매칭이면 살아남은 임베드가 뒤바뀐다.
+  it('임베드 하나를 인라인 삭제해도 살아남은 임베드 데이터가 뒤바뀌지 않는다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor
+        blocks={[
+          textBlock('A'),
+          embedBlock({ embedType: 'image', src: 'data:image/png;base64,XXX' }),
+          embedBlock({ embedType: 'image', src: 'data:image/png;base64,YYY' }),
+          textBlock('B'),
+        ]}
+        onTextChange={onTextChange}
+      />,
+    );
+    // 첫 번째 임베드 figure를 DOM에서 제거(인라인 선택-삭제 모사).
+    container.querySelectorAll('.yh-embed')[0].remove();
+    fireEvent.input(container.querySelector('.yh-editor'));
+
+    const embeds = onTextChange.mock.calls[0][1].filter((b) => b.type === 'embed');
+    expect(embeds).toHaveLength(1);
+    expect(embeds[0].src).toBe('data:image/png;base64,YYY'); // 남은 건 YYY(XXX로 되살아나지 않음)
   });
 });
 
@@ -228,6 +271,26 @@ describe('Editor — 이미지 붙여넣기 → 임베드 결선', () => {
     const embed = onPasteEmbed.mock.calls[0][0];
     expect(embed.embedType).toBe('image');
     expect(embed.src).toMatch(/^data:image\//);
+  });
+
+  it('이미지 붙여넣기 → onPasteEmbed 2번째 인자로 캐럿({lineIndex})을 전달한다', async () => {
+    const onPasteEmbed = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드'), textBlock('본문')]} onTextChange={() => {}} onPasteEmbed={onPasteEmbed} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    // 첫 줄(헤드)에 캐럿을 둔다.
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[0]);
+    range.collapse(true);
+    sel.addRange(range);
+
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(onPasteEmbed).toHaveBeenCalled());
+    expect(onPasteEmbed.mock.calls[0][1]).toMatchObject({ lineIndex: 0 });
   });
 
   it('일반 텍스트 붙여넣기 → preventDefault 안 함 + onPasteEmbed 미호출', () => {

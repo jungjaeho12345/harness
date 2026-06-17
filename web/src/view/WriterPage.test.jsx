@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   render, screen, waitFor, fireEvent, createEvent,
 } from '@testing-library/react';
@@ -394,6 +394,100 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
     expect(spy).not.toHaveBeenCalled(); // 기본 동작 유지
     expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy();
     expect(editorLines(container)).toContain('본문');
+  });
+
+  // 회귀: 삭제할 텍스트 라인이 없어도 Ctrl+D는 브라우저 기본동작(북마크 추가)을 막아야 한다.
+  // (라인이 없을 때 preventDefault를 빼먹으면 두 번째 Ctrl+D에서 북마크 창이 떴다.)
+  it('삭제할 텍스트 라인이 없어도 Ctrl+D는 기본동작(북마크)을 차단한다', async () => {
+    const body = serialize([embedBlock({ embedType: 'image', src: 'x.png' })]); // 텍스트 블록 없음
+    const { container } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'd', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // 삭제는 못 해도 북마크 기본동작은 막는다
+  });
+});
+
+// Ctrl+V 이미지 붙여넣기 — 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드를 삽입한다(news.md 156행).
+describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', () => {
+  const realFileReader = globalThis.FileReader;
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    class FakeFileReader {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,AAA';
+        setTimeout(() => { if (this.onload) this.onload({ target: this }); }, 0);
+      }
+    }
+    globalThis.FileReader = FakeFileReader;
+  });
+  afterEach(() => { globalThis.FileReader = realFileReader; });
+
+  function pasteImageEvent(el) {
+    const ev = createEvent.paste(el, {});
+    const file = new File(['x'], 'pic.png', { type: 'image/png' });
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    });
+    return ev;
+  }
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 에디터 내부 블록(라인 div + 임베드 figure)을 DOM 순서대로 타입 배열로 읽는다.
+  const blockTypes = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
+  ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
+
+  async function openWith(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it('첫 줄에 캐럿을 두고 붙여넣으면 그 줄 바로 뒤에 임베드가 삽입된다(맨 뒤가 아님)', async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    caretAtLine(container, 0); // 제목 줄
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'embed', 'text']); // 제목 → [이미지] → 본문
+  });
+
+  it('붙여넣은 이미지는 이후 타이핑(input)에도 커서 위치에 보존된다(끝으로 밀리지 않음)', async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    caretAtLine(container, 0);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text']));
+
+    // 본문을 수정(input)해도 임베드는 제목과 본문 사이에 그대로 남는다.
+    fireEvent.input(box);
+    await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text']));
   });
 });
 

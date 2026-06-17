@@ -16,7 +16,10 @@ export function isAllowedImageSrc(src) {
   return false;
 }
 
-export function InlineEmbed({ embed, onRemove, readOnly = false }) {
+// blockIndex: 이 임베드가 차지하는 본문 블록 인덱스(snapshot 기준). figure에 data-embed-key로 박아
+//   에디터가 DOM을 다시 읽을 때(readEditorBlocks) 임베드를 '등장 순서'가 아니라 '안정적 키'로 매칭하게 한다
+//   (인라인 삭제 등으로 임베드 개수가 어긋나도 살아남은 임베드 데이터가 뒤바뀌지 않게 함).
+export function InlineEmbed({ embed, onRemove, readOnly = false, blockIndex }) {
   if (!embed) return null;
   const type = embed.embedType;
 
@@ -68,6 +71,7 @@ export function InlineEmbed({ embed, onRemove, readOnly = false }) {
     <figure
       className="yh-embed"
       data-embed-type={type}
+      data-embed-key={blockIndex == null ? undefined : String(blockIndex)}
       style={{ width: figureWidth, maxWidth: '100%', position: 'relative', margin: 0 }}
     >
       {!readOnly && (
