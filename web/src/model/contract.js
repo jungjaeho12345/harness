@@ -26,6 +26,8 @@ export const MODEL_KEYS = Object.freeze([
   'queryHistory',
   'deriveArticle',
   'translate',
+  // 파일 업로드(첨부파일/자료파일) — POST /api/upload. path 문자열을 Contents.attachmentFile/referenceFile에 보관.
+  'uploadFile',
 ]);
 
 // 모든 계약 키가 함수로 구현되어 있는지 검증한다. 누락 시 어떤 키가 빠졌는지 알려주며 throw.

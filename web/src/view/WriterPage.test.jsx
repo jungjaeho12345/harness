@@ -143,6 +143,63 @@ describe('WriterPage — 송고/보류 가드 + 확인창', () => {
     await userEvent.click(actionBtn('송고'));
     expect(apply).not.toHaveBeenCalled();
   });
+
+  // 회귀: 제목 FIELD만 있고 본문 첫 줄이 비어도 제목으로 인정해야 한다(둘 중 하나라도 있으면 통과).
+  // markupVersion 본문은 빈 첫 줄 + "(끝)"로 시작해 bodyTitle은 ''이지만 fields.title은 채워진 기사로 진입.
+  const TITLE_FIELD_ONLY = {
+    pendingEdit: { article: { articleId: 'AKR1', title: '필드제목', status: 'RDS' }, mode: 'edit' },
+  };
+
+  it('제목 FIELD만 있고 본문 첫 줄이 비어도 송고가 진행된다(제목 ALERT 없음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const body = serialize([textBlock(''), textBlock('본문'), textBlock('(끝)')]);
+    const { model } = setup({
+      ...TITLE_FIELD_ONLY,
+      identity: { role: 'R' },
+      seed: { articles: [{ articleId: 'AKR1', title: '필드제목', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    const apply = vi.spyOn(model, 'applyAction');
+    await userEvent.click(actionBtn('송고'));
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'send'));
+    expect(alert).not.toHaveBeenCalledWith(expect.stringContaining('제목'));
+  });
+
+  it('제목 FIELD만 있고 본문 첫 줄이 비어도 보류가 진행된다("(끝)" 불필요)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const body = serialize([textBlock(''), textBlock('본문')]); // (끝) 없음 — 보류는 무관
+    const { model } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '필드제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', title: '필드제목', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(actionBtn('보류')).toBeInTheDocument());
+    const apply = vi.spyOn(model, 'applyAction');
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'hold'));
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('본문 첫 줄이 있고 "(끝)"이 없으면 송고는 (끝) ALERT로 막히고 보류는 진행된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '헤드', body: '헤드라인\n본문', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y' }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('송고'));
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining('(끝)'));
+    expect(apply).not.toHaveBeenCalled();
+
+    await userEvent.click(actionBtn('보류')); // 보류는 (끝) 불필요 → 진행
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'hold'));
+  });
 });
 
 // 3-mapping step3: 매핑 모드 — 본문 readOnly·메타 탭 임베드 추가 활성·액션바 '저장'→saveMapping 결선.
@@ -422,5 +479,161 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
     const removeBtn = screen.getByRole('button', { name: '임베드 삭제' });
     await userEvent.click(removeBtn);
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeNull());
+  });
+});
+
+// 공통정보 확장 — 공동작성/지역/속성/키워드(text) + 내부/외부코멘트(textarea) + 첨부/자료파일(file upload).
+describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/키워드/코멘트)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  const LABELS = ['공동작성', '지역', '속성', '키워드', '내부코멘트', '외부코멘트'];
+
+  it('새 공통정보 입력란이 모두 라벨로 노출된다', () => {
+    setup({ identity: { role: 'R' } });
+    for (const label of LABELS) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+  });
+
+  it('내용(content) 별도 입력란은 추가하지 않는다(본문 에디터가 내용)', () => {
+    setup({ identity: { role: 'R' } });
+    expect(screen.queryByLabelText('내용')).toBeNull();
+  });
+
+  it('입력 변경이 dto(저장)에 반영된다(coAuthor/region/attribute/keyword/comments)', async () => {
+    const { model } = setup({ identity: { role: 'R' } });
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.type(screen.getByLabelText('공동작성'), '박기자');
+    await userEvent.type(screen.getByLabelText('지역'), '서울');
+    await userEvent.type(screen.getByLabelText('속성'), '단독');
+    await userEvent.type(screen.getByLabelText('키워드'), 'kw');
+    await userEvent.type(screen.getByLabelText('내부코멘트'), '내부');
+    await userEvent.type(screen.getByLabelText('외부코멘트'), '외부');
+
+    // 제목을 넣고 송고(신규 → POST 저장) → dto 검사.
+    await userEvent.type(screen.getByLabelText('작성자'), '김기자'); // 무관 필드(아무 입력)
+    // 신규 빈 탭은 제목이 본문 첫 줄에서 나온다 → 제목 필드만 채워도 통과하도록 본문 대신 제목 필드 사용 불가.
+    // 대신 송고가 아닌 저장 경로를 직접 타기 위해 보류(신규는 전이 없이 RDS 저장)로 dto를 만든다.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // 신규 보류는 제목(첫 줄) 필요 — 제목 필드를 채워 가드를 통과시킨다(send/hold 가드 수정 후 동작).
+    // title 필드는 별도 입력란이 없으므로 본문 에디터 첫 줄로 제목을 만든다.
+    const editor = screen.getByRole('textbox', { name: '본문' });
+    editor.focus();
+    await userEvent.type(editor, '제목줄');
+    await userEvent.click(actionBtn('보류'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto).toMatchObject({
+      coAuthor: '박기자', region: '서울', attribute: '단독', keyword: 'kw',
+      internalComment: '내부', externalComment: '외부',
+    });
+  });
+
+  it('편집 진입 시 저장된 공통정보 확장 필드가 입력란에 로드된다', async () => {
+    setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: {
+        articles: [{
+          articleId: 'AKR1', title: '제목', status: 'RDS', lockYN: 'Y', markupVersion: '제목\n본문',
+          coAuthor: '공동기자', region: '대전', attribute: '기획', keyword: '키워드값',
+          internalComment: '내부메모', externalComment: '외부메모',
+        }],
+      },
+    });
+    await waitFor(() => expect(screen.getByLabelText('공동작성')).toHaveValue('공동기자'));
+    expect(screen.getByLabelText('지역')).toHaveValue('대전');
+    expect(screen.getByLabelText('속성')).toHaveValue('기획');
+    expect(screen.getByLabelText('키워드')).toHaveValue('키워드값');
+    expect(screen.getByLabelText('내부코멘트')).toHaveValue('내부메모');
+    expect(screen.getByLabelText('외부코멘트')).toHaveValue('외부메모');
+  });
+
+  it('매핑 모드에서는 새 공통정보 입력란이 readOnly로 잠긴다', async () => {
+    setup({
+      identity: { role: 'D' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR1', title: '제목', status: 'DPS', lockYN: 'Y', markupVersion: '제목\n본문', coAuthor: '공동기자' }] },
+    });
+    await waitFor(() => expect(screen.getByLabelText('공동작성')).toBeInTheDocument());
+    for (const label of LABELS) {
+      expect(screen.getByLabelText(label)).toHaveAttribute('readonly');
+    }
+  });
+});
+
+// 첨부파일/자료파일 — 실제 파일 업로드(model.uploadFile, ADR-003). 반환 path를 dto에 보관한다.
+describe('WriterPage — 첨부파일/자료파일 업로드', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  const file = (name) => new File(['x'], name, { type: 'application/pdf' });
+
+  it('첨부파일 선택 시 model.uploadFile를 호출하고 반환 path를 dto에 싣는다', async () => {
+    const { model } = setup({ identity: { role: 'R' } });
+    const upload = vi.spyOn(model, 'uploadFile');
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const input = screen.getByLabelText('첨부파일');
+    await userEvent.upload(input, file('a.pdf'));
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+
+    // 본문 제목 + 보류로 dto 저장.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const editor = screen.getByRole('textbox', { name: '본문' });
+    editor.focus();
+    await userEvent.type(editor, '제목줄');
+    await userEvent.click(actionBtn('보류'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.attachmentFile).toBe('/uploads/fake-a.pdf');
+  });
+
+  it('자료파일 선택 시 model.uploadFile를 호출하고 반환 path를 dto에 싣는다', async () => {
+    const { model } = setup({ identity: { role: 'R' } });
+    const upload = vi.spyOn(model, 'uploadFile');
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const input = screen.getByLabelText('자료파일');
+    await userEvent.upload(input, file('r.docx'));
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const editor = screen.getByRole('textbox', { name: '본문' });
+    editor.focus();
+    await userEvent.type(editor, '제목줄');
+    await userEvent.click(actionBtn('보류'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.referenceFile).toBe('/uploads/fake-r.docx');
+  });
+
+  it('편집 진입 시 저장된 첨부/자료파일 path가 표시된다', async () => {
+    setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: {
+        articles: [{
+          articleId: 'AKR1', title: '제목', status: 'RDS', lockYN: 'Y', markupVersion: '제목\n본문',
+          attachmentFile: '/uploads/stored-a.pdf', referenceFile: '/uploads/stored-r.docx',
+        }],
+      },
+    });
+    await waitFor(() => expect(screen.getByText('/uploads/stored-a.pdf')).toBeInTheDocument());
+    expect(screen.getByText('/uploads/stored-r.docx')).toBeInTheDocument();
+  });
+
+  it('매핑 모드에서는 첨부/자료파일 입력이 disabled로 잠긴다', async () => {
+    setup({
+      identity: { role: 'D' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR1', title: '제목', status: 'DPS', lockYN: 'Y', markupVersion: '제목\n본문' }] },
+    });
+    await waitFor(() => expect(screen.getByLabelText('첨부파일')).toBeInTheDocument());
+    expect(screen.getByLabelText('첨부파일')).toBeDisabled();
+    expect(screen.getByLabelText('자료파일')).toBeDisabled();
   });
 });

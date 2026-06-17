@@ -49,7 +49,7 @@ function textLineToBlockIndex(blocks, textLineIndex) {
 }
 
 export function WriterPage() {
-  const { identity } = useAppContext();
+  const { identity, model } = useAppContext();
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
@@ -112,7 +112,9 @@ export function WriterPage() {
 
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
   const onAction = async (action) => {
-    const title = bodyTitle(body);
+    // 제목은 본문 첫 줄(bodyTitle) 또는 제목 FIELD 둘 중 하나라도 있으면 인정한다.
+    // (둘 다 본문 첫 줄만 보던 버그로 제목 필드만 있을 때 송고/보류가 모두 잘못 차단됐다.)
+    const title = bodyTitle(body) || (activeTab.fields.title || '').trim();
     if ((action === 'send' || action === 'hold') && !title) {
       window.alert(`제목이 없어 ${ACTION_VERB[action]}할 수 없습니다`);
       return;
@@ -164,6 +166,7 @@ export function WriterPage() {
             onKeyDown={isMapping ? undefined : onKeyDown}
             onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
+            onPasteEmbed={insertEmbed}
           />
         </section>
 
@@ -204,7 +207,7 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} readOnly={isMapping} />
+              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} />
             )}
             {metaTab === 'image' && (
               <SearchPanel
@@ -237,16 +240,43 @@ export function WriterPage() {
   );
 }
 
-// 공통정보 — 편집 가능(작성자/엠바고/2차엠바고) + 읽기전용 매핑 필드.
-// 매핑 모드(readOnly)에서는 작성자/엠바고/2차엠바고 입력란도 readOnly다(임베드만 변경 — step11).
-function CommonInfo({ tab, updateField, readOnly = false }) {
+// 공통정보 — 편집 가능(작성자/엠바고/2차엠바고/공동작성/지역/속성/키워드/내부·외부코멘트 + 첨부/자료파일)
+//   + 읽기전용 매핑 필드. 본문(내용)은 좌측 에디터가 담당하므로 별도 내용 입력란은 두지 않는다.
+// 매핑 모드(readOnly)에서는 모든 공통정보 입력란을 readOnly/disabled로 잠근다(임베드만 변경 — step11, 본문-only 불변식).
+// 파일 업로드는 ADR-003에 따라 view에서 직접 fetch하지 않고 model.uploadFile(file)로만 처리한다.
+function CommonInfo({ tab, updateField, model, readOnly = false }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};
+
+  // 첨부/자료파일 — 선택 즉시 업로드(model.uploadFile) → 성공 시 반환 path를 해당 필드에 보관.
+  const onFileChange = async (field, e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const r = await model.uploadFile(file);
+    if (r && r.ok && r.path) updateField(field, r.path);
+  };
+
   return (
     <div data-testid="meta-common">
       <div className="yh-field">
         <label htmlFor="meta-author">작성자</label>
         <input id="meta-author" value={f.author} readOnly={readOnly} onChange={(e) => updateField('author', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-coauthor">공동작성</label>
+        <input id="meta-coauthor" value={f.coAuthor} readOnly={readOnly} onChange={(e) => updateField('coAuthor', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-region">지역</label>
+        <input id="meta-region" value={f.region} readOnly={readOnly} onChange={(e) => updateField('region', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-attribute">속성</label>
+        <input id="meta-attribute" value={f.attribute} readOnly={readOnly} onChange={(e) => updateField('attribute', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-keyword">키워드</label>
+        <input id="meta-keyword" value={f.keyword} readOnly={readOnly} onChange={(e) => updateField('keyword', e.target.value)} />
       </div>
       <div className="yh-field">
         <label htmlFor="meta-embargo">엠바고 시간</label>
@@ -255,6 +285,40 @@ function CommonInfo({ tab, updateField, readOnly = false }) {
       <div className="yh-field">
         <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
         <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-internal-comment">내부코멘트</label>
+        <textarea id="meta-internal-comment" value={f.internalComment} readOnly={readOnly} onChange={(e) => updateField('internalComment', e.target.value)} />
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-external-comment">외부코멘트</label>
+        <textarea id="meta-external-comment" value={f.externalComment} readOnly={readOnly} onChange={(e) => updateField('externalComment', e.target.value)} />
+      </div>
+
+      {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다. */}
+      <div className="yh-field">
+        <label htmlFor="meta-attachment">첨부파일</label>
+        <input id="meta-attachment" type="file" disabled={readOnly} onChange={(e) => onFileChange('attachmentFile', e)} />
+        {f.attachmentFile && (
+          <span className="yh-file-saved">
+            <a href={f.attachmentFile}>{f.attachmentFile}</a>
+            {!readOnly && (
+              <button type="button" aria-label="첨부파일 지우기" onClick={() => updateField('attachmentFile', '')}>×</button>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="yh-field">
+        <label htmlFor="meta-reference">자료파일</label>
+        <input id="meta-reference" type="file" disabled={readOnly} onChange={(e) => onFileChange('referenceFile', e)} />
+        {f.referenceFile && (
+          <span className="yh-file-saved">
+            <a href={f.referenceFile}>{f.referenceFile}</a>
+            {!readOnly && (
+              <button type="button" aria-label="자료파일 지우기" onClick={() => updateField('referenceFile', '')}>×</button>
+            )}
+          </span>
+        )}
       </div>
 
       {READONLY_LABELS.some(([k]) => ro[k] != null) && (

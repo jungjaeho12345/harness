@@ -17,7 +17,12 @@ const TABS_KEY = 'yh.writer.tabs';
 export const PENDING_NEW_KEY = 'yh.pendingNew';
 
 // 편집 진입 시 입력란에 채우는(편집 가능) 필드 vs 읽기전용으로 보존하는 필드 (news.md 매핑).
-const EDITABLE_FIELDS = ['title', 'body', 'author', 'embargoAt', 'secondEmbargoAt'];
+// 공통정보 확장(공동작성/지역/속성/키워드/내부·외부코멘트) + 첨부파일/자료파일(업로드 후 path 문자열 보관).
+const EDITABLE_FIELDS = [
+  'title', 'body', 'author', 'embargoAt', 'secondEmbargoAt',
+  'coAuthor', 'region', 'attribute', 'keyword', 'internalComment', 'externalComment',
+  'attachmentFile', 'referenceFile',
+];
 const READONLY_FIELDS = [
   'articleId', 'modifier', 'sender', 'department', 'departmentCode',
   'createdAt', 'editedAt', 'sentAt',
@@ -44,13 +49,31 @@ function toSaveDto(tab) {
   return dto;
 }
 
+// 편집 가능 필드의 빈 시드(blankTab) — EDITABLE_FIELDS를 단일 출처로 삼아 새 공통정보 필드도 자동 포함된다.
+function blankFields() {
+  const out = {};
+  for (const k of EDITABLE_FIELDS) out[k] = '';
+  return out;
+}
+
+// 원본 기사(article)에서 편집 가능 필드를 채운다 — 본문은 서버 영속 키(markupVersion) 우선, 작성자는 폴백.
+function fieldsFromArticle(article, fallbackAuthor) {
+  const out = blankFields();
+  for (const k of EDITABLE_FIELDS) {
+    if (article[k] !== undefined && article[k] !== null) out[k] = article[k];
+  }
+  out.body = article.markupVersion ?? article.body ?? article.content ?? '';
+  out.author = article.author ?? fallbackAuthor ?? '';
+  return out;
+}
+
 function blankTab() {
   return {
     id: nextTabId(),
     mode: 'new', // 편집 진입 컨텍스트: new / edit / revise / portalRevise (버튼 표시 규칙이 의존 — step12)
     articleId: null,
     status: null, // 진입 상태(RDS/DDH/DPS…) — 송고/보류/KILL 버튼 표시 규칙이 사용한다(writerButtons).
-    fields: { title: '', body: '', author: '', embargoAt: '', secondEmbargoAt: '' },
+    fields: blankFields(),
     readOnly: {},
   };
 }
@@ -62,14 +85,8 @@ function tabFromArticle(article, mode, fallbackAuthor) {
     mode,
     articleId: article.articleId,
     status: article.status ?? null,
-    fields: {
-      title: article.title ?? '',
-      // 본문은 서버 영속 키(markupVersion)를 최우선으로 한다 — 단건 재조회가 채워준다.
-      body: article.markupVersion ?? article.body ?? article.content ?? '',
-      author: article.author ?? fallbackAuthor ?? '',
-      embargoAt: article.embargoAt ?? '',
-      secondEmbargoAt: article.secondEmbargoAt ?? '',
-    },
+    // 편집 가능 필드(제목/본문/작성자/엠바고/공통정보 확장/첨부·자료파일)를 모두 채운다.
+    fields: fieldsFromArticle(article, fallbackAuthor),
     readOnly: pick(article, READONLY_FIELDS),
   };
 }
@@ -80,13 +97,8 @@ function tabFromArticle(article, mode, fallbackAuthor) {
 function tabFromSource(article, mode, fallbackAuthor) {
   const t = blankTab();
   t.mode = mode; // 'followUp' | 'continue' — articleId가 null이라 writerButtons는 이미 신규로 분류.
-  t.fields = {
-    title: article.title ?? '',
-    body: article.markupVersion ?? article.body ?? article.content ?? '',
-    author: article.author ?? fallbackAuthor ?? '',
-    embargoAt: article.embargoAt ?? '',
-    secondEmbargoAt: article.secondEmbargoAt ?? '',
-  };
+  // 원본의 편집 가능 필드(공통정보 확장·첨부/자료파일 포함)를 신규 탭으로 복사한다.
+  t.fields = fieldsFromArticle(article, fallbackAuthor);
   return t; // articleId:null / status:null / readOnly:{} 는 blankTab 기본값 유지.
 }
 

@@ -8,6 +8,9 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import nodePath from 'node:path';
+import crypto from 'node:crypto';
 
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
@@ -64,6 +67,14 @@ export function enforceHttps(env = process.env.NODE_ENV) {
 }
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
 const DERIVE_MODE_SET = new Set(['followUp', 'continue']);
+
+// 업로드 확장자 화이트리스트(소문자 비교) + 디코드 크기 상한(5MB).
+// 첨부/참고 파일은 Contents.attachmentFile / referenceFile(VARCHAR)에 path 문자열로 보관된다.
+const UPLOAD_EXT_ALLOWLIST = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf',
+  'doc', 'docx', 'xls', 'xlsx', 'txt', 'hwp', 'ppt', 'pptx',
+]);
+const UPLOAD_MAX_BYTES = 5 * 1024 * 1024; // 5MB — 디코드된 바이트 기준.
 
 const UNAUTH = { ok: false, reason: 'unauthenticated' };
 const FORBIDDEN = { ok: false, reason: 'forbidden' };
@@ -161,6 +172,7 @@ export function createApp({
   env = process.env.NODE_ENV,
   cookieSecure,
   forceHttps,
+  uploadDir = 'uploads',
 }) {
   const app = express();
 
@@ -218,7 +230,17 @@ export function createApp({
     });
   }
 
-  app.use(express.json());
+  // 전역 JSON 파서 — 기본 limit(~100kb)을 유지한다. 단 /api/upload는 본문(base64)이 클 수 있어
+  // 라우트 자체 파서(아래 10mb)가 처리하도록 전역 파서를 건너뛴다(전역 limit은 올리지 않는다).
+  const globalJson = express.json();
+  app.use((req, res, next) => {
+    if (req.path === '/api/upload') return next();
+    return globalJson(req, res, next);
+  });
+
+  // 업로드 파일 정적 서빙 — uploadDir(기본 'uploads')를 /uploads 경로로 노출한다.
+  // 저장 파일명은 서버가 발급한 <random-hex>.<ext>뿐이라 사용자 입력 경로가 끼어들지 않는다(경로 탐색 방지).
+  app.use('/uploads', express.static(uploadDir));
 
   // 세션 쿠키 발급 — HttpOnly(XSS 토큰 탈취 차단), Path=/, 슬라이딩 만료 정합 Max-Age.
   // SameSite: Secure일 때(prod) None으로 cross-origin 허용, 아닐 때(dev/test) Lax(None은 Secure 필수라 거부됨 → dev는 헤더 폴백).
@@ -529,6 +551,48 @@ export function createApp({
       if (!me) return res.status(401).json(UNAUTH);
       const r = await controllers.media.search(req.query.q ?? '', req.query.type);
       return res.json({ ok: true, items: r.items, error: r.error });
+    } catch (e) { next(e); }
+  });
+
+  // --- 파일 업로드 (세션 게이트) ---
+  // 얇은 transport(ADR-006): 세션 게이트 → 확장자/크기 검증 → 디스크 저장 → path 반환.
+  // 외부 npm 의존 없이 Node 내장 fs/path/crypto만 쓴다(ADR 최소 의존성).
+  // CRITICAL: 신원은 세션에서만 도출. 저장 파일명은 crypto 무작위 hex + 검증된 확장자로만 만든다
+  //   (사용자 filename에 의존하지 않음 → 경로 탐색 차단). 기존 파일은 절대 덮어쓰거나 지우지 않는다.
+  // 본문(base64) JSON은 클 수 있으므로 이 라우트에만 높은 limit을 적용한다(전역 limit은 올리지 않음).
+  // 5MB 디코드 상한을 base64(약 4/3 팽창)로 환산하면 ~6.7MB + JSON 봉투다 → 5MB '초과' 본문이
+  //   파서를 통과해 아래 too-large 검사에 도달하도록 10mb로 둔다(검증 책임은 라우트에 둔다).
+  app.post('/api/upload', express.json({ limit: '10mb' }), (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+
+      const { filename, contentBase64 } = req.body ?? {};
+      if (typeof filename !== 'string' || typeof contentBase64 !== 'string') {
+        return res.status(400).json({ ok: false, reason: 'invalid-file' });
+      }
+
+      // 확장자는 원본 파일명에서 도출 — 화이트리스트(소문자 비교)에 없으면 거부.
+      const ext = nodePath.extname(filename).slice(1).toLowerCase();
+      if (!ext || !UPLOAD_EXT_ALLOWLIST.has(ext)) {
+        return res.status(400).json({ ok: false, reason: 'invalid-file' });
+      }
+
+      // raw base64 디코드(데이터 URI prefix 없음 가정) — 디코드 후 바이트 크기로 상한 검사.
+      const buf = Buffer.from(contentBase64, 'base64');
+      if (buf.length > UPLOAD_MAX_BYTES) {
+        return res.status(400).json({ ok: false, reason: 'too-large' });
+      }
+
+      // 업로드 디렉터리는 첫 업로드 시 lazy 생성(recursive). DB/기존 파일은 손대지 않는다.
+      fs.mkdirSync(uploadDir, { recursive: true });
+
+      // 저장 파일명 = 무작위 hex + 검증된 확장자. 충돌은 사실상 없지만 wx 플래그로 덮어쓰기를 막는다.
+      const safeName = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+      fs.writeFileSync(nodePath.join(uploadDir, safeName), buf, { flag: 'wx' });
+
+      // path 문자열이 Contents.attachmentFile / referenceFile(VARCHAR)에 저장된다.
+      return res.json({ ok: true, path: `/uploads/${safeName}`, filename });
     } catch (e) { next(e); }
   });
 
