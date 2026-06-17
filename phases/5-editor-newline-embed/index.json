@@ -29,10 +29,10 @@
     {
       "step": 3,
       "name": "writerpage-embed-wiring",
-      "status": "error",
-      "started_at": "2026-06-18T01:54:37+0900",
-      "error_message": "[3회 시도 후 실패] Step did not update status",
-      "failed_at": "2026-06-18T02:01:15+0900"
+      "status": "completed",
+      "started_at": "2026-06-18T05:46:47+0900",
+      "summary": "WriterPage 결선 — insertEmbed(검색패널 이미지/영상/글기사)·pasteEmbedAtCaret(붙여넣기) 모두 insertEmbedAfterLine(step1)로 커서 텍스트 줄 뒤에 임베드+빈 줄 삽입 후 setPendingCaretLine(caretTextLine)로 새 빈 줄에 커서 이동. lastCaretRef(Editor onCaretChange)로 마지막 캐럿 보관(검색패널 클릭 시 포커스 빠짐 대비), pendingCaretLine은 소비 후 useEffect로 null 리셋(같은 줄 연속 삽입도 매번 이동). 캐럿 없음/매핑(isMapping)은 appendEmbedToBody 폴백(빈 줄/커서이동 없음 → 매핑 blocksToText 불변 유지). 미사용 insertEmbedIntoBody import 제거(useRef/useEffect 소비). WriterPage.test.jsx: 붙여넣기 단언 3건을 4요소(text/embed/text/text)로 갱신 + 신규 3케이스(커서 줄 뒤 삽입+focus, 무캐럿 append 폴백, 같은 줄 연속 2회). lint 0, test:web 382 통과, build 성공. (429 한도로 execute.py headless가 멈춰 오케스트레이터가 직접 구현)",
+      "completed_at": "2026-06-18T06:13:59+0900"
     }
   ],
   "created_at": "2026-06-18T01:17:54+0900"
