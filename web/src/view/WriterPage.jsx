@@ -335,33 +335,66 @@ function CommonInfo({ tab, updateField, model, readOnly = false }) {
   );
 }
 
-// 이미지(Google)/영상(YouTube)/글기사(내부 DB) 검색 패널 — 결과 클릭 시 본문에 임베드.
+// 유튜브 video id로 썸네일 URL을 만든다(없으면 null).
+function youtubeThumb(item) {
+  const id = item.videoId ?? (item.id && item.id.videoId);
+  return id ? `https://img.youtube.com/vi/${id}/mqdefault.jpg` : null;
+}
+
+// 이미지(Google)/영상(YouTube)/글기사(내부 DB) 검색 패널 — 결과 선택 시 본문에 임베드.
+// 이미지·영상은 썸네일 카드(클릭 시 삽입), 글기사는 제목 + '삽입' 버튼 행으로 깔끔하게 표시한다.
 function SearchPanel({ kind, results, onSearch, onPick }) {
   const [q, setQ] = useState('');
+  const submit = () => onSearch(q);
   return (
     <div data-testid={`meta-${kind}`}>
-      <div className="yh-field">
+      <div className="yh-search-bar">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           placeholder="검색어를 입력하세요"
           aria-label={`${kind} 검색어`}
         />
+        <button type="button" className="yh-btn" onClick={submit}>검색</button>
       </div>
-      <button type="button" className="yh-btn" onClick={() => onSearch(q)}>검색</button>
-      <div className="yh-search-results">
-        {results.map((item, i) => (
-          <button
-            type="button"
-            key={item.articleId ?? item.videoId ?? item.src ?? item.link ?? i}
-            onClick={() => onPick(item)}
-          >
-            {kind === 'image' && (item.src || item.link)
-              ? <img src={item.src ?? item.link} alt={item.title ?? ''} />
-              : (item.title || item.articleId || item.url || '결과')}
-          </button>
-        ))}
-      </div>
+
+      {kind === 'article' ? (
+        <ul className="yh-article-results">
+          {results.map((item, i) => (
+            <li className="yh-article-result" key={item.articleId ?? i}>
+              <span className="yh-article-result__title" title={item.title}>
+                {item.title || item.articleId || '(제목 없음)'}
+              </span>
+              <button
+                type="button"
+                className="yh-btn yh-btn--sm"
+                onClick={() => onPick(item)}
+              >
+                삽입
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="yh-search-results">
+          {results.map((item, i) => {
+            const thumb = kind === 'image' ? (item.src ?? item.link) : youtubeThumb(item);
+            return (
+              <button
+                type="button"
+                className="yh-media-result"
+                key={item.videoId ?? item.src ?? item.link ?? i}
+                onClick={() => onPick(item)}
+              >
+                {thumb
+                  ? <img src={thumb} alt={item.title ?? ''} />
+                  : (item.title || item.url || '결과')}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

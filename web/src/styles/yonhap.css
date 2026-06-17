@@ -428,6 +428,14 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 검색 입력 + 버튼 한 줄 정렬(이미지/영상/글기사 공통). */
+.yh-search-bar {
+  display: flex;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-sm);
+}
+.yh-search-bar input { flex: 1 1 auto; }
+
 .yh-search-results {
   display: flex;
   flex-wrap: wrap;
@@ -436,3 +444,48 @@ a { color: var(--yh-blue); }
 }
 
 .yh-search-results img { width: 96px; height: auto; cursor: pointer; }
+
+/* 이미지/영상 썸네일 카드 — 버튼 기본 테두리를 없애고 썸네일만 보이게. */
+.yh-media-result {
+  padding: 0;
+  border: 1px solid var(--yh-border, #d9d9d9);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+}
+.yh-media-result:hover { border-color: var(--yh-accent, #c00); }
+.yh-media-result img { display: block; width: 110px; height: auto; }
+
+/* 글기사 결과 — 제목 + '삽입' 버튼의 깔끔한 목록 행. */
+.yh-article-results {
+  list-style: none;
+  margin: var(--yh-sp-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.yh-article-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-sm);
+  padding: 6px 8px;
+  border: 1px solid var(--yh-border, #e5e5e5);
+  border-radius: 4px;
+}
+.yh-article-result__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.yh-btn--sm {
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}

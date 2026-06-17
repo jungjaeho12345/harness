@@ -471,6 +471,22 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
   });
 
+  it("글기사 검색 결과는 제목 + '삽입' 버튼으로 표시되고, 삽입 클릭 시 본문에 기사 임베드가 추가된다", async () => {
+    const { container, model } = await openMapping([textBlock('헤드라인'), textBlock('본문')]);
+    vi.spyOn(model, 'searchArticles').mockResolvedValue({
+      ok: true, items: [{ articleId: 'AKR100', title: '연합뉴스 속보 테스트', status: 'DPS' }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: '글기사' }));
+    await userEvent.type(screen.getByLabelText('article 검색어'), '연합뉴스');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+
+    // 제목이 그대로 보이고, 같은 행에 '삽입' 버튼이 있다(깔끔한 행 디자인).
+    await screen.findByText('연합뉴스 속보 테스트');
+    await userEvent.click(screen.getByRole('button', { name: '삽입' }));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="article"]')).toBeTruthy());
+  });
+
   it('임베드 × 삭제 버튼이 노출되고 클릭하면 임베드가 제거된다', async () => {
     const { container } = await openMapping([
       textBlock('제목'), textBlock('본문'), embedBlock({ embedType: 'image', src: 'https://img/x.png' }),

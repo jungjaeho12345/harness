@@ -74,22 +74,27 @@ test('search: 응답에 items가 없으면 빈 배열로 정규화한다', async
   assert.equal(r.error, false);
 });
 
-test('search: YouTube 키가 없으면 throw하지 않고 빈 결과(error:true)를 반환한다', async () => {
+test('search: YouTube 키가 없으면 fetch 없이 데모 영상 샘플(error:false)을 반환한다', async () => {
   const { fetchFn, calls } = fakeFetch(ok({ items: [{}] }));
   const media = createMediaSearch({ fetchFn, env: { GOOGLE_API_KEY: 'g', GOOGLE_CSE_ID: 'c' } });
 
   const r = await media.search('뉴스', 'video');
-  assert.deepEqual(r, { items: [], error: true });
+  assert.equal(r.error, false);
   assert.equal(calls.length, 0, '키가 없으면 fetch를 부르지 않는다');
+  assert.ok(r.items.length > 0, '데모 샘플이 비어 있지 않다');
+  // 데모 영상 항목은 임베드 가능한 11자리 video id를 가진다.
+  for (const it of r.items) assert.match(it.videoId, /^[\w-]{11}$/);
 });
 
-test('search: Google 키/CSE_ID가 없으면 빈 결과(error:true)를 반환한다', async () => {
+test('search: Google 키/CSE_ID가 없으면 fetch 없이 데모 이미지 샘플(error:false)을 반환한다', async () => {
   const { fetchFn, calls } = fakeFetch(ok({ items: [{}] }));
   const media = createMediaSearch({ fetchFn, env: { GOOGLE_API_KEY: 'g' } }); // CSE_ID 누락
 
   const r = await media.search('고양이', 'image');
-  assert.deepEqual(r, { items: [], error: true });
+  assert.equal(r.error, false);
   assert.equal(calls.length, 0);
+  assert.ok(r.items.length > 0, '데모 샘플이 비어 있지 않다');
+  for (const it of r.items) assert.ok(typeof it.link === 'string' && it.link.length > 0);
 });
 
 test('search: 네트워크 오류(fetch throw)는 예외 대신 빈 결과(error:true)로 처리한다', async () => {
