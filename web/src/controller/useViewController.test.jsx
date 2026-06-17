@@ -122,7 +122,7 @@ describe('useViewController', () => {
   it('editArticle stashes a pendingEdit and navigates to writer.do', async () => {
     const { result, navigate } = setup({ articles: rds(1) });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
-    act(() => { result.current.editArticle({ articleId: 'AKR0', title: 't0' }); });
+    await act(async () => { await result.current.editArticle({ articleId: 'AKR0', title: 't0' }); });
 
     expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
     const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
@@ -132,18 +132,31 @@ describe('useViewController', () => {
   it('reviseArticle marks portalRevise/revise mode', async () => {
     const { result } = setup({ articles: rds(1) });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
-    act(() => { result.current.reviseArticle({ articleId: 'AKR0' }, true); });
+    await act(async () => { await result.current.reviseArticle({ articleId: 'AKR0' }, true); });
     expect(JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY)).mode).toBe('portalRevise');
   });
 
   it('mapArticle stashes a pendingEdit in mapping mode and navigates to writer.do (step11)', async () => {
     const { result, navigate } = setup({ articles: rds(1) });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
-    act(() => { result.current.mapArticle({ articleId: 'AKR0', title: 't0' }); });
+    await act(async () => { await result.current.mapArticle({ articleId: 'AKR0', title: 't0' }); });
 
     expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
     const pending = JSON.parse(sessionStorage.getItem(PENDING_EDIT_KEY));
     expect(pending).toEqual({ article: { articleId: 'AKR0', title: 't0' }, mode: 'mapping' });
+  });
+
+  it('편집 진입 시 다른 세션이 편집 중(locked)이면 ALERT만 띄우고 이동하지 않는다(목록 유지)', async () => {
+    const { result, model, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: false, reason: 'locked' });
+    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+
+    await act(async () => { await result.current.editArticle({ articleId: 'AKR0', title: 't0' }); });
+
+    expect(alertSpy).toHaveBeenCalledWith('편집중입니다.');
+    expect(navigate).not.toHaveBeenCalled(); // 목록 페이지에 그대로 머문다(이동 없음)
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // pendingEdit도 남기지 않음
   });
 
   it('requestDelete is D/Z only and confirms before approveDelete', async () => {
