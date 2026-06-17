@@ -365,6 +365,7 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
   });
 
   it('저장 버튼은 PUT(saveArticle with articleId)를 호출하고 applyAction은 호출하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true); // 저장 확인창 통과(DB 비파괴 가드)
     const { model } = await openMapping([textBlock('제목'), textBlock('본문')]);
     const save = vi.spyOn(model, 'saveArticle');
     const apply = vi.spyOn(model, 'applyAction');
@@ -375,6 +376,7 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
   });
 
   it('본문에 텍스트를 입력해도 body가 바뀌지 않는다(onTextChange 무력화)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true); // 저장 확인창 통과(DB 비파괴 가드)
     const original = serialize([textBlock('제목'), textBlock('본문')]);
     const { container, model } = await openMapping([textBlock('제목'), textBlock('본문')]);
     const save = vi.spyOn(model, 'saveArticle');

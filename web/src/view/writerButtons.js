@@ -23,8 +23,9 @@ function order(set) {
 }
 
 export function submitButtons({ mode, status, role, articleId } = {}) {
-  // 매핑(mapping) — 임베드 전용 제한 편집. 상태 전이 없음 → 송고/보류/KILL 액션바를 노출하지 않는다(step11).
-  if (mode === 'mapping') return [];
+  // 매핑(mapping) — 임베드 전용 제한 편집. 상태 전이(송고/보류/KILL) 없음 → '저장' 단일 버튼만(PUT 저장).
+  // status/role 무관하게 최우선 분기다(임베드 변경만 PUT, 생애주기 전이 없음 — step11/3-mapping).
+  if (mode === 'mapping') return ['save'];
 
   // 신규(미저장, 기사아이디 없음) — 권한 무관 송고·보류만(KILL 숨김).
   if (!articleId || mode === 'new') {

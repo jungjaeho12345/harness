@@ -54,30 +54,6 @@ async function login(base, userId, password) {
   return (await api(base, 'POST', '/api/login', { body: { userId, password } })).body;
 }
 
-// 로그인 후 응답 헤더(Set-Cookie 포함)를 같이 반환한다.
-async function loginFull(base, userId, password) {
-  const res = await fetch(`${base}/api/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId, password }),
-  });
-  const body = await res.json();
-  return { status: res.status, body, setCookie: res.headers.get('set-cookie'), headers: res.headers };
-}
-
-// Cookie 헤더로 요청하는 헬퍼 (쿠키 기반 인증 테스트용).
-async function apiCk(base, method, path, { cookie, body } = {}) {
-  const headers = {};
-  if (body !== undefined) headers['content-type'] = 'application/json';
-  if (cookie) headers['cookie'] = cookie;
-  const res = await fetch(`${base}${path}`, {
-    method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  let json;
-  try { json = await res.json(); } catch { json = undefined; }
-  return { status: res.status, body: json, headers: res.headers };
-}
-
 test('GET /api/health → 200 ok', async () => {
   const ctx = await start();
   try {
@@ -209,13 +185,14 @@ test('GET /api/articles/:id/history: 미인증은 401, 인증은 시간순 이�
     assert.equal(r.status, 200);
     assert.equal(r.body.ok, true);
     assert.ok(Array.isArray(r.body.items));
-    assert.ok(r.body.items.length >= 2);
-    assert.equal(r.body.items[0].eventType, 'create');
-    assert.ok(r.body.items.some((h) => h.eventType === 'send'));
+    // 1-menu-actions 이력 설계: create는 이력을 남기지 않고, 송고 전이는 eventType='status'·action='send' 1건만 기록된다.
+    assert.equal(r.body.items.length, 1);
+    assert.equal(r.body.items[0].eventType, 'status');
+    assert.equal(r.body.items[0].action, 'send');
   } finally { await ctx.close(); }
 });
 
-test('GET /api/articles/:id/send-history: send 이벤트만 반환, 미인증 401', async () => {
+test('GET /api/articles/:id/history?sendOnly=1: send 이벤트만 반환, 미인증 401', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
@@ -223,15 +200,15 @@ test('GET /api/articles/:id/send-history: send 이벤트만 반환, 미인증 40
     const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
     await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
 
-    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/send-history`);
+    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/history?sendOnly=1`);
     assert.equal(unauth.status, 401);
 
-    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/send-history`, { sid });
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history?sendOnly=1`, { sid });
     assert.equal(r.status, 200);
     assert.equal(r.body.ok, true);
     assert.ok(Array.isArray(r.body.items));
     assert.ok(r.body.items.length >= 1);
-    assert.ok(r.body.items.every((h) => h.eventType === 'send'));
+    assert.ok(r.body.items.every((h) => h.eventType === 'status' && h.action === 'send'));
   } finally { await ctx.close(); }
 });
 
@@ -407,7 +384,7 @@ test('GET /api/stream: 쿠키로 인증하면 ready 무효화 신호를 보낸�
   } finally { await ctx.close(); }
 });
 
-test('GET /api/stream: ?session= 쿼리 폴백은 유지된다(dev cross-origin)', async () => {
+test('GET /api/stream: x-session-id 헤더 폴백으로 인증된다', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
@@ -426,7 +403,7 @@ test('GET /api/stream: ?session= 쿼리 폴백은 유지된다(dev cross-origin)
   } finally { await ctx.close(); }
 });
 
-test('GET /api/stream: 쿠키가 ?session= 쿼리보다 우선한다', async () => {
+test('GET /api/stream: 쿠키 인증은 무효 ?session= 쿼리를 무시한다', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
@@ -578,7 +555,7 @@ test('derive: 성공 시 SSE change(create) 무효화 신호가 발생한다', a
     })).body;
 
     const ac = new AbortController();
-    const res = await fetch(`${ctx.base}/api/stream?session=${sid}`, { signal: ac.signal });
+    const res = await fetch(`${ctx.base}/api/stream`, { headers: { 'x-session-id': sid }, signal: ac.signal });
     const reader = res.body.getReader();
     await reader.read(); // ready 프레임 소비.
 

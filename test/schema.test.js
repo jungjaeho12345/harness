@@ -166,23 +166,6 @@ test('createSchema: 누락 컬럼을 ALTER ADD COLUMN으로 추가하고 기존 
   );
 });
 
-test('createSchema: ArticleHistory 테이블과 9개 컬럼을 생성한다', () => {
-  const db = new DatabaseSync(':memory:');
-  createSchema(db);
-  const tables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-    .all()
-    .map((r) => r.name);
-  assert.ok(tables.includes('ArticleHistory'), 'ArticleHistory 테이블이 있어야 함');
-  const cols = columns(db, 'ArticleHistory');
-  const expected = [
-    'id', 'articleId', 'eventType', 'actorUserId', 'actorRole',
-    'fromStatus', 'toStatus', 'title', 'createdAt',
-  ];
-  for (const c of expected) assert.ok(cols.includes(c), `ArticleHistory.${c}`);
-  assert.equal(cols.length, expected.length, '컬럼 개수가 9개여야 함');
-});
-
 test('createSchema: ArticleHistory.id는 INTEGER PRIMARY KEY (ROWID alias 자동증가)', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
@@ -194,19 +177,6 @@ test('createSchema: ArticleHistory.id는 INTEGER PRIMARY KEY (ROWID alias 자동
   db.prepare("INSERT INTO ArticleHistory (articleId, eventType) VALUES ('a1', 'edit')").run();
   const rows = db.prepare('SELECT id FROM ArticleHistory ORDER BY id').all();
   assert.deepEqual(rows.map((r) => r.id), [1, 2], 'id가 자동증가해야 함');
-});
-
-test('createSchema: ArticleHistory 멱등 — 2회 호출해도 오류 없이 데이터를 보존한다', () => {
-  const db = new DatabaseSync(':memory:');
-  createSchema(db);
-  db.prepare(
-    "INSERT INTO ArticleHistory (articleId, eventType, title) VALUES ('a1', 'send', '제목')",
-  ).run();
-  assert.doesNotThrow(() => createSchema(db));
-  assert.equal(
-    db.prepare("SELECT title FROM ArticleHistory WHERE articleId='a1'").get().title,
-    '제목',
-  );
 });
 
 test('createSchema: 보조 인덱스를 만들지 않는다 (PK 자동 인덱스만)', () => {

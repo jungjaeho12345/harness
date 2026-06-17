@@ -73,15 +73,7 @@ export function createArticleService({ articleModel, db, historyModel }) {
       status: 'RDS',
       createdAt,
     };
-    const history = historyEntry({
-      articleId,
-      eventType: 'create',
-      actorUserId: dto.modifier ?? dto.author ?? null,
-      title: dto.title ?? null,
-      toStatus: 'RDS',
-      createdAt,
-    });
-    articleModel.insert({ article, contents, history });
+    articleModel.insert({ article, contents });
     return { ok: true, articleId };
   }
 
@@ -89,17 +81,9 @@ export function createArticleService({ articleModel, db, historyModel }) {
   // 잠금 보유 검증은 호출자(HTTP) 책임.
   function update(articleId, fields = {}) {
     const editedAt = nowISO();
-    const history = historyEntry({
-      articleId,
-      eventType: 'edit',
-      actorUserId: fields.modifier ?? null,
-      title: fields.title ?? null,
-      createdAt: editedAt,
-    });
     const changes = articleModel.update(articleId, {
       article: pick(fields, ARTICLE_FIELDS),
       contents: { ...pick(fields, CONTENTS_FIELDS), editedAt },
-      history,
     });
     // 편집 성공 후 이력 기록. actor는 호출자가 stamp한 modifier(세션 userId — step2).
     record({ articleId, eventType: 'edit', actorUserId: fields.modifier });

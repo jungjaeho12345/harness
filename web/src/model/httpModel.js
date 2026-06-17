@@ -61,14 +61,19 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
 
   return {
     // --- 인증 / 세션 ---
-    // 로그인 성공 시 서버가 Set-Cookie(yh.sid)로 세션을 발급한다. 프론트는 result.user만 상위로 흘리고
-    // sessionId는 저장하지 않는다(쿠키가 보유).
-    login(userId, password) {
-      return request('/api/login', { method: 'POST', body: { userId, password } });
+    // 로그인 성공 시 서버가 Set-Cookie(sid)로 세션을 발급한다. 인증의 1차 수단은 그 쿠키지만,
+    // dev cross-origin(SameSite 제약으로 쿠키 미적재) 폴백을 위해 응답의 sessionId를 sessionStorage에
+    // 보관해 이후 요청에 x-session-id 헤더/?session= 쿼리로 병행 첨부한다.
+    async login(userId, password) {
+      const r = await request('/api/login', { method: 'POST', body: { userId, password } });
+      if (r && r.ok && r.sessionId) writeSessionId(r.sessionId);
+      return r;
     },
-    // 서버가 세션 무효화 + clearCookie로 처리한다. 프론트가 따로 토큰을 지울 것이 없다.
-    logout() {
-      return request('/api/logout', { method: 'POST' });
+    // 서버가 세션 무효화 + clearCookie로 처리한다. 프론트는 폴백용 보관 토큰을 비운다(이후 헤더 미첨부).
+    async logout() {
+      const r = await request('/api/logout', { method: 'POST' });
+      writeSessionId(null);
+      return r;
     },
     // F5 복원 — 쿠키(credentials:'include')로 서버에 신원을 묻는다. 세션 없으면 throw가 아니라
     // 비로그인 응답({ ok:false, reason:'unauthenticated' })을 그대로 돌려준다.
@@ -97,13 +102,6 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     },
     searchArticles(q) {
       return request('/api/articles/search', { query: { q } });
-    },
-    // 이력 조회(읽기 전용) — step3 라우트와 1:1, 응답 { ok, items } 그대로 반환.
-    getArticleHistory(articleId) {
-      return request(`/api/articles/${encodeURIComponent(articleId)}/history`);
-    },
-    getSendHistory(articleId) {
-      return request(`/api/articles/${encodeURIComponent(articleId)}/send-history`);
     },
     searchMedia(query, type) {
       return request('/api/media/search', { query: { q: query, type } });
