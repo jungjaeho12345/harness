@@ -323,7 +323,7 @@ function DeptSelector({ options, selected, onChange }) {
         type="button"
         className="yh-dept-select__trigger"
         data-testid="dept-trigger"
-        aria-haspopup="listbox"
+        aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
@@ -331,7 +331,8 @@ function DeptSelector({ options, selected, onChange }) {
         <span className="yh-dept-select__caret" aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="yh-dept-select__panel" role="listbox" aria-label="부서 선택">
+        // 체크박스 멀티선택 묶음이므로 listbox(option 자식 기대)가 아니라 group으로 둔다.
+        <div className="yh-dept-select__panel" role="group" aria-label="부서 선택">
           <label className="yh-dept-select__option">
             <input type="checkbox" checked={isAll} onChange={() => onChange([])} />
             전체
