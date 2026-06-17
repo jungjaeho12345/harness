@@ -10,8 +10,9 @@ import bcrypt from 'bcryptjs';
 const SAFE_FIELDS = ['userId', 'name', 'role', 'department', 'departmentCode', 'active'];
 
 // 계정 잠금 기본 정책 — IP 단위 레이트리밋과 보완 관계인 사용자 단위 누적 실패 잠금.
-const DEFAULT_LOCKOUT_THRESHOLD = 5;
-const DEFAULT_LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+// 옵션 미주입 시 기본값과 동일해야 한다(테스트가 이 상수를 무옵션 기본값으로 가정).
+export const LOCKOUT_THRESHOLD = 5;
+export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
 // 사용자가 없을 때도 동일한 비용의 bcrypt 비교를 수행하기 위한 더미 해시(타이밍 공격 완화).
 const DUMMY_HASH = bcrypt.hashSync('*timing-equalizer*', 10);
@@ -25,9 +26,17 @@ function sanitize(row = {}) {
 export function createUserService({
   userModel,
   now = () => Date.now(),
-  lockoutThreshold = DEFAULT_LOCKOUT_THRESHOLD,
-  lockoutWindowMs = DEFAULT_LOCKOUT_WINDOW_MS,
+  // 두 가지 명명 규칙을 모두 수용한다(병합 충돌 흡수):
+  //   lockoutThreshold/lockoutWindowMs (security 브랜치) 와
+  //   maxFailedAttempts/lockDurationMs (security-hardening 브랜치).
+  lockoutThreshold,
+  lockoutWindowMs,
+  maxFailedAttempts,
+  lockDurationMs,
 }) {
+  // 임계치·잠금 기간 — maxFailedAttempts/lockDurationMs 우선, 없으면 lockout* , 둘 다 없으면 기본 상수.
+  const threshold = maxFailedAttempts ?? lockoutThreshold ?? LOCKOUT_THRESHOLD;
+  const windowMs = lockDurationMs ?? lockoutWindowMs ?? LOCKOUT_DURATION_MS;
   // 아이디/비밀번호 대조 로그인. 비밀번호는 반환하지 않는다.
   // 존재하지 않는 사용자도 더미 해시로 비교해 성공/실패 경로의 소요 시간 차이를 최소화한다.
   // 잠긴 계정도 비밀번호 비교를 1회 수행해 잠금/비잠금 간 소요 시간 차이를 만들지 않는다.
@@ -40,14 +49,15 @@ export function createUserService({
     // 비활성 거부는 잠금 판정·카운트보다 우선한다(비활성 계정에 카운트를 올리지 않는다).
     if (row && row.active === 'N') return { ok: false, reason: 'inactive' };
 
+    // 잠긴 계정은 올바른 비밀번호여도 거부한다 — 자격 판정보다 먼저 본다(잠금 우선).
+    // 잠금 만료는 lockedUntil을 주입 시계와 비교해 판정한다(행 삭제 없음).
+    if (row && isLocked(row)) return { ok: false, reason: 'locked' };
+
     // 자격이 틀리면 실패 카운트를 누적하고 임계치 도달 시 잠근다.
     if (!row || !passwordOk) {
       if (row) registerFailure(row);
       return { ok: false, reason: 'invalid-credentials' };
     }
-
-    // 잠금 만료는 lockedUntil을 주입 시계와 비교해 판정한다(행 삭제 없음).
-    if (isLocked(row)) return { ok: false, reason: 'locked' };
 
     // 성공 — 잠금 카운트/잠금 시각을 리셋해 영속한다.
     resetLockout(row);
@@ -64,14 +74,15 @@ export function createUserService({
   function registerFailure(row) {
     const next = (Number(row.failedLoginCount) || 0) + 1;
     const patch = { failedLoginCount: String(next), lastFailedLoginAt: String(now()) };
-    if (next >= lockoutThreshold) patch.lockedUntil = String(now() + lockoutWindowMs);
+    if (next >= threshold) patch.lockedUntil = String(now() + windowMs);
     userModel.update(row.userId, patch);
   }
 
   // 성공/만료 시 카운트·잠금 상태를 초기화한다(비파괴: 행은 유지, 필드만 비움).
+  // lockedUntil/lastFailedLoginAt은 SQL NULL로 비운다(조회 시 null로 읽혀 "잠금 없음"이 명확).
   function resetLockout(row) {
     userModel.update(row.userId, {
-      failedLoginCount: '0', lockedUntil: '', lastFailedLoginAt: '',
+      failedLoginCount: '0', lockedUntil: null, lastFailedLoginAt: null,
     });
   }
 

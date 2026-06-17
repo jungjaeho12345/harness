@@ -112,16 +112,17 @@ describe('buildContextMenuItems — per-menu items', () => {
     expect(onSelect).toHaveBeenCalledWith('mapping', article);
   });
 
-  it('비활성 번역 클릭은 onSelect를 호출하지 않는다', async () => {
+  it('번역은 세션만 있으면 항상 활성 — 클릭 시 onSelect(translate, article) 호출', async () => {
+    // 번역은 권한/상태 게이트 없이 항상 활성(서버가 세션 인증·graceful degrade). 클릭하면 onSelect가 발생한다.
     const onSelect = vi.fn();
     const article = { articleId: 'AKR6', status: 'DPS', lockYN: 'N' };
     render(
       <ContextMenu menu="deptWrite" article={article} identity={{ role: 'D' }} onSelect={onSelect} onClose={vi.fn()} />,
     );
     const tr = screen.getByRole('menuitem', { name: '번역' });
-    expect(tr).toBeDisabled();
+    expect(tr).toBeEnabled();
     await userEvent.click(tr);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith('translate', article);
   });
 
   it('followUp/continue are always active (일반 신규 작성 진입)', () => {

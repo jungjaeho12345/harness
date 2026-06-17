@@ -53,7 +53,7 @@ export function WriterPage() {
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
-    updateField, submit, save,
+    updateField, submit, saveMapping,
   } = useWriteController();
   const search = useSearchController();
 
@@ -172,7 +172,7 @@ export function WriterPage() {
           {/* 4개 탭 위 송고/보류/KILL 버튼. 매핑은 전이 없음 → 저장 버튼만(임베드 변경을 PUT 저장). */}
           <div className="yh-actionbar" data-testid="action-bar">
             {isMapping ? (
-              <button type="button" className="yh-btn yh-btn--primary" onClick={() => save()}>
+              <button type="button" className="yh-btn yh-btn--primary" onClick={onSaveMapping}>
                 저장
               </button>
             ) : (

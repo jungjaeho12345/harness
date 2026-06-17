@@ -23,7 +23,9 @@ const ROLES = new Set(['R', 'D', 'Z']);
 
 // 세션 쿠키 transport (security-hardening step0).
 // 외부 의존성 최소화(ADR 철학) — cookie-parser 추가 대신 Cookie 헤더를 직접 파싱한다.
-export const SESSION_COOKIE_NAME = 'yh.sid';
+// 토큰은 무작위 64-hex이며 권한/역할 정보를 담지 않는다(news.md, ADR-004).
+export const SESSION_COOKIE_NAME = 'sid';
+const SESSION_COOKIE_MAX_AGE_MS = ONE_HOUR_MS; // 1시간 — 슬라이딩 만료 권위는 sessionService(쿠키는 보조).
 
 // 쿠키 옵션 빌더 — sameSite/secure는 env로 분기한다.
 // CRITICAL(cross-site): SPA(:5173)와 API(:3001)는 다른 origin = cross-site다(ADR-001).
@@ -42,30 +44,6 @@ export function sessionCookieOptions(env = process.env.NODE_ENV) {
     path: '/',
   };
 }
-
-// Cookie 헤더 파서 — "a=1; b=2" → { a: '1', b: '2' }. 값은 첫 '=' 기준으로 분리.
-function parseCookies(header) {
-  const out = {};
-  if (!header) return out;
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    const k = part.slice(0, idx).trim();
-    if (!k) continue;
-    const raw = part.slice(idx + 1).trim();
-    // 무관한 쿠키 하나라도 잘못된 퍼센트 인코딩(예: %zz)이면 decodeURIComponent가
-    // URIError를 던진다 — 클라이언트 제어 입력이므로 500이 아니라 원본값으로 폴백한다
-    // (세션 sid는 hex라 디코딩 불필요, 인증 실패는 401로 수렴).
-    try {
-      out[k] = decodeURIComponent(raw);
-    } catch {
-      out[k] = raw;
-    }
-  }
-  return out;
-}
-// HSTS max-age — 2년(초). HSTS는 https 응답에만 유효하므로 프로덕션 https 보장과 함께만 의미가 있다.
-const HSTS_MAX_AGE_SEC = 63072000;
 
 // HTTPS 강제 미들웨어 빌더 (security-hardening step1).
 // env로 분기한다 — 프로덕션이 아니면 no-op(로컬/테스트는 http로 띄우므로 강제가 꺼져야 한다).
@@ -113,18 +91,21 @@ function fail(res, result, fallback = 400) {
   return res.status(STATUS_BY_REASON[result.reason] ?? fallback).json(result);
 }
 
-// 세션 쿠키 이름. 토큰은 무작위 64-hex이며 권한/역할 정보를 담지 않는다(news.md, ADR-004).
-const SESSION_COOKIE = 'sid';
-const SESSION_COOKIE_MAX_AGE_S = 60 * 60; // 1시간 — 슬라이딩 만료 권위는 sessionService(쿠키는 보조).
-
 // Cookie 헤더에서 단일 쿠키 값을 파싱한다. 외부 의존성(cookie-parser) 없이 처리(ADR 최소 의존성).
+// 잘못된 퍼센트 인코딩(예: %zz)이면 decodeURIComponent가 URIError를 던진다 — 클라 제어 입력이므로
+// 500이 아니라 원본값으로 폴백한다(세션 sid는 hex라 디코딩 불필요, 인증 실패는 401로 수렴).
 function parseCookie(header, name) {
   if (!header) return undefined;
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() === name) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
+      const raw = part.slice(eq + 1).trim();
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
     }
   }
   return undefined;
@@ -144,58 +125,61 @@ function pickFilters(query = {}) {
   return f;
 }
 
-// cookieSecure: Secure 속성 토글. 프로덕션(HTTPS)에서만 true 권장 — dev/test(HTTP)는 false여야 쿠키가 실린다.
-// forceHttps: HTTPS 강제 토글(기본 false=dev/test no-op). true면 HSTS 적용 + 평문 HTTP를 https로 리다이렉트.
-//   토글 기준은 cookieSecure(step3 Secure 쿠키)와 동일한 환경(prod)을 권장 — Secure 쿠키의 전제이기 때문.
+// 번역 대상 본문 추출 — getById가 돌려주는 { article, contents }에서 본문 텍스트를 만든다.
+// 본문은 Article.markupVersion에 블록 JSON({...,"blocks":[{text}...]})으로 저장된다 →
+// 블록 text를 \n으로 잇는다(articleService.hasEndMarker와 동일 규칙). 파싱 실패/빈 본문이면
+// contents.title → article.title → '' 순으로 폴백한다. CRITICAL: 본문은 서버 DB에서만 취한다(ADR-004).
+function articleToText(found = {}) {
+  const article = found.article ?? {};
+  const raw = article.markupVersion;
+  if (raw) {
+    try {
+      const doc = JSON.parse(raw);
+      if (doc && Array.isArray(doc.blocks)) {
+        const text = doc.blocks
+          .map((b) => (b && typeof b.text === 'string' ? b.text : ''))
+          .join('\n')
+          .trim();
+        if (text) return text;
+      }
+    } catch {
+      // 평문 레거시 본문 — 그대로 사용한다.
+      const text = String(raw).trim();
+      if (text) return text;
+    }
+  }
+  return found.contents?.title ?? article.title ?? '';
+}
+
+// env: 프로덕션 판별 기준(테스트에서 'production' 주입 가능). 미주입 시 process.env.NODE_ENV.
+// cookieSecure: Secure 속성 토글. 미주입 시 isProd(프로덕션 HTTPS에서만 true). dev/test(HTTP)는 false여야 쿠키가 실린다.
+// forceHttps: HTTPS 강제 토글. 미주입 시 isProd. true면 HSTS 적용 + 평문 HTTP를 https로 308 리다이렉트.
+//   Secure 쿠키와 같은 환경(prod)을 전제로 한다 — HSTS/리다이렉트는 https 보장과 함께만 의미가 있다.
 export function createApp({
   controllers,
   sessionService,
-  cookieSecure = process.env.NODE_ENV === 'production',
-  forceHttps = false,
+  env = process.env.NODE_ENV,
+  cookieSecure,
+  forceHttps,
 }) {
   const app = express();
+
+  // 프로덕션 판별 — env로 HSTS·Secure 쿠키·HTTPS 강제 등 프로덕션 전용 보안 설정을 분기한다.
   const isProd = env === 'production';
+  // Secure 쿠키 토글: 명시 주입 우선, 없으면 프로덕션에서만 켠다(로컬 http에서 쿠키 전송이 막히지 않도록).
+  const secure = cookieSecure ?? isProd;
+  // HTTPS 강제 토글: 명시 주입 우선, 없으면 프로덕션에서만 켠다(forceHttps:true 또는 env==='production' 둘 다 강제).
+  const httpsEnforced = forceHttps ?? isProd;
 
   // TLS 종단 리버스 프록시 뒤에서만, 첫 프록시(1홉)의 X-Forwarded-Proto/IP를 신뢰한다.
   // 'true'(무제한 신뢰)는 X-Forwarded-* 스푸핑으로 https 강제·레이트리밋이 우회되므로 쓰지 않는다.
   // 비프로덕션은 프록시가 없으므로 미설정(기본 false) — 로컬/테스트 무영향.
-  if (isProd) app.set('trust proxy', 1);
-
-  // HTTPS 강제(평문→https 308 리다이렉트)는 helmet/cors/도메인 로직보다 앞에 둔다 —
-  // 평문 요청이 도메인 경로까지 도달하지 않게 한다. 비프로덕션이면 enforceHttps가 no-op이다.
-  // 헬스체크(/api/health)도 프로덕션에서는 https로 와야 한다 — 인프라 헬스체크는 보통 같은
-  // TLS 종단을 거치므로 별도 예외를 두지 않는다(예외는 평문 우회 표면을 넓힌다).
-  app.use(enforceHttps(env));
-
-  // 프록시(리버스 프록시 TLS 종단) 뒤 원 프로토콜은 X-Forwarded-Proto로 판정한다.
-  // trust proxy는 최소(첫 홉 1개만 신뢰) — true(무제한)는 X-Forwarded-Proto 스푸핑 우회를 허용하므로 금지.
-  if (forceHttps) app.set('trust proxy', 1);
-
-  // 프로덕션 판별 — nodeEnv 주입 우선(테스트에서 'production' 주입 가능), 없으면 process.env.NODE_ENV.
-  // 이 값으로 HSTS·Secure 쿠키 등 프로덕션 전용 보안 설정을 분기한다.
-  const isProd = (nodeEnv ?? process.env.NODE_ENV) === 'production';
-
-  // 프로덕션은 리버스 프록시(예: nginx) 뒤 HTTPS 종단을 가정한다.
-  // 서버 자체는 127.0.0.1 http로 바인딩하고 TLS는 프록시가 담당하며,
-  // 프록시는 X-Forwarded-Proto를 전달한다.
-  // Secure 쿠키가 프록시 뒤에서도 동작하려면 'trust proxy' 설정이 필요하다.
-  // 개발에서는 비활성 — 불필요하고 로컬 환경에서 부작용을 일으킬 수 있다.
-  if (isProd) app.set('trust proxy', 1);
-
-  // 쿠키 속성 — Secure는 프로덕션에서만 켠다(로컬 http 개발에서 쿠키 전송이 막히지 않도록).
-  // SameSite 트레이드오프: 프론트(:5173)와 API(:3001)는 포트가 달라 cross-site로 취급될 수 있다.
-  // Lax는 cross-site fetch(credentials)에서 쿠키가 붙지 않을 수 있으나, 로컬은 동일 호스트
-  // (localhost) 다른 포트라 브라우저 정책에 따라 동작이 갈린다. 사내 도구(동일 사이트 배포 가정)에서
-  // Lax를 기본으로 하되, cross-origin credentialed 요청이 필요하면 SameSite=None; Secure
-  // (프로덕션 https)가 필요하다. SESSION_SAMESITE 환경변수로 오버라이드 가능.
-  const cookieSecure = isProd;
-  const cookieSameSite = process.env.SESSION_SAMESITE || 'Lax';
-  const cookieOpts = { httpOnly: true, sameSite: cookieSameSite, path: '/', secure: cookieSecure };
+  if (httpsEnforced) app.set('trust proxy', 1);
 
   app.use(helmet({
-    // HSTS는 HTTPS 응답에서만 의미가 있다 — HTTP dev에 보내면 이후 접속이 깨질 수 있으므로 토글로 끈다(forceHttps).
+    // HSTS는 HTTPS 응답에서만 의미가 있다 — HTTP dev에 보내면 이후 접속이 깨질 수 있으므로 토글로 끈다(httpsEnforced).
     // 운영(prod) 적합값: max-age 6개월 + includeSubDomains. preload는 무분별 등록 방지차 비활성.
-    strictTransportSecurity: forceHttps
+    strictTransportSecurity: httpsEnforced
       ? { maxAge: 15552000, includeSubDomains: true, preload: false }
       : false,
     contentSecurityPolicy: {
@@ -223,9 +207,10 @@ export function createApp({
 
   // HTTP→HTTPS 리다이렉트 — helmet/CORS 다음, 라우트보다 앞. 토글 OFF면 no-op(HTTP 그대로 통과).
   // X-Forwarded-Proto가 https가 아니면 동일 host/경로의 https로 308(메서드·본문 보존) 리다이렉트한다.
-  // CORS preflight(OPTIONS)는 위 cors 미들웨어가 먼저 응답을 끝내므로 여기 도달하지 않는다(깨지지 않음).
-  if (forceHttps) {
+  // CRITICAL: cors 미들웨어보다 뒤에 둬야 CORS preflight(OPTIONS)가 먼저 응답을 끝내고 여기 도달하지 않는다.
+  if (httpsEnforced) {
     app.use((req, res, next) => {
+      // trust proxy 설정 시 req.secure는 X-Forwarded-Proto를 반영한다(직접 헤더 신뢰는 스푸핑 위험).
       if (req.secure || req.get('x-forwarded-proto') === 'https') return next();
       const host = req.get('host');
       if (!host) return next(); // host 없는 비정상 요청은 강제 대상 외 — 라우트가 처리.
@@ -238,20 +223,20 @@ export function createApp({
   // 세션 쿠키 발급 — HttpOnly(XSS 토큰 탈취 차단), Path=/, 슬라이딩 만료 정합 Max-Age.
   // SameSite: Secure일 때(prod) None으로 cross-origin 허용, 아닐 때(dev/test) Lax(None은 Secure 필수라 거부됨 → dev는 헤더 폴백).
   function setSessionCookie(res, sessionId) {
-    res.cookie(SESSION_COOKIE, sessionId, {
+    res.cookie(SESSION_COOKIE_NAME, sessionId, {
       httpOnly: true,
-      secure: cookieSecure,
-      sameSite: cookieSecure ? 'none' : 'lax',
+      secure,
+      sameSite: secure ? 'none' : 'lax',
       path: '/',
-      maxAge: SESSION_COOKIE_MAX_AGE_S * 1000,
+      maxAge: SESSION_COOKIE_MAX_AGE_MS,
     });
   }
 
   function clearSessionCookie(res) {
-    res.cookie(SESSION_COOKIE, '', {
+    res.cookie(SESSION_COOKIE_NAME, '', {
       httpOnly: true,
-      secure: cookieSecure,
-      sameSite: cookieSecure ? 'none' : 'lax',
+      secure,
+      sameSite: secure ? 'none' : 'lax',
       path: '/',
       maxAge: 0,
     });
@@ -259,7 +244,7 @@ export function createApp({
 
   // 요청에서 세션 토큰 판독 — 쿠키 우선, x-session-id 헤더 폴백(전환 기간 무회귀).
   function readSessionToken(req) {
-    return parseCookie(req.get('cookie'), SESSION_COOKIE) || req.get('x-session-id');
+    return parseCookie(req.get('cookie'), SESSION_COOKIE_NAME) || req.get('x-session-id');
   }
 
   // SSE 무효화 버스 — 기사 create/update/status/lock 변경 시 신호만 브로드캐스트한다(행 데이터 없음).
@@ -308,8 +293,9 @@ export function createApp({
   });
 
   // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(쿠키 우선, x-session-id 헤더 폴백).
+  // 평문 ?session= 쿼리 폴백은 제거했다 — URL/로그 누출 표면이므로 쿠키·헤더만 허용한다.
   app.get('/api/session', (req, res) => {
-    const sid = readSessionToken(req) || req.query.session;
+    const sid = readSessionToken(req);
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
@@ -563,11 +549,10 @@ export function createApp({
   });
 
   // --- SSE: 무효화 신호 스트림 ---
-  // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더). EventSource는 withCredentials로 쿠키를
-  // 싣지만, dev cross-origin(SameSite=None;Secure 미적재 + 헤더 불가)에서는 쿠키가 안 실린다 → 이 라우트
-  // 한정으로 ?session= 쿼리 폴백을 유지한다(step3 SameSite 결정 정합). 쿠키가 있으면 쿼리는 무시된다.
+  // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더)만 허용한다.
+  // 평문 ?session= 쿼리 폴백은 제거했다 — URL/프록시 로그 누출 표면이므로 쿠키·헤더만 신뢰한다.
   app.get('/api/stream', (req, res) => {
-    const sid = readSessionToken(req) || req.query.session;
+    const sid = readSessionToken(req);
     const me = sid ? sessionService.touchSession(sid) : undefined;
     if (!me) return res.status(401).json(UNAUTH);
 

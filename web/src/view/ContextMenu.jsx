@@ -38,8 +38,6 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   const copyBody = { key: 'copyBody', label: '본문복사', enabled: true };
   const copyTitle = { key: 'copyTitle', label: '제목만복사', enabled: true };
   const edit = { key: 'edit', label: '편집', enabled: true };
-  const history = { key: 'history', label: '이력보기', enabled: true };
-  const sendHistory = { key: 'sendHistory', label: '송고이력보기', enabled: true };
 
   let items;
   if (menu === 'deskUnsent') {

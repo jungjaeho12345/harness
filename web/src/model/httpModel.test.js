@@ -33,7 +33,7 @@ describe('createHttpModel', () => {
     expect(callAt(1)[1].credentials).toBe('include');
   });
 
-  it('login POSTs credentials and does NOT store the session id (HttpOnly cookie holds it)', async () => {
+  it('login POSTs credentials and stores the session id for the dev cross-origin fallback', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-1', user: { userId: 'kim' } }));
     const model = createHttpModel({ base: BASE });
 
@@ -45,14 +45,15 @@ describe('createHttpModel', () => {
     expect(init.method).toBe('POST');
     expect(init.credentials).toBe('include');
     expect(JSON.parse(init.body)).toEqual({ userId: 'kim', password: 'pw' });
+    // 로그인 요청 자체에는 아직 토큰이 없다(저장 전).
     expect(init.headers['x-session-id']).toBeUndefined();
 
-    // sessionStorage 토큰을 쓰지 않는다 — 쿠키가 세션을 보유한다.
-    expect(sessionStorage.getItem('yh.sessionId')).toBeNull();
+    // 인증의 1차 수단은 HttpOnly 쿠키지만, dev cross-origin 폴백을 위해 sessionId를 보관한다.
+    expect(sessionStorage.getItem('yh.sessionId')).toBe('sid-1');
 
-    // 이후 요청에도 x-session-id 헤더가 붙지 않는다(쿠키로 인증).
+    // 이후 요청에는 쿠키(credentials)와 함께 x-session-id 폴백 헤더가 병행 첨부된다.
     await model.queryArticles();
-    expect(callAt(1)[1].headers['x-session-id']).toBeUndefined();
+    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-1');
     expect(callAt(1)[1].credentials).toBe('include');
   });
 
@@ -111,26 +112,20 @@ describe('createHttpModel', () => {
     expect(r.article.articleId).toBe('AKR1');
   });
 
-  it('getArticleHistory GETs /api/articles/:id/history and returns { ok, items }', async () => {
+  // 이력 조회는 canonical queryHistory(/:id/history)로 통합됐다 — superseded getArticleHistory/getSendHistory는 제거.
+  it('queryHistory GETs /api/articles/:id/history and adds sendOnly=1 only when requested', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ eventType: 'create' }] }));
     const model = createHttpModel({ base: BASE });
-    const r = await model.getArticleHistory('AKR1');
+
+    const r = await model.queryHistory('AKR1');
     const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/articles/AKR1/history`);
     expect(init.method).toBe('GET');
     expect(init.body).toBeUndefined();
     expect(r).toEqual({ ok: true, items: [{ eventType: 'create' }] });
-  });
 
-  it('getSendHistory GETs /api/articles/:id/send-history', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ eventType: 'send' }] }));
-    const model = createHttpModel({ base: BASE });
-    const r = await model.getSendHistory('AKR1');
-    const [url, init] = callAt(0);
-    expect(url).toBe(`${BASE}/api/articles/AKR1/send-history`);
-    expect(init.method).toBe('GET');
-    expect(init.body).toBeUndefined();
-    expect(r.items[0].eventType).toBe('send');
+    await model.queryHistory('AKR1', { sendOnly: true });
+    expect(callAt(1)[0]).toBe(`${BASE}/api/articles/AKR1/history?sendOnly=1`);
   });
 
   it('createUser POSTs /api/users and updateUser PUTs /api/users/:id', async () => {

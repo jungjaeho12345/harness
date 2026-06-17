@@ -50,7 +50,7 @@ test('createControllers: 7개 도메인과 메서드를 결선한다', () => {
   for (const m of [
     'query', 'search', 'create', 'update', 'applyAction',
     'acquireEditLock', 'releaseEditLock', 'forceReleaseEditLock', 'assertLockHolder',
-    'getById', 'getHistory', 'getSendHistory',
+    'getById', 'queryHistory',
   ]) {
     assert.equal(typeof controllers.article[m], 'function', `article.${m}`);
   }
@@ -134,30 +134,33 @@ test('article.create→applyAction: 생애주기 전이를 서비스에 위임�
   assert.equal(rows[0].sender, 'desk');
 });
 
-test('article.getHistory / getSendHistory: 이력 조회를 서비스에 위임한다', () => {
+test('article.queryHistory: 이력 조회를 서비스에 위임한다', () => {
   const { controllers } = setup();
   const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
   assert.equal(c.ok, true);
-  // D 송고 → send 이벤트 기록.
+  // create는 이력을 남기지 않는다.
+  assert.deepEqual(controllers.article.queryHistory(c.articleId), []);
+
+  // D 송고 → status/send 이벤트 1건만 기록.
   controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
 
-  const history = controllers.article.getHistory(c.articleId);
+  const history = controllers.article.queryHistory(c.articleId);
   assert.ok(Array.isArray(history));
-  // create + send 이벤트가 시간순으로 쌓인다.
-  assert.ok(history.length >= 2);
-  assert.equal(history[0].eventType, 'create');
-  assert.ok(history.some((h) => h.eventType === 'send'));
+  assert.equal(history.length, 1);
+  assert.equal(history[0].eventType, 'status');
+  assert.equal(history[0].action, 'send');
 
-  const sendHistory = controllers.article.getSendHistory(c.articleId);
+  const sendHistory = controllers.article.queryHistory(c.articleId, { sendOnly: true });
   assert.ok(Array.isArray(sendHistory));
-  assert.ok(sendHistory.length >= 1);
-  assert.ok(sendHistory.every((h) => h.eventType === 'send'));
+  assert.equal(sendHistory.length, 1);
+  assert.equal(sendHistory[0].eventType, 'status');
+  assert.equal(sendHistory[0].action, 'send');
 });
 
-test('article.getHistory: 이벤트 없는 기사는 빈 배열을 반환한다', () => {
+test('article.queryHistory: 이벤트 없는 기사는 빈 배열을 반환한다', () => {
   const { controllers } = setup();
-  assert.deepEqual(controllers.article.getHistory(999999), []);
-  assert.deepEqual(controllers.article.getSendHistory(999999), []);
+  assert.deepEqual(controllers.article.queryHistory(999999), []);
+  assert.deepEqual(controllers.article.queryHistory(999999, { sendOnly: true }), []);
 });
 
 test('article.applyAction: 송고는 "(끝)" 마커가 없으면 거부된다 (가드 위임)', () => {
