@@ -105,6 +105,16 @@ describe('ListPage', () => {
     await waitFor(() => expect(bodyRows(container)).toHaveLength(2));
   });
 
+  it("부서 선택 화면의 '조회' 버튼을 누르면 재조회한다(news.md 81행)", async () => {
+    const { model, container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(screen.getByRole('button', { name: '조회' }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+  });
+
   it('우클릭 삭제요청(DPS+D/Z) → approveDelete를 호출한다', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { model, container } = setup({ articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }] });
