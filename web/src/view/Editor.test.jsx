@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
 import {
-  render, screen, fireEvent, createEvent,
+  describe, it, expect, vi, beforeEach, afterEach,
+} from 'vitest';
+import {
+  render, screen, fireEvent, createEvent, waitFor,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Editor } from './Editor.jsx';
@@ -135,5 +137,96 @@ describe('Editor — IME 조합 중 재색칠 금지 결선', () => {
     const box = screen.getByRole('textbox', { name: '본문' });
     fireEvent.input(box);
     expect(onTextChange).toHaveBeenCalledWith('헤드');
+  });
+});
+
+// 이미지 붙여넣기 → 임베드 결선(handlePaste + onPasteEmbed + embedFromPaste).
+// 이미지 item이면 preventDefault + FileReader로 data:image URL을 읽어 image 임베드를 onPasteEmbed로 전달한다.
+// 일반 텍스트면 preventDefault 안 함 + onPasteEmbed 미호출. "(끝)" 뒤 붙여넣기 차단은 그대로 유지.
+describe('Editor — 이미지 붙여넣기 → 임베드 결선', () => {
+  const realFileReader = globalThis.FileReader;
+
+  beforeEach(() => {
+    // FileReader 스텁 — readAsDataURL 호출 시 data:image URL을 비동기로 onload에 넘긴다.
+    class FakeFileReader {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,AAA';
+        // 비동기 콜백 — waitFor로 기다린다.
+        setTimeout(() => { if (this.onload) this.onload({ target: this }); }, 0);
+      }
+    }
+    globalThis.FileReader = FakeFileReader;
+  });
+
+  afterEach(() => { globalThis.FileReader = realFileReader; });
+
+  // 이미지 item 1개를 가진 clipboardData를 단 paste 이벤트를 만든다.
+  function pasteImageEvent(el) {
+    const ev = createEvent.paste(el, {});
+    const file = new File(['x'], 'pic.png', { type: 'image/png' });
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    });
+    return ev;
+  }
+
+  function pasteTextEvent(el) {
+    const ev = createEvent.paste(el, {});
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] },
+    });
+    return ev;
+  }
+
+  it('이미지 붙여넣기 → preventDefault + onPasteEmbed로 image 임베드(data:image src)를 전달', async () => {
+    const onPasteEmbed = vi.fn();
+    render(<Editor blocks={[textBlock('헤드'), textBlock('본문')]} onTextChange={() => {}} onPasteEmbed={onPasteEmbed} />);
+    const box = screen.getByRole('textbox', { name: '본문' });
+
+    const ev = pasteImageEvent(box);
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    await waitFor(() => expect(onPasteEmbed).toHaveBeenCalled());
+    const embed = onPasteEmbed.mock.calls[0][0];
+    expect(embed.embedType).toBe('image');
+    expect(embed.src).toMatch(/^data:image\//);
+  });
+
+  it('일반 텍스트 붙여넣기 → preventDefault 안 함 + onPasteEmbed 미호출', () => {
+    const onPasteEmbed = vi.fn();
+    render(<Editor blocks={[textBlock('헤드'), textBlock('본문')]} onTextChange={() => {}} onPasteEmbed={onPasteEmbed} />);
+    const box = screen.getByRole('textbox', { name: '본문' });
+
+    const ev = pasteTextEvent(box);
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).not.toHaveBeenCalled();
+    expect(onPasteEmbed).not.toHaveBeenCalled();
+  });
+
+  it('"(끝)" 뒤에서는 이미지 붙여넣기도 차단된다(caret 차단 유지)', () => {
+    const onPasteEmbed = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]} onTextChange={() => {}} onPasteEmbed={onPasteEmbed} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    // "(끝)" 줄에 캐럿.
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[2]);
+    range.collapse(true);
+    sel.addRange(range);
+
+    const ev = pasteImageEvent(box);
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled(); // 차단됨
+    expect(onPasteEmbed).not.toHaveBeenCalled(); // 임베드 추가 안 함
   });
 });

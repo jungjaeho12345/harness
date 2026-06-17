@@ -223,6 +223,26 @@ describe('createHttpModel', () => {
     expect(sessionStorage.getItem('yh.sessionId')).toBeNull();
   });
 
+  it('uploadFile reads the File as a data URL, strips the prefix, and POSTs raw base64 to /api/upload', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, path: '/uploads/abc.png', filename: 'pic.png' }));
+    const model = createHttpModel({ base: BASE });
+
+    // "hello" → base64 aGVsbG8= (jsdom의 FileReader.readAsDataURL이 data:...;base64,를 만든다).
+    const file = new File(['hello'], 'pic.png', { type: 'image/png' });
+    const r = await model.uploadFile(file);
+
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/upload`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    const body = JSON.parse(init.body);
+    expect(body.filename).toBe('pic.png');
+    // prefix("data:...;base64,")는 제거되고 raw base64만 전송된다(서버 계약).
+    expect(body.contentBase64).toBe('aGVsbG8=');
+    expect(body.contentBase64).not.toMatch(/^data:/);
+    expect(r).toEqual({ ok: true, path: '/uploads/abc.png', filename: 'pic.png' });
+  });
+
   function installFakeEventSource(instances) {
     class FakeEventSource {
       constructor(url, opts) {

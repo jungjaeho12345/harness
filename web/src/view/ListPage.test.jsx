@@ -48,14 +48,15 @@ describe('ListPage', () => {
     expect(screen.getByLabelText('경제')).toBeInTheDocument();
   });
 
-  it('데스크 미송고에서 부서를 선택하면 departments로 재조회한다', async () => {
+  it('데스크 미송고에서 부서를 좁히면 departments로 재조회한다', async () => {
     const { model } = setup({
       articles: [],
-      users: [{ userId: 'kim', name: '김기자', department: '정치' }],
+      users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
     });
-    const cb = await screen.findByLabelText('정치');
+    await screen.findByLabelText('경제');
     const spy = vi.spyOn(model, 'queryArticles');
-    await userEvent.click(cb);
+    // 기본은 '전체'(전 부서) — 경제를 끄면 정치만 남아 departments=['정치']로 재조회한다.
+    await userEvent.click(screen.getByLabelText('경제'));
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RDS', 'DDH'], departments: ['정치'] }));
   });
 
@@ -106,6 +107,36 @@ describe('ListPage', () => {
     fireEvent.contextMenu(bodyRows(container)[0]);
     await userEvent.click(screen.getByRole('menuitem', { name: '삭제요청' }));
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
+  });
+
+  it("부서 선택: 기본 '전체'(전 부서 체크)에서 개별 부서로 좁히고 '전체'로 되돌린다", async () => {
+    const seed = {
+      users: [{ userId: 'a', department: '정치' }, { userId: 'b', department: '경제' }],
+      articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }],
+    };
+    const { model } = setup(seed);
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await screen.findByLabelText('정치'); // 부서 옵션(queryUsers) 렌더 대기
+
+    // 기본값: '전체' + 모든 부서가 체크돼 전 부서로 조회된다(빈 선택 = 부서 미지정).
+    expect(screen.getByLabelText('전체')).toBeChecked();
+    expect(screen.getByLabelText('정치')).toBeChecked();
+    expect(screen.getByLabelText('경제')).toBeChecked();
+
+    // 개별 부서를 끄면 그 부서만 빠지고(좁힘) departments로 재조회한다.
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(screen.getByLabelText('경제'));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ status: ['DPS'], departments: ['정치'] }),
+    ));
+    expect(screen.getByLabelText('전체')).not.toBeChecked();
+    expect(screen.getByLabelText('정치')).toBeChecked();
+    expect(screen.getByLabelText('경제')).not.toBeChecked();
+
+    // '전체'를 누르면 전 부서로 리셋된다(모든 박스 체크).
+    await userEvent.click(screen.getByLabelText('전체'));
+    await waitFor(() => expect(screen.getByLabelText('경제')).toBeChecked());
+    expect(screen.getByLabelText('정치')).toBeChecked();
   });
 
   it('잠긴 행의 우클릭 Lock해제(D/Z) → force-unlock을 호출한다', async () => {

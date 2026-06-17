@@ -4,11 +4,18 @@ import userEvent from '@testing-library/user-event';
 import { InlineEmbed, isAllowedImageSrc } from './InlineEmbed.jsx';
 
 describe('InlineEmbed', () => {
-  it('renders an image embed with a remove (×) button at 612px', () => {
+  it('renders an image embed capped to a 200x200 box (not 612px) with a remove (×) button', () => {
+    // 제품 결정: 비율 유지, 최대 200×200, 모든 이미지 임베드.
+    // figureWidthPx가 와도 이미지 figure는 612px를 예약하지 않는다(fit-content/200px).
     render(<InlineEmbed embed={{ embedType: 'image', src: 'x.png', alt: '사진', figureWidthPx: 612 }} onRemove={() => {}} />);
-    expect(screen.getByRole('img', { name: '사진' })).toBeInTheDocument();
-    const fig = screen.getByRole('img', { name: '사진' }).closest('figure');
-    expect(fig).toHaveStyle({ width: '612px' });
+    const img = screen.getByRole('img', { name: '사진' });
+    expect(img).toBeInTheDocument();
+    // 이미지: 긴 변 <= 200px, 비율 유지(width/height auto + max 200).
+    expect(img).toHaveStyle({ maxWidth: '200px', maxHeight: '200px', width: 'auto', height: 'auto' });
+    const fig = img.closest('figure');
+    // figure는 612px를 예약하지 않고 캡된 이미지에 맞춘다.
+    expect(fig).not.toHaveStyle({ width: '612px' });
+    expect(fig).toHaveStyle({ width: 'fit-content' });
     expect(screen.getByRole('button', { name: '임베드 삭제' })).toBeInTheDocument();
   });
 

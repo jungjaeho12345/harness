@@ -279,29 +279,29 @@ export function ListPage() {
   );
 }
 
-// 부서 선택 — '전체' 토글 + 체크박스 멀티셀렉트(데스크 미송고·부서별 작성·부서별 송고 공통).
-// '전체'(빈 선택)가 기본값이며, 변경 시 컨트롤러가 자동 재조회한다.
+// 부서 선택 — '전체'(전 부서) + 체크박스 멀티셀렉트(데스크 미송고·부서별 작성·부서별 송고 공통).
+// '전체'는 기본 체크(빈 선택=전 부서)이며 누르면 전 부서로 리셋한다. 빈 선택일 때 모든 부서 박스도
+// 체크로 보인다(select-all 느낌). 개별 부서를 끄면 좁혀지고, 모두 다시 켜면 '전체'로 돌아온다.
+// 변경 시 컨트롤러가 자동 재조회한다(빈 선택/전 부서 선택 = 부서 미지정 = 전 부서 조회).
 function DeptSelector({ options, selected, onChange }) {
   const sel = selected || [];
-  const isAll = sel.length === 0;
+  // '전체' = 전 부서. 빈 선택(기본) 또는 모든 부서 선택을 똑같이 '전체'로 본다.
+  const isAll = sel.length === 0 || (options.length > 0 && options.every((d) => sel.includes(d)));
   const toggle = (dept) => {
-    const set = new Set(sel);
+    // '전체(빈 선택)'에서 개별 부서를 누르면 전 부서를 출발점으로 그 부서만 토글한다.
+    const set = new Set(sel.length === 0 ? options : sel);
     if (set.has(dept)) set.delete(dept); else set.add(dept);
     onChange([...set]);
   };
   return (
     <div className="yh-dept-selector" data-testid="dept-selector">
       <label>
-        <input
-          type="checkbox"
-          checked={isAll}
-          onChange={() => onChange([])}
-        />
+        <input type="checkbox" checked={isAll} onChange={() => onChange([])} />
         전체
       </label>
       {options.map((d) => (
         <label key={d}>
-          <input type="checkbox" checked={sel.includes(d)} onChange={() => toggle(d)} />
+          <input type="checkbox" checked={isAll || sel.includes(d)} onChange={() => toggle(d)} />
           {d}
         </label>
       ))}

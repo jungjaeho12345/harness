@@ -7,6 +7,7 @@ import { useRef } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked } from './editorNewline.js';
+import { embedFromPaste } from './clipboardEmbed.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
 
 // contentEditable에서 입력된 본문 텍스트를 라인 div 기준으로 재구성한다(임베드 figure는 제외).
@@ -59,6 +60,7 @@ export function Editor({
   onRemoveEmbed,
   onKeyDown,
   onTextChange,
+  onPasteEmbed,
   spellcheck = false,
   readOnly = false,
   textEditable = true,
@@ -78,8 +80,24 @@ export function Editor({
     if (isInsertionKey(e) && caretBlocked(e.currentTarget)) e.preventDefault();
   };
 
+  // 붙여넣기 — ① "(끝)" 뒤면 차단(텍스트·이미지 공통). ② 클립보드에 이미지 item이 있으면 임베드로 변환
+  //   (preventDefault + FileReader로 data:image URL을 읽어 onPasteEmbed에 전달). ③ 그 외(일반 텍스트)는
+  //   기본 붙여넣기 동작을 유지한다(preventDefault 안 함·onPasteEmbed 미호출).
   const handlePaste = (e) => {
-    if (caretBlocked(e.currentTarget)) e.preventDefault();
+    if (caretBlocked(e.currentTarget)) { e.preventDefault(); return; }
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items || !onPasteEmbed) return;
+    const imageItem = Array.from(items).find((it) => it && typeof it.type === 'string' && it.type.startsWith('image/'));
+    if (!imageItem) return; // 일반 텍스트 — 기본 동작 유지.
+    const file = imageItem.getAsFile && imageItem.getAsFile();
+    if (!file) return;
+    e.preventDefault();
+    const reader = new FileReader();
+    reader.onload = () => {
+      // InlineEmbed가 200×200으로 캡하므로 여기서 크기는 지정하지 않는다(embedFromPaste 기본).
+      onPasteEmbed(embedFromPaste({ imageDataUrl: reader.result }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleCompositionStart = (e) => {

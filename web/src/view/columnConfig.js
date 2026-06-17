@@ -1,5 +1,6 @@
 // 기사 목록(list.do) 컬럼 표시/숨김 + 컬럼 간격 설정 — 메뉴별로 저장 (news.md 기사 조회페이지).
-// 4개 메뉴 공통 컬럼: 기사아이디·제목·작성자·수정자·작성시간·수정시간·기사상태·LockYN.
+// 4개 메뉴 공통 컬럼: 기사아이디·제목·작성자·수정자·부서·부서코드·작성시간·수정시간·기사상태·LockYN.
+// (부서/부서코드는 사용자 요청으로 추가 — news.md 기본 8컬럼에 더해 노출. 컬럼 설정에서 토글 가능.)
 // 설정은 메뉴별로 지속(localStorage) — UI 환경설정이므로 세션을 넘어 유지한다.
 
 export const COLUMNS = Object.freeze([
@@ -7,6 +8,8 @@ export const COLUMNS = Object.freeze([
   { key: 'title', label: '제목' },
   { key: 'author', label: '작성자' },
   { key: 'modifier', label: '수정자' },
+  { key: 'department', label: '부서' },
+  { key: 'departmentCode', label: '부서코드' },
   { key: 'createdAt', label: '작성시간' },
   { key: 'editedAt', label: '수정시간' },
   { key: 'status', label: '기사상태' },

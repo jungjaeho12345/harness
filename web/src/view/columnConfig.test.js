@@ -7,9 +7,10 @@ import {
 describe('columnConfig — list columns', () => {
   beforeEach(() => { localStorage.clear(); });
 
-  it('defines the 8 common columns', () => {
+  it('defines the common columns incl. department/departmentCode', () => {
     expect(COLUMNS.map((c) => c.key)).toEqual([
-      'articleId', 'title', 'author', 'modifier', 'createdAt', 'editedAt', 'status', 'lockYN',
+      'articleId', 'title', 'author', 'modifier', 'department', 'departmentCode',
+      'createdAt', 'editedAt', 'status', 'lockYN',
     ]);
   });
 

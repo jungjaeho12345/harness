@@ -143,6 +143,24 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
       });
     },
 
+    // --- 파일 업로드(첨부파일/자료파일) ---
+    // File을 FileReader로 data URL로 읽어 "data:...;base64," 접두사를 떼어낸 raw base64만 서버로 보낸다
+    // (server /api/upload 계약은 prefix 없는 raw base64를 받는다). 응답 { ok, path, filename }을 그대로 반환한다.
+    // path 문자열이 Contents.attachmentFile/referenceFile(VARCHAR)에 저장된다.
+    async uploadFile(file) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('file-read-failed'));
+        reader.readAsDataURL(file);
+      });
+      const contentBase64 = String(dataUrl).replace(/^data:[^;]*;base64,/, '');
+      return request('/api/upload', {
+        method: 'POST',
+        body: { filename: file.name, contentBase64 },
+      });
+    },
+
     // --- 편집 잠금 ---
     lockArticle(articleId, action) {
       const body = action ? { action } : {};

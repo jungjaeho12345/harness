@@ -23,6 +23,9 @@ function setup(seed) {
 const FULL = {
   articleId: 'AKR1', title: '제목', body: '본문', author: '원작성자',
   embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
+  coAuthor: '박기자', region: '서울', attribute: '단독', keyword: '키워드',
+  internalComment: '내부메모', externalComment: '외부메모',
+  attachmentFile: '/uploads/a.pdf', referenceFile: '/uploads/r.docx',
   modifier: 'lee', sender: 'park', department: '경제', departmentCode: 'EC',
   createdAt: '2026-01-01T00:00:00Z', editedAt: '2026-01-01T01:00:00Z', sentAt: '2026-01-01T02:00:00Z',
   status: 'RDS', lockYN: 'N',
@@ -59,6 +62,9 @@ describe('useWriteController', () => {
     expect(tab.fields).toEqual({
       title: '제목', body: '본문', author: '원작성자',
       embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
+      coAuthor: '박기자', region: '서울', attribute: '단독', keyword: '키워드',
+      internalComment: '내부메모', externalComment: '외부메모',
+      attachmentFile: '/uploads/a.pdf', referenceFile: '/uploads/r.docx',
     });
     // 읽기전용 보존 — 기사아이디/수정자/송고자/부서/부서코드/시간들.
     expect(tab.readOnly).toMatchObject({
@@ -103,6 +109,38 @@ describe('useWriteController', () => {
     act(() => { result.current.updateField('articleId', 'HACK'); }); // 읽기전용 → 무시
     expect(result.current.activeTab.fields.title).toBe('새 제목');
     expect(result.current.activeTab.articleId).toBe('AKR1');
+  });
+
+  it('updateField mutates the new common-info fields (coAuthor/region/attribute/keyword/comments/files)', async () => {
+    const { result } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    for (const [k, v] of [
+      ['coAuthor', '새공동'], ['region', '부산'], ['attribute', '기획'], ['keyword', 'kw'],
+      ['internalComment', '내부'], ['externalComment', '외부'],
+      ['attachmentFile', '/uploads/x.pdf'], ['referenceFile', '/uploads/y.docx'],
+    ]) {
+      act(() => { result.current.updateField(k, v); });
+      expect(result.current.activeTab.fields[k]).toBe(v);
+    }
+  });
+
+  it('a blank new tab seeds the new common-info fields as empty strings', () => {
+    const { result } = setup({});
+    const f = result.current.activeTab.fields;
+    for (const k of ['coAuthor', 'region', 'attribute', 'keyword', 'internalComment', 'externalComment', 'attachmentFile', 'referenceFile']) {
+      expect(f[k]).toBe('');
+    }
+  });
+
+  it('updateField in mapping mode rejects the new common-info fields too (body-only invariant)', async () => {
+    const { result } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+    act(() => { result.current.updateField('coAuthor', '해킹'); });
+    act(() => { result.current.updateField('attachmentFile', '/uploads/hack.pdf'); });
+    act(() => { result.current.updateField('internalComment', '해킹'); });
+    expect(result.current.activeTab.fields.coAuthor).toBe('박기자');
+    expect(result.current.activeTab.fields.attachmentFile).toBe('/uploads/a.pdf');
+    expect(result.current.activeTab.fields.internalComment).toBe('내부메모');
   });
 
   it('closeTab releases the lock and keeps one blank tab when closing the last', async () => {
