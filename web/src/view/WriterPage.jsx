@@ -3,7 +3,7 @@
 // 가드: 송고는 "(끝)" 필요, 송고/보류는 제목(첫 줄) 필요. 각 액션은 확인창 후에만 진행.
 // 데이터는 useWriteController/useSearchController 경유(transport 직접 호출 금지, ADR-003).
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
