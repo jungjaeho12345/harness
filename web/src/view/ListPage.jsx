@@ -133,7 +133,7 @@ export function ListPage() {
         </span>
       );
     }
-    if (col.key === 'createdAt' || col.key === 'editedAt') {
+    if (col.key === 'createdAt' || col.key === 'editedAt' || col.key === 'sentAt') {
       return <span className="yh-col--time">{formatCell(col.key, row[col.key])}</span>;
     }
     return formatCell(col.key, row[col.key]);
