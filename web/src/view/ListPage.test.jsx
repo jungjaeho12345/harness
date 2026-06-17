@@ -26,12 +26,17 @@ const bodyRows = (c) => c.querySelectorAll('tbody tr');
 describe('ListPage', () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
-  it('4개 메뉴와 실시간 상태바를 보여준다', () => {
+  it('4개 메뉴와 실시간 상태바를 보여준다', async () => {
     setup({ articles: [] });
     for (const m of ['데스크 미송고', '부서별 작성', '부서별 송고', '개인별 수정']) {
       expect(screen.getByRole('button', { name: m })).toBeInTheDocument();
     }
-    expect(screen.getByTestId('live-status')).toBeInTheDocument();
+    // 상태바는 하드코딩이 아니라 실제 SSE 연결 상태를 반영한다 — fake 스트림은 즉시 연결됨(onStatus true).
+    await waitFor(() => {
+      const live = screen.getByTestId('live-status');
+      expect(live).toHaveClass('yh-live--on');
+      expect(live).toHaveTextContent('실시간');
+    });
   });
 
   it('데스크 미송고에서도 부서 체크박스(기본 전체)를 보여준다', async () => {

@@ -255,6 +255,87 @@ a { color: var(--yh-blue); }
   font-weight: 700;
 }
 
+/* 작성 문서 탭 스트립 — 열린 기사들을 파일 탭처럼. 활성 탭은 본문과 연결된 흰 탭 + 상단 블루 액센트 */
+.yh-tabs--docs {
+  align-items: flex-end;
+  gap: 2px;
+  margin-bottom: var(--yh-sp-md);
+  padding-top: var(--yh-sp-xs);
+  overflow-x: auto;
+}
+
+.yh-tabs--docs .yh-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  background: var(--yh-gray-bg);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md) var(--yh-radius-md) 0 0;
+  color: var(--yh-gray-dark);
+  transition: background var(--yh-transition), color var(--yh-transition);
+}
+
+.yh-tabs--docs .yh-tab:hover { background: #ededed; }
+
+.yh-tabs--docs .yh-tab--active {
+  background: var(--yh-white);
+  border-bottom-color: var(--yh-white);
+  margin-bottom: -1px;
+  box-shadow: inset 0 2px 0 var(--yh-blue);
+  color: var(--yh-blue);
+}
+
+.yh-tab__label {
+  max-width: 13rem;
+  padding: var(--yh-sp-sm) var(--yh-sp-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  font-size: 0.85rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.yh-tab--active .yh-tab__label { font-weight: 700; }
+
+.yh-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: var(--yh-sp-xs);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--yh-radius-sm);
+  color: var(--yh-gray-mid);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--yh-transition), color var(--yh-transition);
+}
+
+.yh-tab__close:hover { background: var(--yh-red); color: #fff; }
+
+.yh-tab__add {
+  align-self: center;
+  margin-left: var(--yh-sp-xs);
+  padding: var(--yh-sp-xs) var(--yh-sp-sm);
+  background: transparent;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  color: var(--yh-gray-dark);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--yh-transition), color var(--yh-transition);
+}
+
+.yh-tab__add:hover { background: var(--yh-blue-light); color: var(--yh-blue); }
+
 /* 표 — 신문형 밀도 */
 .yh-table {
   width: 100%;
@@ -304,28 +385,58 @@ a { color: var(--yh-blue); }
   margin-top: var(--yh-sp-md);
 }
 
-/* 작성 페이지 60:40 */
+/* 작성 페이지 — 좌 에디터 : 우 메타 = 58:42. 뷰포트 높이에 맞춰 두 열을 같은 높이로 두고
+   각 열이 내부에서 스크롤한다(메타 필드가 길어도 에디터와 높이가 어긋나지 않게). */
 .yh-writer {
   display: flex;
   gap: var(--yh-sp-lg);
   align-items: stretch;
+  height: calc(100vh - 11rem);
+  min-height: 30rem;
 }
 
-.yh-writer__editor { flex: 0 0 60%; min-width: 0; }
-.yh-writer__meta { flex: 0 0 40%; min-width: 0; }
+.yh-writer__editor {
+  flex: 0 0 58%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 
-/* 에디터 */
-.yh-editor {
-  min-height: 24rem;
-  padding: var(--yh-sp-md);
+.yh-writer__meta {
+  flex: 0 0 42%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--yh-white);
   border: 1px solid var(--yh-gray-line);
-  border-radius: var(--yh-radius-md);
-  font-size: 0.95rem;
-  line-height: 1.6;
-  outline: none;
+  border-radius: var(--yh-radius-lg);
+  box-shadow: var(--yh-shadow-sm);
+  overflow: hidden;
 }
 
-.yh-editor__line { min-height: 1.6em; white-space: pre-wrap; }
+/* 에디터 — 열 전체를 채우고 내부 스크롤. 지면 톤(넉넉한 여백·행간), 포커스 시 블루 강조 */
+.yh-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--yh-sp-xl);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-lg);
+  box-shadow: var(--yh-shadow-sm);
+  background: var(--yh-white);
+  font-size: 0.95rem;
+  line-height: 1.8;
+  outline: none;
+  transition: border-color var(--yh-transition), box-shadow var(--yh-transition);
+}
+
+.yh-editor:focus {
+  border-color: var(--yh-blue);
+  box-shadow: var(--yh-shadow-md);
+}
+
+.yh-editor__line { min-height: 1.8em; white-space: pre-wrap; }
 
 /* 임베드 */
 .yh-embed { display: block; }
@@ -353,11 +464,71 @@ a { color: var(--yh-blue); }
   text-decoration: none;
 }
 
-/* 송고/보류/KILL 버튼 바 */
+/* 송고/보류/KILL 버튼 바 — 메타 패널 상단에 고정 */
 .yh-actionbar {
   display: flex;
   gap: var(--yh-sp-sm);
-  margin-bottom: var(--yh-sp-md);
+  flex-shrink: 0;
+  padding: var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+}
+
+/* 메타 탭(공통정보/이미지/영상/글기사) — 액션바 아래 고정 헤더 */
+.yh-writer__meta > .yh-tabs {
+  flex-shrink: 0;
+  padding: 0 var(--yh-sp-md);
+  background: var(--yh-gray-bg);
+}
+
+/* 메타 본문 — 남은 높이를 채우고 내부 스크롤 */
+.yh-meta-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--yh-sp-lg) var(--yh-sp-md);
+}
+
+/* 공통정보 — 2열 그리드로 밀도를 높이고, 긴 입력(코멘트·파일·읽기전용)은 전체폭 */
+.yh-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--yh-sp-md);
+}
+
+.yh-meta-grid .yh-field { margin-bottom: 0; }
+
+.yh-field--wide { grid-column: 1 / -1; }
+
+.yh-field textarea {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+
+/* 읽기전용 매핑 필드 묶음 — 구분선으로 분리 */
+.yh-readonly-meta {
+  margin-top: var(--yh-sp-md);
+  padding-top: var(--yh-sp-md);
+  border-top: 1px solid var(--yh-gray-line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--yh-sp-md);
+}
+
+/* 저장된 파일 표시 — 링크 + 지우기 */
+.yh-file-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  margin-top: var(--yh-sp-xs);
+  font-size: 0.8rem;
+}
+
+.yh-file-saved a {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 컨텍스트 메뉴 */

@@ -50,6 +50,7 @@ export function useViewController() {
   const [page, setPage] = useState(1);
   const [items, setItems] = useState([]);
   const [deptOptions, setDeptOptions] = useState([]);
+  const [live, setLive] = useState(false); // SSE 실제 연결 상태(ready→true, error/해제→false).
 
   const filter = useMemo(
     () => buildMenuFilter(menu, identity, departments),
@@ -77,9 +78,11 @@ export function useViewController() {
   }, [model]);
 
   // SSE 무효화 신호 → 자기 필터로 재조회한다(ADR-005, 행 데이터 push 받지 않음).
+  // onStatus로 실제 연결 상태를 받아 live에 반영한다(상태바가 하드코딩이 아니라 진짜 SSE 상태를 보여주게).
   useEffect(() => {
-    const sub = model.subscribe(filter, () => { refresh(); });
-    return () => sub.unsubscribe();
+    setLive(false);
+    const sub = model.subscribe(filter, () => { refresh(); }, setLive);
+    return () => { setLive(false); sub.unsubscribe(); };
   }, [model, filter, refresh]);
 
   const selectMenu = useCallback((m) => {
@@ -180,6 +183,7 @@ export function useViewController() {
     menu, selectMenu,
     departments, setDepartments, deptOptions,
     page, setPage, totalPages, pageItems, items,
+    live,
     refresh,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
     createFollowUp, createContinue, resend, runTranslate, mapArticle,

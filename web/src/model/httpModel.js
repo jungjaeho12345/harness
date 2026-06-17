@@ -40,7 +40,10 @@ function buildQuery(params = {}) {
   return qs ? `?${qs}` : '';
 }
 
-export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:3001' } = {}) {
+// base는 기본적으로 빈 문자열(동일 출처) — dev는 Vite 프록시(/api→API), prod는 API 서버가 정적 번들을 같이 서빙한다.
+// 동일 출처여야 SameSite=Lax 세션 쿠키가 EventSource(SSE)에도 first-party로 실려 실시간이 동작한다.
+// (cross-origin로 띄우려면 VITE_API_BASE를 vite.config 프록시 target으로 주거나 base를 명시 주입한다.)
+export function createHttpModel({ base = '' } = {}) {
   // 모든 REST 호출의 단일 통로 — 쿠키 첨부(credentials:'include') + JSON 직렬화/역직렬화.
   async function request(path, { method = 'GET', body, query } = {}) {
     const headers = {};
@@ -190,11 +193,13 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
     // dev cross-origin(SameSite 제약으로 쿠키 미적재)에서는 보관된 sessionId를 ?session= 쿼리 폴백으로만
     // 붙인다(토큰 없으면 URL에 노출 안 함). ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다.
     // onChange는 "무효화 신호"만 받으며, filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
-    subscribe(filter, onChange) {
+    // onStatus(boolean) — 선택적 연결 상태 콜백. ready→true, error→false로 호출해 View가 실제 SSE 상태를 표시할 수 있게 한다.
+    subscribe(filter, onChange, onStatus) {
       const url = `${base}/api/stream${buildQuery({ session: readSessionId() })}`;
       const source = new EventSource(url, { withCredentials: true });
       let connected = false;
-      source.addEventListener('ready', () => { connected = true; });
+      const setStatus = (next) => { connected = next; onStatus?.(next); };
+      source.addEventListener('ready', () => setStatus(true));
       source.addEventListener('change', (event) => {
         let signal = {};
         try {
@@ -204,7 +209,7 @@ export function createHttpModel({ base = import.meta.env.VITE_API_BASE ?? 'http:
         }
         onChange(signal, filter);
       });
-      source.addEventListener('error', () => { connected = false; });
+      source.addEventListener('error', () => setStatus(false));
       return {
         connected: () => connected,
         unsubscribe: () => source.close(),
