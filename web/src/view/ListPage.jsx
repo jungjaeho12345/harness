@@ -39,7 +39,7 @@ export function ListPage() {
   const { identity } = useAppContext();
   const ctrl = useViewController();
   const {
-    menu, selectMenu, departments, setDepartments, deptOptions,
+    menu, selectMenu, departments, setDepartments, deptOptions, refresh,
     live,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
@@ -158,11 +158,15 @@ export function ListPage() {
       </div>
 
       {showDeptSelector && (
-        <DeptSelector
-          options={deptOptions}
-          selected={departments}
-          onChange={setDepartments}
-        />
+        <div className="yh-dept-bar" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <DeptSelector
+            options={deptOptions}
+            selected={departments}
+            onChange={setDepartments}
+          />
+          {/* 명시적 조회 버튼(news.md 81행) — 선택한 부서로 재조회. 진입/변경 시 자동조회는 컨트롤러가 유지. */}
+          <button type="button" className="yh-btn yh-btn--primary" onClick={() => refresh()}>조회</button>
+        </div>
       )}
 
       <table className="yh-table">
