@@ -34,6 +34,22 @@ describe('RcvMgmtPage (Z 전용 CRUD)', () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'NEWS1', name: '소스' })));
   });
 
+  it('생성 폼에 사용자명/비밀번호/API키/활성 입력이 있고 createReceiverConfig로 전달한다 (#5)', async () => {
+    const { model } = setup({ receiverConfigs: [] });
+    const create = vi.spyOn(model, 'createReceiverConfig');
+
+    await userEvent.type(screen.getByLabelText('소스아이디'), 'NEWS1');
+    await userEvent.type(screen.getByLabelText('사용자명'), 'u1');
+    await userEvent.type(screen.getByLabelText('비밀번호'), 'p1');
+    await userEvent.type(screen.getByLabelText('API 키'), 'k1');
+    await userEvent.selectOptions(screen.getByLabelText('활성'), 'N');
+    await userEvent.click(screen.getByRole('button', { name: '설정 생성' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceId: 'NEWS1', username: 'u1', password: 'p1', apiKey: 'k1', active: 'N',
+    })));
+  });
+
   it('삭제하면 설정 행만 deleteReceiverConfig로 지운다(수집 기사 비파괴)', async () => {
     const { model } = setup({ receiverConfigs: [{ id: 7, sourceId: 'AP', type: 'FTP', name: 'x', host: '', port: '', active: 'Y' }] });
     const del = vi.spyOn(model, 'deleteReceiverConfig');

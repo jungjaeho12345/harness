@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { createSchema } from '../src/db/schema.js';
+import { createSchema, backfillEmptyDepartments } from '../src/db/schema.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
 import { createFtpWatcher } from './ftpWatcher.js';
@@ -499,6 +499,12 @@ export function createApp({
       if (!hold.ok) return fail(res, hold);
       const fields = { ...(req.body ?? {}), modifier: me.userId };
       delete fields.role;
+      // 편집 저장 시에도 부서가 명시적으로 빈 값이면 세션 부서로 보정한다(신규 POST와 정합, news.md).
+      // 부서 키가 아예 없으면(부분 수정) 건드리지 않아 기존 부서를 보존한다.
+      if ('department' in fields && !fields.department) {
+        fields.department = me.department;
+        fields.departmentCode = me.departmentCode;
+      }
       const r = controllers.article.update(req.params.id, fields);
       if (r.ok) app.notifyChange('update');
       return res.json(r);
@@ -612,6 +618,21 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // body { sourceId } → collection.pull. 등록된 활성 API 소스를 서버가 능동 호출해 응답을 등록한다(rcv.md).
+  // /receive와 동일하게 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 외부 노출을 좁힌다.
+  app.post('/api/collection/pull', async (req, res, next) => {
+    try {
+      const required = process.env.COLLECTION_TOKEN;
+      if (required && req.get('x-collection-token') !== required) {
+        return res.status(401).json(UNAUTH);
+      }
+      const { sourceId } = req.body ?? {};
+      const r = await controllers.collection.pull(sourceId);
+      if (r.ok) { app.notifyChange('create'); return res.json(r); }
+      return fail(res, r);
+    } catch (e) { next(e); }
+  });
+
   // --- SSE: 무효화 신호 스트림 ---
   // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더)만 허용한다.
   // 평문 ?session= 쿼리 폴백은 제거했다 — URL/프록시 로그 누출 표면이므로 쿠키·헤더만 신뢰한다.
@@ -647,6 +668,7 @@ export function createApp({
 function bootstrap() {
   const db = new DatabaseSync('news.db');
   createSchema(db); // 비파괴 멱등 마이그레이션만 — DROP/DELETE 없음.
+  backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
 
   const sessionService = createSessionService();
   const controllers = createControllers(db, { sessionService });

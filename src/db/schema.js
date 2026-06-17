@@ -87,13 +87,32 @@ export function createSchema(db) {
     db.exec(`CREATE TABLE IF NOT EXISTS ${table} (${defs})`);
 
     // 비파괴 멱등 마이그레이션: 기존 컬럼은 그대로 두고 누락분만 ADD COLUMN.
+    // 대소문자 보정: SQLite 식별자는 대소문자 무시이므로 예전 DB가 'LockYN' 등 다른 표기로
+    // 같은 컬럼을 가질 수 있다. 케이스 무시로 비교해 이미 있는 컬럼을 중복 추가(=duplicate column 오류)하지 않는다.
     const existing = new Set(
-      db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name),
+      db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name.toLowerCase()),
     );
     for (const [name, def] of cols) {
-      if (!existing.has(name)) {
+      if (!existing.has(name.toLowerCase())) {
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
       }
     }
   }
+}
+
+// 비어 있는 Contents.department를 작성자(author)와 이름이 일치하는 User의 부서로 보정한다.
+// 비파괴: 빈 부서(NULL/'')만 채우고 기존 부서는 덮어쓰지 않으며, 매칭 사용자가 없거나
+// 그 사용자의 부서도 비어 있으면 그대로 둔다. 보정한 행 수를 반환한다(멱등 — 재호출 시 0).
+export function backfillEmptyDepartments(db) {
+  return db.prepare(
+    `UPDATE Contents
+        SET department = (SELECT u.department FROM User u WHERE u.name = Contents.author),
+            departmentCode = (SELECT u.departmentCode FROM User u WHERE u.name = Contents.author)
+      WHERE (department IS NULL OR department = '')
+        AND EXISTS (
+          SELECT 1 FROM User u
+           WHERE u.name = Contents.author
+             AND u.department IS NOT NULL AND u.department != ''
+        )`,
+  ).run().changes;
 }

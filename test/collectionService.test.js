@@ -8,13 +8,13 @@ import { createReceiverConfigModel } from '../src/models/receiverConfigModel.js'
 import { createCollectionService } from '../src/services/collectionService.js';
 import * as parser from '../src/parsers/parser.js';
 
-function setup() {
+function setup(fetchFn) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const articleModel = createArticleModel(db);
   const articleService = createArticleService({ articleModel, db });
   const receiverConfigModel = createReceiverConfigModel(db);
-  const collection = createCollectionService({ articleService, receiverConfigModel, parser });
+  const collection = createCollectionService({ articleService, receiverConfigModel, parser, fetchFn });
   return { db, articleModel, receiverConfigModel, collection };
 }
 
@@ -66,6 +66,73 @@ test('receive: 비활성(active=N) 설정은 등록을 거부한다', () => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'inactive');
   assert.equal(articleModel.query().length, 0);
+});
+
+test('pull: 등록된 활성 API 소스를 호출(apiKey 헤더)해 응답을 자동기사로 등록한다 (#4)', async () => {
+  let seenUrl; let seenInit;
+  const fetchFn = async (url, init) => {
+    seenUrl = url; seenInit = init;
+    return { ok: true, text: async () => JSON.stringify({ title: 'PULL 제목', content: 'PULL 본문' }) };
+  };
+  const { collection, receiverConfigModel, articleModel } = setup(fetchFn);
+  receiverConfigModel.insert({ sourceId: 'api-pull', type: 'API', apiEndpoint: 'https://news.example/api', apiKey: 'SECRET', active: 'Y' });
+
+  const r = await collection.pull('api-pull');
+  assert.equal(r.ok, true);
+  assert.equal(seenUrl, 'https://news.example/api', 'apiEndpoint로 호출한다');
+  assert.equal(seenInit.headers.Authorization, 'Bearer SECRET', 'apiKey를 Authorization 헤더로 보낸다');
+
+  const row = articleModel.getById(r.articleId);
+  assert.equal(row.contents.title, 'PULL 제목');
+  assert.equal(row.contents.attribute, '자동기사');
+  assert.equal(row.contents.status, 'RDS');
+});
+
+test('pull: 평문(JSON 아님) 응답도 첫 줄=제목으로 파싱해 등록한다 (#4)', async () => {
+  const fetchFn = async () => ({ ok: true, text: async () => '평문 제목\n평문 본문' });
+  const { collection, receiverConfigModel, articleModel } = setup(fetchFn);
+  receiverConfigModel.insert({ sourceId: 'api-txt', type: 'API', apiEndpoint: 'https://x/feed', active: 'Y' });
+
+  const r = await collection.pull('api-txt');
+  assert.equal(r.ok, true);
+  assert.equal(articleModel.getById(r.articleId).contents.title, '평문 제목');
+});
+
+test('pull: 외부 호출 실패(!ok)는 오류 없이 graceful 거부하고 기사를 만들지 않는다 (#4)', async () => {
+  const fetchFn = async () => ({ ok: false, status: 500, text: async () => '' });
+  const { collection, receiverConfigModel, articleModel } = setup(fetchFn);
+  receiverConfigModel.insert({ sourceId: 'api-bad', type: 'API', apiEndpoint: 'https://x/feed', active: 'Y' });
+
+  const r = await collection.pull('api-bad');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'fetch-failed');
+  assert.equal(articleModel.query().length, 0);
+});
+
+test('pull: fetch가 throw해도 graceful 거부한다 (#4)', async () => {
+  const fetchFn = async () => { throw new Error('network down'); };
+  const { collection, receiverConfigModel } = setup(fetchFn);
+  receiverConfigModel.insert({ sourceId: 'api-throw', type: 'API', apiEndpoint: 'https://x/feed', active: 'Y' });
+
+  const r = await collection.pull('api-throw');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'fetch-failed');
+});
+
+test('pull: 미등록 sourceId는 거부, 활성 API 소스가 없으면(FTP/비활성) 거부한다 (#4)', async () => {
+  let called = false;
+  const fetchFn = async () => { called = true; return { ok: true, text: async () => '{}' }; };
+  const { collection, receiverConfigModel } = setup(fetchFn);
+
+  assert.equal((await collection.pull('nope')).reason, 'unregistered');
+
+  receiverConfigModel.insert({ sourceId: 'ftp-only', type: 'FTP', active: 'Y' });
+  assert.equal((await collection.pull('ftp-only')).reason, 'no-active-api-source', 'FTP 타입은 pull 대상 아님');
+
+  receiverConfigModel.insert({ sourceId: 'api-off', type: 'API', apiEndpoint: 'https://x', active: 'N' });
+  assert.equal((await collection.pull('api-off')).reason, 'no-active-api-source', '비활성 API는 호출 안 함');
+
+  assert.equal(called, false, '거부 경로에서는 외부 호출을 하지 않는다');
 });
 
 test('receive: parser는 주입 가능하다 — 가짜 parser/서비스로 네트워크 없이 동작한다', () => {

@@ -259,6 +259,41 @@ test('PUT /api/articles/:id: 잠금 보유자만 수정할 수 있다', async ()
   } finally { await ctx.close(); }
 });
 
+test('PUT /api/articles/:id: 부서를 빈 값으로 저장하면 세션 부서로 보정한다 (#3)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', departmentCode: 'SOC', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // POST 자동입력을 피하려 다른 부서(경제부)로 명시 저장.
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', department: '경제부', departmentCode: 'ECO' } })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+
+    // 편집 저장에서 부서를 빈 값으로 전송 → 세션 부서(사회부)로 보정.
+    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { department: '', departmentCode: '' } });
+    assert.equal(ok.status, 200);
+    const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
+    assert.equal(row.department, '사회부', '빈 부서는 세션 부서로 보정');
+    assert.equal(row.departmentCode, 'SOC');
+  } finally { await ctx.close(); }
+});
+
+test('PUT /api/articles/:id: 부서 키를 보내지 않으면 기존 부서를 보존한다 (부분 수정, #3)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', departmentCode: 'SOC', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', department: '경제부', departmentCode: 'ECO' } })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid });
+
+    // 부서 키 없이 제목만 수정 → 기존 부서(경제부) 보존.
+    const ok = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid, body: { title: '새제목' } });
+    assert.equal(ok.status, 200);
+    const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
+    assert.equal(row.department, '경제부', '부서 미전송 시 기존 부서 보존');
+    assert.equal(row.title, '새제목');
+  } finally { await ctx.close(); }
+});
+
 test('DPS 편집 진입 lock 획득은 D 전용, 비-DPS는 인증 사용자 누구나', async () => {
   const ctx = await start();
   try {
@@ -353,6 +388,24 @@ test('수집 인제스트: 미등록 sourceId 거부(403), 등록 시 attribute=
     const rows = ctx.controllers.article.query({ articleId: ok.body.articleId });
     assert.equal(rows[0].attribute, '자동기사');
     assert.equal(rows[0].status, 'RDS');
+  } finally { await ctx.close(); }
+});
+
+test('수집 pull: 등록된 API 소스를 능동 호출해 자동기사로 등록한다 (#4)', async () => {
+  const fetchFn = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ title: '풀제목', content: '풀본문' }) });
+  const ctx = await start({ fetchFn });
+  try {
+    createReceiverConfigModel(ctx.db).insert({ sourceId: 'api-1', type: 'API', apiEndpoint: 'https://x/api', apiKey: 'K', active: 'Y' });
+    const ok = await api(ctx.base, 'POST', '/api/collection/pull', { body: { sourceId: 'api-1' } });
+    assert.equal(ok.status, 200);
+    const rows = ctx.controllers.article.query({ articleId: ok.body.articleId });
+    assert.equal(rows[0].attribute, '자동기사');
+    assert.equal(rows[0].title, '풀제목');
+
+    // 미등록 sourceId는 거부(403 unregistered).
+    const denied = await api(ctx.base, 'POST', '/api/collection/pull', { body: { sourceId: 'nope' } });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.reason, 'unregistered');
   } finally { await ctx.close(); }
 });
 
