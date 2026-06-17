@@ -8,7 +8,7 @@
 // → 타이핑 중에는 React가 편집 영역을 다시 그리지 않는다(내부 snapshot 고정). 외부/구조 변경(로드·Ctrl+D·
 //   임베드 추가/삭제·Alt+Y·포커스 이탈 재색칠)일 때만 snapshot을 갱신하고 편집 div를 깨끗이 remount한다.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked } from './editorNewline.js';
@@ -120,6 +120,9 @@ export function Editor({
   const snapRef = useRef(blocks);
   const lastEmittedRef = useRef(blocksToText(blocks));
   const forceRecolorRef = useRef(false);
+  // rootRef: 편집 div DOM 참조(remount 후 포커스/캐럿 복원용). refocusRef: 복원 대상 { lineIndex } 또는 null.
+  const rootRef = useRef(null);
+  const refocusRef = useRef(null);
   const [renderTick, setRenderTick] = useState(0);
 
   // blocks(prop)가 바뀌면 "타이핑 echo"인지 "외부/구조 변경"인지 판정한다.
@@ -130,11 +133,38 @@ export function Editor({
       || incomingText !== lastEmittedRef.current
       || embedSig(blocks) !== embedSig(snapRef.current);
     if (!structural) return;
+    // remount(아래 setRenderTick)로 편집 div가 새로 그려지면 포커스/캐럿이 빠진다.
+    // remount 직전 편집 중(에디터가 포커스 보유)이었다면 복원 대상(현재 캐럿 라인)을 기록한다.
+    // 포커스가 에디터 밖(blur 재색칠·외부 로드·검색 임베드 삽입)이면 복원하지 않는다(포커스 가로채기 금지).
+    const focusedRoot = rootRef.current;
+    const wasFocused = !!focusedRoot && typeof document !== 'undefined' && document.activeElement === focusedRoot;
+    const caretNow = wasFocused ? readCaret(focusedRoot) : null;
+    refocusRef.current = wasFocused ? { lineIndex: caretNow ? caretNow.lineIndex : 0 } : null;
     snapRef.current = blocks;
     lastEmittedRef.current = incomingText;
     forceRecolorRef.current = false;
     setRenderTick((t) => t + 1);
   }, [blocks]);
+
+  // remount(renderTick 증가) 직후: 직전에 편집 중이었다면 편집 div에 포커스와 캐럿을 복원한다.
+  // 없으면 Ctrl+D 라인 삭제 시 remount로 포커스가 빠져, 다음 Ctrl+D가 브라우저 기본동작(북마크)으로 샌다.
+  useLayoutEffect(() => {
+    const target = refocusRef.current;
+    refocusRef.current = null;
+    const root = rootRef.current;
+    if (!target || !root || textLocked) return;
+    root.focus();
+    const lineEls = root.querySelectorAll('.yh-editor__line');
+    if (!lineEls.length) return;
+    const idx = Math.max(0, Math.min(target.lineIndex, lineEls.length - 1));
+    const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+    if (!sel || typeof document === 'undefined' || !document.createRange) return;
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[idx]);
+    range.collapse(true); // 삭제 위치의 라인 시작에 캐럿 — 연속 Ctrl+D가 자연스럽게 이어진다.
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, [renderTick, textLocked]);
 
   // 렌더 소스는 snapRef(고정 스냅샷). 텍스트 라인 역할(색상)도 스냅샷 기준으로 판정한다(임베드 제외).
   const renderBlocks = snapRef.current;
@@ -211,6 +241,7 @@ export function Editor({
   return (
     <div
       key={renderTick}
+      ref={rootRef}
       className="yh-editor"
       role="textbox"
       aria-label="본문"

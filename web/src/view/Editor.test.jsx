@@ -37,6 +37,41 @@ describe('Editor', () => {
     expect(screen.queryByText('본문')).toBeNull();
   });
 
+  it('편집 중 구조 변경(Ctrl+D 라인삭제 등)으로 remount되면 편집 div에 focus()를 복원한다(연속 Ctrl+D 북마크 방지)', () => {
+    const { rerender } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째'), textBlock('셋째')]} onKeyDown={() => {}} onTextChange={() => {}} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    // jsdom은 contentEditable div를 native focus하지 않으므로 activeElement를 강제로 에디터로 둔다(편집 중 상태 모사).
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => box });
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      // 부모가 Ctrl+D로 라인 하나를 제거한 blocks를 다시 내려준다(구조 변경 → remount).
+      rerender(
+        <Editor blocks={[textBlock('첫줄'), textBlock('셋째')]} onKeyDown={() => {}} onTextChange={() => {}} />,
+      );
+      // remount 후 편집 div가 포커스를 되찾아야 다음 Ctrl+D가 에디터에서 처리된다(북마크로 새지 않음).
+      expect(focusSpy).toHaveBeenCalled();
+    } finally {
+      focusSpy.mockRestore();
+      delete document.activeElement;
+    }
+  });
+
+  it('편집 div가 포커스가 아닐 때(외부 로드·blur) 구조 변경은 focus()를 가로채지 않는다', () => {
+    const { rerender } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째')]} onKeyDown={() => {}} onTextChange={() => {}} />,
+    );
+    // activeElement는 기본값(에디터 아님) — 포커스 복원 대상이 아니어야 한다.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      rerender(<Editor blocks={[textBlock('첫줄')]} onKeyDown={() => {}} onTextChange={() => {}} />);
+      expect(focusSpy).not.toHaveBeenCalled();
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
   it('colors title/subtitle/body lines per the structure rule', () => {
     render(<Editor blocks={[textBlock('제목'), textBlock('부제'), textBlock('본문1'), textBlock('본문2'), textBlock('본문3'), textBlock('본문4'), textBlock('본문5')]} />);
     expect(screen.getByText('제목')).toHaveStyle({ color: COLORS.title });
