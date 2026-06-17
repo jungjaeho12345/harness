@@ -21,9 +21,7 @@
 - ⑤ 리뷰는 harness-code-reviewer 에이전트가 한다. (diff 코드리뷰 — 버그·아키텍처·보안·DB 비파괴)
 
 > 아키텍처 규칙
-- CRITICAL: {절대 지켜야 할 규칙 1 (예: 모든 API 로직은 app/api/ 라우트 핸들러에서만 처리)}
-- CRITICAL: {절대 지켜야 할 규칙 2 (예: 클라이언트 컴포넌트에서 직접 외부 API를 호출하지 말 것)}
-- {일반 규칙 (예: 컴포넌트는 components/ 폴더에, 타입은 types/ 폴더에 분리)}
+- ARCHITECTURE.md, ADR.md 참조한다.
 
 > 개발 프로세스
 - CRITICAL: 새 기능 구현 시 반드시 테스트를 먼저 작성하고, 테스트가 통과하는 구현을 작성할 것 (TDD)

@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -243,7 +244,12 @@ class StepExecutor:
             sys.exit(1)
 
         prompt = preamble + step_file.read_text(encoding="utf-8")
-        claude_cmd = "claude.cmd" if sys.platform == "win32" else "claude"
+        # win32: npm 설치는 claude.cmd, 네이티브 설치는 claude.exe — PATH에서 실제 런처를 해석한다.
+        if sys.platform == "win32":
+            claude_cmd = (shutil.which("claude.cmd") or shutil.which("claude.exe")
+                          or shutil.which("claude") or "claude.cmd")
+        else:
+            claude_cmd = shutil.which("claude") or "claude"
         # prompt은 stdin으로 전달 — Windows CMD 최대 길이(~32 767자) 초과 방지
         result = subprocess.run(
             [claude_cmd, "-p", "--dangerously-skip-permissions", "--output-format", "json"],
