@@ -2,7 +2,7 @@
 // 우클릭 컨텍스트 메뉴, 상태 배지 색, 헤더 우클릭 컬럼 설정 모달, 행 클릭 시 상세보기 새 창(720×800).
 // 모든 데이터/액션은 useViewController 경유(transport 직접 호출 금지, ADR-003).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useViewController, VIEW_MENUS } from '../controller/useViewController.js';
 import { ContextMenu } from './ContextMenu.jsx';
@@ -284,11 +284,14 @@ export function ListPage() {
   );
 }
 
-// 부서 선택 — '전체'(전 부서) + 체크박스 멀티셀렉트(데스크 미송고·부서별 작성·부서별 송고 공통).
-// '전체'는 기본 체크(빈 선택=전 부서)이며 누르면 전 부서로 리셋한다. 빈 선택일 때 모든 부서 박스도
-// 체크로 보인다(select-all 느낌). 개별 부서를 끄면 좁혀지고, 모두 다시 켜면 '전체'로 돌아온다.
-// 변경 시 컨트롤러가 자동 재조회한다(빈 선택/전 부서 선택 = 부서 미지정 = 전 부서 조회).
+// 부서 선택 — Select 드롭다운 + 내부 체크박스 멀티셀렉트(데스크 미송고·부서별 작성·부서별 송고 공통).
+// 트리거 버튼을 누르면 패널이 열리고, '전체' 체크박스는 select-all로 동작한다(누르면 전 부서로 리셋).
+// '전체'는 기본 체크(빈 선택=전 부서)다. 빈 선택일 때 모든 부서 박스도 체크로 보인다(select-all 느낌).
+// 개별 부서를 끄면 좁혀지고, 모두 다시 켜면 '전체'로 돌아온다. 변경 시 컨트롤러가 자동 재조회한다
+// (빈 선택/전 부서 선택 = 부서 미지정 = 전 부서 조회). 바깥 클릭 시 패널을 닫는다.
 function DeptSelector({ options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
   const sel = selected || [];
   // '전체' = 전 부서. 빈 선택(기본) 또는 모든 부서 선택을 똑같이 '전체'로 본다.
   const isAll = sel.length === 0 || (options.length > 0 && options.every((d) => sel.includes(d)));
@@ -298,18 +301,45 @@ function DeptSelector({ options, selected, onChange }) {
     if (set.has(dept)) set.delete(dept); else set.add(dept);
     onChange([...set]);
   };
+
+  // 바깥 클릭 시 닫기 — 패널이 열려 있을 때만 리스너를 단다.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  // 트리거에 보여줄 현재 선택 요약.
+  const summary = isAll ? '전체' : sel.length === 1 ? sel[0] : `${sel.length}개 부서`;
+
   return (
-    <div className="yh-dept-selector" data-testid="dept-selector">
-      <label>
-        <input type="checkbox" checked={isAll} onChange={() => onChange([])} />
-        전체
-      </label>
-      {options.map((d) => (
-        <label key={d}>
-          <input type="checkbox" checked={isAll || sel.includes(d)} onChange={() => toggle(d)} />
-          {d}
-        </label>
-      ))}
+    <div className="yh-dept-selector" data-testid="dept-selector" ref={ref}>
+      <button
+        type="button"
+        className="yh-dept-select__trigger"
+        data-testid="dept-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span>부서: {summary}</span>
+        <span className="yh-dept-select__caret" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="yh-dept-select__panel" role="listbox" aria-label="부서 선택">
+          <label className="yh-dept-select__option">
+            <input type="checkbox" checked={isAll} onChange={() => onChange([])} />
+            전체
+          </label>
+          {options.map((d) => (
+            <label key={d} className="yh-dept-select__option">
+              <input type="checkbox" checked={isAll || sel.includes(d)} onChange={() => toggle(d)} />
+              {d}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
