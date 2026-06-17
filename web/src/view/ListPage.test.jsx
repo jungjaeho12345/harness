@@ -90,12 +90,43 @@ describe('ListPage', () => {
 
   it('행을 클릭하면 상세보기 새 창(720×800)을 연다', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue({
-      document: { write: vi.fn(), close: vi.fn() },
+      document: { open: vi.fn(), write: vi.fn(), close: vi.fn() },
     });
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
     await userEvent.click(bodyRows(container)[0]);
     expect(open).toHaveBeenCalledWith('', '_blank', expect.stringContaining('width=720'));
+  });
+
+  it('행을 클릭하면 getArticle로 본문을 받아 상세보기 새 창에 제목+본문을 쓴다', async () => {
+    // 목록 행(Contents 전용)에는 본문(markupVersion)이 없다 — 상세보기 직전 model.getArticle(id)로
+    // 본문까지 갖춘 전체 기사를 받아와 렌더해야 제목(본문 첫 줄)과 본문이 보인다.
+    const written = [];
+    const win = { document: { open: vi.fn(), write: (h) => written.push(h), close: vi.fn() } };
+    vi.spyOn(window, 'open').mockReturnValue(win);
+
+    // markupVersion: 첫 줄=제목, 둘째 줄=본문(yh-editor 블록 JSON).
+    const markup = JSON.stringify({
+      format: 'yh-editor',
+      version: 1,
+      blocks: [{ type: 'text', text: '제목줄입니다' }, { type: 'text', text: '본문 단락 텍스트' }],
+    });
+    const { model, container } = setup({ articles: [{ articleId: 'AKR0', title: 't0', status: 'RDS', lockYN: 'N' }] });
+    // 목록 행에는 markupVersion이 없고, getArticle만이 본문을 채워 돌려준다.
+    const getArticle = vi.spyOn(model, 'getArticle').mockResolvedValue({
+      ok: true,
+      article: { articleId: 'AKR0', title: '제목줄입니다', markupVersion: markup },
+      contents: { articleId: 'AKR0', author: '관리자' },
+    });
+
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+    await userEvent.click(bodyRows(container)[0]);
+
+    await waitFor(() => expect(getArticle).toHaveBeenCalledWith('AKR0'));
+    await waitFor(() => expect(written.length).toBeGreaterThan(0));
+    const html = written.join('');
+    expect(html).toContain('제목줄입니다'); // 본문 첫 줄(=제목)
+    expect(html).toContain('본문 단락 텍스트'); // 본문 블록
   });
 
   it('실시간 SSE 신호가 오면 목록을 재조회한다', async () => {

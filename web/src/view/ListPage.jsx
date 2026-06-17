@@ -23,10 +23,19 @@ const MENU_LABELS = {
 };
 
 // 상세보기 — 새 창 720×800에 이스케이프된 HTML을 쓴다(스크립트 실행 불가).
-function openDetail(article) {
+// 목록 행(article)은 Contents 전용이라 본문(markupVersion)이 없어 제목·본문이 안 보인다 →
+// loadDetail(컨트롤러)로 본문까지 갖춘 전체 기사를 가져와 렌더한다. 팝업 차단을 피하려
+// 클릭 즉시(동기) 빈 창을 먼저 열고, 본문을 받은 뒤 write한다.
+async function openDetail(article, loadDetail) {
   const w = window.open('', '_blank', 'width=720,height=800');
   if (!w || !w.document) return;
-  w.document.write(renderDetailHtml(article));
+  let full = article;
+  try {
+    const f = await loadDetail(article.articleId);
+    if (f) full = f;
+  } catch { /* 조회 실패 — 목록 행만으로 폴백 렌더 */ }
+  w.document.open();
+  w.document.write(renderDetailHtml(full));
   w.document.close();
 }
 
@@ -42,7 +51,7 @@ export function ListPage() {
     menu, selectMenu, departments, setDepartments, deptOptions, refresh,
     live,
     page, setPage, totalPages, pageItems,
-    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory, loadDetail,
     createFollowUp, createContinue, resend, runTranslate, mapArticle,
   } = ctrl;
 
@@ -81,7 +90,7 @@ export function ListPage() {
       case 'mapping': mapArticle(article); break;
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
-      case 'detail': openDetail(article); break;
+      case 'detail': await openDetail(article, loadDetail); break;
       case 'history': showHistory(article, '이력보기', false); break;
       case 'sendHistory': showHistory(article, '송고이력보기', true); break;
       // 번역 — 결과를 in-app 모달로 표시. 실패해도 throw 없이 원문+안내(showTranslate가 graceful 처리).
@@ -179,7 +188,7 @@ export function ListPage() {
           {pageItems.map((row) => (
             <tr
               key={row.articleId}
-              onClick={() => openDetail(row)}
+              onClick={() => openDetail(row, loadDetail)}
               onContextMenu={(e) => { e.preventDefault(); setCtx({ article: row, x: e.clientX, y: e.clientY }); }}
             >
               {cols.map((c) => (
