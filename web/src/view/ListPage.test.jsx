@@ -83,6 +83,32 @@ describe('ListPage', () => {
     expect(apply).toHaveBeenCalledWith('AKR9', 'approveDelete');
   });
 
+  it("부서 선택 '전체'를 누르면 모든 부서가 체크되고 전 부서로 조회한다", async () => {
+    const seed = {
+      users: [{ userId: 'a', department: '정치' }, { userId: 'b', department: '경제' }],
+      articles: [{ articleId: 'AKR9', title: 't', status: 'DPS', lockYN: 'N' }],
+    };
+    const { model } = setup(seed);
+    await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await screen.findByLabelText('정치'); // 부서 옵션(queryUsers) 렌더 대기
+
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(screen.getByLabelText('전체'));
+
+    // 개별 부서 체크박스가 모두 켜지고, 전 부서(departments=모든 옵션)로 조회한다.
+    expect(screen.getByLabelText('전체')).toBeChecked();
+    expect(screen.getByLabelText('정치')).toBeChecked();
+    expect(screen.getByLabelText('경제')).toBeChecked();
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ status: ['DPS'], departments: expect.arrayContaining(['정치', '경제']) }),
+    ));
+
+    // 다시 누르면 모두 해제된다.
+    await userEvent.click(screen.getByLabelText('전체'));
+    expect(screen.getByLabelText('정치')).not.toBeChecked();
+    expect(screen.getByLabelText('경제')).not.toBeChecked();
+  });
+
   it('잠긴 행의 우클릭 Lock해제(D/Z) → force-unlock을 호출한다', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { model, container } = setup({ articles: [{ articleId: 'AKR5', title: 't', status: 'RDS', lockYN: 'Y' }] });

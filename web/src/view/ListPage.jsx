@@ -154,7 +154,6 @@ export function ListPage() {
 
       {showDeptSelector && (
         <DeptSelector
-          menu={menu}
           options={deptOptions}
           selected={departments}
           onChange={setDepartments}
@@ -280,10 +279,13 @@ export function ListPage() {
   );
 }
 
-// 부서 선택 — '전체' 토글 + 체크박스 멀티셀렉트(부서별 송고/작성). 변경 시 컨트롤러가 자동 재조회.
-function DeptSelector({ menu, options, selected, onChange }) {
+// 부서 선택 — '전체'(전 부서 선택) 토글 + 체크박스 멀티셀렉트(부서별 송고/작성). 변경 시 컨트롤러가 자동 재조회.
+// '전체'는 select-all로 동작한다: 누르면 모든 부서 체크박스가 켜지고(전 부서 조회), 다시 누르면 모두 해제한다.
+function DeptSelector({ options, selected, onChange }) {
   const sel = selected || [];
-  const isAll = sel.length === 0;
+  // 모든 부서가 선택돼 있으면 '전체' 체크. (옵션이 없으면 false.)
+  const isAll = options.length > 0 && options.every((d) => sel.includes(d));
+  const toggleAll = () => onChange(isAll ? [] : [...options]);
   const toggle = (dept) => {
     const set = new Set(sel);
     if (set.has(dept)) set.delete(dept); else set.add(dept);
@@ -292,11 +294,7 @@ function DeptSelector({ menu, options, selected, onChange }) {
   return (
     <div className="yh-dept-selector" data-testid="dept-selector">
       <label>
-        <input
-          type="checkbox"
-          checked={isAll}
-          onChange={() => onChange(menu === 'deptSend' ? [] : null)}
-        />
+        <input type="checkbox" checked={isAll} onChange={toggleAll} />
         전체
       </label>
       {options.map((d) => (
