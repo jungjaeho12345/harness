@@ -9,7 +9,7 @@
 //   임베드 추가/삭제·Alt+Y·포커스 이탈 재색칠)일 때만 snapshot을 갱신하고 편집 div를 깨끗이 remount한다.
 
 import { useEffect, useRef, useState } from 'react';
-import { blocksToText, isEmbedBlock, isTextBlock } from './editorContent.js';
+import { blocksToText, isEmbedBlock, isTextBlock, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked } from './editorNewline.js';
 import { embedFromPaste } from './clipboardEmbed.js';
@@ -22,6 +22,37 @@ function readEditorText(root) {
   const lineEls = root.querySelectorAll('.yh-editor__line');
   if (!lineEls.length) return root.textContent ?? '';
   return Array.from(lineEls).map((el) => el.textContent ?? '').join('\n');
+}
+
+// 라인 div(텍스트)와 임베드 figure를 DOM 순서대로 읽어 블록 배열로 재구성한다(텍스트 + 임베드 인터리브).
+// 임베드 데이터는 figure DOM에 없으므로 스냅샷(snapshotBlocks)에서 가져온다. figure의 data-embed-key(snapshot 블록
+// 인덱스)로 '안정적 매칭'을 하고, 키가 없을 때만 등장 순서로 폴백한다 — 인라인 삭제 등으로 임베드 개수가 어긋나도
+// 살아남은 임베드 데이터가 뒤바뀌지 않는다.
+// → 커서 위치에 넣은 임베드의 위치가 이후 타이핑/포커스 이탈 후에도 보존된다(news.md 156·167행).
+function readEditorBlocks(root, snapshotBlocks) {
+  if (!root) return [];
+  const snap = Array.isArray(snapshotBlocks) ? snapshotBlocks : [];
+  const snapEmbeds = snap.filter(isEmbedBlock);
+  const nodes = root.querySelectorAll('.yh-editor__line, .yh-embed');
+  if (!nodes.length) {
+    // 라인 div가 아직 없는 초기/빈 편집 영역 — 브라우저가 직접 넣은 텍스트라도 보존.
+    const text = root.textContent ?? '';
+    return text ? [textBlock(text)] : [];
+  }
+  const out = [];
+  let ei = 0; // data-embed-key가 없는 figure를 위한 등장 순서 폴백 인덱스
+  for (const el of nodes) {
+    if (el.classList.contains('yh-editor__line')) {
+      out.push(textBlock(el.textContent ?? ''));
+    } else { // .yh-embed figure
+      const rawKey = el.dataset && el.dataset.embedKey;
+      const keyed = (rawKey != null && rawKey !== '') ? snap[Number(rawKey)] : undefined;
+      if (isEmbedBlock(keyed)) out.push(keyed); // 안정적 키 매칭(인라인 삭제에도 안전)
+      else if (ei < snapEmbeds.length) out.push(snapEmbeds[ei]); // 폴백: DOM 등장 순서
+      ei += 1;
+    }
+  }
+  return out;
 }
 
 // 임베드 블록들의 서명 — 구조(임베드 추가/삭제/변경) 변화 감지에 쓴다(텍스트 타이핑과 무관).
@@ -119,6 +150,8 @@ export function Editor({
   // 붙여넣기 — ① "(끝)" 뒤면 차단(텍스트·이미지 공통). ② 클립보드에 이미지 item이 있으면 임베드로 변환
   //   (preventDefault + FileReader로 data:image URL을 읽어 onPasteEmbed에 전달). ③ 그 외(일반 텍스트)는
   //   기본 붙여넣기 동작을 유지한다(preventDefault 안 함·onPasteEmbed 미호출).
+  // 이미지는 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드로 들어간다(news.md 156행) — 캐럿은 비동기 FileReader
+  // 전에 동기로 확보한다(이후 selection이 소실될 수 있으므로).
   const handlePaste = (e) => {
     if (caretBlocked(e.currentTarget)) { e.preventDefault(); return; }
     const items = e.clipboardData && e.clipboardData.items;
@@ -128,10 +161,11 @@ export function Editor({
     const file = imageItem.getAsFile && imageItem.getAsFile();
     if (!file) return;
     e.preventDefault();
+    const caret = readCaret(e.currentTarget); // 동기로 캐럿 확보(붙여넣을 위치).
     const reader = new FileReader();
     reader.onload = () => {
       // InlineEmbed가 200×200으로 캡하므로 여기서 크기는 지정하지 않는다(embedFromPaste 기본).
-      onPasteEmbed(embedFromPaste({ imageDataUrl: reader.result }));
+      onPasteEmbed(embedFromPaste({ imageDataUrl: reader.result }), caret);
     };
     reader.readAsDataURL(file);
   };
@@ -145,18 +179,20 @@ export function Editor({
   // 본문을 부모로 내보내되(가드/제목 동기화용), 위 effect가 echo로 판정해 편집 div를 다시 그리지 않는다(캐럿 보존).
   const handleInput = (e) => {
     if (composingRef.current) return;
-    const text = readEditorText(e.currentTarget);
+    const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
+    const text = blocksToText(editBlocks);
     lastEmittedRef.current = text;
-    if (onTextChange) onTextChange(text);
+    if (onTextChange) onTextChange(text, editBlocks);
   };
 
   // 조합 완료 → 본문 반영(동기화). 재색칠(remount)은 하지 않는다 — 조합마다 remount하면 캐럿이 튄다(한글 입력).
   const handleCompositionEnd = (e) => {
     composingRef.current = false;
     if (!textLocked && onTextChange) {
-      const text = readEditorText(e.currentTarget);
+      const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
+      const text = blocksToText(editBlocks);
       lastEmittedRef.current = text;
-      onTextChange(text);
+      onTextChange(text, editBlocks);
     }
   };
 
@@ -165,7 +201,8 @@ export function Editor({
   const handleBlur = (e) => {
     if (!textLocked && onTextChange && shouldRecolor('blur', { composing: composingRef.current })) {
       forceRecolorRef.current = true;
-      onTextChange(readEditorText(e.currentTarget));
+      const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
+      onTextChange(blocksToText(editBlocks), editBlocks);
     }
   };
 
@@ -194,6 +231,7 @@ export function Editor({
           return (
             <InlineEmbed
               key={`embed-${i}`}
+              blockIndex={i}
               embed={block}
               readOnly={readOnly}
               onRemove={() => onRemoveEmbed && onRemoveEmbed(i)}

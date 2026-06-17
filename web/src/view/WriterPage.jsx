@@ -13,7 +13,9 @@ import { deserialize, serialize, hasEndMarker, blocksToText } from './editorCont
 import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
-import { bodyTitle, mergeTextIntoBody, appendEmbedToBody } from './writerBody.js';
+import {
+  bodyTitle, appendEmbedToBody, insertEmbedIntoBody, serializeBodyFromBlocks,
+} from './writerBody.js';
 
 const META_TABS = [
   { key: 'common', label: '공통정보' },
@@ -66,11 +68,12 @@ export function WriterPage() {
   const body = activeTab.fields.body;
   const blocks = deserialize(body);
 
-  // 본문 타이핑 → 정규 순서로 재직렬화 + 제목(첫 줄) 동기화.
-  const onTextChange = (text) => {
-    const next = mergeTextIntoBody(body, text);
+  // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화 + 제목(첫 줄) 동기화.
+  // 임베드는 "(끝)"만 최종 블록으로 보낼 뿐 위치를 옮기지 않는다(news.md 156·167행 — 커서 위치/블록 순서 보존).
+  const onTextChange = (text, editedBlocks) => {
+    const next = serializeBodyFromBlocks(editedBlocks);
     updateField('body', next);
-    updateField('title', bodyTitle(next));
+    updateField('title', (String(text ?? '').split('\n')[0] ?? '').trim());
   };
 
   // Alt+Y → "(끝)" 최종 블록 삽입 + 맞춤법 검사 on(중복이면 무삽입).
@@ -85,6 +88,9 @@ export function WriterPage() {
     }
     const ctrlD = isDeleteLine(e);
     if (!ctrlD && e.key !== 'Backspace' && e.key !== 'Delete') return;
+    // Ctrl+D는 삭제 가능 여부와 무관하게 브라우저 기본동작(북마크 추가)을 막는다.
+    // (삭제할 라인이 없을 때 preventDefault를 빼먹으면 두 번째 Ctrl+D에서 북마크 창이 뜬다.)
+    if (ctrlD) e.preventDefault();
 
     const text = blocksToText(blocks);
     const caret = readCaret(e.currentTarget);
@@ -94,7 +100,7 @@ export function WriterPage() {
 
     const blockIndex = textLineToBlockIndex(blocks, textLineIndex);
     if (blockIndex < 0) return;
-    e.preventDefault();
+    if (!ctrlD) e.preventDefault(); // Backspace/Delete는 실제 라인 삭제가 확정될 때만 기본동작을 막는다.
     updateField('body', serialize(deleteLineAt(blocks, blockIndex).blocks));
   };
 
@@ -108,6 +114,15 @@ export function WriterPage() {
   const insertEmbed = (embed) => {
     if (!embed) return;
     updateField('body', appendEmbedToBody(body, embed));
+  };
+
+  // Ctrl+V 이미지 붙여넣기 — 캐럿이 있는 텍스트 라인 바로 뒤에 임베드를 삽입한다(텍스트 직렬화 없이 커서 위치에만 — news.md 156행).
+  // 캐럿을 못 읽으면(포커스 밖 등) 끝에 덧붙인다.
+  const pasteEmbedAtCaret = (embed, caret) => {
+    if (!embed) return;
+    const lineBlockIndex = caret ? textLineToBlockIndex(blocks, caret.lineIndex) : -1;
+    const insertAt = lineBlockIndex >= 0 ? lineBlockIndex + 1 : -1;
+    updateField('body', insertEmbedIntoBody(body, embed, insertAt));
   };
 
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
@@ -166,7 +181,7 @@ export function WriterPage() {
             onKeyDown={isMapping ? undefined : onKeyDown}
             onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
-            onPasteEmbed={insertEmbed}
+            onPasteEmbed={pasteEmbedAtCaret}
           />
         </section>
 
