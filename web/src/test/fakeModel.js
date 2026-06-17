@@ -176,9 +176,10 @@ export function createFakeModel(seed = {}) {
       return { ok: true };
     },
 
-    subscribe(filter, onChange) {
+    subscribe(filter, onChange, onStatus) {
       const handler = (signal) => onChange(signal, filter);
       listeners.add(handler);
+      onStatus?.(true); // fake 스트림은 즉시 연결됨으로 본다.
       return {
         connected: () => true,
         unsubscribe: () => listeners.delete(handler),

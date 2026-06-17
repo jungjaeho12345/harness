@@ -40,6 +40,7 @@ export function ListPage() {
   const ctrl = useViewController();
   const {
     menu, selectMenu, departments, setDepartments, deptOptions,
+    live,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
     createFollowUp, createContinue, resend, runTranslate, mapArticle,
@@ -146,9 +147,13 @@ export function ListPage() {
             </button>
           ))}
         </div>
-        {/* 실시간 상태바 — SSE 구독(컨트롤러). 끊기면 EventSource가 자동 재연결(ADR-005). */}
-        <span className="yh-live yh-live--on" data-testid="live-status">
-          <span className="yh-live__dot" /> 실시간
+        {/* 실시간 상태바 — 컨트롤러의 실제 SSE 연결 상태(live)를 표시한다. 끊기면 EventSource가 자동 재연결(ADR-005). */}
+        <span
+          className={`yh-live ${live ? 'yh-live--on' : ''}`}
+          data-testid="live-status"
+          title={live ? '실시간 연결됨' : '실시간 연결 끊김 — 자동 재연결 시도 중'}
+        >
+          <span className="yh-live__dot" /> {live ? '실시간' : '연결 끊김'}
         </span>
       </div>
 
