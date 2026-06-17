@@ -33,6 +33,8 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   const canWrite = role === 'R' || role === 'D' || role === 'Z';
   // news.md 명세 부재 — 도출: 재송은 DPS + D/Z에서만 활성(재송고=데스크 송고). 서버 applyAction이 최종 강제.
   const canResend = isDPS && (role === 'D' || role === 'Z');
+  // 데스크 미송고 편집: 데스크(D)·관리자(Z)만 활성(기자 R 비활성).
+  const canDeskEdit = role === 'D' || role === 'Z';
 
   const detail = { key: 'detail', label: '상세보기', enabled: true };
   const copyBody = { key: 'copyBody', label: '본문복사', enabled: true };
@@ -41,8 +43,8 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
 
   let items;
   if (menu === 'deskUnsent') {
-    // 데스크 미송고: 편집 / 상세보기 / 이력보기 / 본문복사 / 제목만복사.
-    items = [edit, detail, HISTORY, copyBody, copyTitle];
+    // 데스크 미송고: 편집(D/Z만 활성) / 상세보기 / 이력보기 / 본문복사 / 제목만복사.
+    items = [{ ...edit, enabled: canDeskEdit }, detail, HISTORY, copyBody, copyTitle];
   } else {
     // 부서별 작성·개인별 수정·부서별 송고 공통 항목.
     items = [
