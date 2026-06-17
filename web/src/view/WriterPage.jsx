@@ -143,16 +143,16 @@ export function WriterPage() {
   return (
     <main className="yh-page">
       {/* 작성 탭 스트립 — ＋로 새 탭, ×로 닫기, 클릭으로 전환 */}
-      <div className="yh-tabs" data-testid="writer-tabs">
+      <div className="yh-tabs yh-tabs--docs" data-testid="writer-tabs">
         {tabs.map((t) => (
           <span key={t.id} className={`yh-tab ${t.id === activeTabId ? 'yh-tab--active' : ''}`}>
             <button type="button" className="yh-tab__label" onClick={() => selectTab(t.id)}>
               {t.fields.title || t.articleId || '새 기사'}
             </button>
-            <button type="button" aria-label="탭 닫기" onClick={() => closeTab(t.id)}>×</button>
+            <button type="button" className="yh-tab__close" aria-label="탭 닫기" onClick={() => closeTab(t.id)}>×</button>
           </span>
         ))}
-        <button type="button" aria-label="새 작성 탭" className="yh-btn" onClick={() => addTab()}>＋</button>
+        <button type="button" aria-label="새 작성 탭" className="yh-tab__add" onClick={() => addTab()}>＋</button>
       </div>
 
       <div className="yh-writer">
@@ -258,67 +258,69 @@ function CommonInfo({ tab, updateField, model, readOnly = false }) {
 
   return (
     <div data-testid="meta-common">
-      <div className="yh-field">
-        <label htmlFor="meta-author">작성자</label>
-        <input id="meta-author" value={f.author} readOnly={readOnly} onChange={(e) => updateField('author', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-coauthor">공동작성</label>
-        <input id="meta-coauthor" value={f.coAuthor} readOnly={readOnly} onChange={(e) => updateField('coAuthor', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-region">지역</label>
-        <input id="meta-region" value={f.region} readOnly={readOnly} onChange={(e) => updateField('region', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-attribute">속성</label>
-        <input id="meta-attribute" value={f.attribute} readOnly={readOnly} onChange={(e) => updateField('attribute', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-keyword">키워드</label>
-        <input id="meta-keyword" value={f.keyword} readOnly={readOnly} onChange={(e) => updateField('keyword', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-embargo">엠바고 시간</label>
-        <input id="meta-embargo" value={f.embargoAt} readOnly={readOnly} onChange={(e) => updateField('embargoAt', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
-        <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-internal-comment">내부코멘트</label>
-        <textarea id="meta-internal-comment" value={f.internalComment} readOnly={readOnly} onChange={(e) => updateField('internalComment', e.target.value)} />
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-external-comment">외부코멘트</label>
-        <textarea id="meta-external-comment" value={f.externalComment} readOnly={readOnly} onChange={(e) => updateField('externalComment', e.target.value)} />
-      </div>
+      <div className="yh-meta-grid">
+        <div className="yh-field">
+          <label htmlFor="meta-author">작성자</label>
+          <input id="meta-author" value={f.author} readOnly={readOnly} onChange={(e) => updateField('author', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="meta-coauthor">공동작성</label>
+          <input id="meta-coauthor" value={f.coAuthor} readOnly={readOnly} onChange={(e) => updateField('coAuthor', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="meta-region">지역</label>
+          <input id="meta-region" value={f.region} readOnly={readOnly} onChange={(e) => updateField('region', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="meta-attribute">속성</label>
+          <input id="meta-attribute" value={f.attribute} readOnly={readOnly} onChange={(e) => updateField('attribute', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="meta-embargo">엠바고 시간</label>
+          <input id="meta-embargo" value={f.embargoAt} readOnly={readOnly} onChange={(e) => updateField('embargoAt', e.target.value)} />
+        </div>
+        <div className="yh-field">
+          <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
+          <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
+        </div>
+        <div className="yh-field yh-field--wide">
+          <label htmlFor="meta-keyword">키워드</label>
+          <input id="meta-keyword" value={f.keyword} readOnly={readOnly} onChange={(e) => updateField('keyword', e.target.value)} />
+        </div>
+        <div className="yh-field yh-field--wide">
+          <label htmlFor="meta-internal-comment">내부코멘트</label>
+          <textarea id="meta-internal-comment" value={f.internalComment} readOnly={readOnly} onChange={(e) => updateField('internalComment', e.target.value)} />
+        </div>
+        <div className="yh-field yh-field--wide">
+          <label htmlFor="meta-external-comment">외부코멘트</label>
+          <textarea id="meta-external-comment" value={f.externalComment} readOnly={readOnly} onChange={(e) => updateField('externalComment', e.target.value)} />
+        </div>
 
-      {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다. */}
-      <div className="yh-field">
-        <label htmlFor="meta-attachment">첨부파일</label>
-        <input id="meta-attachment" type="file" disabled={readOnly} onChange={(e) => onFileChange('attachmentFile', e)} />
-        {f.attachmentFile && (
-          <span className="yh-file-saved">
-            <a href={f.attachmentFile}>{f.attachmentFile}</a>
-            {!readOnly && (
-              <button type="button" aria-label="첨부파일 지우기" onClick={() => updateField('attachmentFile', '')}>×</button>
-            )}
-          </span>
-        )}
-      </div>
-      <div className="yh-field">
-        <label htmlFor="meta-reference">자료파일</label>
-        <input id="meta-reference" type="file" disabled={readOnly} onChange={(e) => onFileChange('referenceFile', e)} />
-        {f.referenceFile && (
-          <span className="yh-file-saved">
-            <a href={f.referenceFile}>{f.referenceFile}</a>
-            {!readOnly && (
-              <button type="button" aria-label="자료파일 지우기" onClick={() => updateField('referenceFile', '')}>×</button>
-            )}
-          </span>
-        )}
+        {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다. */}
+        <div className="yh-field yh-field--wide">
+          <label htmlFor="meta-attachment">첨부파일</label>
+          <input id="meta-attachment" type="file" disabled={readOnly} onChange={(e) => onFileChange('attachmentFile', e)} />
+          {f.attachmentFile && (
+            <span className="yh-file-saved">
+              <a href={f.attachmentFile}>{f.attachmentFile}</a>
+              {!readOnly && (
+                <button type="button" aria-label="첨부파일 지우기" onClick={() => updateField('attachmentFile', '')}>×</button>
+              )}
+            </span>
+          )}
+        </div>
+        <div className="yh-field yh-field--wide">
+          <label htmlFor="meta-reference">자료파일</label>
+          <input id="meta-reference" type="file" disabled={readOnly} onChange={(e) => onFileChange('referenceFile', e)} />
+          {f.referenceFile && (
+            <span className="yh-file-saved">
+              <a href={f.referenceFile}>{f.referenceFile}</a>
+              {!readOnly && (
+                <button type="button" aria-label="자료파일 지우기" onClick={() => updateField('referenceFile', '')}>×</button>
+              )}
+            </span>
+          )}
+        </div>
       </div>
 
       {READONLY_LABELS.some(([k]) => ro[k] != null) && (
