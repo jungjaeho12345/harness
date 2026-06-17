@@ -384,6 +384,10 @@ a { color: var(--yh-blue); }
   margin-bottom: var(--yh-sp-md);
 }
 
+/* 부서 조회 바 — 셀렉트 트리거와 조회 버튼의 높이·정렬을 맞춰 이질감 제거 */
+.yh-dept-bar .yh-dept-selector { margin-bottom: 0; }
+.yh-dept-bar .yh-btn { padding: var(--yh-sp-sm) var(--yh-sp-md); }
+
 .yh-dept-select__trigger {
   display: inline-flex;
   align-items: center;
