@@ -176,19 +176,20 @@ test('article 편집 잠금: acquire/assert/release를 서비스에 위임한다
   const { controllers } = setup();
   const c = controllers.article.create({ title: 't', markupVersion: '{}' });
 
-  assert.equal(controllers.article.acquireEditLock(c.articleId, { userId: 'kim', sessionId: 's1' }).ok, true);
-  assert.equal(controllers.article.assertLockHolder(c.articleId, { sessionId: 's1' }).ok, true);
-  assert.equal(controllers.article.assertLockHolder(c.articleId, { sessionId: 's2' }).ok, false);
+  // 보유자는 편집 탭(clientId)이다 — 보유 탭만 assert/release 가능.
+  assert.equal(controllers.article.acquireEditLock(c.articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' }).ok, true);
+  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c1' }).ok, true);
+  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c2' }).ok, false);
 
-  // 다른 세션의 획득은 실패하고 누가 잠갔는지 노출하지 않는다.
-  const other = controllers.article.acquireEditLock(c.articleId, { sessionId: 's2' });
+  // 다른 사용자의 획득은 실패하고 누가 잠갔는지 노출하지 않는다.
+  const other = controllers.article.acquireEditLock(c.articleId, { userId: 'lee', sessionId: 's2', clientId: 'c2' });
   assert.equal(other.ok, false);
   assert.equal(other.reason, 'locked');
-  assert.equal(other.lockerSessionId, undefined);
+  assert.equal(other.lockerClientId, undefined);
 
-  assert.equal(controllers.article.releaseEditLock(c.articleId, { sessionId: 's1' }).ok, true);
+  assert.equal(controllers.article.releaseEditLock(c.articleId, { clientId: 'c1' }).ok, true);
   // 강제 해제는 보유자와 무관하게 동작한다.
-  controllers.article.acquireEditLock(c.articleId, { sessionId: 's2' });
+  controllers.article.acquireEditLock(c.articleId, { userId: 'lee', sessionId: 's2', clientId: 'c2' });
   assert.equal(controllers.article.forceReleaseEditLock(c.articleId).ok, true);
 });
 

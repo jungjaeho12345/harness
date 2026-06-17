@@ -174,6 +174,47 @@ describe('createHttpModel', () => {
     expect(callAt(2)[0]).toBe(`${BASE}/api/articles/AKR1/force-unlock`);
   });
 
+  it('sends the x-edit-client header on lock when a clientId is given (per-tab lock identity)', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.lockArticle('AKR1', 'revise', 'tab-client-1');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/lock`);
+    expect(init.method).toBe('POST');
+    expect(init.headers['x-edit-client']).toBe('tab-client-1');
+    expect(init.credentials).toBe('include');
+    expect(JSON.parse(init.body)).toEqual({ action: 'revise' });
+  });
+
+  it('sends the x-edit-client header on unlock when a clientId is given (holder release)', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.unlockArticle('AKR1', 'tab-client-2');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/unlock`);
+    expect(init.method).toBe('POST');
+    expect(init.headers['x-edit-client']).toBe('tab-client-2');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('sends the x-edit-client header on save(PUT) so the server checks the lock holder (blocks a 2nd tab)', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.saveArticle({ articleId: 'AKR1', title: 'edit' }, 'tab-client-3');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1`);
+    expect(init.method).toBe('PUT');
+    expect(init.headers['x-edit-client']).toBe('tab-client-3');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('omits the x-edit-client header when no clientId is given (backwards compatible)', async () => {
+    const model = createHttpModel({ base: BASE });
+    await model.lockArticle('AKR1', 'revise');
+    await model.unlockArticle('AKR1');
+    await model.saveArticle({ articleId: 'AKR1', title: 'edit' });
+    expect(callAt(0)[1].headers['x-edit-client']).toBeUndefined();
+    expect(callAt(1)[1].headers['x-edit-client']).toBeUndefined();
+    expect(callAt(2)[1].headers['x-edit-client']).toBeUndefined();
+  });
+
   it('request always sends credentials: include so the session cookie rides cross-origin', async () => {
     const model = createHttpModel({ base: BASE });
 

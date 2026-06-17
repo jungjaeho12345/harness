@@ -157,11 +157,12 @@ test('articleModel: setLock/clearLock이 잠금 컬럼을 갱신한다', () => {
   const { articles } = setup();
   articles.insert(makeArticle('AKR1'));
 
-  articles.setLock('AKR1', { lockerUserId: 'kim', lockerSessionId: 'sess-1', lockedAt: '2026-06-14T01:00:00.000Z' });
+  articles.setLock('AKR1', { lockerUserId: 'kim', lockerSessionId: 'sess-1', lockerClientId: 'tab-1', lockedAt: '2026-06-14T01:00:00.000Z' });
   let c = articles.getById('AKR1').contents;
   assert.equal(c.lockYN, 'Y');
   assert.equal(c.lockerUserId, 'kim');
   assert.equal(c.lockerSessionId, 'sess-1');
+  assert.equal(c.lockerClientId, 'tab-1');
   assert.equal(c.lockedAt, '2026-06-14T01:00:00.000Z');
 
   articles.clearLock('AKR1');
@@ -169,6 +170,7 @@ test('articleModel: setLock/clearLock이 잠금 컬럼을 갱신한다', () => {
   assert.equal(c.lockYN, 'N');
   assert.equal(c.lockerUserId, null);
   assert.equal(c.lockerSessionId, null);
+  assert.equal(c.lockerClientId, null);
   assert.equal(c.lockedAt, null);
 });
 

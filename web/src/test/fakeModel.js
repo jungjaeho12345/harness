@@ -92,10 +92,20 @@ export function createFakeModel(seed = {}) {
       // 서버 getById와 같은 shape({ article, contents }). in-memory는 평탄 1행이라 둘 다 같은 행을 비춘다.
       return { ok: true, article: { ...a }, contents: { ...a } };
     },
-    saveArticle(dto = {}) {
+    // clientId(편집 탭 식별자)는 PUT 저장 시 잠금 보유 탭 검증(assertLockHolder)에 쓰인다 — in-memory에선
+    // 보유 탭(lockerClientId)이 다르면 거부해 "2번째 탭 저장 차단" 계약을 단위테스트에서 재현할 수 있게 한다.
+    saveArticle(dto = {}, clientId) {
       // 서버는 본문을 markupVersion 컬럼에만 저장하고 body 키는 버린다(ARTICLE_FIELDS pick 이음새).
       // 같은 정규화를 해야 contract 불일치(본문이 body로 전송되는 버그)가 단위테스트에서도 드러난다.
       const { body, ...persist } = dto; // eslint-disable-line no-unused-vars
+      // 편집(PUT, articleId 보유)일 때만 잠금 보유 탭을 검증한다. 잠겨 있고 보유 탭이 다르면 거부.
+      if (persist.articleId) {
+        const locked = findArticle(persist.articleId);
+        if (locked && locked.lockYN === 'Y' && locked.lockerClientId
+          && clientId !== undefined && clientId !== locked.lockerClientId) {
+          return { ok: false, reason: 'not-holder' };
+        }
+      }
       if (persist.articleId) {
         const a = findArticle(persist.articleId);
         if (a) Object.assign(a, persist);
@@ -143,21 +153,38 @@ export function createFakeModel(seed = {}) {
       return { ok: true, path: `/uploads/fake-${name}`, filename: name };
     },
 
-    lockArticle(articleId) {
+    // clientId(편집 탭 식별자)-aware in-memory 잠금. acquire 규칙(편집 잠금 계약 a/b/c 모델의 축소판):
+    // 이미 다른 clientId가 잠그고 있으면 'locked' 거부(같은 세션 다른 탭/다른 사용자), 같은 clientId면 재획득 허용.
+    lockArticle(articleId, action, clientId) { // action은 서버 게이트용 — fake는 잠금 식별(clientId)만 검증
       const a = findArticle(articleId);
-      if (a) a.lockYN = 'Y';
+      if (a) {
+        if (a.lockYN === 'Y' && a.lockerClientId && clientId !== undefined && a.lockerClientId !== clientId) {
+          return { ok: false, reason: 'locked' };
+        }
+        a.lockYN = 'Y';
+        a.lockerClientId = clientId ?? null;
+      }
       notify('lock');
       return { ok: true };
     },
-    unlockArticle(articleId) {
+    // 보유 탭(lockerClientId===clientId)만 해제한다. 비보유 탭은 not-holder, 이미 해제면 멱등 ok.
+    unlockArticle(articleId, clientId) {
       const a = findArticle(articleId);
-      if (a) a.lockYN = 'N';
+      if (a) {
+        if (a.lockYN === 'Y' && a.lockerClientId
+          && clientId !== undefined && a.lockerClientId !== clientId) {
+          return { ok: false, reason: 'not-holder' };
+        }
+        a.lockYN = 'N';
+        a.lockerClientId = null;
+      }
       notify('lock');
       return { ok: true };
     },
+    // 강제 해제(D/Z) — clientId 무관하게 잠금을 비운다(보유 탭 검증 없음).
     forceUnlockArticle(articleId) {
       const a = findArticle(articleId);
-      if (a) a.lockYN = 'N';
+      if (a) { a.lockYN = 'N'; a.lockerClientId = null; }
       notify('lock');
       return { ok: true };
     },

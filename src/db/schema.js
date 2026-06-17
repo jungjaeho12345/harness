@@ -44,6 +44,7 @@ const SCHEMA = {
     ['lockYN', "VARCHAR DEFAULT 'N'"],
     ['lockerUserId', 'VARCHAR'],
     ['lockerSessionId', 'VARCHAR'],
+    ['lockerClientId', 'VARCHAR'],
     ['lockedAt', 'VARCHAR'],
     ['coAuthor', 'VARCHAR'],
     ['region', 'VARCHAR'],

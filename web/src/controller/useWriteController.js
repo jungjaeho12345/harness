@@ -34,6 +34,19 @@ function nextTabId() {
   return `tab-${tabSeq}`;
 }
 
+// 편집 탭(EDIT TAB)별 고유 clientId — 잠금/저장/해제 시 x-edit-client 헤더로 실어 서버가
+// "한 세션 1탭만 편집"(같은 세션 다른 탭 차단)·같은 탭 새로고침 재획득·같은 사용자 재로그인 takeover를
+// 식별하게 한다(편집 잠금 계약). crypto.randomUUID 우선, 없으면 Math 없는 폴백(시간+카운터)으로 충돌을 피한다.
+let clientSeq = 0;
+function nextClientId() {
+  try {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) return `c-${uuid}`;
+  } catch { /* crypto 불가 — 폴백 */ }
+  clientSeq += 1;
+  return `c-${Date.now().toString(36)}-${clientSeq}`;
+}
+
 function pick(src, keys) {
   const out = {};
   for (const k of keys) if (src && src[k] !== undefined && src[k] !== null) out[k] = src[k];
@@ -73,18 +86,21 @@ function blankTab() {
     mode: 'new', // 편집 진입 컨텍스트: new / edit / revise / portalRevise (버튼 표시 규칙이 의존 — step12)
     articleId: null,
     status: null, // 진입 상태(RDS/DDH/DPS…) — 송고/보류/KILL 버튼 표시 규칙이 사용한다(writerButtons).
+    clientId: null, // 편집 잠금을 획득한 탭만 채워진다(편집 탭 식별자, x-edit-client).
     fields: blankFields(),
     readOnly: {},
   };
 }
 
 // 편집 진입 — 제목/본문/작성자/엠바고/2차엠바고는 입력란에 채우고, 나머지 메타는 읽기전용으로 보존한다.
-function tabFromArticle(article, mode, fallbackAuthor) {
+// clientId: 이 편집 탭의 잠금을 획득할 때 쓴 식별자를 탭에 보관해 저장(PUT)·해제(unlock)에서 같은 값을 보낸다.
+function tabFromArticle(article, mode, fallbackAuthor, clientId) {
   return {
     id: nextTabId(),
     mode,
     articleId: article.articleId,
     status: article.status ?? null,
+    clientId: clientId ?? null,
     // 편집 가능 필드(제목/본문/작성자/엠바고/공통정보 확장/첨부·자료파일)를 모두 채운다.
     fields: fieldsFromArticle(article, fallbackAuthor),
     readOnly: pick(article, READONLY_FIELDS),
@@ -157,7 +173,7 @@ export function useWriteController() {
     const cur = tabsRef.current;
     const closing = cur.find((t) => t.id === id);
     if (unlock && closing && closing.articleId) {
-      Promise.resolve(model.unlockArticle(closing.articleId)).catch(() => {});
+      Promise.resolve(model.unlockArticle(closing.articleId, closing.clientId)).catch(() => {});
     }
     let next = cur.filter((t) => t.id !== id);
     if (next.length === 0) next = [blankTab()];
@@ -200,13 +216,15 @@ export function useWriteController() {
     // 매핑(mapping)도 임베드 전용 편집이므로 전이 없는 잠금('revise')을 재사용한다 — 별도 분기 불필요.
     // 서버 POST :id/lock 게이트(DPS는 D 전용)가 실제 인가를 강제한다(신뢰경계=서버, ADR-004).
     const lockAction = mode === 'portalRevise' ? 'portalRevise' : 'revise';
-    const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => null);
+    // 이 편집 탭의 고유 clientId를 발급해 잠금 획득에 실어 보낸다(이후 저장/해제도 같은 값을 사용).
+    const clientId = nextClientId();
+    const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction, clientId)).catch(() => null);
     if (lock && lock.ok === false && lock.reason === 'locked') {
       globalThis.alert?.('편집중입니다.');
       return null; // 다른 세션이 편집 중 — 탭을 열지 않는다.
     }
 
-    const tab = tabFromArticle(full, mode, identity && identity.name);
+    const tab = tabFromArticle(full, mode, identity && identity.name, clientId);
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
     return tab.id;
@@ -243,7 +261,7 @@ export function useWriteController() {
   const save = useCallback(async () => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab));
+    const r = await model.saveArticle(toSaveDto(tab), tab.clientId);
     if (r && r.ok && r.articleId && !tab.articleId) {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
@@ -256,9 +274,9 @@ export function useWriteController() {
   const saveMapping = useCallback(async () => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab)); // PUT(articleId 포함) — 원본 미삭제(DB 비파괴).
+    const r = await model.saveArticle(toSaveDto(tab), tab.clientId); // PUT(articleId 포함) — 원본 미삭제(DB 비파괴).
     if (r && r.ok) {
-      if (tab.articleId) await Promise.resolve(model.unlockArticle(tab.articleId)).catch(() => {});
+      if (tab.articleId) await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
       resetTabToBlank(tab.id);
     }
     return r;
@@ -271,15 +289,15 @@ export function useWriteController() {
     if (!tab) return { ok: false, reason: 'no-tab' };
 
     if (!tab.articleId) {
-      const r = await model.saveArticle(toSaveDto(tab));
+      const r = await model.saveArticle(toSaveDto(tab), tab.clientId);
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }
 
-    await model.saveArticle(toSaveDto(tab));
+    await model.saveArticle(toSaveDto(tab), tab.clientId);
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
-      await Promise.resolve(model.unlockArticle(tab.articleId)).catch(() => {});
+      await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
       resetTabToBlank(tab.id);
     }
     return r;
@@ -340,7 +358,7 @@ export function useWriteController() {
     const onUnload = () => {
       for (const t of tabsRef.current) {
         if (t.articleId) {
-          try { model.unlockArticle(t.articleId); }
+          try { model.unlockArticle(t.articleId, t.clientId); }
           catch { /* 언로드 중 — 실패는 무시 */ }
         }
       }

@@ -143,6 +143,16 @@ export function useViewController() {
     return model.forceUnlockArticle(article.articleId);
   }, [model, identity]);
 
+  // 상세보기 — 목록 행은 Contents 전용(본문 markupVersion 없음)이라, 상세보기 직전에
+  // model.getArticle(id)로 본문(Article.markupVersion)·제목까지 갖춘 전체 기사를 가져온다(ADR-003).
+  // 서버 GET :id는 { ok, article, contents } shape. contents의 공통정보 위에 article을 마지막에 펼쳐
+  // markupVersion·title이 Article 값으로 우선되게 한다(본문 첫 줄=제목 렌더가 살아난다).
+  const loadDetail = useCallback(async (articleId) => {
+    const r = await model.getArticle(articleId);
+    if (!r || r.ok === false) return null;
+    return { ...(r.contents || {}), ...(r.article || {}) };
+  }, [model]);
+
   // 이력보기/송고이력보기 — 읽기 전용. 확인창 없이 model.queryHistory(ADR-003)로 이력 행을 가져온다.
   // sendOnly면 송고 이력만(서버 도메인 필터). 이력이 없으면 빈 배열을 반환한다(오류 아님 — step0 전제).
   const loadHistory = useCallback(async (article, { sendOnly = false } = {}) => {
@@ -196,7 +206,7 @@ export function useViewController() {
     page, setPage, totalPages, pageItems, items,
     live,
     refresh,
-    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory,
+    editArticle, reviseArticle, releaseLock, requestDelete, loadHistory, loadDetail,
     createFollowUp, createContinue, resend, runTranslate, mapArticle,
   };
 }
