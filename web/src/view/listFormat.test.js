@@ -20,6 +20,7 @@ describe('formatCell', () => {
   it('시간 컬럼만 포맷한다', () => {
     expect(formatCell('createdAt', '2026-06-14T03:09:06Z')).toBe('2026-06-14 03:09');
     expect(formatCell('editedAt', '2026-06-14T03:09:06Z')).toBe('2026-06-14 03:09');
+    expect(formatCell('sentAt', '2026-06-14T03:09:06Z')).toBe('2026-06-14 03:09');
     expect(formatCell('title', '제목')).toBe('제목');
     expect(formatCell('lockYN', 'Y')).toBe('Y');
   });
