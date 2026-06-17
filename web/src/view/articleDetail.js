@@ -1,7 +1,8 @@
-// 상세보기 데이터 구성 (news.md 상세보기).
-// 상단: 공통정보를 가로로 나열(빈 필드는 '—'). 하단: 본문 블록을 저장된 순서대로 하나의 영역에.
-// 본문 첫 줄이 곧 제목이므로 별도 제목 요소는 두지 않는다. 창 제목은 기사 제목(없으면 '(제목 없음)').
-// CRITICAL: 모든 내용은 HTML 이스케이프되어 스크립트가 실행되지 않는다.
+// 상세보기 데이터 구성 + 새 창 렌더 (news.md 상세보기).
+// 상단: 공통정보를 가로 그리드로 나열(빈 필드는 '—'). 하단: 본문 블록을 저장된 순서대로 한 영역에(명조 지면).
+// 본문 첫 줄이 곧 제목이므로 별도 제목 요소는 두지 않는다(CSS로 첫 줄 강조). 창 제목은 기사 제목(없으면 '(제목 없음)').
+// 새 창은 앱 CSS(yonhap.css)를 로드하지 않으므로 디자인은 인라인 <style>(DETAIL_STYLE)로 포함한다.
+// CRITICAL: 모든 내용은 HTML 이스케이프되어 스크립트가 실행되지 않는다(<style>은 정적이라 사용자 값을 담지 않는다).
 
 import { deserialize, isEmbedBlock } from './editorContent.js';
 
@@ -47,29 +48,86 @@ export function buildDetail(article = {}) {
   return { common, blocks, windowTitle };
 }
 
+// 새 창용 인라인 스타일 — yonhap.css 디자인 토큰(블루 기조·레드 포인트·명조 헤드라인)을 직접 박는다.
+// 새 창은 외부 CSS를 못 받으므로 값을 인라인한다. 정적 문자열이라 사용자 데이터를 담지 않는다(XSS 무관).
+const DETAIL_STYLE = `
+:root{
+  --b:#0a4da6;--r:#c8102e;--gold:#d4af37;
+  --ink:#1a1a1a;--gd:#444;--gm:#888;--gl:#ddd;
+  --bg:#f5f5f5;--bl:rgba(10,77,166,.08);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{
+  font-family:'Noto Sans KR',system-ui,-apple-system,sans-serif;
+  font-size:14px;line-height:1.5;color:var(--ink);background:var(--bg);padding:16px;
+}
+.yh-detail{
+  max-width:672px;margin:0 auto;background:#fff;
+  border:1px solid rgba(10,77,166,.15);border-radius:6px;
+  box-shadow:0 2px 6px rgba(0,0,0,.08);overflow:hidden;
+}
+.yh-detail__head{display:flex;align-items:center;gap:8px;padding:12px 20px;border-bottom:2px solid var(--b);}
+.yh-detail__head::before{content:"";width:4px;height:18px;background:var(--r);}
+.yh-detail__head h2{margin:0;font-size:.95rem;font-weight:700;letter-spacing:.02em;}
+.yh-detail__common{
+  margin:0;padding:16px 20px;background:#fafafa;border-bottom:1px solid var(--gl);
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 16px;
+}
+.yh-detail__field{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.yh-detail__field dt{font-size:.68rem;font-weight:700;color:var(--b);letter-spacing:.05em;}
+.yh-detail__field dd{margin:0;font-size:.85rem;color:var(--ink);white-space:pre-wrap;word-break:break-word;}
+.yh-detail__field dd.is-empty{color:var(--gm);}
+.yh-detail__body{padding:20px 24px 28px;font-family:'Nanum Myeongjo','Noto Serif KR',serif;}
+.yh-detail__line{margin:0 0 .7em;font-size:1.02rem;line-height:1.85;color:var(--ink);white-space:pre-wrap;word-break:break-word;}
+.yh-detail__line:first-child{
+  font-size:1.5rem;font-weight:700;line-height:1.4;
+  margin-bottom:1rem;padding-bottom:.6rem;border-bottom:2px solid var(--b);
+}
+.yh-detail__embed{
+  margin:.9em 0;padding:10px 12px;background:var(--bl);
+  border:1px solid var(--gl);border-left:3px solid var(--b);border-radius:2px;
+  font-family:'Noto Sans KR',system-ui,sans-serif;font-size:.82rem;color:var(--gd);word-break:break-word;
+}
+.yh-detail__embed::before{
+  content:attr(data-embed-type);display:inline-block;margin-right:8px;padding:1px 6px;vertical-align:middle;
+  font-size:.62rem;font-weight:700;color:#fff;background:var(--b);border-radius:2px;text-transform:uppercase;
+}
+.yh-detail__empty{margin:0;color:var(--gm);font-style:italic;font-family:'Noto Sans KR',system-ui,sans-serif;}
+`;
+
 // 상세보기 새 창에 write할 HTML 문서 문자열 — 모든 값 이스케이프(스크립트 실행 불가).
 export function renderDetailHtml(article = {}) {
   const { common, blocks, windowTitle } = buildDetail(article);
 
   const commonHtml = common
-    .map((f) => `<div class="yh-detail__field"><dt>${escapeHtml(f.label)}</dt>`
-      + `<dd>${escapeHtml(f.value)}</dd></div>`)
-    .join('');
-
-  const bodyHtml = blocks
-    .map((b) => {
-      if (isEmbedBlock(b)) {
-        const label = b.embedType === 'article' ? (b.title ?? '') : (b.src ?? b.title ?? '');
-        return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(b.embedType)}">`
-          + `${escapeHtml(label)}</figure>`;
-      }
-      return `<p class="yh-detail__line">${escapeHtml(b.text)}</p>`;
+    .map((f) => {
+      const cls = f.value === EMPTY_FIELD ? ' class="is-empty"' : '';
+      return `<div class="yh-detail__field"><dt>${escapeHtml(f.label)}</dt>`
+        + `<dd${cls}>${escapeHtml(f.value)}</dd></div>`;
     })
     .join('');
 
+  const bodyHtml = blocks.length
+    ? blocks
+      .map((b) => {
+        if (isEmbedBlock(b)) {
+          const label = b.embedType === 'article' ? (b.title ?? '') : (b.src ?? b.title ?? '');
+          return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(b.embedType)}">`
+            + `${escapeHtml(label)}</figure>`;
+        }
+        return `<p class="yh-detail__line">${escapeHtml(b.text)}</p>`;
+      })
+      .join('')
+    : '<p class="yh-detail__empty">본문 내용이 없습니다.</p>';
+
   return '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
-    + `<title>${escapeHtml(windowTitle)}</title></head><body>`
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + `<title>${escapeHtml(windowTitle)}</title>`
+    + `<style>${DETAIL_STYLE}</style></head><body>`
+    + '<article class="yh-detail">'
+    + '<header class="yh-detail__head"><h2>상세보기</h2></header>'
     + `<dl class="yh-detail__common">${commonHtml}</dl>`
     + `<section class="yh-detail__body">${bodyHtml}</section>`
-    + '</body></html>';
+    + '</article></body></html>';
 }
