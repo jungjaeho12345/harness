@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-06-18T01:39:13+0900",
       "summary": "writerBody.js에 insertEmbedAfterLine(currentBody, embed, textLineIndex) -> {body, caretTextLine} 추가 — 텍스트 줄(텍스트 블록만 0-base 카운트, WriterPage textLineToBlockIndex 동일 동작) 블록 뒤에 임베드 + 빈 textBlock('') 삽입, caretTextLine은 그 빈 줄의 텍스트-줄 인덱스. 범위 밖/null/음수는 끝('(끝)' 앞) 폴백, '(끝)'은 항상 최종 블록 유지(serializeBodyFromBlocks 규칙), 빈 줄은 '(끝)' 앞. caretTextLine은 정규화된 블록 순서에서 빈 줄 참조로 계산해 '(끝)' 재배치까지 반영. 순수 함수(저장 포맷 불변). writerBody.test.js +6 케이스, web 371 통과.",
-      "completed_at": "2026-06-18T01:42:30+0900"
+      "completed_at": "2026-06-18T01:42:57+0900"
     },
     {
       "step": 2,
