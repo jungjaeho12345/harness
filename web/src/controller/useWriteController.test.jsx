@@ -80,6 +80,22 @@ describe('useWriteController', () => {
     expect(lock).toHaveBeenCalledTimes(1);
   });
 
+  it('openArticle shows "편집중입니다." and does not open a tab when another session holds the lock', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    // 다른 세션이 편집 중 — 서버 acquireEditLock이 { ok:false, reason:'locked' }를 돌려준다.
+    vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: false, reason: 'locked' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    let returned;
+    await act(async () => { returned = await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    expect(alert).toHaveBeenCalledWith('편집중입니다.');
+    expect(returned).toBeNull();
+    // 편집 탭이 열리지 않는다 — 빈 새 기사 탭만 유지된다.
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false);
+    expect(result.current.activeTab.articleId).toBeNull();
+  });
+
   it('updateField only mutates editable fields', async () => {
     const { result } = setup({ articles: [{ ...FULL }] });
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
