@@ -24,23 +24,10 @@ export function serializeBodyFromBlocks(blocks) {
   return serialize(rest);
 }
 
-// 임베드를 본문 블록 배열의 blockIndex 위치에 삽입한다(커서 위치 임베딩 — news.md 156행).
-// blockIndex가 유효 범위를 벗어나면 끝(끝 마커 앞)에 덧붙인다. "(끝)"은 항상 최종 블록으로 유지.
-export function insertEmbedIntoBody(currentBody, embed, blockIndex) {
-  if (!embed) return currentBody;
-  const blocks = deserialize(currentBody);
-  if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex > blocks.length) {
-    return appendEmbedToBody(currentBody, embed);
-  }
-  const next = blocks.slice();
-  next.splice(blockIndex, 0, embed);
-  return serializeBodyFromBlocks(next);
-}
-
 // 텍스트 줄 인덱스(0-base, 임베드 제외) → blocks 배열 인덱스.
-// WriterPage.jsx의 비-export 내부 함수 textLineToBlockIndex와 동일 동작(텍스트 블록만 센다 — Editor의 textLine 카운팅과 같은 규칙).
+// WriterPage(onKeyDown 라인 삭제)와 insertEmbedAfterLine이 공유한다(텍스트 블록만 센다 — Editor의 textLine 카운팅과 같은 규칙).
 // null/음수/범위 밖이면 -1을 반환한다(count는 0부터 증가하므로 그런 값과는 절대 일치하지 않는다).
-function textLineToBlockIndex(blocks, textLineIndex) {
+export function textLineToBlockIndex(blocks, textLineIndex) {
   let count = -1;
   for (let i = 0; i < blocks.length; i += 1) {
     if (blocks[i] && blocks[i].type === 'text') {

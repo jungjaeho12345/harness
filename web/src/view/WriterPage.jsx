@@ -14,7 +14,7 @@ import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from '
 import { lineAtOffset } from './editorCaret.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
-  bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks,
+  bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
 
 const META_TABS = [
@@ -37,18 +37,6 @@ const READONLY_LABELS = [
 ];
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
-
-// 텍스트 라인 인덱스(라인 div 순서) → blocks 배열 인덱스. 텍스트 블록만 세어 환산한다(임베드 제외 — Editor의 textLine 카운팅과 동일 규칙).
-function textLineToBlockIndex(blocks, textLineIndex) {
-  let count = -1;
-  for (let i = 0; i < blocks.length; i += 1) {
-    if (blocks[i] && blocks[i].type === 'text') {
-      count += 1;
-      if (count === textLineIndex) return i;
-    }
-  }
-  return -1;
-}
 
 export function WriterPage() {
   const { identity, model } = useAppContext();
