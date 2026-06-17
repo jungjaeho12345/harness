@@ -1,6 +1,7 @@
 import {
   describe, it, expect, vi, beforeEach, afterEach,
 } from 'vitest';
+import { useState } from 'react';
 import {
   render, screen, fireEvent, createEvent, waitFor,
 } from '@testing-library/react';
@@ -135,6 +136,86 @@ describe('Editor — 타이핑 중 편집 div 안정(캐럿 보존)', () => {
       Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent),
     ).toEqual(['제목']));
     expect(container.querySelector('.yh-editor')).not.toBe(before); // remount(새 노드) → 깨끗한 DOM 재구성
+  });
+});
+
+// 개행 보존(버그 수정): 브라우저가 Enter/붙여넣기로 만든 <br>·클래스 없는 중첩 div가 섞인 DOM에서도
+// input 시 onTextChange가 줄 수만큼의 텍스트 블록을 emit해야 한다(여러 줄이 한 블록으로 합쳐지지 않음).
+describe('Editor — 거친 DOM(<br>/중첩 div) 개행 복원', () => {
+  it('<br>로 두 줄이 표현된 라인 div에서 input은 두 개의 텍스트 블록을 emit한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('줄1줄2')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    // 브라우저가 라인 div 안에 <br>를 넣어 두 줄로 만든 상황 모사.
+    container.querySelector('.yh-editor__line').innerHTML = '줄1<br>줄2';
+    fireEvent.input(box);
+    expect(onTextChange).toHaveBeenCalledWith('줄1\n줄2', [
+      { type: 'text', text: '줄1' },
+      { type: 'text', text: '줄2' },
+    ]);
+  });
+
+  it('클래스 없는 중첩 div로 둘째 줄이 표현된 DOM에서 input은 두 개의 텍스트 블록을 emit한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('줄1')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    // 브라우저가 둘째 줄을 클래스 없는 div로 래핑한 상황 모사(최상위 형제 div).
+    const extra = document.createElement('div');
+    extra.textContent = '줄2';
+    box.appendChild(extra);
+    fireEvent.input(box);
+    const blocks = onTextChange.mock.calls[0][1];
+    expect(blocks.map((b) => b.text)).toEqual(['줄1', '줄2']); // 개행 보존(합쳐지지 않음)
+  });
+
+  it('맨 앞 bare 텍스트노드 + 라인 div가 섞여도 줄 순서/개행을 보존한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('줄2')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    // 라인 div 앞에 bare 텍스트노드(줄1)를 넣어 [text, lineDiv] 구성.
+    box.insertBefore(document.createTextNode('줄1'), box.firstChild);
+    // 두 줄 사이 경계를 위해 <br> 삽입(bare 텍스트 + br + lineDiv).
+    box.insertBefore(document.createElement('br'), container.querySelector('.yh-editor__line'));
+    fireEvent.input(box);
+    const blocks = onTextChange.mock.calls[0][1];
+    expect(blocks.map((b) => b.text)).toEqual(['줄1', '줄2']);
+  });
+});
+
+// Enter 줄 분할(버그 수정): Enter는 브라우저 기본 줄바꿈 대신 블록 모델로 분할하고 새 줄에 캐럿을 둔다.
+describe('Editor — Enter 줄 분할(블록 모델)', () => {
+  function Harness({ initial }) {
+    const [blocks, setBlocks] = useState(initial);
+    return (
+      <Editor
+        blocks={blocks}
+        onTextChange={(t, b) => setBlocks(b)}
+        onKeyDown={() => {}}
+      />
+    );
+  }
+
+  it('줄 중간 Enter는 그 줄을 두 줄로 분할하고 remount 후 새 줄에 캐럿을 둔다', async () => {
+    const { container } = render(<Harness initial={[textBlock('AB CD')]} />);
+    caretAtLine(container, 0, false); // 줄 시작
+    // 캐럿을 텍스트노드 offset 2(AB 뒤)로 정확히 둔다.
+    const tnode = container.querySelector('.yh-editor__line').firstChild;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(tnode, 2);
+    range.collapse(true);
+    sel.addRange(range);
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Enter' });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled(); // 브라우저 기본 줄바꿈 차단
+    await waitFor(() => expect(
+      Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent),
+    ).toEqual(['AB', ' CD']));
   });
 });
 

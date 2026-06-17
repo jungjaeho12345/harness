@@ -1,0 +1,29 @@
+{
+  "project": "기사 작성기",
+  "phase": "5-editor-newline-embed",
+  "steps": [
+    {
+      "step": 0,
+      "name": "editor-newline-restore",
+      "status": "completed",
+      "started_at": "2026-06-18T01:17:54+0900",
+      "summary": "본문 개행 합쳐짐 버그 수정 — readEditorBlocks를 DOM 워크로 하드닝(<br>·중첩 div·bare 텍스트노드 개행 복원) + Enter를 블록 모델 분할로 제어(insertTextIntoBlocks 순수 헬퍼, nextCaretLineRef로 새 줄 캐럿 복원) + 여러 줄 텍스트 붙여넣기 개행 보존. readCaret {lineIndex,offset} 계약 불변, 빈 줄 시드 미사용(jsdom userEvent 충돌 회피)."
+    },
+    {
+      "step": 1,
+      "name": "writerbody-embed-newline",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "editor-caret-bridge",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "writerpage-embed-wiring",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-06-18T01:17:54+0900"
+}

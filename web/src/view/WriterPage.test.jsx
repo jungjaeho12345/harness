@@ -747,3 +747,53 @@ describe('WriterPage — 첨부파일/자료파일 업로드', () => {
     expect(screen.getByLabelText('자료파일')).toBeDisabled();
   });
 });
+
+// 본문 개행 직렬화 버그 수정: 빈 새 기사에서 여러 줄 입력 후 Alt+Y를 눌러도 줄이 한 줄로 합쳐지지 않는다.
+describe('WriterPage — 본문 개행 보존(여러 줄 입력 + Alt+Y)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  const editor = (container) => container.querySelector('.yh-editor');
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  // 캐럿을 lineIndex번째 라인의 텍스트 끝(텍스트노드 offset)에 둔다 — Enter 정확 분할용.
+  function caretAtLineTextEnd(container, lineIndex) {
+    const el = container.querySelectorAll('.yh-editor__line')[lineIndex];
+    const tnode = el.firstChild;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    if (tnode && tnode.nodeType === 3) range.setStart(tnode, tnode.textContent.length);
+    else { range.selectNodeContents(el); range.collapse(false); }
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  it('빈 본문에 "줄1 ⏎ 줄2 ⏎ 줄3" 입력 후 Alt+Y → 줄1\\n줄2\\n줄3\\n(끝)로 보존(합쳐지지 않음)', async () => {
+    const { container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭(body 없음)
+
+    // 1) "줄1" 입력 모사 — 빈 에디터엔 라인 div가 없으므로 bare 텍스트노드로 넣고 input.
+    editor(container).textContent = '줄1';
+    fireEvent.input(editor(container));
+    // 2) Enter — 라인 래퍼가 없어 캐럿 null → 끝에 빈 줄 추가 후 remount(라인 div 2개).
+    fireEvent.keyDown(editor(container), { key: 'Enter' });
+    await waitFor(() => expect(editorLines(container)).toEqual(['줄1', '']));
+
+    // 3) 둘째 줄에 "줄2" 입력 + 줄 끝 캐럿 → Enter.
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '줄2';
+    fireEvent.input(editor(container));
+    caretAtLineTextEnd(container, 1);
+    fireEvent.keyDown(editor(container), { key: 'Enter' });
+    await waitFor(() => expect(editorLines(container)).toEqual(['줄1', '줄2', '']));
+
+    // 4) 셋째 줄에 "줄3" 입력.
+    container.querySelectorAll('.yh-editor__line')[2].textContent = '줄3';
+    fireEvent.input(editor(container));
+    await waitFor(() => expect(editorLines(container)).toEqual(['줄1', '줄2', '줄3']));
+
+    // 5) Alt+Y → "(끝)"이 마지막 줄로 추가되고, 앞 줄들은 그대로 보존.
+    fireEvent.keyDown(editor(container), { key: 'y', altKey: true });
+    await waitFor(() => expect(editorLines(container)).toEqual(['줄1', '줄2', '줄3', '(끝)']));
+  });
+});
