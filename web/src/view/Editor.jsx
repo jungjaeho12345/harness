@@ -133,6 +133,23 @@ function isInsertionKey(e) {
   return typeof e.key === 'string' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
 }
 
+// 편집 div에 focus 후 지정 텍스트-줄(.yh-editor__line) 시작에 캐럿을 둔다.
+// remount 후 캐럿 복원(refocusRef)과 지정 줄 포커스(pendingCaretLine)의 공용 경로.
+function focusLineStart(root, lineIndex) {
+  if (!root) return;
+  root.focus();
+  const lineEls = root.querySelectorAll('.yh-editor__line');
+  if (!lineEls.length) return;
+  const idx = Math.max(0, Math.min(lineIndex, lineEls.length - 1));
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!sel || typeof document === 'undefined' || !document.createRange) return;
+  const range = document.createRange();
+  range.selectNodeContents(lineEls[idx]);
+  range.collapse(true); // 줄 시작에 캐럿
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 // readOnly: 완전 읽기전용(텍스트 비편집 + 임베드 × 버튼 숨김 — 상세보기 등).
 // textEditable: 본문 텍스트 편집 가능 여부. false면 본문 텍스트 타이핑이 body에 반영되지 않는다.
 //   단 임베드 × 삭제 버튼은 그대로 노출된다(매핑 모드 — 텍스트 비편집 + 임베드 추가/삭제 허용).
@@ -143,6 +160,8 @@ export function Editor({
   onKeyDown,
   onTextChange,
   onPasteEmbed,
+  onCaretChange,
+  pendingCaretLine = null,
   spellcheck = false,
   readOnly = false,
   textEditable = true,
@@ -196,25 +215,24 @@ export function Editor({
     setRenderTick((t) => t + 1);
   }, [blocks]);
 
-  // remount(renderTick 증가) 직후: 직전에 편집 중이었다면 편집 div에 포커스와 캐럿을 복원한다.
-  // 없으면 Ctrl+D 라인 삭제 시 remount로 포커스가 빠져, 다음 Ctrl+D가 브라우저 기본동작(북마크)으로 샌다.
+  // remount(renderTick 증가)/지정 줄 포커스(pendingCaretLine) 복원 — 단일 경로.
+  // ① pendingCaretLine: Step 3에서 body 변경(remount)과 같은 렌더에 함께 온다. number면 wasFocused 복원보다
+  //    먼저/우선 그 줄에 focus+caret을 둔다(이전 포커스 여부 무관). renderTick(remount)마다 새 DOM에 다시 적용된다.
+  //    textLocked(읽기전용/매핑)면 무시한다.
+  // ② refocusRef(wasFocused): 직전 편집 중이었다면 편집 div에 포커스/캐럿을 복원한다.
+  //    없으면 Ctrl+D 라인 삭제 시 remount로 포커스가 빠져, 다음 Ctrl+D가 브라우저 기본동작(북마크)으로 샌다.
   useLayoutEffect(() => {
     const target = refocusRef.current;
-    refocusRef.current = null;
+    refocusRef.current = null; // 항상 소비(원본 동작)
     const root = rootRef.current;
-    if (!target || !root || textLocked) return;
-    root.focus();
-    const lineEls = root.querySelectorAll('.yh-editor__line');
-    if (!lineEls.length) return;
-    const idx = Math.max(0, Math.min(target.lineIndex, lineEls.length - 1));
-    const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
-    if (!sel || typeof document === 'undefined' || !document.createRange) return;
-    const range = document.createRange();
-    range.selectNodeContents(lineEls[idx]);
-    range.collapse(true); // 삭제 위치의 라인 시작에 캐럿 — 연속 Ctrl+D가 자연스럽게 이어진다.
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }, [renderTick, textLocked]);
+    if (!root || textLocked) return; // 읽기전용/매핑은 포커스 가로채지 않음
+    if (typeof pendingCaretLine === 'number') {
+      focusLineStart(root, pendingCaretLine); // 지정 줄 우선(wasFocused 복원보다 먼저)
+      return;
+    }
+    if (!target) return;
+    focusLineStart(root, target.lineIndex); // 삭제 위치의 라인 시작에 캐럿 — 연속 Ctrl+D가 자연스럽게 이어진다.
+  }, [renderTick, pendingCaretLine, textLocked]);
 
   // 렌더 소스는 snapRef(고정 스냅샷). 텍스트 라인 역할(색상)도 스냅샷 기준으로 판정한다(임베드 제외).
   const renderBlocks = snapRef.current;
@@ -230,6 +248,17 @@ export function Editor({
     nextCaretLineRef.current = caretLineIndex;
     if (onTextChange) onTextChange(blocksToText(next), next);
   };
+
+  // 캐럿 보고 — 캐럿이 에디터 안에서 이동하는 이벤트에서 현재 텍스트-줄 인덱스를 부모로 알린다(Step 3 검색 삽입 위치).
+  // readCaret이 null이면(에디터 밖으로 selection이 빠짐) 보고하지 않는다 → 부모의 lastCaret을 지우지 않는다.
+  // 이벤트 핸들러/effect에서만 호출한다(렌더 본문 동기 호출 금지 — 무한 렌더 방지).
+  const reportCaret = (root) => {
+    if (!onCaretChange) return;
+    const caret = readCaret(root);
+    if (!caret) return;
+    onCaretChange({ lineIndex: caret.lineIndex });
+  };
+  const handleCaretEvent = (e) => reportCaret(e.currentTarget);
 
   // 키다운 — 부모(WriterPage: Alt+Y/Ctrl+D/라인삭제)를 먼저 처리하고, 그 다음 Enter(줄 분할)·"(끝)" 뒤 삽입 차단.
   const handleKeyDown = (e) => {
@@ -294,6 +323,7 @@ export function Editor({
     const text = blocksToText(editBlocks);
     lastEmittedRef.current = text;
     if (onTextChange) onTextChange(text, editBlocks);
+    reportCaret(e.currentTarget); // 타이핑 후 캐럿 위치 갱신(echo 경로라 selection이 보존됨)
   };
 
   // 조합 완료 → 본문 반영(동기화). 재색칠(remount)은 하지 않는다 — 조합마다 remount하면 캐럿이 튄다(한글 입력).
@@ -310,6 +340,8 @@ export function Editor({
   // 포커스 이탈 시 재색칠(news.md: 색 적용은 조합 완료/포커스 이탈/로드 시점). 조합 중 blur면 재색칠하지 않는다.
   // blur는 편집이 멈춘 시점이라 remount(재색칠)해도 캐럿 튐이 보이지 않는다 → forceRecolor로 한 번 강제.
   const handleBlur = (e) => {
+    // blur 계약: 캐럿이 에디터 안이면(readCaret 비-null) 마지막 캐럿을 보고, 밖이면(null) 보고하지 않는다(부모 lastCaret 유지).
+    reportCaret(e.currentTarget);
     if (!textLocked && onTextChange && shouldRecolor('blur', { composing: composingRef.current })) {
       forceRecolorRef.current = true;
       const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
@@ -336,6 +368,9 @@ export function Editor({
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onBlur={handleBlur}
+      onKeyUp={onCaretChange ? handleCaretEvent : undefined}
+      onMouseUp={onCaretChange ? handleCaretEvent : undefined}
+      onSelect={onCaretChange ? handleCaretEvent : undefined}
       onInput={(!textLocked && onTextChange) ? handleInput : undefined}
     >
       {renderBlocks.map((block, i) => {

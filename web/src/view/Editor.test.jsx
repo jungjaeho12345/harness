@@ -445,3 +445,138 @@ describe('Editor — 이미지 붙여넣기 → 임베드 결선', () => {
     expect(onPasteEmbed).not.toHaveBeenCalled(); // 임베드 추가 안 함
   });
 });
+
+// Step 2: 캐럿 보고(onCaretChange) — 캐럿 이동 이벤트에서 현재 텍스트-줄 인덱스를 부모로 보고.
+// blur 계약: 에디터 안에 캐럿이 있으면(readCaret 비-null) 마지막 캐럿을 보고하고, 밖이면(null) 보고하지 않는다.
+describe('Editor — 캐럿 보고(onCaretChange)', () => {
+  it('캐럿 이동 이벤트(keyUp)에서 현재 lineIndex로 onCaretChange를 호출한다', () => {
+    const onCaretChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b'), textBlock('c')]} onTextChange={() => {}} onCaretChange={onCaretChange} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(container, 2); // 셋째 줄
+    fireEvent.keyUp(box, { key: 'ArrowDown' });
+    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 2 });
+  });
+
+  it('마우스업에서도 현재 lineIndex로 onCaretChange를 호출한다', () => {
+    const onCaretChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b')]} onTextChange={() => {}} onCaretChange={onCaretChange} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(container, 1);
+    fireEvent.mouseUp(box);
+    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 1 });
+  });
+
+  it('blur 시 selection이 에디터 안이면 마지막 lineIndex로 onCaretChange를 호출한다', () => {
+    const onCaretChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b')]} onTextChange={() => {}} onCaretChange={onCaretChange} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(container, 1);
+    onCaretChange.mockClear();
+    fireEvent.blur(box);
+    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 1 });
+  });
+
+  it('blur 시 selection이 에디터 밖(root 미포함)이면 onCaretChange를 호출하지 않는다', () => {
+    const onCaretChange = vi.fn();
+    render(<Editor blocks={[textBlock('a')]} onTextChange={() => {}} onCaretChange={onCaretChange} />);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    // selection을 에디터 밖 노드로 이동(검색패널 클릭 모사).
+    const outside = document.createElement('div');
+    outside.textContent = '밖';
+    document.body.appendChild(outside);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(outside);
+    range.collapse(true);
+    sel.addRange(range);
+
+    fireEvent.blur(box);
+    expect(onCaretChange).not.toHaveBeenCalled(); // null이면 마지막 캐럿을 지우지 않는다(부모 lastCaret 유지)
+    outside.remove();
+  });
+});
+
+// Step 2: pendingCaretLine — 지정 텍스트-줄에 focus()+캐럿. remount 복원(refocusRef)보다 우선. textLocked면 무시.
+describe('Editor — pendingCaretLine 지정 줄 포커스', () => {
+  it('pendingCaretLine을 number로 rerender하면 focus()하고 그 줄에 캐럿(range)을 둔다', () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b'), textBlock('c')]} onTextChange={() => {}} />,
+    );
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      rerender(
+        <Editor blocks={[textBlock('a'), textBlock('b'), textBlock('c')]} onTextChange={() => {}} pendingCaretLine={1} />,
+      );
+      expect(focusSpy).toHaveBeenCalled();
+      const lineEls = container.querySelectorAll('.yh-editor__line');
+      expect(window.getSelection().anchorNode).toBe(lineEls[1]); // 둘째 줄 시작에 캐럿
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
+  it('textLocked(readOnly)면 pendingCaretLine으로 focus()하지 않는다', () => {
+    const { rerender } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b')]} readOnly />,
+    );
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      rerender(<Editor blocks={[textBlock('a'), textBlock('b')]} readOnly pendingCaretLine={1} />);
+      expect(focusSpy).not.toHaveBeenCalled();
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
+  it('pendingCaretLine은 이전 포커스 여부와 무관하게(activeElement가 에디터가 아니어도) 동작한다', () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('a'), textBlock('b')]} onTextChange={() => {}} />,
+    );
+    // activeElement는 기본값(에디터 아님) — wasFocused 경로가 아님에도 pendingCaretLine은 적용되어야 한다.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      rerender(
+        <Editor blocks={[textBlock('a'), textBlock('b')]} onTextChange={() => {}} pendingCaretLine={0} />,
+      );
+      expect(focusSpy).toHaveBeenCalled();
+      const lineEls = container.querySelectorAll('.yh-editor__line');
+      expect(window.getSelection().anchorNode).toBe(lineEls[0]);
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
+  // Step 3 핵심 시나리오: body 변경(remount)과 pendingCaretLine을 같은 렌더에 함께 전달하면,
+  // remount된 새 DOM의 지정 줄에 캐럿이 안착한다(검색 임베드 삽입 후 빈 줄로 포커스 이동).
+  it('body 변경(remount)과 함께 온 pendingCaretLine은 remount 후 새 DOM의 그 줄에 캐럿을 둔다', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문')]} onTextChange={() => {}} />,
+    );
+    // 임베드 삽입 모사: 본문(텍스트-줄 1) 뒤에 임베드 + 빈 줄(텍스트-줄 2)이 생긴 새 body + 그 빈 줄(2)로 pendingCaretLine.
+    rerender(
+      <Editor
+        blocks={[
+          textBlock('제목'),
+          textBlock('본문'),
+          embedBlock({ embedType: 'image', src: 'data:image/png;base64,AAA' }),
+          textBlock(''),
+        ]}
+        onTextChange={() => {}}
+        pendingCaretLine={2}
+      />,
+    );
+    await waitFor(() => {
+      const lineEls = container.querySelectorAll('.yh-editor__line');
+      expect(lineEls).toHaveLength(3); // 제목/본문/빈 줄
+      expect(window.getSelection().anchorNode).toBe(lineEls[2]); // 새 DOM의 빈 줄(텍스트-줄 2)에 캐럿
+    });
+  });
+});
