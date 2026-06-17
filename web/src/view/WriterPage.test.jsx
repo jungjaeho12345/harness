@@ -172,6 +172,15 @@ describe('WriterPage — 매핑 모드(mode:mapping)', () => {
     expect(editor.getAttribute('contenteditable')).toBe('false');
   });
 
+  it('공통정보 메타 입력(작성자/엠바고/2차엠바고)도 readOnly로 잠긴다', async () => {
+    const { container } = await openMapping([textBlock('헤드라인'), textBlock('본문내용')]);
+    for (const id of ['meta-author', 'meta-embargo', 'meta-embargo2']) {
+      const input = container.querySelector(`#${id}`);
+      expect(input).toBeTruthy();
+      expect(input.readOnly).toBe(true);
+    }
+  });
+
   it("액션바에 '저장'만 있고 송고/보류/KILL은 없다", async () => {
     await openMapping([textBlock('헤드라인'), textBlock('본문')]);
     expect(actionBtn('저장')).toBeInTheDocument();

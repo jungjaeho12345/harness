@@ -199,7 +199,7 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} />
+              <CommonInfo tab={activeTab} updateField={updateField} readOnly={isMapping} />
             )}
             {metaTab === 'image' && (
               <SearchPanel
@@ -233,22 +233,23 @@ export function WriterPage() {
 }
 
 // 공통정보 — 편집 가능(작성자/엠바고/2차엠바고) + 읽기전용 매핑 필드.
-function CommonInfo({ tab, updateField }) {
+// readOnly=true(매핑 모드)면 작성자/엠바고 입력도 잠근다 — 매핑은 본문 임베드만 추가하고 메타는 건드리지 않는다.
+function CommonInfo({ tab, updateField, readOnly = false }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};
   return (
     <div data-testid="meta-common">
       <div className="yh-field">
         <label htmlFor="meta-author">작성자</label>
-        <input id="meta-author" value={f.author} onChange={(e) => updateField('author', e.target.value)} />
+        <input id="meta-author" value={f.author} readOnly={readOnly} onChange={(e) => updateField('author', e.target.value)} />
       </div>
       <div className="yh-field">
         <label htmlFor="meta-embargo">엠바고 시간</label>
-        <input id="meta-embargo" value={f.embargoAt} onChange={(e) => updateField('embargoAt', e.target.value)} />
+        <input id="meta-embargo" value={f.embargoAt} readOnly={readOnly} onChange={(e) => updateField('embargoAt', e.target.value)} />
       </div>
       <div className="yh-field">
         <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
-        <input id="meta-embargo2" value={f.secondEmbargoAt} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
+        <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
       </div>
 
       {READONLY_LABELS.some(([k]) => ro[k] != null) && (
