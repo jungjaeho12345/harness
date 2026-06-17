@@ -12,27 +12,29 @@ export const VIEW_MENUS = Object.freeze(['deskUnsent', 'deptWrite', 'deptSend', 
 export const PAGE_SIZE = 10;
 
 // 메뉴별 조회 필터 (news.md 기사 조회페이지).
-// 데스크 미송고: RDS·DDH / 부서별 작성: 해당 부서, DPS·RRH 제외 / 부서별 송고: DPS만, 부서 다중 /
-// 개인별 수정: 로그인 작성자, RDS·RRK.
+// 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK.
+// 부서 다중 선택(departments)은 데스크 미송고·부서별 작성·부서별 송고에서 지원하며, 기본값은 '전체'(부서 미지정)다.
 export function buildMenuFilter(menu, identity, departments) {
-  const myDept = identity && identity.department;
+  const depts = (departments && departments.length) ? departments : null; // null/[] = '전체'(부서 미지정)
   switch (menu) {
     case 'deptWrite': {
-      const sel = (departments && departments.length) ? departments : (myDept ? [myDept] : []);
       const f = { excludeStatus: ['DPS', 'RRH'] };
-      if (sel.length) f.departments = sel;
+      if (depts) f.departments = depts;
       return f;
     }
     case 'deptSend': {
       const f = { status: ['DPS'] };
-      if (departments && departments.length) f.departments = departments; // '전체'면 부서 미지정
+      if (depts) f.departments = depts;
       return f;
     }
     case 'personal':
       return { author: (identity && (identity.name || identity.userId)) || undefined, status: ['RDS', 'RRK'] };
     case 'deskUnsent':
-    default:
-      return { status: ['RDS', 'DDH'] };
+    default: {
+      const f = { status: ['RDS', 'DDH'] };
+      if (depts) f.departments = depts;
+      return f;
+    }
   }
 }
 
@@ -44,7 +46,7 @@ function canManage(identity) {
 export function useViewController() {
   const { model, identity, navigate } = useAppContext();
   const [menu, setMenu] = useState('deskUnsent');
-  const [departments, setDepartments] = useState(null); // null = 메뉴 기본값(부서별 작성=내 부서)
+  const [departments, setDepartments] = useState(null); // null/[] = '전체'(부서 미지정) — 3개 메뉴 공통 기본값
   const [page, setPage] = useState(1);
   const [items, setItems] = useState([]);
   const [deptOptions, setDeptOptions] = useState([]);

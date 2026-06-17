@@ -21,11 +21,13 @@ const rds = (n) => Array.from({ length: n }, (_, i) => ({ articleId: `AKR${i}`, 
 describe('buildMenuFilter', () => {
   const me = { userId: 'kim', name: '김기자', department: '정치' };
 
-  it('desk unsent → RDS·DDH', () => {
+  it('desk unsent → RDS·DDH, default 전체; honors department selection', () => {
     expect(buildMenuFilter('deskUnsent', me, null)).toEqual({ status: ['RDS', 'DDH'] });
+    expect(buildMenuFilter('deskUnsent', me, ['정치'])).toEqual({ status: ['RDS', 'DDH'], departments: ['정치'] });
   });
-  it('dept write → my department, excluding DPS·RRH', () => {
-    expect(buildMenuFilter('deptWrite', me, null)).toEqual({ excludeStatus: ['DPS', 'RRH'], departments: ['정치'] });
+  it('dept write → excludes DPS·RRH, default 전체 (no department), honors explicit selection', () => {
+    expect(buildMenuFilter('deptWrite', me, null)).toEqual({ excludeStatus: ['DPS', 'RRH'] });
+    expect(buildMenuFilter('deptWrite', me, ['정치', '경제'])).toEqual({ excludeStatus: ['DPS', 'RRH'], departments: ['정치', '경제'] });
   });
   it('dept send → DPS only, multi-select departments', () => {
     expect(buildMenuFilter('deptSend', me, ['정치', '경제'])).toEqual({ status: ['DPS'], departments: ['정치', '경제'] });
@@ -99,6 +101,14 @@ describe('useViewController', () => {
     const spy = vi.spyOn(model, 'queryArticles');
     await act(async () => { result.current.selectMenu('deptSend'); });
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['DPS'] }));
+  });
+
+  it('desk-unsent supports a department multi-select (departments on selection; 기본 전체)', async () => {
+    const { result, model } = setup({ articles: [] });
+    const spy = vi.spyOn(model, 'queryArticles');
+    // 데스크 미송고에서 부서를 고르면 departments로 재조회한다(기본은 전체 → 선택 시 부서 지정).
+    await act(async () => { result.current.setDepartments(['정치']); });
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RDS', 'DDH'], departments: ['정치'] }));
   });
 
   it('re-queries when an SSE invalidation signal arrives', async () => {

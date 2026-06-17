@@ -194,15 +194,21 @@ export function useWriteController() {
       if (r && r.ok) full = { ...article, ...r.article, ...r.contents };
     } catch { /* 조회 실패 — 폴백 */ }
 
-    const tab = tabFromArticle(full, mode, identity && identity.name);
-    setTabs((prev) => [...prev, tab]);
-    setActiveTabId(tab.id);
-
-    // 잠금 획득 — 고침/포털고침은 lock action으로 구분(서버 editDps D 게이트). 단순 편집 진입이며 전이 없음.
+    // 잠금 획득 — 다른 세션이 편집 중(lockYN='Y')이면 서버가 { ok:false, reason:'locked' }를 돌려준다.
+    // 이때는 편집 탭을 열지 않고 '편집중입니다.'로 안내한다(데스크 미송고 등 편집 진입 공통).
+    // 고침/포털고침은 lock action으로 구분(서버 editDps D 게이트). 단순 편집 진입이며 전이 없음.
     // 매핑(mapping)도 임베드 전용 편집이므로 전이 없는 잠금('revise')을 재사용한다 — 별도 분기 불필요.
     // 서버 POST :id/lock 게이트(DPS는 D 전용)가 실제 인가를 강제한다(신뢰경계=서버, ADR-004).
     const lockAction = mode === 'portalRevise' ? 'portalRevise' : 'revise';
-    await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => {});
+    const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => null);
+    if (lock && lock.ok === false && lock.reason === 'locked') {
+      globalThis.alert?.('편집중입니다.');
+      return null; // 다른 세션이 편집 중 — 탭을 열지 않는다.
+    }
+
+    const tab = tabFromArticle(full, mode, identity && identity.name);
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
     return tab.id;
   }, [identity, model]);
 
