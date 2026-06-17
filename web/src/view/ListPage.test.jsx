@@ -149,6 +149,36 @@ describe('ListPage', () => {
     expect(screen.getByLabelText('정치')).toBeChecked();
   });
 
+  it('부서 Select: 바깥을 클릭하면 패널이 닫힌다', async () => {
+    setup({
+      articles: [],
+      users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
+    });
+    await userEvent.click(await screen.findByTestId('dept-trigger')); // 열기
+    expect(await screen.findByLabelText('정치')).toBeInTheDocument(); // 패널 열림 확인
+    // 패널 바깥(메뉴바 컨테이너 — 비인터랙티브) 클릭 → mousedown 핸들러가 패널을 닫는다(메뉴 전환 등 부작용 없음).
+    await userEvent.click(screen.getByTestId('menubar'));
+    await waitFor(() => expect(screen.queryByLabelText('정치')).toBeNull());
+  });
+
+  it('부서 Select: 부분 선택 시 트리거 요약이 부서명/N개 부서로 표시된다', async () => {
+    const seed = {
+      users: [{ userId: 'a', department: '정치' }, { userId: 'b', department: '경제' }, { userId: 'c', department: '사회' }],
+      articles: [],
+    };
+    setup(seed);
+    const trigger = await screen.findByTestId('dept-trigger');
+    expect(trigger).toHaveTextContent('전체'); // 기본값
+    await userEvent.click(trigger);
+    await screen.findByLabelText('사회');
+    // 경제를 끄면 정치·사회 2개 → 'N개 부서' 요약.
+    await userEvent.click(screen.getByLabelText('경제'));
+    await waitFor(() => expect(trigger).toHaveTextContent('2개 부서'));
+    // 정치도 끄면 사회 1개만 → 부서명 그대로 요약.
+    await userEvent.click(screen.getByLabelText('정치'));
+    await waitFor(() => expect(trigger).toHaveTextContent('사회'));
+  });
+
   it('잠긴 행의 우클릭 Lock해제(D/Z) → force-unlock을 호출한다', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { model, container } = setup({ articles: [{ articleId: 'AKR5', title: 't', status: 'RDS', lockYN: 'Y' }] });
