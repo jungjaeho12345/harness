@@ -129,7 +129,7 @@ export function ListPage() {
     return formatCell(col.key, row[col.key]);
   };
 
-  const showDeptSelector = menu === 'deptWrite' || menu === 'deptSend';
+  const showDeptSelector = menu === 'deskUnsent' || menu === 'deptWrite' || menu === 'deptSend';
 
   return (
     <main className="yh-page">
@@ -154,7 +154,6 @@ export function ListPage() {
 
       {showDeptSelector && (
         <DeptSelector
-          menu={menu}
           options={deptOptions}
           selected={departments}
           onChange={setDepartments}
@@ -280,8 +279,9 @@ export function ListPage() {
   );
 }
 
-// 부서 선택 — '전체' 토글 + 체크박스 멀티셀렉트(부서별 송고/작성). 변경 시 컨트롤러가 자동 재조회.
-function DeptSelector({ menu, options, selected, onChange }) {
+// 부서 선택 — '전체' 토글 + 체크박스 멀티셀렉트(데스크 미송고·부서별 작성·부서별 송고 공통).
+// '전체'(빈 선택)가 기본값이며, 변경 시 컨트롤러가 자동 재조회한다.
+function DeptSelector({ options, selected, onChange }) {
   const sel = selected || [];
   const isAll = sel.length === 0;
   const toggle = (dept) => {
@@ -295,7 +295,7 @@ function DeptSelector({ menu, options, selected, onChange }) {
         <input
           type="checkbox"
           checked={isAll}
-          onChange={() => onChange(menu === 'deptSend' ? [] : null)}
+          onChange={() => onChange([])}
         />
         전체
       </label>

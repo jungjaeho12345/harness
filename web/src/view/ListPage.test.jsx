@@ -34,6 +34,31 @@ describe('ListPage', () => {
     expect(screen.getByTestId('live-status')).toBeInTheDocument();
   });
 
+  it('데스크 미송고에서도 부서 체크박스(기본 전체)를 보여준다', async () => {
+    setup({
+      articles: [],
+      users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
+    });
+    // 기본 메뉴(데스크 미송고)에서 부서 선택기가 보인다.
+    expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
+    // 기본값 '전체'가 선택돼 있다.
+    expect(screen.getByLabelText('전체')).toBeChecked();
+    // 부서 체크박스는 사용자 목록의 부서에서 도출된다.
+    expect(await screen.findByLabelText('정치')).toBeInTheDocument();
+    expect(screen.getByLabelText('경제')).toBeInTheDocument();
+  });
+
+  it('데스크 미송고에서 부서를 선택하면 departments로 재조회한다', async () => {
+    const { model } = setup({
+      articles: [],
+      users: [{ userId: 'kim', name: '김기자', department: '정치' }],
+    });
+    const cb = await screen.findByLabelText('정치');
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(cb);
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RDS', 'DDH'], departments: ['정치'] }));
+  });
+
   it('기본(데스크 미송고)에서 10개씩 페이징한다', async () => {
     const { container } = setup({ articles: rds(25) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(10));
