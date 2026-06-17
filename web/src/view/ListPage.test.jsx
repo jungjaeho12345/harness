@@ -39,16 +39,18 @@ describe('ListPage', () => {
     });
   });
 
-  it('데스크 미송고에서도 부서 체크박스(기본 전체)를 보여준다', async () => {
+  it('데스크 미송고에서도 부서 Select(기본 전체)를 보여주고, 열면 체크박스가 나온다', async () => {
     setup({
       articles: [],
       users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
     });
-    // 기본 메뉴(데스크 미송고)에서 부서 선택기가 보인다.
+    // 기본 메뉴(데스크 미송고)에서 부서 Select 드롭다운이 보이고, 트리거에 기본값 '전체'가 요약된다.
     expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
-    // 기본값 '전체'가 선택돼 있다.
+    const trigger = screen.getByTestId('dept-trigger');
+    expect(trigger).toHaveTextContent('전체');
+    // 드롭다운을 열면 '전체'(체크) + 부서 체크박스(사용자 목록에서 도출)가 나온다.
+    await userEvent.click(trigger);
     expect(screen.getByLabelText('전체')).toBeChecked();
-    // 부서 체크박스는 사용자 목록의 부서에서 도출된다.
     expect(await screen.findByLabelText('정치')).toBeInTheDocument();
     expect(screen.getByLabelText('경제')).toBeInTheDocument();
   });
@@ -58,6 +60,8 @@ describe('ListPage', () => {
       articles: [],
       users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
     });
+    await screen.findByTestId('dept-trigger');
+    await userEvent.click(screen.getByTestId('dept-trigger')); // 드롭다운 열기
     await screen.findByLabelText('경제');
     const spy = vi.spyOn(model, 'queryArticles');
     // 기본은 '전체'(전 부서) — 경제를 끄면 정치만 남아 departments=['정치']로 재조회한다.
@@ -121,6 +125,7 @@ describe('ListPage', () => {
     };
     const { model } = setup(seed);
     await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+    await userEvent.click(await screen.findByTestId('dept-trigger')); // 부서 Select 열기
     await screen.findByLabelText('정치'); // 부서 옵션(queryUsers) 렌더 대기
 
     // 기본값: '전체' + 모든 부서가 체크돼 전 부서로 조회된다(빈 선택 = 부서 미지정).

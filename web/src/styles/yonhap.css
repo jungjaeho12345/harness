@@ -377,6 +377,70 @@ a { color: var(--yh-blue); }
   margin-bottom: var(--yh-sp-md);
 }
 
+/* 부서 선택 — Select 드롭다운(트리거 + 체크박스 패널) */
+.yh-dept-selector {
+  position: relative;
+  display: inline-block;
+  margin-bottom: var(--yh-sp-md);
+}
+
+.yh-dept-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-sm);
+  min-width: 11rem;
+  padding: var(--yh-sp-sm) var(--yh-sp-md);
+  font-family: var(--yh-sans);
+  font-size: 0.85rem;
+  color: var(--yh-ink);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+  transition: border-color var(--yh-transition);
+}
+
+.yh-dept-select__trigger:hover { border-color: var(--yh-blue); }
+.yh-dept-select__trigger[aria-expanded="true"] { border-color: var(--yh-blue); }
+
+.yh-dept-select__caret { color: var(--yh-gray-mid); font-size: 0.7rem; }
+
+.yh-dept-select__panel {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 30;
+  min-width: 11rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: var(--yh-sp-xs);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-md);
+}
+
+.yh-dept-select__option {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-sm);
+  padding: var(--yh-sp-xs) var(--yh-sp-sm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: var(--yh-radius-sm);
+}
+
+.yh-dept-select__option:hover { background: var(--yh-blue-light); }
+
+/* '전체'(첫 옵션)와 부서 목록 사이 구분선 */
+.yh-dept-select__option:first-child {
+  border-bottom: 1px solid var(--yh-gray-line);
+  border-radius: 0;
+  margin-bottom: var(--yh-sp-xs);
+  padding-bottom: var(--yh-sp-sm);
+}
+
 /* 페이징 */
 .yh-pager {
   display: flex;
