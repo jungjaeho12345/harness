@@ -1,5 +1,6 @@
 // 본문 임베드 블록 렌더 — 이미지/영상(유튜브)/기사 참조 카드. 각 임베드에 × 삭제 버튼이 있다.
-// 폭: 사진/영상 figure 612px, 기사 참조 카드 480px (clipboardEmbed EMBED_SIZE). transport 비의존(콜백만).
+// 폭: 영상 figure 612px, 기사 참조 카드 480px (clipboardEmbed EMBED_SIZE). transport 비의존(콜백만).
+// 이미지: 제품 결정대로 비율 유지·최대 200×200으로 캡하고 figure는 캡된 이미지에 맞춘다(612px 미예약).
 
 import { EMBED_SIZE, parseYouTubeId } from './clipboardEmbed.js';
 
@@ -18,9 +19,6 @@ export function isAllowedImageSrc(src) {
 export function InlineEmbed({ embed, onRemove, readOnly = false }) {
   if (!embed) return null;
   const type = embed.embedType;
-  const figureWidth = type === 'article'
-    ? (embed.widthPx ?? EMBED_SIZE.articleCardWidthPx)
-    : (embed.figureWidthPx ?? EMBED_SIZE.figureWidthPx);
 
   let body = null;
   if (type === 'image') {
@@ -30,7 +28,8 @@ export function InlineEmbed({ embed, onRemove, readOnly = false }) {
         <img
           src={embed.src}
           alt={embed.alt ?? ''}
-          style={{ width: '100%' }}
+          // 비율 유지 + 긴 변 <= 200px 캡(최대 200×200). width/height auto로 종횡비 보존.
+          style={{ maxWidth: '200px', maxHeight: '200px', width: 'auto', height: 'auto' }}
           referrerPolicy="no-referrer"
         />
       );
@@ -57,11 +56,19 @@ export function InlineEmbed({ embed, onRemove, readOnly = false }) {
     );
   }
 
+  // 이미지는 figure가 612px를 예약하지 않고 캡된 이미지(<=200px)에 맞춘다(fit-content).
+  // 영상은 figureWidthPx(기본 612px), 기사 참조 카드는 widthPx(기본 480px) 유지.
+  const figureWidth = type === 'image'
+    ? 'fit-content'
+    : type === 'article'
+      ? `${embed.widthPx ?? EMBED_SIZE.articleCardWidthPx}px`
+      : `${embed.figureWidthPx ?? EMBED_SIZE.figureWidthPx}px`;
+
   return (
     <figure
       className="yh-embed"
       data-embed-type={type}
-      style={{ width: `${figureWidth}px`, maxWidth: '100%', position: 'relative', margin: 0 }}
+      style={{ width: figureWidth, maxWidth: '100%', position: 'relative', margin: 0 }}
     >
       {!readOnly && (
         <button

@@ -136,6 +136,12 @@ export function createFakeModel(seed = {}) {
       const a = findArticle(articleId);
       return { ok: true, translatedText: a?.title ?? '' };
     },
+    // 파일 업로드(첨부파일/자료파일) — 네트워크 없이 server /api/upload 응답 shape({ ok, path, filename })을 모사.
+    // 저장 path는 server와 동일하게 /uploads/ 접두사를 둔다(테스트/스토리가 path 문자열을 그대로 dto에 싣는다).
+    uploadFile(file = {}) {
+      const name = file.name ?? 'file';
+      return { ok: true, path: `/uploads/fake-${name}`, filename: name };
+    },
 
     lockArticle(articleId) {
       const a = findArticle(articleId);
