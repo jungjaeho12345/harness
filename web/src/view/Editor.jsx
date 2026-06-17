@@ -2,8 +2,13 @@
 // CRITICAL: 본문 영역 위에 '본문' 라벨 텍스트는 표시하지 않는다(접근성 aria-label은 유지 — news.md).
 // 색: 제목 파랑/부제 빨강/본문 검정/"(끝)" 골드(editorColoring). transport 비의존 — 변경은 콜백(onRemoveEmbed/onKeyDown)으로만.
 // 키 입력 결선(step15): "(끝)" 뒤 삽입 차단(isInputBlocked)·IME 조합 중 재색칠 금지(shouldRecolor) — news.md 162·168행.
+//
+// CRITICAL(타이핑 안정성): contentEditable을 매 입력마다 state로 재렌더하면 브라우저 캐럿이 초기화되어
+// "맘대로 써지고", 브라우저가 직접 바꾼 DOM을 React가 재조정하다 removeChild로 크래시(화면 하얘짐)한다.
+// → 타이핑 중에는 React가 편집 영역을 다시 그리지 않는다(내부 snapshot 고정). 외부/구조 변경(로드·Ctrl+D·
+//   임베드 추가/삭제·Alt+Y·포커스 이탈 재색칠)일 때만 snapshot을 갱신하고 편집 div를 깨끗이 remount한다.
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked } from './editorNewline.js';
@@ -17,6 +22,11 @@ function readEditorText(root) {
   const lineEls = root.querySelectorAll('.yh-editor__line');
   if (!lineEls.length) return root.textContent ?? '';
   return Array.from(lineEls).map((el) => el.textContent ?? '').join('\n');
+}
+
+// 임베드 블록들의 서명 — 구조(임베드 추가/삭제/변경) 변화 감지에 쓴다(텍스트 타이핑과 무관).
+function embedSig(blocks) {
+  return JSON.stringify((Array.isArray(blocks) ? blocks : []).filter(isEmbedBlock));
 }
 
 // 현재 selection 캐럿을 { lineIndex, offset }으로 읽는다 — lineIndex는 라인 div(=텍스트 블록) 순서,
@@ -67,11 +77,37 @@ export function Editor({
 }) {
   // 본문 텍스트 편집 차단 — readOnly(완전 잠금)이거나 textEditable=false(매핑)면 텍스트 입력을 body에 반영하지 않는다.
   const textLocked = readOnly || !textEditable;
-  // 텍스트 라인 역할(색상)은 텍스트 블록 전체 기준으로 판정한다(임베드 제외 — editorColoring).
-  const lineRoles = classifyLines(blocksToText(blocks).split('\n'));
 
   // IME 조합 상태 — 조합 중에는 본문 동기화/재색칠을 미룬다(news.md 168행).
   const composingRef = useRef(false);
+
+  // ── 타이핑 중 재렌더 방지(캐럿 안정 + 크래시 방지) ──────────────────────────
+  // snapRef: 실제로 DOM에 그려진 블록(렌더 소스). 타이핑 echo로는 갱신하지 않는다.
+  // lastEmittedRef: 마지막으로 onTextChange로 내보낸 본문 텍스트(= DOM의 현재 텍스트). echo 판별 기준.
+  // forceRecolorRef: blur 시 한 번 재색칠을 강제하는 플래그.
+  // renderTick: 구조 변경 시 증가 → 편집 div의 key가 바뀌어 깨끗이 remount(브라우저가 바꾼 DOM과의 diff 회피).
+  const snapRef = useRef(blocks);
+  const lastEmittedRef = useRef(blocksToText(blocks));
+  const forceRecolorRef = useRef(false);
+  const [renderTick, setRenderTick] = useState(0);
+
+  // blocks(prop)가 바뀌면 "타이핑 echo"인지 "외부/구조 변경"인지 판정한다.
+  // echo(텍스트·임베드 동일)면 무시(편집 div를 다시 그리지 않음 → 캐럿 보존). 그 외엔 snapshot 갱신 + remount.
+  useEffect(() => {
+    const incomingText = blocksToText(blocks);
+    const structural = forceRecolorRef.current
+      || incomingText !== lastEmittedRef.current
+      || embedSig(blocks) !== embedSig(snapRef.current);
+    if (!structural) return;
+    snapRef.current = blocks;
+    lastEmittedRef.current = incomingText;
+    forceRecolorRef.current = false;
+    setRenderTick((t) => t + 1);
+  }, [blocks]);
+
+  // 렌더 소스는 snapRef(고정 스냅샷). 텍스트 라인 역할(색상)도 스냅샷 기준으로 판정한다(임베드 제외).
+  const renderBlocks = snapRef.current;
+  const lineRoles = classifyLines(blocksToText(renderBlocks).split('\n'));
 
   // 키다운 — 부모(WriterPage: Alt+Y/Ctrl+D/라인삭제)를 먼저 처리하고, 처리되지 않은 삽입성 키만 "(끝)" 뒤에서 차단.
   const handleKeyDown = (e) => {
@@ -105,23 +141,30 @@ export function Editor({
     if (caretBlocked(e.currentTarget)) e.preventDefault();
   };
 
-  // 입력 반영 — 조합 중에는 미룬다(텍스트는 contentEditable DOM에 남고 compositionend에서 동기화·재색칠).
+  // 입력 반영 — 조합 중에는 미룬다(텍스트는 contentEditable DOM에 남고 compositionend에서 동기화).
+  // 본문을 부모로 내보내되(가드/제목 동기화용), 위 effect가 echo로 판정해 편집 div를 다시 그리지 않는다(캐럿 보존).
   const handleInput = (e) => {
     if (composingRef.current) return;
-    if (onTextChange) onTextChange(readEditorText(e.currentTarget));
+    const text = readEditorText(e.currentTarget);
+    lastEmittedRef.current = text;
+    if (onTextChange) onTextChange(text);
   };
 
-  // 조합 완료 → 본문 반영 + 재색칠(re-render). shouldRecolor로 게이트(RECOLOR_TRIGGERS: compositionend).
+  // 조합 완료 → 본문 반영(동기화). 재색칠(remount)은 하지 않는다 — 조합마다 remount하면 캐럿이 튄다(한글 입력).
   const handleCompositionEnd = (e) => {
     composingRef.current = false;
-    if (!textLocked && onTextChange && shouldRecolor('compositionend', { composing: composingRef.current })) {
-      onTextChange(readEditorText(e.currentTarget));
+    if (!textLocked && onTextChange) {
+      const text = readEditorText(e.currentTarget);
+      lastEmittedRef.current = text;
+      onTextChange(text);
     }
   };
 
   // 포커스 이탈 시 재색칠(news.md: 색 적용은 조합 완료/포커스 이탈/로드 시점). 조합 중 blur면 재색칠하지 않는다.
+  // blur는 편집이 멈춘 시점이라 remount(재색칠)해도 캐럿 튐이 보이지 않는다 → forceRecolor로 한 번 강제.
   const handleBlur = (e) => {
     if (!textLocked && onTextChange && shouldRecolor('blur', { composing: composingRef.current })) {
+      forceRecolorRef.current = true;
       onTextChange(readEditorText(e.currentTarget));
     }
   };
@@ -130,6 +173,7 @@ export function Editor({
 
   return (
     <div
+      key={renderTick}
       className="yh-editor"
       role="textbox"
       aria-label="본문"
@@ -145,7 +189,7 @@ export function Editor({
       onBlur={handleBlur}
       onInput={(!textLocked && onTextChange) ? handleInput : undefined}
     >
-      {blocks.map((block, i) => {
+      {renderBlocks.map((block, i) => {
         if (isEmbedBlock(block)) {
           return (
             <InlineEmbed
