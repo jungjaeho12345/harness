@@ -103,15 +103,26 @@ export function useViewController() {
 
   const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // 편집 진입 — 대상 기사·모드를 sessionStorage로 넘기고 writer.do로 이동(편집 탭 주소창엔 기사아이디).
-  const enterEditor = useCallback((article, mode) => {
+  // 편집 진입 — 이동 전에 편집 잠금을 먼저 획득한다. 다른 세션이 편집 중(locked)이면
+  // '편집중입니다.' ALERT만 띄우고 현재(목록) 페이지에 그대로 머문다(writer.do로 이동하지 않음).
+  // 잠금에 성공하면 대상·모드를 sessionStorage로 넘기고 writer.do로 이동한다(편집 탭 주소창엔 기사아이디).
+  // 고침/포털고침은 lock action으로 구분(서버 editDps D 게이트). 매핑도 전이 없는 'revise' 잠금을 재사용한다.
+  // 실제 인가는 서버 POST :id/lock 게이트가 강제한다(신뢰경계=서버, ADR-004) — 여기선 충돌(locked) UX만 담당.
+  const enterEditor = useCallback(async (article, mode) => {
+    const lockAction = mode === 'portalRevise' ? 'portalRevise' : 'revise';
+    const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => null);
+    if (lock && lock.ok === false && lock.reason === 'locked') {
+      globalThis.alert?.('편집중입니다.');
+      return null; // 다른 세션이 편집 중 — 이동하지 않고 목록에 그대로 머문다.
+    }
     try {
       sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify({ article, mode }));
     } catch {
       // sessionStorage 불가 — pendingEdit 없이 이동(writer가 빈 탭으로 시작).
     }
     navigate('writer.do', { articleId: article.articleId });
-  }, [navigate]);
+    return article.articleId;
+  }, [model, navigate]);
 
   const editArticle = useCallback((article) => enterEditor(article, 'edit'), [enterEditor]);
   const reviseArticle = useCallback(
@@ -143,14 +154,14 @@ export function useViewController() {
   // 원본은 비변경(서버 deriveArticle이 create 위임으로만 신규 행 생성). 새 기사는 RDS·미잠금이라 잠금 획득이 정상 동작.
   const createFollowUp = useCallback(async (article) => {
     const r = await model.deriveArticle(article.articleId, 'followUp');
-    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    if (r && r.ok && r.articleId) await enterEditor({ articleId: r.articleId }, 'edit');
     return r;
   }, [model, enterEditor]);
 
   // 계속기사작성 — 동일하되 'continue' 모드(본문 복사). 새 기사로 편집 진입.
   const createContinue = useCallback(async (article) => {
     const r = await model.deriveArticle(article.articleId, 'continue');
-    if (r && r.ok && r.articleId) enterEditor({ articleId: r.articleId }, 'edit');
+    if (r && r.ok && r.articleId) await enterEditor({ articleId: r.articleId }, 'edit');
     return r;
   }, [model, enterEditor]);
 
