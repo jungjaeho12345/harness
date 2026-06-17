@@ -3,7 +3,7 @@
 // 가드: 송고는 "(끝)" 필요, 송고/보류는 제목(첫 줄) 필요. 각 액션은 확인창 후에만 진행.
 // 데이터는 useWriteController/useSearchController 경유(transport 직접 호출 금지, ADR-003).
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
@@ -14,7 +14,7 @@ import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from '
 import { lineAtOffset } from './editorCaret.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
-  bodyTitle, appendEmbedToBody, insertEmbedIntoBody, serializeBodyFromBlocks,
+  bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
 
 const META_TABS = [
@@ -38,18 +38,6 @@ const READONLY_LABELS = [
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
-// 텍스트 라인 인덱스(라인 div 순서) → blocks 배열 인덱스. 텍스트 블록만 세어 환산한다(임베드 제외 — Editor의 textLine 카운팅과 동일 규칙).
-function textLineToBlockIndex(blocks, textLineIndex) {
-  let count = -1;
-  for (let i = 0; i < blocks.length; i += 1) {
-    if (blocks[i] && blocks[i].type === 'text') {
-      count += 1;
-      if (count === textLineIndex) return i;
-    }
-  }
-  return -1;
-}
-
 export function WriterPage() {
   const { identity, model } = useAppContext();
   const {
@@ -67,6 +55,14 @@ export function WriterPage() {
 
   const body = activeTab.fields.body;
   const blocks = deserialize(body);
+
+  // 마지막 에디터 캐럿(텍스트-줄) — 검색패널 클릭 시 에디터 포커스가 빠져 라이브 readCaret이 null이므로 여기 보관(Editor onCaretChange).
+  const lastCaretRef = useRef(null);
+  // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
+  const [pendingCaretLine, setPendingCaretLine] = useState(null);
+  useEffect(() => {
+    if (pendingCaretLine !== null) setPendingCaretLine(null);
+  }, [pendingCaretLine]);
 
   // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화 + 제목(첫 줄) 동기화.
   // 임베드는 "(끝)"만 최종 블록으로 보낼 뿐 위치를 옮기지 않는다(news.md 156·167행 — 커서 위치/블록 순서 보존).
@@ -111,19 +107,24 @@ export function WriterPage() {
     updateField('body', serialize(next));
   };
 
-  const insertEmbed = (embed) => {
+  // 임베드를 커서 텍스트 줄 "다음"에 삽입하고, 그 뒤 빈 줄을 만들어 커서를 그 줄로 옮긴다(news.md 156행 — 커서 위치 임베딩).
+  // 캐럿이 없거나(한 번도 포커스 안 함) 매핑 모드(텍스트 잠금)면 끝("(끝)" 앞)에만 추가한다(빈 줄/커서 이동 없음 — 매핑 본문 불변식).
+  const insertEmbedAtLine = (embed, caretLine) => {
     if (!embed) return;
-    updateField('body', appendEmbedToBody(body, embed));
+    if (isMapping || caretLine == null) {
+      updateField('body', appendEmbedToBody(body, embed));
+      return;
+    }
+    const r = insertEmbedAfterLine(body, embed, caretLine);
+    updateField('body', r.body);
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
-  // Ctrl+V 이미지 붙여넣기 — 캐럿이 있는 텍스트 라인 바로 뒤에 임베드를 삽입한다(텍스트 직렬화 없이 커서 위치에만 — news.md 156행).
-  // 캐럿을 못 읽으면(포커스 밖 등) 끝에 덧붙인다.
-  const pasteEmbedAtCaret = (embed, caret) => {
-    if (!embed) return;
-    const lineBlockIndex = caret ? textLineToBlockIndex(blocks, caret.lineIndex) : -1;
-    const insertAt = lineBlockIndex >= 0 ? lineBlockIndex + 1 : -1;
-    updateField('body', insertEmbedIntoBody(body, embed, insertAt));
-  };
+  // 검색패널(이미지/영상/글기사) 픽 — 마지막 에디터 캐럿 줄에 삽입(클릭으로 포커스가 빠지므로 lastCaretRef 사용, 라이브 readCaret 금지).
+  const insertEmbed = (embed) => insertEmbedAtLine(embed, lastCaretRef.current ? lastCaretRef.current.lineIndex : null);
+
+  // Ctrl+V 이미지 붙여넣기 — 동기로 확보한 캐럿 줄에 삽입(텍스트 직렬화 없이 — news.md 156행).
+  const pasteEmbedAtCaret = (embed, caret) => insertEmbedAtLine(embed, caret ? caret.lineIndex : null);
 
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
   const onAction = async (action) => {
@@ -182,6 +183,8 @@ export function WriterPage() {
             onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
             onPasteEmbed={pasteEmbedAtCaret}
+            onCaretChange={(c) => { lastCaretRef.current = c; }}
+            pendingCaretLine={pendingCaretLine}
           />
         </section>
 

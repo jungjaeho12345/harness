@@ -1,0 +1,39 @@
+{
+  "project": "기사 작성기",
+  "phase": "5-editor-newline-embed",
+  "steps": [
+    {
+      "step": 0,
+      "name": "editor-newline-restore",
+      "status": "completed",
+      "started_at": "2026-06-18T01:17:54+0900",
+      "summary": "본문 개행 합쳐짐 버그 수정 — readEditorBlocks를 DOM 워크로 하드닝(<br>·중첩 div·bare 텍스트노드 개행 복원) + Enter를 블록 모델 분할로 제어(insertTextIntoBlocks 순수 헬퍼, nextCaretLineRef로 새 줄 캐럿 복원) + 여러 줄 텍스트 붙여넣기 개행 보존. readCaret {lineIndex,offset} 계약 불변, 빈 줄 시드 미사용(jsdom userEvent 충돌 회피).",
+      "completed_at": "2026-06-18T01:39:12+0900"
+    },
+    {
+      "step": 1,
+      "name": "writerbody-embed-newline",
+      "status": "completed",
+      "started_at": "2026-06-18T01:39:13+0900",
+      "summary": "writerBody.js에 insertEmbedAfterLine(currentBody, embed, textLineIndex) -> {body, caretTextLine} 추가 — 텍스트 줄(텍스트 블록만 0-base 카운트, WriterPage textLineToBlockIndex 동일 동작) 블록 뒤에 임베드 + 빈 textBlock('') 삽입, caretTextLine은 그 빈 줄의 텍스트-줄 인덱스. 범위 밖/null/음수는 끝('(끝)' 앞) 폴백, '(끝)'은 항상 최종 블록 유지(serializeBodyFromBlocks 규칙), 빈 줄은 '(끝)' 앞. caretTextLine은 정규화된 블록 순서에서 빈 줄 참조로 계산해 '(끝)' 재배치까지 반영. 순수 함수(저장 포맷 불변). writerBody.test.js +6 케이스, web 371 통과.",
+      "completed_at": "2026-06-18T01:42:57+0900"
+    },
+    {
+      "step": 2,
+      "name": "editor-caret-bridge",
+      "status": "completed",
+      "started_at": "2026-06-18T01:42:57+0900",
+      "summary": "Editor.jsx에 ① onCaretChange({lineIndex}) 캐럿 보고 — keyUp/mouseUp/select/input/blur에서 readCaret(root)로 텍스트-줄 인덱스 보고(onCaretChange 있을 때만 결선). blur 계약: readCaret이 비-null이면 마지막 캐럿 보고, null(에디터 밖 selection)이면 미보고(부모 lastCaret 유지). ② pendingCaretLine(number|null) 지정 줄 포커스 — focusLineStart(root,line) 모듈 헬퍼 추출, 단일 useLayoutEffect([renderTick,pendingCaretLine,textLocked])에서 number면 wasFocused(refocusRef) 복원보다 우선해 .yh-editor__line 시작에 focus+caret, renderTick(remount)마다 새 DOM에 재적용(body변경+pending 동시 전달 시나리오 안착), textLocked(readOnly/매핑)면 무시. onCaretChange는 이벤트/effect에서만 호출(렌더 본문 동기 호출 없음). Editor.test.jsx +8(캐럿 보고 4·pendingCaretLine 4), echo no-remount/wasFocused 회귀 유지. web 379 통과, lint 0.",
+      "completed_at": "2026-06-18T01:54:36+0900"
+    },
+    {
+      "step": 3,
+      "name": "writerpage-embed-wiring",
+      "status": "completed",
+      "started_at": "2026-06-18T05:46:47+0900",
+      "summary": "WriterPage 결선 — insertEmbed(검색패널 이미지/영상/글기사)·pasteEmbedAtCaret(붙여넣기) 모두 insertEmbedAfterLine(step1)로 커서 텍스트 줄 뒤에 임베드+빈 줄 삽입 후 setPendingCaretLine(caretTextLine)로 새 빈 줄에 커서 이동. lastCaretRef(Editor onCaretChange)로 마지막 캐럿 보관(검색패널 클릭 시 포커스 빠짐 대비), pendingCaretLine은 소비 후 useEffect로 null 리셋(같은 줄 연속 삽입도 매번 이동). 캐럿 없음/매핑(isMapping)은 appendEmbedToBody 폴백(빈 줄/커서이동 없음 → 매핑 blocksToText 불변 유지). 미사용 insertEmbedIntoBody import 제거(useRef/useEffect 소비). WriterPage.test.jsx: 붙여넣기 단언 3건을 4요소(text/embed/text/text)로 갱신 + 신규 3케이스(커서 줄 뒤 삽입+focus, 무캐럿 append 폴백, 같은 줄 연속 2회). lint 0, test:web 382 통과, build 성공. (429 한도로 execute.py headless가 멈춰 오케스트레이터가 직접 구현)",
+      "completed_at": "2026-06-18T06:13:59+0900"
+    }
+  ],
+  "created_at": "2026-06-18T01:17:54+0900"
+}
