@@ -121,6 +121,81 @@ export function readCaret(root) {
   return { lineIndex, offset: offset + offsetInLine };
 }
 
+// emitInsert(Enter·여러 줄 붙여넣기) 전용 캐럿 — readEditorBlocks/elementToLines와 "같은 줄 기준"으로
+// { lineIndex(텍스트-줄 순서), offset(blocksToText 좌표) }을 산출한다. readCaret(.yh-editor__line 단위)과 달리
+// 줄 안 <br>·중첩 블록까지 분할해 세므로, dirty DOM(브라우저가 만든 줄 안 <br> 등)에서도 분할 위치가 정확하다.
+// 깨끗한 DOM에선 readCaret과 동일 결과(1 .yh-editor__line = 1 줄)라 회귀가 없다. anchor가 에디터 밖/미발견이면 null.
+// 텍스트 노드 anchor는 정확히, 요소 anchor는 그 줄 시작(col 0)으로 본다(readCaret과 동일 단순화).
+function readCaretForInsert(root) {
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!root || !sel || sel.rangeCount === 0) return null;
+  const A = sel.anchorNode;
+  if (!A || !root.contains(A)) return null;
+  const AO = sel.anchorOffset;
+
+  const out = []; // 완성된 텍스트 줄(임베드 제외 — blocksToText와 동일 시퀀스)
+  let pending = null; // 최상위 인라인 누적 줄
+  let caretLine = null;
+  let caretCol = null;
+  const flush = () => { if (pending !== null) { out.push(pending); pending = null; } };
+
+  // 블록 요소(.yh-editor__line/div/p…) 내용을 줄로 펼치며 캐럿을 추적(elementToLines와 동일 규칙).
+  const walkBlock = (el) => {
+    if (el === A && caretLine === null) { caretLine = out.length; caretCol = 0; }
+    const startLen = out.length;
+    let cur = '';
+    let dirty = false;
+    const pushLine = () => { out.push(cur); cur = ''; dirty = false; };
+    for (const child of el.childNodes) {
+      if (child.nodeType === 3) {
+        if (child === A && caretLine === null) {
+          caretLine = out.length; caretCol = cur.length + Math.min(AO, (child.textContent ?? '').length);
+        }
+        cur += child.textContent ?? ''; dirty = true;
+      } else if (child.nodeType === 1) {
+        if (child.tagName === 'BR') {
+          pushLine();
+        } else if (BLOCK_TAGS.has(child.tagName) || (child.classList && child.classList.contains('yh-editor__line'))) {
+          if (dirty) pushLine();
+          walkBlock(child);
+        } else { // 인라인
+          if (child === A && caretLine === null) { caretLine = out.length; caretCol = cur.length; }
+          cur += child.textContent ?? ''; dirty = true;
+        }
+      }
+    }
+    if (dirty || out.length === startLen) pushLine();
+  };
+
+  for (const node of root.childNodes) {
+    if (node.nodeType === 3) {
+      if (pending === null) pending = '';
+      if (node === A && caretLine === null) {
+        caretLine = out.length; caretCol = pending.length + Math.min(AO, (node.textContent ?? '').length);
+      }
+      pending += node.textContent ?? '';
+      continue;
+    }
+    if (node.nodeType !== 1) continue;
+    const el = node;
+    if (el.classList && el.classList.contains('yh-embed')) { flush(); continue; } // 임베드: 텍스트 줄 분리(텍스트 없음)
+    if (el.tagName === 'BR') { out.push(pending ?? ''); pending = null; continue; } // 최상위 <br> — 현재 줄 닫음(빈 줄이라도)
+    if ((el.classList && el.classList.contains('yh-editor__line')) || BLOCK_TAGS.has(el.tagName)) {
+      flush(); walkBlock(el);
+    } else { // 최상위 인라인
+      if (pending === null) pending = '';
+      if (el === A && caretLine === null) { caretLine = out.length; caretCol = pending.length; }
+      pending += el.textContent ?? '';
+    }
+  }
+  flush();
+
+  if (caretLine === null) return null;
+  let offset = caretCol;
+  for (let i = 0; i < caretLine; i += 1) offset += out[i].length + 1; // 앞 줄들 + 각 '\n'
+  return { lineIndex: caretLine, offset };
+}
+
 // 캐럿이 "(끝)" 마커 시작 이상이면 삽입 차단 대상(news.md 162행). 캐럿 미상이면 차단하지 않는다.
 function caretBlocked(root) {
   const caret = readCaret(root);
@@ -242,7 +317,7 @@ export function Editor({
   // lastEmittedRef를 갱신하지 않아(echo가 아니라) 구조 변경으로 판정되고 편집 div가 깨끗이 remount된다 →
   // 브라우저가 <br>/미래핑 노드를 만들지 못해 "1줄 = 1 .yh-editor__line = 1 텍스트 블록" 불변식이 유지된다.
   const emitInsert = (root, text) => {
-    const caret = readCaret(root);
+    const caret = readCaretForInsert(root); // readEditorBlocks와 같은 줄 기준 — dirty DOM에서도 분할 위치 정합
     const cur = readEditorBlocks(root, snapRef.current);
     const { blocks: next, caretLineIndex } = insertTextIntoBlocks(cur, caret, text);
     nextCaretLineRef.current = caretLineIndex;

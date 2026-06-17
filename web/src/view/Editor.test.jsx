@@ -217,6 +217,29 @@ describe('Editor — Enter 줄 분할(블록 모델)', () => {
       Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent),
     ).toEqual(['AB', ' CD']));
   });
+
+  // 회귀(코드리뷰 major): 한 .yh-editor__line 안에 <br>가 생긴 dirty 상태(예: 브라우저 Backspace 줄 병합)에서도
+  // Enter는 readCaretForInsert(블록 모델과 같은 줄 기준)로 캐럿 위치에서 정확히 분할해야 한다.
+  it('줄 안 <br>로 거칠어진 줄에서도 Enter가 캐럿 위치(블록 모델)에서 정확히 분할한다', async () => {
+    const { container } = render(<Harness initial={[textBlock('AB')]} />);
+    const line = container.querySelector('.yh-editor__line');
+    line.innerHTML = 'A<br>B'; // 한 라인 div 안에 A·B 두 시각 줄(<br> 경계)
+    const bNode = line.lastChild; // 'B' 텍스트노드
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(bNode, 1); // 'B' 뒤에 캐럿
+    range.collapse(true);
+    sel.addRange(range);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    // 캐럿이 B 뒤 → B 다음에서 분할: ['A','B','']. (구버전 readCaret은 ['A','','B']로 오분할)
+    await waitFor(() => expect(
+      Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent),
+    ).toEqual(['A', 'B', '']));
+  });
 });
 
 // 15-A: "(끝)" 마커 뒤 삽입 차단 결선(isInputBlocked). 삭제/이동/선택은 차단하지 않는다(news.md 162행).
