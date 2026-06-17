@@ -70,6 +70,8 @@ export function createControllers(db, {
     create: (dto) => articleService.create(dto),
     update: (articleId, fields) => articleService.update(articleId, fields),
     getById: (articleId) => articleService.getById(articleId),
+    getHistory: (articleId) => articleService.getHistory(articleId),
+    getSendHistory: (articleId) => articleService.getSendHistory(articleId),
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
     derive: (sourceId, mode, overrides) => articleService.deriveArticle(sourceId, mode, overrides),
     queryHistory: (articleId, opts) => articleService.queryHistory(articleId, opts),

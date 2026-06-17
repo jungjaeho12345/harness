@@ -125,6 +125,12 @@ export function WriterPage() {
     await submit(action);
   };
 
+  // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
+  const onSaveMapping = async () => {
+    if (!window.confirm('저장하시겠습니까?')) return;
+    await saveMapping();
+  };
+
   const buttons = submitButtons({
     mode: activeTab.mode,
     status: activeTab.status,

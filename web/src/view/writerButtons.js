@@ -12,6 +12,7 @@ export const SUBMIT_LABELS = Object.freeze({
   send: '송고',
   hold: '보류',
   kill: 'KILL',
+  save: '저장',
 });
 
 // 표시 순서 — 항상 송고 → 보류 → KILL 순으로 거른다.

@@ -7,12 +7,13 @@ import { createFakeModel } from '../test/fakeModel.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'D', department: '정치' }) {
   const model = createFakeModel(seed);
+  const navigate = vi.fn();
   const utils = render(
-    <AppContext.Provider value={{ model, identity, navigate: vi.fn(), replace: vi.fn(), setSession: vi.fn() }}>
+    <AppContext.Provider value={{ model, identity, navigate, replace: vi.fn(), setSession: vi.fn() }}>
       <ListPage />
     </AppContext.Provider>,
   );
-  return { model, ...utils };
+  return { model, navigate, ...utils };
 }
 
 const rds = (n) => Array.from({ length: n }, (_, i) => ({

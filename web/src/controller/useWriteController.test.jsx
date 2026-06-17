@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
-import { useWriteController } from './useWriteController.js';
+import { useWriteController, PENDING_NEW_KEY } from './useWriteController.js';
 import { PENDING_EDIT_KEY } from './useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
+import { appendEmbedToBody } from '../view/writerBody.js';
+import { serialize, deserialize, blocksToText, textBlock, embedBlock } from '../view/editorContent.js';
 
 const IDENTITY = { userId: 'kim', name: '김기자', role: 'D', department: '정치' };
 
@@ -224,5 +226,155 @@ describe('useWriteController', () => {
     const { result } = setup({ articles: [{ ...FULL }] });
     await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true));
     expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // 소비됨
+  });
+
+  // ── 후속/계속(신규 기사 파생) 진입 ─────────────────────────────────────────
+  it('consumes a pendingNew(followUp) on mount → opens a NEW tab (articleId:null) with copied fields + re-fetched body', async () => {
+    // 목록행에는 본문이 없다. 단건 재조회(getArticle)로 markupVersion을 본문으로 채운다.
+    const markup = JSON.stringify({ format: 'yh-editor', version: 1, blocks: [{ type: 'text', text: '본문라인' }] });
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: {
+        articleId: 'AKR1', title: '제목', author: '원작성자',
+        embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
+        sender: 'park', sentAt: '2026-01-01T02:00:00Z', modifier: 'lee', status: 'DPS',
+      },
+      mode: 'followUp',
+    }));
+    const { result } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: markup, status: 'DPS' }] });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+    expect(sessionStorage.getItem(PENDING_NEW_KEY)).toBeNull(); // 소비됨
+
+    const tab = result.current.tabs.find((t) => t.mode === 'followUp');
+    expect(tab.articleId).toBeNull(); // 신규 발번을 위해 null
+    expect(tab.status).toBeNull(); // 서버가 RDS 부여
+    // 채널 페이로드엔 본문이 없었다 → body가 markup이면 getArticle 단건 재조회가 일어난 것.
+    expect(tab.fields.title).toBe('제목');
+    expect(tab.fields.author).toBe('원작성자');
+    expect(tab.fields.embargoAt).toBe('2026-01-01T00:00:00Z');
+    expect(tab.fields.secondEmbargoAt).toBe('2026-01-02T00:00:00Z');
+    expect(tab.fields.body).toBe(markup); // 원본 markupVersion이 본문으로 복사됨
+    // 원본 메타(송고자/송고시간/수정자/기사아이디)는 신규 탭으로 끌어오지 않는다.
+    expect(tab.readOnly).toEqual({});
+  });
+
+  it('followUp entry does NOT acquire a lock on the source article (신규 생성이지 원본 편집 아님)', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'followUp',
+    }));
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+    expect(lock).not.toHaveBeenCalled(); // 원본 미잠금
+  });
+
+  it('saving a followUp tab goes through the new POST path (no source articleId in dto → 원본 미수정)', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'followUp',
+    }));
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'followUp')).toBe(true));
+
+    await act(async () => { await result.current.submit('send'); });
+    expect(save).toHaveBeenCalled();
+    const dto = save.mock.calls[0][0];
+    expect(dto.articleId).toBeUndefined(); // 신규 POST — 원본 articleId 미포함
+    expect(dto.markupVersion).toBe('본문'); // 본문은 markupVersion으로 실린다
+    expect(dto.role).toBeUndefined(); // role 미포함(ADR-004)
+  });
+
+  it('consumes a pendingNew(continue) on mount → opens a NEW tab with mode continue', async () => {
+    sessionStorage.setItem(PENDING_NEW_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', markupVersion: '본문' }, mode: 'continue',
+    }));
+    const { result } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: '본문', status: 'DPS' }] });
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'continue')).toBe(true));
+    const tab = result.current.tabs.find((t) => t.mode === 'continue');
+    expect(tab.articleId).toBeNull();
+  });
+
+  // ── 매핑(mapping) 진입 + 텍스트 보존 저장 ─────────────────────────────────────
+  // 본문: 텍스트 2줄 + "(끝)" 마커의 markupVersion. 매핑은 임베드만 추가하고 텍스트는 절대 안 바뀐다.
+  const MAPPING_MARKUP = serialize([
+    textBlock('첫 줄'), textBlock('둘째 줄'), textBlock('(끝)'),
+  ]);
+
+  it('consumes a pendingEdit(mapping) on mount → opens a mapping edit tab and acquires the lock', async () => {
+    // 매핑은 편집 진입 계열(PENDING_EDIT_KEY) — 신규 채널(PENDING_NEW)이 아니다. 잠금을 획득한다.
+    sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify({
+      article: { articleId: 'AKR1', title: '제목', status: 'DPS' }, mode: 'mapping',
+    }));
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: MAPPING_MARKUP, status: 'DPS' }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.mode === 'mapping')).toBe(true));
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // 소비됨
+
+    const tab = result.current.tabs.find((t) => t.mode === 'mapping');
+    expect(tab.articleId).toBe('AKR1'); // 기존 기사 편집 — articleId 유지
+    expect(tab.fields.body).toBe(MAPPING_MARKUP); // 재조회로 원본 본문이 채워짐
+    await waitFor(() => expect(lock).toHaveBeenCalledWith('AKR1', 'revise')); // 편집 잠금 획득(일반 편집과 동일)
+  });
+
+  it('openArticle(mapping) re-uses the edit path: getArticle + lockArticle, keeps articleId', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: MAPPING_MARKUP, status: 'DPS' }] });
+    const getArticle = vi.spyOn(model, 'getArticle');
+    const lock = vi.spyOn(model, 'lockArticle');
+    await act(async () => { await result.current.openArticle({ articleId: 'AKR1', title: '제목', status: 'DPS' }, 'mapping'); });
+
+    const tab = result.current.activeTab;
+    expect(tab.mode).toBe('mapping');
+    expect(tab.articleId).toBe('AKR1');
+    expect(tab.fields.body).toBe(MAPPING_MARKUP);
+    expect(getArticle).toHaveBeenCalledWith('AKR1');
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise');
+  });
+
+  it('saveMapping persists body via PUT(markupVersion) preserving text blocks, adding only the embed; no applyAction', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: MAPPING_MARKUP, status: 'DPS' }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await act(async () => { await result.current.openArticle({ articleId: 'AKR1', title: '제목', status: 'DPS' }, 'mapping'); });
+
+    // 임베드 1개를 본문에 추가(텍스트 블록은 건드리지 않는 appendEmbedToBody 경로).
+    const embed = embedBlock({ embedType: 'image', mediaId: 'IMG1', url: 'http://x/y.jpg' });
+    const withEmbed = appendEmbedToBody(result.current.activeTab.fields.body, embed);
+    act(() => { result.current.updateField('body', withEmbed); });
+
+    await act(async () => { await result.current.saveMapping(); });
+
+    expect(save).toHaveBeenCalled();
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.articleId).toBe('AKR1'); // PUT(articleId 포함)
+    expect(dto.body).toBeUndefined(); // body 키 미전송 — markupVersion으로만
+    expect(dto.role).toBeUndefined(); // role 미포함(ADR-004)
+
+    // 텍스트 블록 불변(blocksToText), 임베드만 1개 증가.
+    const origBlocks = deserialize(MAPPING_MARKUP);
+    const savedBlocks = deserialize(dto.markupVersion);
+    expect(blocksToText(savedBlocks)).toBe(blocksToText(origBlocks)); // 텍스트 비파괴
+    const origEmbeds = origBlocks.filter((b) => b.type === 'embed').length;
+    const savedEmbeds = savedBlocks.filter((b) => b.type === 'embed').length;
+    expect(savedEmbeds).toBe(origEmbeds + 1); // 임베드만 1개 추가
+
+    expect(apply).not.toHaveBeenCalled(); // 매핑은 생애주기 전이가 없다
+  });
+
+  it('saveMapping unlocks and resets the tab to a blank new-article tab on success', async () => {
+    const { result, model } = setup({ articles: [{ articleId: 'AKR1', title: '제목', markupVersion: MAPPING_MARKUP, status: 'DPS' }] });
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await act(async () => { await result.current.openArticle({ articleId: 'AKR1', title: '제목', status: 'DPS' }, 'mapping'); });
+
+    await act(async () => { await result.current.saveMapping(); });
+
+    expect(unlock).toHaveBeenCalledWith('AKR1'); // 저장 성공 후 잠금 해제
+    expect(apply).not.toHaveBeenCalled(); // 전이 없음
+    // 매핑 탭은 빈 새 기사 탭으로 정리된다 — 더 이상 편집 컨텍스트(articleId)가 남지 않는다.
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    expect(result.current.activeTab.mode).toBe('new');
+    expect(result.current.activeTab.articleId).toBeNull();
+    expect(result.current.activeTab.fields.body).toBe('');
   });
 });

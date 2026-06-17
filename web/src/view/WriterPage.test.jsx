@@ -7,7 +7,7 @@ import { AppContext } from '../app/context.js';
 import { WriterPage } from './WriterPage.jsx';
 import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
-import { serialize, textBlock, embedBlock } from './editorContent.js';
+import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 
 function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, pendingEdit, seed } = {}) {
   if (pendingEdit) sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify(pendingEdit));
@@ -142,6 +142,126 @@ describe('WriterPage — 송고/보류 가드 + 확인창', () => {
     const apply = vi.spyOn(model, 'applyAction');
     await userEvent.click(actionBtn('송고'));
     expect(apply).not.toHaveBeenCalled();
+  });
+});
+
+// 3-mapping step3: 매핑 모드 — 본문 readOnly·메타 탭 임베드 추가 활성·액션바 '저장'→saveMapping 결선.
+describe('WriterPage — 매핑 모드(mode:mapping)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 본문(markupVersion)을 가진 기사로 매핑 진입한 WriterPage를 띄운다.
+  async function openMapping(blocks, { mediaItems = [], articles = [] } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R', name: '김기자' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '제목', status: 'DPS' }, mode: 'mapping' },
+      seed: {
+        articles: [{ articleId: 'AKR9', status: 'DPS', lockYN: 'Y', markupVersion: body }, ...articles],
+        mediaItems,
+      },
+    });
+    // 매핑 진입 완료 = 액션바에 '저장' 버튼이 뜸.
+    await waitFor(() => expect(actionBtn('저장')).toBeInTheDocument());
+    return utils;
+  }
+
+  it('본문 에디터가 readOnly(contentEditable=false)로 잠긴다', async () => {
+    const { container } = await openMapping([textBlock('헤드라인'), textBlock('본문내용')]);
+    const editor = container.querySelector('.yh-editor');
+    expect(editor).toBeTruthy();
+    expect(editor.getAttribute('contenteditable')).toBe('false');
+  });
+
+  it('공통정보 메타 입력(작성자/엠바고/2차엠바고)도 readOnly로 잠긴다', async () => {
+    const { container } = await openMapping([textBlock('헤드라인'), textBlock('본문내용')]);
+    for (const id of ['meta-author', 'meta-embargo', 'meta-embargo2']) {
+      const input = container.querySelector(`#${id}`);
+      expect(input).toBeTruthy();
+      expect(input.readOnly).toBe(true);
+    }
+  });
+
+  it("액션바에 '저장'만 있고 송고/보류/KILL은 없다", async () => {
+    await openMapping([textBlock('헤드라인'), textBlock('본문')]);
+    expect(actionBtn('저장')).toBeInTheDocument();
+    expect(actionBtn('송고')).toBeNull();
+    expect(actionBtn('보류')).toBeNull();
+    expect(actionBtn('KILL')).toBeNull();
+  });
+
+  it('이미지 메타 탭에서 검색 결과 클릭 시 본문에 임베드만 추가되고 텍스트 블록은 보존된다', async () => {
+    const { model } = await openMapping(
+      [textBlock('헤드라인'), textBlock('본문내용'), textBlock('(끝)')],
+      { mediaItems: [{ type: 'image', src: 'pic.png', title: '사진' }] },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), '사진');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    await screen.findByRole('img', { name: '사진' });
+    await userEvent.click(screen.getByRole('img', { name: '사진' }).closest('button'));
+
+    // 저장 → PUT으로 실린 본문에서 텍스트 블록 불변 + 임베드 1개 추가 확인.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    const blocks = deserialize(dto.markupVersion);
+    expect(blocksToText(blocks)).toBe('헤드라인\n본문내용\n(끝)'); // 텍스트 보존(blocksToText 불변)
+    expect(blocks.some((b) => b.type === 'embed' && b.embedType === 'image')).toBe(true);
+  });
+
+  it("'저장' 클릭은 saveMapping(PUT)을 호출하고 applyAction(송고)을 호출하지 않는다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openMapping([textBlock('헤드라인'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('저장'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // PUT(articleId 포함) — 매핑은 기존 기사 저장.
+    expect(save.mock.calls[0][0].articleId).toBe('AKR9');
+    expect(apply).not.toHaveBeenCalled(); // 전이 없음
+  });
+
+  it("'저장'은 송고 가드(제목/(끝))를 적용하지 않는다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    // 제목 없음·"(끝)" 없음이어도 저장은 막히지 않는다.
+    const { model } = await openMapping([textBlock(''), textBlock('본문만')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('저장'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("'저장' 확인창에서 취소하면 saveMapping(PUT)을 호출하지 않는다(DB 비파괴)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const { model } = await openMapping([textBlock('헤드라인'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('저장'));
+
+    expect(save).not.toHaveBeenCalled(); // 취소 → PUT 미전송(원본 본문 무변경)
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('일반 편집(edit) 모드는 무회귀 — 에디터 편집 가능 + 송고/보류 버튼', async () => {
+    setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: 't', body: 't\n본문', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y' }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    expect(actionBtn('저장')).toBeNull();
+    const editor = document.querySelector('.yh-editor');
+    expect(editor.getAttribute('contenteditable')).toBe('true');
   });
 });
 

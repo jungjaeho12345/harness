@@ -66,22 +66,40 @@ export function createArticleService({ articleModel, db, historyModel }) {
   function create(dto = {}) {
     const articleId = generateArticleId(db);
     const article = { articleId, ...pick(dto, ARTICLE_FIELDS) };
+    const createdAt = nowISO();
     const contents = {
       articleId,
       ...pick(dto, CONTENTS_FIELDS),
       status: 'RDS',
-      createdAt: nowISO(),
+      createdAt,
     };
-    articleModel.insert({ article, contents });
+    const history = historyEntry({
+      articleId,
+      eventType: 'create',
+      actorUserId: dto.modifier ?? dto.author ?? null,
+      title: dto.title ?? null,
+      toStatus: 'RDS',
+      createdAt,
+    });
+    articleModel.insert({ article, contents, history });
     return { ok: true, articleId };
   }
 
   // 부분 업데이트(트랜잭션). status 전이는 다루지 않는다(applyAction 전용).
   // 잠금 보유 검증은 호출자(HTTP) 책임.
   function update(articleId, fields = {}) {
+    const editedAt = nowISO();
+    const history = historyEntry({
+      articleId,
+      eventType: 'edit',
+      actorUserId: fields.modifier ?? null,
+      title: fields.title ?? null,
+      createdAt: editedAt,
+    });
     const changes = articleModel.update(articleId, {
       article: pick(fields, ARTICLE_FIELDS),
-      contents: { ...pick(fields, CONTENTS_FIELDS), editedAt: nowISO() },
+      contents: { ...pick(fields, CONTENTS_FIELDS), editedAt },
+      history,
     });
     // 편집 성공 후 이력 기록. actor는 호출자가 stamp한 modifier(세션 userId — step2).
     record({ articleId, eventType: 'edit', actorUserId: fields.modifier });

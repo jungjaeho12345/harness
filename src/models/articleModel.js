@@ -42,7 +42,9 @@ function tx(db, fn) {
   }
 }
 
-export function createArticleModel(db) {
+// articleHistoryModel은 선택 주입 — 주입되면 insert/update에 넘긴 history를
+// 같은 tx 안에서 recordWithDb로 합류시킨다(원자성). 미주입이면 history 인자는 무시한다.
+export function createArticleModel(db, { articleHistoryModel } = {}) {
   // Article·Contents 각각 조회해 { article, contents }로 반환한다 (둘 다 없으면 null).
   function getById(articleId) {
     const article = db.prepare('SELECT * FROM Article WHERE articleId = ?').get(articleId);
@@ -51,19 +53,26 @@ export function createArticleModel(db) {
     return { article, contents };
   }
 
-  function insert({ article, contents } = {}) {
+  // history가 있고 historyModel이 주입됐다면 같은 db 핸들(=같은 tx) 안에서 이력 INSERT.
+  function recordHistory(history) {
+    if (history && articleHistoryModel) articleHistoryModel.recordWithDb(db, history);
+  }
+
+  function insert({ article, contents, history } = {}) {
     tx(db, () => {
       if (article) insertInto(db, 'Article', ARTICLE_COLS, article);
       if (contents) insertInto(db, 'Contents', CONTENTS_COLS, contents);
+      recordHistory(history);
     });
     return (article && article.articleId) || (contents && contents.articleId);
   }
 
-  function update(articleId, { article, contents } = {}) {
+  function update(articleId, { article, contents, history } = {}) {
     return tx(db, () => {
       let changes = 0;
       if (article) changes += updateSet(db, 'Article', ARTICLE_COLS, 'articleId', articleId, article);
       if (contents) changes += updateSet(db, 'Contents', CONTENTS_COLS, 'articleId', articleId, contents);
+      recordHistory(history);
       return changes;
     });
   }

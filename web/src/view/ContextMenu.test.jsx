@@ -83,6 +83,108 @@ describe('buildContextMenuItems — per-menu items', () => {
       expect(find(items, 'sendHistory').enabled).toBe(true);
     }
   });
+
+  it('mapping is always active (매핑=일반 편집 진입, 권한·상태 제한 없음)', () => {
+    // 권한 R·D·Z, 상태 DPS·RDS 다양화 — 매핑은 항상 활성.
+    for (const menu of ['deptWrite', 'deptSend', 'personal']) {
+      for (const [status, role] of [['DPS', 'D'], ['RDS', 'R'], ['DPS', 'Z'], ['RDS', 'D']]) {
+        const items = buildContextMenuItems(menu, { status }, { role });
+        expect(find(items, 'mapping')).toBeTruthy();
+        expect(find(items, 'mapping').enabled).toBe(true);
+        expect(find(items, 'mapping').label).toBe('매핑');
+      }
+    }
+  });
+
+  it('deskUnsent 메뉴에는 매핑/번역 항목이 없다 (회귀)', () => {
+    const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
+    expect(keys(items)).not.toContain('mapping');
+    expect(keys(items)).not.toContain('translate');
+  });
+
+  it('활성 매핑 클릭 시 onSelect(mapping, article) 호출', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR7', status: 'RDS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'R' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '매핑' }));
+    expect(onSelect).toHaveBeenCalledWith('mapping', article);
+  });
+
+  it('비활성 번역 클릭은 onSelect를 호출하지 않는다', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR6', status: 'DPS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'D' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    const tr = screen.getByRole('menuitem', { name: '번역' });
+    expect(tr).toBeDisabled();
+    await userEvent.click(tr);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('followUp/continue are always active (일반 신규 작성 진입)', () => {
+    // DPS + D
+    const dpsD = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'D' });
+    expect(find(dpsD, 'followUp').enabled).toBe(true);
+    expect(find(dpsD, 'continue').enabled).toBe(true);
+    // DPS + R
+    const dpsR = buildContextMenuItems('deptWrite', { status: 'DPS' }, { role: 'R' });
+    expect(find(dpsR, 'followUp').enabled).toBe(true);
+    expect(find(dpsR, 'continue').enabled).toBe(true);
+    // 비-DPS(RDS) + D
+    const rdsD = buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' });
+    expect(find(rdsD, 'followUp').enabled).toBe(true);
+    expect(find(rdsD, 'continue').enabled).toBe(true);
+  });
+
+  it('resend active only for DPS + role D/Z (재송=DPS 재송고)', () => {
+    // DPS + D/Z → 활성
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'D' }), 'resend').enabled).toBe(true);
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'Z' }), 'resend').enabled).toBe(true);
+    // DPS + R → 비활성(R은 send 전이 거부)
+    expect(find(buildContextMenuItems('deptSend', { status: 'DPS' }, { role: 'R' }), 'resend').enabled).toBe(false);
+    // 비-DPS(RDS) + D → 비활성
+    expect(find(buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' }), 'resend').enabled).toBe(false);
+  });
+
+  it('deskUnsent 메뉴에는 followUp/continue/resend 항목이 없다 (회귀)', () => {
+    const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
+    expect(keys(items)).not.toContain('followUp');
+    expect(keys(items)).not.toContain('continue');
+    expect(keys(items)).not.toContain('resend');
+  });
+
+  it('활성 followUp 클릭 시 onSelect(key, article) 호출', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR2', status: 'DPS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptSend" article={article} identity={{ role: 'D' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '후속기사작성' }));
+    expect(onSelect).toHaveBeenCalledWith('followUp', article);
+  });
+
+  it('history/sendHistory are now active (이력보기/송고이력보기)', () => {
+    const items = buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'R' });
+    expect(find(items, 'history').enabled).toBe(true);
+    expect(find(items, 'sendHistory').enabled).toBe(true);
+    // 데스크 미송고는 history만, sendHistory 없음.
+    const desk = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'R' });
+    expect(find(desk, 'history').enabled).toBe(true);
+    expect(keys(desk)).not.toContain('sendHistory');
+  });
+
+  it('history click emits onSelect (활성 항목)', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR1', status: 'RDS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="deptWrite" article={article} identity={{ role: 'R' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '이력보기' }));
+    expect(onSelect).toHaveBeenCalledWith('history', article);
+  });
 });
 
 describe('buildContextMenuItems — active conditions', () => {

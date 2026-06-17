@@ -46,6 +46,30 @@ describe('submitButtons — 권한×상태×진입 진리표', () => {
   });
 
   it('항상 송고→보류→KILL 순서로 거른다', () => {
-    expect(SUBMIT_LABELS).toEqual({ send: '송고', hold: '보류', kill: 'KILL' });
+    expect(SUBMIT_LABELS.send).toBe('송고');
+    expect(SUBMIT_LABELS.hold).toBe('보류');
+    expect(SUBMIT_LABELS.kill).toBe('KILL');
+  });
+});
+
+describe('submitButtons — 매핑 모드(mode:mapping)', () => {
+  it("매핑 진입: articleId·DPS 상태·D 권한이어도 '저장' 단일 버튼만", () => {
+    expect(submitButtons({ mode: 'mapping', articleId: 'AKR1', status: 'DPS', role: 'D' }))
+      .toEqual(['save']);
+  });
+
+  it('매핑 분기는 최우선 — status/role을 어떤 값으로 바꿔도 항상 [save]', () => {
+    const statuses = ['DPS', 'RDS', 'DDH', 'RRK', null, undefined];
+    const allRoles = ['R', 'D', 'Z', null, undefined];
+    for (const status of statuses) {
+      for (const role of allRoles) {
+        expect(submitButtons({ mode: 'mapping', articleId: 'AKR1', status, role }))
+          .toEqual(['save']);
+      }
+    }
+  });
+
+  it("SUBMIT_LABELS.save === '저장'", () => {
+    expect(SUBMIT_LABELS.save).toBe('저장');
   });
 });

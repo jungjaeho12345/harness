@@ -12,6 +12,7 @@ import {
   COLUMNS, loadColumnConfig, saveColumnConfig, toggleColumn, setGap, visibleColumns,
 } from './columnConfig.js';
 import { renderDetailHtml } from './articleDetail.js';
+import { renderHistoryHtml } from './historyView.js';
 import { blocksToText, deserialize } from './editorContent.js';
 import { formatDateTime } from './listFormat.js';
 
@@ -28,6 +29,22 @@ function openDetail(article) {
   if (!w || !w.document) return;
   w.document.write(renderDetailHtml(article));
   w.document.close();
+}
+
+// 이력보기/송고이력보기 — 상세보기와 같은 새 창 패턴(720×800).
+// 팝업 차단 회피: window.open은 클릭 핸들러 안에서 동기적으로 먼저 호출해 창 핸들을 얻은 뒤,
+// async 조회(load)가 끝나면 그 창에 write한다(await 후 open 금지 — 사용자 제스처 컨텍스트 소실).
+function openHistory(article, kind, load) {
+  const w = window.open('', '_blank', 'width=720,height=800');
+  if (!w || !w.document) return;
+  Promise.resolve(load(article)).then((res) => {
+    const items = (res && res.items) || [];
+    w.document.write(renderHistoryHtml(items, { title: article.title, kind }));
+    w.document.close();
+  }).catch(() => {
+    w.document.write(renderHistoryHtml([], { title: article.title, kind }));
+    w.document.close();
+  });
 }
 
 function copyText(text) {
@@ -77,8 +94,12 @@ export function ListPage() {
       case 'edit': editArticle(article); break;
       case 'reviseNoPortal': reviseArticle(article, false); break;
       case 'revisePortal': reviseArticle(article, true); break;
+      case 'mapping': mapArticle(article); break;
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
+      case 'followUp': followUpArticle(article); break;
+      case 'continue': continueArticle(article); break;
+      case 'resend': resendArticle(article); break;
       case 'detail': openDetail(article); break;
       case 'history': showHistory(article, '이력보기', false); break;
       case 'sendHistory': showHistory(article, '송고이력보기', true); break;

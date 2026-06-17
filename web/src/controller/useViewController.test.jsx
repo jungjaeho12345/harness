@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
 import { useViewController, buildMenuFilter, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
+import { PENDING_NEW_KEY } from './useWriteController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }) {

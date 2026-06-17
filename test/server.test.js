@@ -192,6 +192,75 @@ test('action: 송고는 "(끝)" 마커가 없으면 400 (no-end-marker)', async 
   } finally { await ctx.close(); }
 });
 
+test('GET /api/articles/:id/history: 미인증은 401, 인증은 시간순 이력 배열', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    // 미인증 → 401.
+    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`);
+    assert.equal(unauth.status, 401);
+
+    // 인증 → { ok:true, items:[...] }.
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.ok(Array.isArray(r.body.items));
+    assert.ok(r.body.items.length >= 2);
+    assert.equal(r.body.items[0].eventType, 'create');
+    assert.ok(r.body.items.some((h) => h.eventType === 'send'));
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/articles/:id/send-history: send 이벤트만 반환, 미인증 401', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/send-history`);
+    assert.equal(unauth.status, 401);
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/send-history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.ok(Array.isArray(r.body.items));
+    assert.ok(r.body.items.length >= 1);
+    assert.ok(r.body.items.every((h) => h.eventType === 'send'));
+  } finally { await ctx.close(); }
+});
+
+test('GET /api/articles/:id/history: 이벤트 없는 기사는 빈 items, 단건/search 라우트는 무회귀', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+
+    // 존재하지 않는 기사 이력 → 빈 배열.
+    const empty = await api(ctx.base, 'GET', '/api/articles/999999/history', { sid });
+    assert.equal(empty.status, 200);
+    assert.deepEqual(empty.body.items, []);
+
+    // /search 라우트가 history 라우트 추가로 깨지지 않는다.
+    const search = await api(ctx.base, 'GET', '/api/articles/search?q=', { sid });
+    assert.equal(search.status, 200);
+    assert.equal(search.body.ok, true);
+    assert.ok(Array.isArray(search.body.items));
+
+    // 단건 조회 라우트도 그대로 동작(존재 기사).
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
+    const single = await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid });
+    assert.equal(single.status, 200);
+    assert.equal(single.body.ok, true);
+    assert.ok(single.body.article);
+  } finally { await ctx.close(); }
+});
+
 test('PUT /api/articles/:id: 잠금 보유자만 수정할 수 있다', async () => {
   const ctx = await start();
   try {
