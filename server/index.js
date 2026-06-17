@@ -230,11 +230,17 @@ export function createApp({
     });
   }
 
-  // 전역 JSON 파서 — 기본 limit(~100kb)을 유지한다. 단 /api/upload는 본문(base64)이 클 수 있어
-  // 라우트 자체 파서(아래 10mb)가 처리하도록 전역 파서를 건너뛴다(전역 limit은 올리지 않는다).
+  // 전역 JSON 파서 — 기본 limit(~100kb)을 유지한다(로그인 등 일반 라우트의 보호 면적은 그대로).
+  // 단 본문이 클 수 있는 라우트는 전역 파서를 건너뛰고 라우트 자체 파서(큰 limit)가 처리한다:
+  //  - /api/upload: 첨부/자료 파일(base64)
+  //  - 기사 생성(POST)/수정(PUT): 본문(markupVersion)에 인라인 이미지(base64)가 들어갈 수 있어
+  //    기본 100kb를 쉽게 넘는다(넘으면 413→500으로 송고가 조용히 실패하던 버그).
   const globalJson = express.json();
+  const articleJson = express.json({ limit: '10mb' });
+  const isArticleWrite = (req) => (req.method === 'POST' && req.path === '/api/articles')
+    || (req.method === 'PUT' && /^\/api\/articles\/[^/]+$/.test(req.path));
   app.use((req, res, next) => {
-    if (req.path === '/api/upload') return next();
+    if (req.path === '/api/upload' || isArticleWrite(req)) return next();
     return globalJson(req, res, next);
   });
 
@@ -423,7 +429,7 @@ export function createApp({
   });
 
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다. 신규는 항상 RDS로 저장(서비스).
-  app.post('/api/articles', (req, res, next) => {
+  app.post('/api/articles', articleJson, (req, res, next) => {
     try {
       const { me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
@@ -491,7 +497,7 @@ export function createApp({
   });
 
   // 부분 수정 — 편집 잠금 보유자(세션)만 가능.
-  app.put('/api/articles/:id', (req, res, next) => {
+  app.put('/api/articles/:id', articleJson, (req, res, next) => {
     try {
       const { me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
