@@ -437,6 +437,9 @@ export function createApp({
       const dto = { ...(req.body ?? {}) };
       delete dto.role; // 클라 role 무시.
       if (!dto.department) { dto.department = me.department; dto.departmentCode = me.departmentCode; }
+      // 작성자 미전송이면 세션 사용자로 보정한다(부서와 동일 정책 — 신규 기사가 작성자 없이 저장되지 않게).
+      // 클라가 작성자를 명시하면(대필 등) 그대로 보존한다. 신원은 세션에서만 도출(ADR-004).
+      if (!dto.author) dto.author = me.name || me.userId;
       const r = controllers.article.create(dto);
       if (r.ok) app.notifyChange('create');
       return res.json(r);

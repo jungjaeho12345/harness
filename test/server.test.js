@@ -287,6 +287,29 @@ test('PUT /api/articles/:id: 같은 세션의 2번째 탭(다른 clientId)은 lo
   } finally { await ctx.close(); }
 });
 
+test('POST /api/articles: 작성자 미전송 시 세션 사용자 이름으로 stamp한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', departmentCode: 'SOC', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // author를 보내지 않고 생성 → 세션 사용자 이름으로 보정(신규 작성 작성자 자동 입력).
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
+    const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
+    assert.equal(row.author, '김기자', '작성자 미전송 시 세션 사용자로 보정');
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/articles: 명시한 작성자는 세션 stamp가 덮어쓰지 않는다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', author: '대필기자' } })).body;
+    const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
+    assert.equal(row.author, '대필기자', '명시한 작성자는 보존');
+  } finally { await ctx.close(); }
+});
+
 test('PUT /api/articles/:id: 부서를 빈 값으로 저장하면 세션 부서로 보정한다 (#3)', async () => {
   const ctx = await start();
   try {

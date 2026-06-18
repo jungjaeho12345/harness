@@ -45,3 +45,44 @@ describe('articleDetail — HTML escaping', () => {
     expect(html).not.toContain('<img src=x onerror=alert(1)>');
   });
 });
+
+describe('articleDetail — embed media rendering', () => {
+  it('renders an <img> (not the raw src text) for an allowed image embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'image', src: '/uploads/abc.png', alt: '사진' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<img');
+    expect(html).toContain('src="/uploads/abc.png"');
+    expect(html).toContain('alt="사진"');
+  });
+
+  it('renders an <img> for a data:image/ embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'image', src: 'data:image/png;base64,AAAA' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<img');
+    expect(html).toContain('src="data:image/png;base64,AAAA"');
+  });
+
+  it('does not render an <img> nor leak the raw src for a disallowed image scheme', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'image', src: 'javascript:alert(1)' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('javascript:alert(1)');
+  });
+
+  it('renders a canonical YouTube <iframe> for a video embed', () => {
+    const markupVersion = serialize([embedBlock({
+      embedType: 'video', videoId: 'dQw4w9WgXcQ', src: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<iframe');
+    expect(html).toContain('src="https://www.youtube.com/embed/dQw4w9WgXcQ"');
+  });
+
+  it('renders the title text (no media) for an article reference embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'article', articleId: 'AKR9', title: '참조기사' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('참조기사');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<iframe');
+  });
+});

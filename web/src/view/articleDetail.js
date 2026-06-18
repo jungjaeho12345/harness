@@ -5,6 +5,7 @@
 // CRITICAL: 모든 내용은 HTML 이스케이프되어 스크립트가 실행되지 않는다(<style>은 정적이라 사용자 값을 담지 않는다).
 
 import { deserialize, isEmbedBlock } from './editorContent.js';
+import { parseYouTubeId, isAllowedImageSrc } from './clipboardEmbed.js';
 
 export const EMPTY_FIELD = '—';
 const NO_TITLE = '(제목 없음)';
@@ -93,8 +94,39 @@ body{
   content:attr(data-embed-type);display:inline-block;margin-right:8px;padding:1px 6px;vertical-align:middle;
   font-size:.62rem;font-weight:700;color:#fff;background:var(--b);border-radius:2px;text-transform:uppercase;
 }
+/* 이미지/영상 임베드는 라벨/박스 크롬 없이 실제 미디어만 보여준다. */
+.yh-detail__embed--media{padding:0;background:none;border:none;border-left:none;border-radius:0;}
+.yh-detail__embed--media::before{content:none;}
+.yh-detail__embed--media img{max-width:100%;height:auto;display:block;border:1px solid var(--gl);border-radius:3px;}
+.yh-detail__embed--media iframe{width:100%;max-width:560px;aspect-ratio:16/9;border:0;border-radius:3px;}
 .yh-detail__empty{margin:0;color:var(--gm);font-style:italic;font-family:'Noto Sans KR',system-ui,sans-serif;}
 `;
+
+// 임베드 블록 → 상세보기 HTML. 에디터(InlineEmbed)와 같은 규칙으로 이미지/영상은 실제 미디어로,
+// 기사 참조는 제목 텍스트로 렌더한다. CRITICAL: 이미지 src는 허용 scheme(isAllowedImageSrc)만,
+// 영상은 11자리 videoId로 재구성한 canonical 임베드 URL만 신뢰한다(임의 src 주입 차단). 모든 값은 이스케이프한다.
+// 비허용 임베드(예: javascript: 이미지)는 원본 값을 노출하지 않고 자리표시자만 둔다(예전엔 src 문자열을 본문에 그대로 노출).
+function embedHtml(b) {
+  const type = b.embedType;
+  if (type === 'image' && isAllowedImageSrc(b.src)) {
+    return '<figure class="yh-detail__embed yh-detail__embed--media" data-embed-type="image">'
+      + `<img src="${escapeHtml(b.src)}" alt="${escapeHtml(b.alt ?? '')}" referrerpolicy="no-referrer"></figure>`;
+  }
+  if (type === 'video') {
+    const videoId = b.videoId || parseYouTubeId(b.src) || parseYouTubeId(b.url);
+    if (videoId) {
+      return '<figure class="yh-detail__embed yh-detail__embed--media" data-embed-type="video">'
+        + `<iframe src="https://www.youtube.com/embed/${escapeHtml(videoId)}" title="${escapeHtml(b.title ?? '영상')}"`
+        + ' loading="lazy" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe></figure>';
+    }
+  }
+  if (type === 'article') {
+    return '<figure class="yh-detail__embed" data-embed-type="article">'
+      + `${escapeHtml(b.title || b.articleId || '기사')}</figure>`;
+  }
+  // 알 수 없거나 허용되지 않은 임베드 — 원본 값(src 등)을 노출하지 않는다.
+  return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(type ?? '')}">[${escapeHtml(type || '임베드')}]</figure>`;
+}
 
 // 상세보기 새 창에 write할 HTML 문서 문자열 — 모든 값 이스케이프(스크립트 실행 불가).
 export function renderDetailHtml(article = {}) {
@@ -111,11 +143,7 @@ export function renderDetailHtml(article = {}) {
   const bodyHtml = blocks.length
     ? blocks
       .map((b) => {
-        if (isEmbedBlock(b)) {
-          const label = b.embedType === 'article' ? (b.title ?? '') : (b.src ?? b.title ?? '');
-          return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(b.embedType)}">`
-            + `${escapeHtml(label)}</figure>`;
-        }
+        if (isEmbedBlock(b)) return embedHtml(b);
         return `<p class="yh-detail__line">${escapeHtml(b.text)}</p>`;
       })
       .join('')

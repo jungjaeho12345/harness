@@ -2,19 +2,11 @@
 // 폭: 영상 figure 612px, 기사 참조 카드 480px (clipboardEmbed EMBED_SIZE). transport 비의존(콜백만).
 // 이미지: 제품 결정대로 비율 유지·최대 200×200으로 캡하고 figure는 캡된 이미지에 맞춘다(612px 미예약).
 
-import { EMBED_SIZE, parseYouTubeId } from './clipboardEmbed.js';
+import { EMBED_SIZE, parseYouTubeId, isAllowedImageSrc } from './clipboardEmbed.js';
 
-// 이미지 src 허용 scheme 검사 — https:/data:image/ 와 scheme 없는 상대경로만 허용.
-// javascript:/data:text/.../http: 등은 거부(트래킹·스푸핑 완화).
-export function isAllowedImageSrc(src) {
-  if (typeof src !== 'string' || src === '') return false;
-  const m = src.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
-  if (!m) return true; // scheme 없음 = 상대경로 → 허용
-  const scheme = m[1].toLowerCase();
-  if (scheme === 'https') return true;
-  if (scheme === 'data') return /^data:image\//i.test(src);
-  return false;
-}
+// 이미지 src 허용 scheme 검사(https:/data:image/·상대경로만)는 임베드 모델 모듈(clipboardEmbed)로 단일화했다.
+// 상세보기 렌더(articleDetail)와 같은 규칙을 공유한다. 기존 import 경로 호환을 위해 여기서 재노출한다.
+export { isAllowedImageSrc };
 
 // blockIndex: 이 임베드가 차지하는 본문 블록 인덱스(snapshot 기준). figure에 data-embed-key로 박아
 //   에디터가 DOM을 다시 읽을 때(readEditorBlocks) 임베드를 '등장 순서'가 아니라 '안정적 키'로 매칭하게 한다
