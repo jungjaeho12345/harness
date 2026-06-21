@@ -2,6 +2,13 @@
   "project": "기사 작성기",
   "phase": "10-editor-prefs-store",
   "steps": [
-    { "step": 0, "name": "editor-prefs-store", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "editor-prefs-store",
+      "status": "completed",
+      "started_at": "2026-06-21T13:41:03+0900",
+      "summary": "editorPrefs.js — STORAGE_KEY 'yh.editorPrefs', DEFAULT_EDITOR_PREFS(colors/autosave/byline/dateFormat, 색상은 editorColoring.COLORS+background 시드), loadEditorPrefs(카테고리별 기본값 위 얕은 병합), saveEditorPrefs(try/catch graceful), setEditorPref(순수·비-mutate 카테고리 병합). columnConfig 패턴·graceful 영속, 서버 무관 클라 localStorage 전용."
+    }
+  ],
+  "created_at": "2026-06-21T13:41:03+0900"
 }
