@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-06-21T10:43:09+0900",
       "summary": "DESK_TABLE에 EPS:{kill:EEK,hold:EEH} row 추가(Z 공유·send 미정의로 재송고 거부). transition 순수성 유지하고 applyAction이 RDS+D/Z+send+엠바고설정(embargoAt||secondEmbargoAt)일 때만 DPS→EPS 후처리(이력 toStatus·sender/sentAt 일치). DDH/DPS 송고·R 송고·엠바고 미설정은 DPS/RDS 회귀 보존. 신규 컬럼 없음(DB 비파괴). npm test 357 pass, lint 0.",
-      "completed_at": "2026-06-21T10:50:00+0900"
+      "completed_at": "2026-06-21T10:47:40+0900"
     },
     {
       "step": 2,
