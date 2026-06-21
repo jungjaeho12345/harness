@@ -7,7 +7,8 @@ import { useAppContext } from '../app/context.js';
 import { useViewController, VIEW_MENUS } from '../controller/useViewController.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { statusBadge } from './statusBadge.js';
-import { formatCell } from './listFormat.js';
+import { formatCell, setDateFormat } from './listFormat.js';
+import { loadEditorPrefs } from './editorPrefs.js';
 import {
   COLUMNS, loadColumnConfig, saveColumnConfig, toggleColumn, setGap, visibleColumns,
 } from './columnConfig.js';
@@ -67,6 +68,9 @@ export function ListPage() {
 
   // 메뉴별 컬럼 설정 로드(설정은 메뉴별로 저장 — columnConfig).
   useEffect(() => { setColConfig(loadColumnConfig(menu)); }, [menu]);
+
+  // 저장된 날짜형식을 적용한다(환경설정 모달은 저장만, 적용은 여기서 — news.md 에디터 환경설정 > 날짜형식).
+  useEffect(() => { setDateFormat(loadEditorPrefs().dateFormat); }, []);
 
   const cols = visibleColumns(colConfig);
 

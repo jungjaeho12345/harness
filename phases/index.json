@@ -64,6 +64,11 @@
       "dir": "11-editor-color-prefs",
       "status": "completed",
       "completed_at": "2026-06-21T14:08:15+0900"
+    },
+    {
+      "dir": "12-editor-prefs-datefmt",
+      "status": "completed",
+      "completed_at": "2026-06-21T14:25:49+0900"
     }
   ]
 }
