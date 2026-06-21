@@ -115,3 +115,32 @@ describe('EditorMenuBar — 상단 메뉴바(쉘, 비활성 placeholder)', () =>
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+// Step 1(9-editor-text-transforms): enabledIds로 결선된 항목만 활성화.
+describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
+  it('enabledIds 미전달 시 모든 드롭다운 항목이 비활성이다(phase 8 하위호환)', async () => {
+    render(<EditorMenuBar />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(screen.getByText('(끝)삽입').closest('button')).toBeDisabled();
+    expect(screen.getByText('(계속)삽입').closest('button')).toBeDisabled();
+  });
+
+  it("enabledIds=['edit.insertContinue']면 그 항목만 활성·클릭 시 onSelect를 호출한다", async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['edit.insertContinue']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(screen.getByText('(계속)삽입').closest('button')).toBeEnabled();
+    expect(screen.getByText('(끝)삽입').closest('button')).toBeDisabled(); // 미결선 항목은 여전히 비활성
+    await userEvent.click(screen.getByText('(계속)삽입'));
+    expect(onSelect).toHaveBeenCalledWith('edit.insertContinue');
+  });
+
+  it('enabledIds를 Set으로도 받을 수 있다', async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={new Set(['view.toUpper'])} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '보기' }));
+    expect(screen.getByText('대문자로 바꾸기').closest('button')).toBeEnabled();
+    await userEvent.click(screen.getByText('대문자로 바꾸기'));
+    expect(onSelect).toHaveBeenCalledWith('view.toUpper');
+  });
+});

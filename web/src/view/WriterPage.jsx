@@ -13,7 +13,11 @@ import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
-import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from './editorShortcuts.js';
+import {
+  insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
+  isInsertContinueMarker, insertContinueMarker, transformTextLine,
+  toUpper, toLower, capitalizeFirst, toggleCase,
+} from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
@@ -40,6 +44,16 @@ const READONLY_LABELS = [
 ];
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
+
+// 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
+const MENU_ENABLED = ['edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase'];
+// 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
+const VIEW_TRANSFORMS = {
+  'view.toUpper': toUpper,
+  'view.toLower': toLower,
+  'view.capitalize': capitalizeFirst,
+  'view.toggleCase': toggleCase,
+};
 
 export function WriterPage() {
   const { identity, model } = useAppContext();
@@ -82,14 +96,48 @@ export function WriterPage() {
     updateField('title', (String(text ?? '').split('\n')[0] ?? '').trim());
   };
 
-  // Alt+Y → "(끝)" 최종 블록 삽입 + 맞춤법 검사 on(중복이면 무삽입).
+  // (끝)삽입 — 키보드 Alt+Y와 메뉴 'edit.insertEnd'의 공용 핸들러(단일 소스). "(끝)" 최종 블록 삽입 + 맞춤법 on(중복이면 무삽입).
+  const insertEnd = () => {
+    const r = insertEndMarker(blocks);
+    updateField('body', serialize(r.blocks));
+    setSpell(true); // Editor가 spellcheck 상태 변화로 재렌더되어 색칠(메뉴 경로에서도 동일 부수효과).
+  };
+
+  // (계속)삽입 — 키보드 Ctrl+Y와 메뉴 'edit.insertContinue'의 공용 핸들러. 마지막 캐럿 텍스트-줄 다음에 "(계속)" 삽입.
+  const insertContinue = () => {
+    const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+    const r = insertContinueMarker(blocks, caretLine);
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
+  // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 6개 항목만 동작한다.
+  // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
+  const onMenuSelect = (id) => {
+    if (isMapping) return;
+    if (id === 'edit.insertEnd') { insertEnd(); return; }
+    if (id === 'edit.insertContinue') { insertContinue(); return; }
+    const fn = VIEW_TRANSFORMS[id];
+    if (!fn) return;
+    // 대소문자 변환은 마지막 캐럿 텍스트-줄에만 적용한다. 캐럿이 없으면 no-op.
+    const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+    if (caretLine == null) return;
+    const r = transformTextLine(blocks, caretLine, fn);
+    updateField('body', serialize(r.blocks));
+    setPendingCaretLine(caretLine); // 같은 줄 유지(메뉴 클릭으로 빠진 포커스를 그 줄로 되돌림).
+  };
+
+  // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
     if (isInsertEndMarker(e)) {
       e.preventDefault();
-      const r = insertEndMarker(blocks);
-      updateField('body', serialize(r.blocks));
-      setSpell(true);
+      insertEnd();
+      return;
+    }
+    if (isInsertContinueMarker(e)) {
+      e.preventDefault(); // 브라우저 redo(Ctrl+Y) 가로채기.
+      insertContinue();
       return;
     }
     const ctrlD = isDeleteLine(e);
@@ -184,7 +232,7 @@ export function WriterPage() {
       <div className="yh-writer">
         {/* 좌측 60% — 에디터 크롬(메뉴바·툴바) → 에디터 → 상태표시줄 순으로 쌓는다. */}
         <section className="yh-writer__editor">
-          {/* 메뉴바/툴바 보이기 토글 — 전용 버튼(항상 보임). EditorMenuBar '보기' 항목은 비활성(쉘)이라 결선하지 않는다.
+          {/* 메뉴바/툴바 보이기 토글 — 전용 버튼(항상 보임). 보이기 항목은 EditorMenuBar에 없어(우클릭 컨텍스트 메뉴 규정) 결선 대상이 아니다.
               (news.md L173은 우클릭 컨텍스트 메뉴 항목으로도 규정하나 ContextMenu 이동은 후속 phase로 연기 — 이번엔 전용 버튼만.) */}
           <div className="yh-editor-chrome-bar">
             <button
@@ -206,7 +254,7 @@ export function WriterPage() {
               툴바
             </button>
           </div>
-          {showMenuBar && <EditorMenuBar />}
+          {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
           <Editor
             key={activeTabId}
