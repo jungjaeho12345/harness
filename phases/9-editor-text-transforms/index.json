@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-06-21T12:30:32+0900",
       "summary": "EditorMenuBar에 enabledIds prop 추가(미전달 시 전부 비활성·하위호환)로 결선 6개 항목만 활성화·onSelect 위임. WriterPage에 insertEnd(Alt+Y 공용)·insertContinue(Ctrl+Y, preventDefault)·onMenuSelect((끝)/(계속)/대소문자 4종) 핸들러 결선, lastCaretRef 캐럿 줄 기준, 매핑 모드 가드(본문-only 불변식), 모두 updateField('body',serialize)+setPendingCaretLine/setSpell 기존 안전 경로 사용(Editor 무변경). vitest 단언 추가, web 463 통과·build·lint 통과.",
-      "completed_at": "2026-06-21T12:38:00+0900"
+      "completed_at": "2026-06-21T12:39:19+0900"
     }
   ],
   "created_at": "2026-06-21T12:25:49+0900"
