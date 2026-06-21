@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "9-editor-text-transforms",
+  "steps": [
+    { "step": 0, "name": "text-transform-pure", "status": "pending" },
+    { "step": 1, "name": "text-transform-wiring", "status": "pending" }
+  ]
+}
