@@ -52,7 +52,8 @@
     },
     {
       "dir": "9-editor-text-transforms",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-21T12:39:20+0900"
     }
   ]
 }
