@@ -1,0 +1,24 @@
+{
+  "project": "기사 작성기",
+  "phase": "11-editor-color-prefs",
+  "steps": [
+    {
+      "step": 0,
+      "name": "editorcoloring-configurable",
+      "status": "completed",
+      "started_at": "2026-06-21T13:56:09+0900",
+      "summary": "editorColoring 인자화(activeColors·setEditorColors·resetEditorColors·colorForRole 현재색 읽기, 기본 COLORS 불변) 요약",
+      "completed_at": "2026-06-21T13:59:39+0900"
+    },
+    {
+      "step": 1,
+      "name": "color-prefs-dialog",
+      "status": "completed",
+      "started_at": "2026-06-21T13:59:40+0900",
+      "summary": "EditorPrefsDialog(색상 탭)·help.preferences 결선·적용(saveEditorPrefs+setEditorColors+배경)·마운트 영속 적용 요약",
+      "completed_at": "2026-06-21T14:08:15+0900"
+    }
+  ],
+  "created_at": "2026-06-21T13:56:09+0900",
+  "completed_at": "2026-06-21T14:08:15+0900"
+}

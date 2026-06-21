@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import {
+  describe, it, expect, afterEach,
+} from 'vitest';
 import {
   COLORS, classifyLines, colorForRole, colorLines, shouldRecolor,
+  setEditorColors, resetEditorColors,
 } from './editorColoring.js';
+
+// module-level activeColors가 케이스 간 누수되지 않게 매 케이스 후 기본값으로 되돌린다(필수).
+afterEach(() => resetEditorColors());
 
 describe('editorColoring — structure & colors', () => {
   it('first line is title, lines 2-5 subtitle, 6+ body', () => {
@@ -43,5 +49,38 @@ describe('editorColoring — structure & colors', () => {
     expect(shouldRecolor('blur')).toBe(true);
     expect(shouldRecolor('load')).toBe(true);
     expect(shouldRecolor('input')).toBe(false);
+  });
+});
+
+describe('editorColoring — user-configurable active colors', () => {
+  it('defaults are unchanged when setEditorColors is not called', () => {
+    expect(colorForRole('subtitle')).toBe('#c8102e');
+    expect(colorForRole('title')).toBe('#0a4da6');
+    expect(colorForRole('body')).toBe('#1a1a1a');
+    expect(colorForRole('end')).toBe('#d4af37');
+  });
+
+  it('setEditorColors merges a whitelisted key; others stay; reset restores default', () => {
+    setEditorColors({ subtitle: '#000000' });
+    expect(colorForRole('subtitle')).toBe('#000000');
+    expect(colorForRole('title')).toBe('#0a4da6'); // 불변
+    expect(colorForRole('body')).toBe('#1a1a1a'); // 불변
+    resetEditorColors();
+    expect(colorForRole('subtitle')).toBe('#c8102e');
+  });
+
+  it('ignores non-whitelisted keys (unknown/background/end)', () => {
+    setEditorColors({ unknown: '#fff' });
+    setEditorColors({ background: '#000000' });
+    setEditorColors({ end: '#000000' });
+    expect(colorForRole('end')).toBe('#d4af37'); // 골드 유지
+    expect(colorForRole('title')).toBe('#0a4da6');
+    expect(colorForRole('subtitle')).toBe('#c8102e');
+    expect(colorForRole('body')).toBe('#1a1a1a');
+  });
+
+  it('does not mutate the frozen COLORS constant', () => {
+    setEditorColors({ title: '#123456' });
+    expect(COLORS.title).toBe('#0a4da6');
   });
 });

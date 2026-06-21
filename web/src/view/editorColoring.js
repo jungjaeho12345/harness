@@ -5,12 +5,33 @@
 
 import { END_MARKER } from './editorContent.js';
 
+// 기본 색(불변 — 리셋/폴백 기준). Object.freeze라 직접 mutate 불가.
 export const COLORS = Object.freeze({
   title: '#0a4da6', // --yh-blue
   subtitle: '#c8102e', // --yh-red
   body: '#1a1a1a', // --yh-ink (검정)
   end: '#d4af37', // --yh-gold "(끝)"
 });
+
+// 사용자 설정 대상 텍스트 색 화이트리스트(news.md 색상 = 제목/부제목/본문).
+// 바탕색(background)은 텍스트 색이 아니라 WriterPage가 적용(Step 1), "(끝)" 골드(end)는 사용자 설정 대상이 아님.
+const TEXT_COLOR_KEYS = ['title', 'subtitle', 'body'];
+
+// 현재 적용 색(module-level 가변 사본, 기본 {...COLORS}). setEditorColors로만 바뀐다.
+let activeColors = { ...COLORS };
+
+// 화이트리스트 텍스트 색 키만 현재 적용 색 위에 병합한다. 그 외(background/end/unknown)는 무시.
+export function setEditorColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  for (const key of TEXT_COLOR_KEYS) {
+    if (typeof colors[key] === 'string') activeColors[key] = colors[key];
+  }
+}
+
+// 현재 적용 색을 기본 COLORS로 되돌린다.
+export function resetEditorColors() {
+  activeColors = { ...COLORS };
+}
 
 function isEndLine(line) {
   return String(line).trim() === END_MARKER;
@@ -29,8 +50,9 @@ export function classifyLines(lines) {
   });
 }
 
+// 현재 적용 색에서 role 색을 반환(없으면 body). 시그니처·호출부는 기존과 동일(인자 1개) — Editor.jsx 무변경.
 export function colorForRole(role) {
-  return COLORS[role] ?? COLORS.body;
+  return activeColors[role] ?? activeColors.body;
 }
 
 // 본문 텍스트 → 라인별 {text, role, color}. 컴포넌트가 라인 span 색을 칠하는 데 쓴다.

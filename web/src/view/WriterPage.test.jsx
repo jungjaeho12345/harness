@@ -8,6 +8,8 @@ import { WriterPage } from './WriterPage.jsx';
 import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
+import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import { colorForRole, resetEditorColors } from './editorColoring.js';
 
 function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, pendingEdit, seed } = {}) {
   if (pendingEdit) sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify(pendingEdit));
@@ -1062,5 +1064,90 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
 
     // 매핑은 본문-only 불변식 — 대문자 변환이 적용되지 않는다.
     expect(editorLines(container)[0]).toBe('title abc');
+  });
+});
+
+// Step 1(11-editor-color-prefs): 색상 환경설정 모달 결선(도움말>환경설정) + 적용/취소 + 배경 + 마운트 영속 적용.
+// editorPrefs(localStorage) + editorColoring(module 상태)을 쓰므로 localStorage.clear()(마운트 effect 오염 차단) +
+// resetEditorColors()(module 상태 복원)로 격리한다.
+describe('WriterPage — 색상 환경설정(EditorPrefsDialog) 결선·적용', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 도움말 메뉴를 열고 '환경설정' 항목을 클릭한다.
+  async function openPrefsViaMenu() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it('도움말>환경설정 클릭 시 EditorPrefsDialog가 열린다', async () => {
+    setup({ identity: { role: 'R' } });
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+    await openPrefsViaMenu();
+    expect(screen.getByTestId('pref-color-title')).toBeInTheDocument();
+  });
+
+  it('매핑 모드에서도 환경설정이 열린다(매핑 가드 이전 처리 — 죽은 버튼 아님)', async () => {
+    await openWith([textBlock('제목'), textBlock('본문')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    await openPrefsViaMenu();
+    expect(screen.getByTestId('pref-color-title')).toBeInTheDocument();
+  });
+
+  it('편집 화면 배경(editor-canvas)이 저장된 바탕색을 반영한다', () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), colors: { ...loadEditorPrefs().colors, background: '#123456' } });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(getByTestId('editor-canvas')).toHaveStyle({ backgroundColor: '#123456' });
+  });
+
+  it('마운트 시 저장된 텍스트 색이 setEditorColors로 적용된다(colorForRole 저장색 반환)', () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), colors: { ...loadEditorPrefs().colors, subtitle: '#0000ff' } });
+    setup({ identity: { role: 'R' } });
+    expect(colorForRole('subtitle')).toBe('#0000ff');
+  });
+
+  it("부제목 색을 바꿔 '적용'하면 저장·module색·부제 줄 색이 새 값으로 반영된다(remount 없이)", async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('부제')]);
+    const editorBefore = container.querySelector('.yh-editor');
+    const subtitleLine = () => Array.from(container.querySelectorAll('.yh-editor__line'))
+      .find((el) => el.getAttribute('data-role') === 'subtitle');
+    expect(subtitleLine().style.color).not.toBe('rgb(0, 255, 0)');
+
+    await openPrefsViaMenu();
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#00ff00' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 영속 + module 색 + 부제 줄 색이 새 값.
+    await waitFor(() => expect(loadEditorPrefs().colors.subtitle).toBe('#00ff00'));
+    expect(colorForRole('subtitle')).toBe('#00ff00');
+    await waitFor(() => expect(subtitleLine().style.color).toBe('rgb(0, 255, 0)'));
+    // 자연 재렌더 — Editor 노드는 그대로(색 반영을 위한 강제 remount/key 변경 없음).
+    expect(container.querySelector('.yh-editor')).toBe(editorBefore);
+    // 모달은 닫힘.
+    expect(screen.queryByTestId('pref-color-subtitle')).toBeNull();
+  });
+
+  it("'취소' 시 저장·module색·배경 모두 불변이다", async () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), colors: { ...loadEditorPrefs().colors, background: '#abcdef' } });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    await openPrefsViaMenu();
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#00ff00' } });
+    fireEvent.change(screen.getByTestId('pref-color-background'), { target: { value: '#111111' } });
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().colors.subtitle).toBe(DEFAULT_EDITOR_PREFS.colors.subtitle);
+    expect(colorForRole('subtitle')).toBe(DEFAULT_EDITOR_PREFS.colors.subtitle);
+    expect(getByTestId('editor-canvas')).toHaveStyle({ backgroundColor: '#abcdef' }); // 배경 불변
+    expect(screen.queryByTestId('pref-color-subtitle')).toBeNull();
   });
 });

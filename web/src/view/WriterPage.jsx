@@ -11,6 +11,9 @@ import { Editor, readCaret } from './Editor.jsx';
 import { StatusBar } from './StatusBar.jsx';
 import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
+import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
+import { loadEditorPrefs } from './editorPrefs.js';
+import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
 import {
@@ -46,7 +49,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase'];
+const MENU_ENABLED = ['edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -73,6 +76,24 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(true);
   const [showToolBar, setShowToolBar] = useState(true);
+
+  // 색상 환경설정(도움말>환경설정) — 모달 표시 + 에디터 바탕색(editorBg). 저장값은 localStorage(editorPrefs)에 영속.
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [editorBg, setEditorBg] = useState(() => loadEditorPrefs().colors.background);
+
+  // 마운트 시 저장된 색을 적용한다(새로고침 후에도 반영). 텍스트색은 setEditorColors, 바탕색은 editorBg로.
+  useEffect(() => {
+    const c = loadEditorPrefs().colors;
+    setEditorColors({ title: c.title, subtitle: c.subtitle, body: c.body });
+    setEditorBg(c.background);
+  }, []);
+
+  // 모달 닫힘 — applied=true(적용)면 바탕색을 저장값으로 갱신(모달이 이미 setEditorColors 호출 → 자연 재렌더로 텍스트색 반영).
+  // applied가 아니면(취소) 색/배경 갱신 없이 닫기만 한다.
+  const onPrefsClose = (applied) => {
+    if (applied) setEditorBg(loadEditorPrefs().colors.background);
+    setShowPrefs(false);
+  };
 
   // 매핑(mapping) — 임베드 전용 제한 편집. 본문 텍스트 비편집·공통정보 readOnly이되 임베드 추가/삭제는 허용(step11).
   const isMapping = activeTab.mode === 'mapping';
@@ -114,6 +135,8 @@ export function WriterPage() {
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 6개 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
+    // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
+    if (id === 'help.preferences') { setShowPrefs(true); return; }
     if (isMapping) return;
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
@@ -256,19 +279,22 @@ export function WriterPage() {
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
-          <Editor
-            key={activeTabId}
-            blocks={blocks}
-            spellcheck={spell}
-            textEditable={!isMapping}
-            onKeyDown={isMapping ? undefined : onKeyDown}
-            onTextChange={isMapping ? undefined : onTextChange}
-            onRemoveEmbed={onRemoveEmbed}
-            onPasteEmbed={pasteEmbedAtCaret}
-            // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
-            onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
-            pendingCaretLine={pendingCaretLine}
-          />
+          {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음). */}
+          <div className="yh-writer__canvas" data-testid="editor-canvas" style={{ backgroundColor: editorBg }}>
+            <Editor
+              key={activeTabId}
+              blocks={blocks}
+              spellcheck={spell}
+              textEditable={!isMapping}
+              onKeyDown={isMapping ? undefined : onKeyDown}
+              onTextChange={isMapping ? undefined : onTextChange}
+              onRemoveEmbed={onRemoveEmbed}
+              onPasteEmbed={pasteEmbedAtCaret}
+              // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
+              onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
+              pendingCaretLine={pendingCaretLine}
+            />
+          </div>
           {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿만 결선. overwrite/language는 기본값(placeholder) 유지. */}
           <StatusBar text={blocksToText(blocks)} caret={statusCaret} />
         </section>
@@ -339,6 +365,9 @@ export function WriterPage() {
           </div>
         </aside>
       </div>
+
+      {/* 색상 환경설정 모달 — 도움말>환경설정으로 열림. 적용 시 onPrefsClose(true)로 배경 적용. */}
+      <EditorPrefsDialog open={showPrefs} onClose={onPrefsClose} />
     </main>
   );
 }
