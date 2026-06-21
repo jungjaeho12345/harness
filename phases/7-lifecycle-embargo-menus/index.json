@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-06-21T10:47:41+0900",
       "summary": "killArticles 메뉴(VIEW_MENUS 5번째)·라벨('KILL기사') 추가, buildMenuFilter→{status:['RRK','DDK','EEK']}(부서 무관·셀렉터 비노출). statusBadge에 EEK=슬레이트·EEH=앰버·EPS=인디고(#4f46e5) 추가. ContextMenu killArticles 분기는 읽기전용(상세·이력·송고이력·복사)만 노출(전이 액션 차단). SCHEMA/news.md status enum·배지 규칙 동기화. 서버 무변경. test:web 394 pass, build·lint 0.",
-      "completed_at": "2026-06-21T10:52:00+0900"
+      "completed_at": "2026-06-21T10:53:55+0900"
     },
     {
       "step": 3,
