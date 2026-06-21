@@ -2,7 +2,18 @@
   "project": "기사 작성기",
   "phase": "9-editor-text-transforms",
   "steps": [
-    { "step": 0, "name": "text-transform-pure", "status": "pending" },
-    { "step": 1, "name": "text-transform-wiring", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "text-transform-pure",
+      "status": "completed",
+      "started_at": "2026-06-21T12:25:49+0900",
+      "summary": "editorShortcuts.js에 순수 함수 추가 — CONTINUE_MARKER('(계속)')·isInsertContinueMarker(Ctrl+Y)·insertContinueMarker(텍스트-줄 다음 삽입, 빈 줄 없음, '(끝)' 최종 보존, caretTextLine 반환)·transformTextLine(텍스트-줄 단위 fn 적용)·대소문자 4종(toUpper/toLower/capitalizeFirst/toggleCase). vitest 단위 테스트 추가, 에디터/WriterPage 무변경."
+    },
+    {
+      "step": 1,
+      "name": "text-transform-wiring",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-06-21T12:25:49+0900"
 }
