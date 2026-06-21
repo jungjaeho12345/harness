@@ -7,7 +7,8 @@
       "name": "editor-draft-store",
       "status": "completed",
       "started_at": "2026-06-21T14:39:58+0900",
-      "summary": "초안 자동저장 저장소 editorDraft.js(saveDraft/loadDraft/clearDraft/expireDrafts — graceful localStorage, 시간은 nowMs 인자) + EditorPrefsDialog에 자동저장 탭(사용/저장간격 30초~5분/보존기한 1~7일) 추가. test:web 515 pass, build·lint 통과."
+      "summary": "초안 자동저장 저장소 editorDraft.js(saveDraft/loadDraft/clearDraft/expireDrafts — graceful localStorage, 시간은 nowMs 인자) + EditorPrefsDialog에 자동저장 탭(사용/저장간격 30초~5분/보존기한 1~7일) 추가. test:web 515 pass, build·lint 통과.",
+      "completed_at": "2026-06-21T14:44:50+0900"
     },
     {
       "step": 1,
