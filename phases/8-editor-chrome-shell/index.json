@@ -1,0 +1,40 @@
+{
+  "project": "기사 작성기",
+  "phase": "8-editor-chrome-shell",
+  "steps": [
+    {
+      "step": 0,
+      "name": "editor-statusbar",
+      "status": "completed",
+      "started_at": "2026-06-21T11:32:09+0900",
+      "summary": "editorStats(wordCount/byteLength/caretPosition 정의)·StatusBar(props·testid) 요약",
+      "completed_at": "2026-06-21T11:36:47+0900"
+    },
+    {
+      "step": 1,
+      "name": "editor-menubar",
+      "status": "completed",
+      "started_at": "2026-06-21T11:36:48+0900",
+      "summary": "EditorMenuBar 7메뉴 config·드롭다운 동작·비활성 placeholder 요약",
+      "completed_at": "2026-06-21T11:41:17+0900"
+    },
+    {
+      "step": 2,
+      "name": "editor-toolbar",
+      "status": "completed",
+      "started_at": "2026-06-21T11:41:18+0900",
+      "summary": "EditorToolBar 글꼴/크기 셀렉트·13버튼 비활성 placeholder 요약",
+      "completed_at": "2026-06-21T11:44:32+0900"
+    },
+    {
+      "step": 3,
+      "name": "writerpage-chrome-integration",
+      "status": "completed",
+      "started_at": "2026-06-21T11:44:33+0900",
+      "summary": "WriterPage chrome 배치·StatusBar 캐럿결선·메뉴바/툴바 토글·Editor onCaretChange offset 추가 요약",
+      "completed_at": "2026-06-21T11:50:51+0900"
+    }
+  ],
+  "created_at": "2026-06-21T11:32:09+0900",
+  "completed_at": "2026-06-21T11:50:51+0900"
+}

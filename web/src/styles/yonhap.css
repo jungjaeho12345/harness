@@ -506,6 +506,149 @@ a { color: var(--yh-blue); }
 
 .yh-editor__line { min-height: 1.8em; white-space: pre-wrap; }
 
+/* 에디터 상태표시줄 — 워드수·Byte·단락/행/열·삽입/수정·언어. 신문형 밀도(좁은 행간·작은 글씨). */
+.yh-editor-statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-top: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+  font-size: 0.75rem;
+  color: var(--yh-gray-dark);
+}
+
+.yh-editor-statusbar__sep { color: var(--yh-gray-mid); }
+
+/* 에디터 크롬 토글 바 — 메뉴바/툴바 보이기 전용 버튼(항상 보임). 신문형 밀도(작은 글씨·얇은 구분선). */
+.yh-editor-chrome-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-white);
+}
+
+.yh-editor-chrome-bar__toggle {
+  padding: 1px 8px;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+  color: var(--yh-gray-dark);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background var(--yh-transition), color var(--yh-transition);
+}
+
+.yh-editor-chrome-bar__toggle[aria-pressed='true'] {
+  background: var(--yh-blue);
+  border-color: var(--yh-blue);
+  color: var(--yh-white);
+}
+
+/* 에디터 상단 메뉴바 — 파일/편집/보기/맞춤법/표/도구/도움말 + 드롭다운(쉘, 비활성 placeholder). */
+.yh-editor-menubar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+  font-size: 0.82rem;
+}
+
+.yh-editor-menubar__group { position: relative; }
+
+.yh-editor-menubar__top {
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  background: transparent;
+  border: 0;
+  font-family: var(--yh-sans);
+  font-size: inherit;
+  color: var(--yh-ink);
+  cursor: pointer;
+}
+
+.yh-editor-menubar__top:hover,
+.yh-editor-menubar__top[aria-expanded='true'] { background: var(--yh-blue-light); }
+
+.yh-editor-menubar__dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  list-style: none;
+  margin: 0;
+  padding: var(--yh-sp-xs) 0;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-md);
+  z-index: 50;
+  min-width: 12rem;
+}
+
+.yh-editor-menubar__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-lg);
+  width: 100%;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  font-size: 0.82rem;
+  color: var(--yh-ink);
+}
+
+.yh-editor-menubar__item:disabled { color: var(--yh-gray-mid); cursor: default; }
+.yh-editor-menubar__shortcut { color: var(--yh-gray-mid); font-size: 0.75rem; }
+
+/* 에디터 툴바 — 메뉴바 아래 글꼴/크기 셀렉트 + 버튼군(쉘, 비활성 placeholder). */
+.yh-editor-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+}
+
+.yh-editor-toolbar__select {
+  padding: 2px var(--yh-sp-xs);
+  font-family: var(--yh-sans);
+  font-size: 0.8rem;
+  color: var(--yh-ink);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+}
+
+.yh-editor-toolbar__sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px var(--yh-sp-xs);
+  background: var(--yh-gray-line);
+}
+
+.yh-editor-toolbar__btn {
+  padding: 2px var(--yh-sp-sm);
+  font-family: var(--yh-sans);
+  font-size: 0.8rem;
+  color: var(--yh-ink);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+}
+
+.yh-editor-toolbar__btn:hover { background: var(--yh-blue-light); }
+.yh-editor-toolbar__btn:disabled { color: var(--yh-gray-mid); background: var(--yh-gray-bg); cursor: default; }
+
 /* 임베드 */
 .yh-embed { display: block; }
 

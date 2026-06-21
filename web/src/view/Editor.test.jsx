@@ -480,7 +480,7 @@ describe('Editor — 캐럿 보고(onCaretChange)', () => {
     const box = screen.getByRole('textbox', { name: '본문' });
     caretAtLine(container, 2); // 셋째 줄
     fireEvent.keyUp(box, { key: 'ArrowDown' });
-    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 2 });
+    expect(onCaretChange).toHaveBeenCalledWith(expect.objectContaining({ lineIndex: 2 }));
   });
 
   it('마우스업에서도 현재 lineIndex로 onCaretChange를 호출한다', () => {
@@ -491,7 +491,7 @@ describe('Editor — 캐럿 보고(onCaretChange)', () => {
     const box = screen.getByRole('textbox', { name: '본문' });
     caretAtLine(container, 1);
     fireEvent.mouseUp(box);
-    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 1 });
+    expect(onCaretChange).toHaveBeenCalledWith(expect.objectContaining({ lineIndex: 1 }));
   });
 
   it('blur 시 selection이 에디터 안이면 마지막 lineIndex로 onCaretChange를 호출한다', () => {
@@ -503,7 +503,7 @@ describe('Editor — 캐럿 보고(onCaretChange)', () => {
     caretAtLine(container, 1);
     onCaretChange.mockClear();
     fireEvent.blur(box);
-    expect(onCaretChange).toHaveBeenCalledWith({ lineIndex: 1 });
+    expect(onCaretChange).toHaveBeenCalledWith(expect.objectContaining({ lineIndex: 1 }));
   });
 
   it('blur 시 selection이 에디터 밖(root 미포함)이면 onCaretChange를 호출하지 않는다', () => {

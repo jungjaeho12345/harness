@@ -331,7 +331,7 @@ export function Editor({
     if (!onCaretChange) return;
     const caret = readCaret(root);
     if (!caret) return;
-    onCaretChange({ lineIndex: caret.lineIndex });
+    onCaretChange({ lineIndex: caret.lineIndex, offset: caret.offset });
   };
   const handleCaretEvent = (e) => reportCaret(e.currentTarget);
 

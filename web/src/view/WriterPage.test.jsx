@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  render, screen, waitFor, fireEvent, createEvent,
+  render, screen, waitFor, fireEvent, createEvent, within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
@@ -33,6 +33,54 @@ describe('WriterPage — 레이아웃', () => {
     for (const t of ['공통정보', '이미지', '영상', '글기사']) {
       expect(screen.getByRole('button', { name: t })).toBeInTheDocument();
     }
+  });
+});
+
+// Step 3: 에디터 크롬(메뉴바·툴바·상태표시줄) 배치 + 보이기 토글.
+describe('WriterPage — 에디터 크롬(메뉴바/툴바/상태표시줄) 배치·토글', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 본문(markupVersion)을 가진 기사로 편집 진입한 WriterPage를 띄운다.
+  async function openWith(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it('메뉴바·툴바·상태표시줄이 좌측 에디터 영역에 보인다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const editorCol = container.querySelector('.yh-writer__editor');
+    expect(within(editorCol).getByTestId('menubar')).toBeInTheDocument();
+    expect(within(editorCol).getByTestId('toolbar')).toBeInTheDocument();
+    expect(within(editorCol).getByRole('status', { name: '에디터 상태' })).toBeInTheDocument();
+  });
+
+  it('본문 텍스트가 상태표시줄 단어수/Byte에 반영된다', async () => {
+    const { getByTestId } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    // blocksToText = "헤드라인\n본문" → 단어 2개, UTF-8 19바이트(한글 3B×6 + 개행 1B).
+    expect(getByTestId('stat-words')).toHaveTextContent('2단어');
+    expect(getByTestId('stat-bytes')).toHaveTextContent('19B');
+  });
+
+  it('toggle-menubar/toggle-toolbar로 메뉴바·툴바를 숨기고 다시 보일 수 있다', async () => {
+    const { getByTestId, queryByTestId } = setup({ identity: { role: 'R' } });
+    expect(queryByTestId('menubar')).toBeInTheDocument();
+    expect(queryByTestId('toolbar')).toBeInTheDocument();
+
+    await userEvent.click(getByTestId('toggle-menubar'));
+    expect(queryByTestId('menubar')).toBeNull();
+    await userEvent.click(getByTestId('toggle-toolbar'));
+    expect(queryByTestId('toolbar')).toBeNull();
+
+    await userEvent.click(getByTestId('toggle-menubar'));
+    expect(queryByTestId('menubar')).toBeInTheDocument();
+    await userEvent.click(getByTestId('toggle-toolbar'));
+    expect(queryByTestId('toolbar')).toBeInTheDocument();
   });
 });
 

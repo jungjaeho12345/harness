@@ -8,6 +8,9 @@ import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
 import { Editor, readCaret } from './Editor.jsx';
+import { StatusBar } from './StatusBar.jsx';
+import { EditorMenuBar } from './EditorMenuBar.jsx';
+import { EditorToolBar } from './EditorToolBar.jsx';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
 import { insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt } from './editorShortcuts.js';
@@ -49,6 +52,13 @@ export function WriterPage() {
 
   const [metaTab, setMetaTab] = useState('common');
   const [spell, setSpell] = useState(false);
+
+  // 에디터 크롬(메뉴바·툴바·상태표시줄) — Step 3 배치.
+  // statusCaret: 상태표시줄 '행/열' 표시용 마지막 캐럿({lineIndex, offset}). 캐럿 이동마다 갱신(가산적 결선).
+  // showMenuBar/showToolBar: 메뉴바/툴바 보이기 토글(레이아웃 토글 — placeholder 아님).
+  const [statusCaret, setStatusCaret] = useState(null);
+  const [showMenuBar, setShowMenuBar] = useState(true);
+  const [showToolBar, setShowToolBar] = useState(true);
 
   // 매핑(mapping) — 임베드 전용 제한 편집. 본문 텍스트 비편집·공통정보 readOnly이되 임베드 추가/삭제는 허용(step11).
   const isMapping = activeTab.mode === 'mapping';
@@ -172,8 +182,32 @@ export function WriterPage() {
       </div>
 
       <div className="yh-writer">
-        {/* 좌측 60% — 에디터 */}
+        {/* 좌측 60% — 에디터 크롬(메뉴바·툴바) → 에디터 → 상태표시줄 순으로 쌓는다. */}
         <section className="yh-writer__editor">
+          {/* 메뉴바/툴바 보이기 토글 — 전용 버튼(항상 보임). EditorMenuBar '보기' 항목은 비활성(쉘)이라 결선하지 않는다.
+              (news.md L173은 우클릭 컨텍스트 메뉴 항목으로도 규정하나 ContextMenu 이동은 후속 phase로 연기 — 이번엔 전용 버튼만.) */}
+          <div className="yh-editor-chrome-bar">
+            <button
+              type="button"
+              className="yh-editor-chrome-bar__toggle"
+              data-testid="toggle-menubar"
+              aria-pressed={showMenuBar}
+              onClick={() => setShowMenuBar((v) => !v)}
+            >
+              메뉴바
+            </button>
+            <button
+              type="button"
+              className="yh-editor-chrome-bar__toggle"
+              data-testid="toggle-toolbar"
+              aria-pressed={showToolBar}
+              onClick={() => setShowToolBar((v) => !v)}
+            >
+              툴바
+            </button>
+          </div>
+          {showMenuBar && <EditorMenuBar />}
+          {showToolBar && <EditorToolBar />}
           <Editor
             key={activeTabId}
             blocks={blocks}
@@ -183,9 +217,12 @@ export function WriterPage() {
             onTextChange={isMapping ? undefined : onTextChange}
             onRemoveEmbed={onRemoveEmbed}
             onPasteEmbed={pasteEmbedAtCaret}
-            onCaretChange={(c) => { lastCaretRef.current = c; }}
+            // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
+            onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
             pendingCaretLine={pendingCaretLine}
           />
+          {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿만 결선. overwrite/language는 기본값(placeholder) 유지. */}
+          <StatusBar text={blocksToText(blocks)} caret={statusCaret} />
         </section>
 
         {/* 우측 40% — 메타데이터 */}
