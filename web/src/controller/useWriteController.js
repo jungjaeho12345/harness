@@ -63,9 +63,11 @@ function toSaveDto(tab) {
 }
 
 // 편집 가능 필드의 빈 시드(blankTab) — EDITABLE_FIELDS를 단일 출처로 삼아 새 공통정보 필드도 자동 포함된다.
-function blankFields() {
+// author는 로그인 사용자 이름으로 미리 채운다(신규 작성 시 작성자 미입력 방지). 비우면 ''.
+function blankFields(author = '') {
   const out = {};
   for (const k of EDITABLE_FIELDS) out[k] = '';
+  out.author = author ?? '';
   return out;
 }
 
@@ -80,14 +82,14 @@ function fieldsFromArticle(article, fallbackAuthor) {
   return out;
 }
 
-function blankTab() {
+function blankTab(author = '') {
   return {
     id: nextTabId(),
     mode: 'new', // 편집 진입 컨텍스트: new / edit / revise / portalRevise (버튼 표시 규칙이 의존 — step12)
     articleId: null,
     status: null, // 진입 상태(RDS/DDH/DPS…) — 송고/보류/KILL 버튼 표시 규칙이 사용한다(writerButtons).
     clientId: null, // 편집 잠금을 획득한 탭만 채워진다(편집 탭 식별자, x-edit-client).
-    fields: blankFields(),
+    fields: blankFields(author), // 작성자는 로그인 사용자로 미리 채운다(신규 작성 작성자 자동 입력).
     readOnly: {},
   };
 }
@@ -119,7 +121,8 @@ function tabFromSource(article, mode, fallbackAuthor) {
 }
 
 // sessionStorage에서 탭 목록을 복원한다(페이지 이동 후에도 유지). 비어 있으면 빈 새 기사 탭 1개.
-function loadTabs() {
+// author: 새로 만드는 빈 탭의 작성자 시드(로그인 사용자 이름).
+function loadTabs(author = '') {
   try {
     const parsed = JSON.parse(sessionStorage.getItem(TABS_KEY));
     if (parsed && Array.isArray(parsed.tabs) && parsed.tabs.length) {
@@ -133,15 +136,21 @@ function loadTabs() {
   } catch {
     // 저장된 탭 없음/파싱 불가 — 빈 새 기사 탭으로 시작.
   }
-  const first = blankTab();
+  const first = blankTab(author);
   return { tabs: [first], activeTabId: first.id };
 }
 
 export function useWriteController() {
   const { model, identity, replace } = useAppContext();
 
+  // 신규 빈 탭의 작성자 시드 — 로그인 사용자 이름. 콜백(addTab/resetTabToBlank)이 항상 최신 값을
+  // 보도록 ref로 미러링한다(블록 팩토리는 모듈 함수라 identity에 직접 접근하지 못한다).
+  const authorSeed = (identity && identity.name) || '';
+  const authorRef = useRef(authorSeed);
+  useEffect(() => { authorRef.current = authorSeed; }, [authorSeed]);
+
   const seed = useRef(null);
-  if (seed.current === null) seed.current = loadTabs();
+  if (seed.current === null) seed.current = loadTabs(authorSeed);
 
   const [tabs, setTabs] = useState(seed.current.tabs);
   const [activeTabId, setActiveTabId] = useState(seed.current.activeTabId);
@@ -185,11 +194,11 @@ export function useWriteController() {
 
   // 편집 탭을 빈 새 기사 탭으로 전환(같은 자리·같은 탭 id 유지) — 송고/보류/KILL/삭제승인 성공 후.
   const resetTabToBlank = useCallback((id) => {
-    setTabs((prev) => prev.map((t) => (t.id === id ? { ...blankTab(), id: t.id } : t)));
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...blankTab(authorRef.current), id: t.id } : t)));
   }, []);
 
   const addTab = useCallback(() => {
-    const t = blankTab();
+    const t = blankTab(authorRef.current);
     setTabs((prev) => [...prev, t]);
     setActiveTabId(t.id);
     return t.id;

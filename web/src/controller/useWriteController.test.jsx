@@ -41,6 +41,14 @@ describe('useWriteController', () => {
     expect(result.current.activeTab.articleId).toBeNull();
   });
 
+  it('seeds the author of new (blank) tabs with the logged-in user name', () => {
+    const { result } = setup({});
+    // 신규 작성 탭은 작성자가 로그인 사용자(identity.name)로 미리 채워진다.
+    expect(result.current.activeTab.fields.author).toBe('김기자');
+    act(() => { result.current.addTab(); });
+    expect(result.current.activeTab.fields.author).toBe('김기자');
+  });
+
   it('addTab adds an independent tab and persists across remounts (sessionStorage)', () => {
     const { result, unmount } = setup({});
     act(() => { result.current.addTab(); });

@@ -18,6 +18,19 @@ export function parseYouTubeId(url) {
   return m ? m[1] : null;
 }
 
+// 이미지 src 허용 scheme 검사 — https:/data:image/ 와 scheme 없는 상대경로만 허용.
+// javascript:/data:text/.../http: 등은 거부(트래킹·스푸핑·XSS 완화). 에디터 렌더(InlineEmbed)와
+// 상세보기 렌더(articleDetail) 양쪽이 같은 규칙을 쓰도록 임베드 모델 모듈에 단일 출처로 둔다.
+export function isAllowedImageSrc(src) {
+  if (typeof src !== 'string' || src === '') return false;
+  const m = src.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (!m) return true; // scheme 없음 = 상대경로 → 허용
+  const scheme = m[1].toLowerCase();
+  if (scheme === 'https') return true;
+  if (scheme === 'data') return /^data:image\//i.test(src);
+  return false;
+}
+
 // 이미지 임베드(붙여넣기 데이터 URL 또는 검색 결과 URL).
 export function makeImageEmbed(src, { alt = '' } = {}) {
   return embedBlock({
