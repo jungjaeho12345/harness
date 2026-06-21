@@ -7,7 +7,8 @@
       "name": "editorcoloring-configurable",
       "status": "completed",
       "started_at": "2026-06-21T13:56:09+0900",
-      "summary": "editorColoring 인자화(activeColors·setEditorColors·resetEditorColors·colorForRole 현재색 읽기, 기본 COLORS 불변) 요약"
+      "summary": "editorColoring 인자화(activeColors·setEditorColors·resetEditorColors·colorForRole 현재색 읽기, 기본 COLORS 불변) 요약",
+      "completed_at": "2026-06-21T13:59:39+0900"
     },
     {
       "step": 1,
