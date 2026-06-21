@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "8-editor-chrome-shell",
+  "steps": [
+    { "step": 0, "name": "editor-statusbar", "status": "pending" },
+    { "step": 1, "name": "editor-menubar", "status": "pending" },
+    { "step": 2, "name": "editor-toolbar", "status": "pending" },
+    { "step": 3, "name": "writerpage-chrome-integration", "status": "pending" }
+  ]
+}
