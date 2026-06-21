@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "editor-toolbar",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-21T11:41:18+0900",
+      "summary": "EditorToolBar 글꼴/크기 셀렉트·13버튼 비활성 placeholder 요약",
+      "completed_at": "2026-06-21T11:43:30+0900"
     },
     {
       "step": 3,
