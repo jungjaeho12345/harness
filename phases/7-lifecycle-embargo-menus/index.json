@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "7-lifecycle-embargo-menus",
+  "steps": [
+    { "step": 0, "name": "lifecycle-firstauthor-generalize", "status": "pending" },
+    { "step": 1, "name": "eps-embargo-transition", "status": "pending" },
+    { "step": 2, "name": "killarticles-menu-badges", "status": "pending" },
+    { "step": 3, "name": "embargo-management-menu", "status": "pending" }
+  ]
+}
