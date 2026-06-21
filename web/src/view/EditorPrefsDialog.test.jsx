@@ -126,3 +126,83 @@ describe('EditorPrefsDialog — 탭 구조 + 날짜형식', () => {
     expect(prefs.dateFormat).toBe('YYYY/MM/DD HH:mm');
   });
 });
+
+// 자동저장 탭 — phase 13. 색상/날짜형식 탭(위 describe)을 깨지 않고 자동저장 탭만 추가했는지 확인한다.
+describe('EditorPrefsDialog — 자동저장 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('자동저장 탭으로 전환하면 사용/간격/보존기한 입력을 보여준다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-autosave')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-autosave'));
+    expect(screen.getByTestId('pref-autosave-enabled')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-autosave-interval')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-autosave-retention')).toBeInTheDocument();
+    // 다른 탭의 입력은 보이지 않는다.
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('자동저장 입력 초기값은 저장값(loadEditorPrefs().autosave)이다', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-autosave'));
+
+    expect(screen.getByTestId('pref-autosave-enabled')).toBeChecked();
+    expect(screen.getByTestId('pref-autosave-interval')).toHaveValue('120');
+    expect(screen.getByTestId('pref-autosave-retention')).toHaveValue('3');
+  });
+
+  it("자동저장을 설정하고 '적용'하면 editorPrefs.autosave에 반영된다(숫자로 저장)", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-autosave'));
+
+    fireEvent.click(screen.getByTestId('pref-autosave-enabled'));
+    fireEvent.change(screen.getByTestId('pref-autosave-interval'), { target: { value: '180' } });
+    fireEvent.change(screen.getByTestId('pref-autosave-retention'), { target: { value: '5' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { autosave } = loadEditorPrefs();
+    expect(autosave.enabled).toBe(true);
+    expect(autosave.intervalSec).toBe(180); // 문자열이 아닌 숫자
+    expect(autosave.retentionDays).toBe(5);
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it('적용은 색·날짜형식·자동저장을 함께 저장한다(상호 보존)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#00ff00' } });
+    fireEvent.click(screen.getByTestId('prefs-tab-dateFormat'));
+    fireEvent.change(screen.getByTestId('pref-dateFormat'), { target: { value: 'YYYY.MM.DD' } });
+    fireEvent.click(screen.getByTestId('prefs-tab-autosave'));
+    fireEvent.click(screen.getByTestId('pref-autosave-enabled'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+    expect(prefs.autosave.enabled).toBe(true);
+  });
+
+  it("'기본값'은 자동저장 폼을 DEFAULT_EDITOR_PREFS.autosave로 되돌린다", () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      autosave: { enabled: true, intervalSec: 300, retentionDays: 7 },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-autosave'));
+    expect(screen.getByTestId('pref-autosave-enabled')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    expect(screen.getByTestId('pref-autosave-enabled')).not.toBeChecked();
+    expect(screen.getByTestId('pref-autosave-interval'))
+      .toHaveValue(String(DEFAULT_EDITOR_PREFS.autosave.intervalSec));
+    expect(screen.getByTestId('pref-autosave-retention'))
+      .toHaveValue(String(DEFAULT_EDITOR_PREFS.autosave.retentionDays));
+  });
+});
