@@ -13,12 +13,26 @@ const DESK_TABLE = {
   RDS: { send: 'DPS', hold: 'DDH', kill: 'DDK' },
   DPS: { send: 'DPS', hold: 'DDH', approveDelete: 'DPD' }, // DPS는 재송고만, 바로 KILL 불가
   DDH: { send: 'DPS', kill: 'DDK' },                       // 이미 보류이므로 hold 없음
+  EPS: { kill: 'EEK', hold: 'EEH' },                       // 엠바고 송고 대기 — send 없음(재송고 미정의)
 };
 
 // R(기자)는 RDS 기사만 다룰 수 있고, approveDelete는 불가하다.
 const REPORTER_TABLE = {
   RDS: { send: 'RDS', hold: 'RRH', kill: 'RRK' },
 };
+
+// 최초 작성(create) 시 초기 상태. 기본 RDS.
+// 보류: (Z|D)→DDH, R→RRH. 송고/미지정 등은 RDS. (news.md "기사 생애주기")
+// 편집-컨텍스트 transition('RDS',role,'hold')와 결과가 동일하므로 그 결과를 재사용해 한 표로 수렴한다(단일 진실).
+// transition이 거부하는 role(미지정/알 수 없는 role)·그 외 모든 action은 RDS로 흡수한다 —
+// 항상 유효한 상태 문자열을 반환하며 거부하지 않는다(최초 저장은 항상 성공).
+export function initialStatus(role, action) {
+  if (action === 'hold') {
+    const t = transition('RDS', role, 'hold');
+    if (t.ok) return t.status;
+  }
+  return 'RDS';
+}
 
 // 다음 status를 { ok:true, status } 로 반환하거나, 정의 외 조합은 { ok:false, reason } 로 거부.
 export function transition(status, role, action) {

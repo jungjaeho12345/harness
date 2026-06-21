@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
-import { useViewController, buildMenuFilter, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
+import { useViewController, buildMenuFilter, VIEW_MENUS, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }) {
@@ -35,6 +35,23 @@ describe('buildMenuFilter', () => {
   });
   it('personal → logged-in author, RDS·RRK', () => {
     expect(buildMenuFilter('personal', me, null)).toEqual({ author: '김기자', status: ['RDS', 'RRK'] });
+  });
+  it('kill articles → KILL 계열(RRK·DDK·EEK)만, 부서 무관(부서 키 없음)', () => {
+    // KILL기사는 부서 무관 전체 KILL 목록 — departments를 줘도 부서 키를 붙이지 않는다(personal 패턴).
+    expect(buildMenuFilter('killArticles', me, null)).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
+    expect(buildMenuFilter('killArticles', me, ['정치'])).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
+  });
+  it('embargo mgmt → EPS만, 부서 무관(부서 키 없음)', () => {
+    // 엠바고 관리는 부서 무관 전체 EPS 목록 — departments를 줘도 부서 키를 붙이지 않는다(killArticles/personal 패턴).
+    expect(buildMenuFilter('embargoMgmt', me, null)).toEqual({ status: ['EPS'] });
+    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['EPS'] });
+  });
+});
+
+describe('VIEW_MENUS', () => {
+  it('6개 메뉴 — killArticles·embargoMgmt가 기존 4개 뒤에 추가된다', () => {
+    expect(VIEW_MENUS).toHaveLength(6);
+    expect(VIEW_MENUS).toEqual(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles', 'embargoMgmt']);
   });
 });
 

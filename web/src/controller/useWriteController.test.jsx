@@ -256,6 +256,38 @@ describe('useWriteController', () => {
     expect(result.current.activeTab.fields.title).toBe('');
   });
 
+  it('forwards the pressed intent action (hold/send) to saveArticle on a NEW tab (server decides DDH/RDS)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '신규'); });
+
+    // 신규 저장은 create(POST)로 가고, 누른 의도 action이 saveArticle 3번째 인자로 전달된다(Z+hold→DDH).
+    await act(async () => { await result.current.submit('hold'); });
+    expect(save).toHaveBeenLastCalledWith(expect.any(Object), null, 'hold');
+    const holdDto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(holdDto.articleId).toBeUndefined(); // create 경로 — 기사아이디 미포함
+    expect(holdDto.role).toBeUndefined(); // role 미전송(ADR-004)
+
+    // 송고도 동일하게 전달된다(서버가 RDS로 저장).
+    act(() => { result.current.updateField('title', '신규2'); });
+    await act(async () => { await result.current.submit('send'); });
+    expect(save).toHaveBeenLastCalledWith(expect.any(Object), null, 'send');
+  });
+
+  it('does NOT pass action to saveArticle on an edit tab (PUT is body-only; transition via applyAction)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    await act(async () => { await result.current.submit('hold'); });
+
+    // 편집 저장(PUT)은 본문 수정뿐 — action을 싣지 않는다(상태 전이는 applyAction 담당).
+    const lastSave = save.mock.calls[save.mock.calls.length - 1];
+    expect(lastSave[0]).toEqual(expect.objectContaining({ articleId: 'AKR1' }));
+    expect(lastSave[2]).toBeUndefined(); // 3번째 인자(action) 없음
+    expect(apply).toHaveBeenCalledWith('AKR1', 'hold'); // 전이는 applyAction이 담당(기존 동작 불변)
+  });
+
   it('submit on an edit tab applies the lifecycle action and resets to a blank tab', async () => {
     const { result, model } = setup({ articles: [{ ...FULL }] });
     const apply = vi.spyOn(model, 'applyAction');

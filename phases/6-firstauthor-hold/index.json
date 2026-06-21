@@ -1,0 +1,24 @@
+{
+  "project": "기사 작성기",
+  "phase": "6-firstauthor-hold",
+  "steps": [
+    {
+      "step": 0,
+      "name": "backend-initial-status",
+      "status": "completed",
+      "started_at": "2026-06-21T09:00:46+0900",
+      "summary": "최초 작성 초기 상태를 세션 role+의도 action으로 서버가 결정. lifecycle.js에 순수 함수 initialStatus(role, action)→'RDS'|'DDH'(Z+hold만 DDH, 거부 없음) 추가; articleService.create(dto, {role, action}={})가 status:'RDS' 하드코딩 대신 initialStatus 사용(옵션 미전달 시 RDS 하위호환); controllers.article.create(dto, opts) 패스스루; POST /api/articles가 me.role+req.body.action을 전달(body.status/role은 status 결정에 불사용, ADR-004). transition/DESK_TABLE/deriveArticle 무변경. 테스트 338개 통과·lint 0.",
+      "completed_at": "2026-06-21T09:04:29+0900"
+    },
+    {
+      "step": 1,
+      "name": "frontend-pass-action",
+      "status": "completed",
+      "started_at": "2026-06-21T09:04:30+0900",
+      "summary": "신규 저장(create) 시 누른 의도 action('send'/'hold')을 서버로 전송. useWriteController.submit(action)의 신규 분기(!tab.articleId)가 model.saveArticle(dto, clientId, action)로 action을 넘김(편집 PUT 경로는 불변, applyAction이 전이 담당); httpModel.saveArticle(dto, clientId, action)이 create(POST)에서만 body에 action을 추가(PUT/미전달 시 키 없음, 하위호환), role은 미전송(ADR-004). 이로써 Z가 신규 보류 시 서버 initialStatus가 DDH로 저장. web 테스트 388개·백엔드 338개 통과·lint 0·build 성공.",
+      "completed_at": "2026-06-21T09:09:35+0900"
+    }
+  ],
+  "created_at": "2026-06-21T09:00:46+0900",
+  "completed_at": "2026-06-21T09:09:35+0900"
+}

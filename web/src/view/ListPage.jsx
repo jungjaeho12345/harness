@@ -20,6 +20,8 @@ const MENU_LABELS = {
   deptWrite: '부서별 작성',
   deptSend: '부서별 송고',
   personal: '개인별 수정',
+  killArticles: 'KILL기사',
+  embargoMgmt: '엠바고 관리',
 };
 
 // 상세보기 — 새 창 720×800에 이스케이프된 HTML을 쓴다(스크립트 실행 불가).

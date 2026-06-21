@@ -101,6 +101,29 @@ describe('createHttpModel', () => {
     expect(callAt(1)[1].method).toBe('PUT');
   });
 
+  it('saveArticle puts the intent action in the create(POST) body only — not on PUT, not when omitted, never role', async () => {
+    const model = createHttpModel({ base: BASE });
+
+    // 신규(create=POST)만 의도 action을 body에 싣는다 — 서버 initialStatus가 Z+hold를 DDH로 둔다(step0).
+    await model.saveArticle({ title: 'new' }, null, 'hold');
+    expect(callAt(0)[1].method).toBe('POST');
+    expect(JSON.parse(callAt(0)[1].body)).toMatchObject({ title: 'new', action: 'hold' });
+
+    await model.saveArticle({ title: 'new2' }, null, 'send');
+    expect(JSON.parse(callAt(1)[1].body).action).toBe('send');
+
+    // 편집(PUT)에는 action을 싣지 않는다 — 상태 전이는 applyAction 담당.
+    await model.saveArticle({ articleId: 'AKR1', title: 'edit' }, null, 'send');
+    expect(callAt(2)[1].method).toBe('PUT');
+    expect(JSON.parse(callAt(2)[1].body).action).toBeUndefined();
+
+    // action 미전달이면 body에 action 키가 없다(하위호환). role은 어떤 경우에도 싣지 않는다(ADR-004).
+    await model.saveArticle({ title: 'new3' });
+    const lastBody = JSON.parse(callAt(3)[1].body);
+    expect(lastBody.action).toBeUndefined();
+    expect(lastBody.role).toBeUndefined();
+  });
+
   it('getArticle GETs /api/articles/:id with no body', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, article: { articleId: 'AKR1' }, contents: {} }));
     const model = createHttpModel({ base: BASE });

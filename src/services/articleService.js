@@ -3,7 +3,7 @@
 // role은 항상 인자로 받는다(클라이언트 신뢰 아님 — 신뢰 검증은 step8 HTTP 계층).
 
 import { generateArticleId } from '../db/articleId.js';
-import { transition } from './lifecycle.js';
+import { transition, initialStatus } from './lifecycle.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -62,15 +62,17 @@ export function createArticleService({ articleModel, db, historyModel }) {
     catch { /* 이력 기록 실패는 본 기능을 막지 않는다 */ }
   }
 
-  // 신규 기사 — articleId 생성, status RDS, Article+Contents 트랜잭션 저장.
-  function create(dto = {}) {
+  // 신규 기사 — articleId 생성, 초기 status 결정, Article+Contents 트랜잭션 저장.
+  // 초기 status는 세션 role + 의도 action으로 결정한다(initialStatus, 기본 RDS / (Z|D)+hold→DDH, R+hold→RRH).
+  // 옵션 미전달 시(deriveArticle 등 기존 호출) role/action=undefined → RDS 유지(하위호환).
+  function create(dto = {}, { role, action } = {}) {
     const articleId = generateArticleId(db);
     const article = { articleId, ...pick(dto, ARTICLE_FIELDS) };
     const createdAt = nowISO();
     const contents = {
       articleId,
       ...pick(dto, CONTENTS_FIELDS),
-      status: 'RDS',
+      status: initialStatus(role, action),
       createdAt,
     };
     articleModel.insert({ article, contents });
@@ -116,7 +118,17 @@ export function createArticleService({ articleModel, db, historyModel }) {
       return { ok: false, reason: 'no-end-marker' };
     }
 
-    const contents = { status: result.status };
+    // 엠바고 송고 진입(RDS→EPS): "데스크 미송고에서 송고시" 엠바고 시간이 설정돼 있으면 DPS 대신 EPS.
+    // transition은 순수하게 유지하고(RDS+D/Z+send=DPS), 여기서만 후처리한다(news.md 엠바고 규칙).
+    // 엠바고 유형(1/2/1+2차)은 두 시간 컬럼 조합으로 도출되므로 별도 컬럼 없이 set 여부만 본다(DB 비파괴).
+    let finalStatus = result.status;
+    const embargoSet = !!(row.contents.embargoAt || row.contents.secondEmbargoAt);
+    if (action === 'send' && row.contents.status === 'RDS'
+      && (role === 'D' || role === 'Z') && result.status === 'DPS' && embargoSet) {
+      finalStatus = 'EPS';
+    }
+
+    const contents = { status: finalStatus };
     if (action === 'send') {
       contents.sender = userId ?? null;
       contents.sentAt = nowISO();
@@ -128,10 +140,10 @@ export function createArticleService({ articleModel, db, historyModel }) {
       eventType: 'status',
       action,
       fromStatus: row.contents.status,
-      toStatus: result.status,
+      toStatus: finalStatus,
       actorUserId: userId ?? null,
     });
-    return { ok: true, status: result.status };
+    return { ok: true, status: finalStatus };
   }
 
   // 후속기사작성(followUp)/계속기사작성(continue) — 원본을 바탕으로 "새 기사"를 작성한다.

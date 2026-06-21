@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { transition } from '../src/services/lifecycle.js';
+import { transition, initialStatus } from '../src/services/lifecycle.js';
 
 // news.md 기사 생애주기 전이표 — 허용 칸. [status, role, action, expectedNext]
 const ALLOWED = [
@@ -26,6 +26,11 @@ const ALLOWED = [
   ['DPS', 'Z', 'approveDelete', 'DPD'],
   ['DDH', 'Z', 'send', 'DPS'],
   ['DDH', 'Z', 'kill', 'DDK'],
+  // EPS(엠바고 송고 대기) — D/Z 후속 전이만. send 키 없음(재송고 미정의).
+  ['EPS', 'D', 'kill', 'EEK'],
+  ['EPS', 'D', 'hold', 'EEH'],
+  ['EPS', 'Z', 'kill', 'EEK'],
+  ['EPS', 'Z', 'hold', 'EEH'],
 ];
 
 for (const [status, role, action, next] of ALLOWED) {
@@ -55,6 +60,13 @@ const DENIED = [
   // approveDelete는 DPS에서만 — RDS/DDH는 거부
   ['RDS', 'D', 'approveDelete'],
   ['DDH', 'D', 'approveDelete'],
+  // EPS는 kill/hold만 — 재송고(send)·삭제승인은 미정의(거부), R은 EPS 전체 불가
+  ['EPS', 'D', 'send'],
+  ['EPS', 'Z', 'send'],
+  ['EPS', 'D', 'approveDelete'],
+  ['EPS', 'R', 'kill'],
+  ['EPS', 'R', 'hold'],
+  ['EPS', 'R', 'send'],
   // 터미널 상태는 전이 없음
   ['RRH', 'D', 'send'],
   ['RRK', 'D', 'send'],
@@ -80,3 +92,33 @@ test('transition 거부: 정의되지 않은 액션', () => {
   assert.equal(transition('RDS', 'D', 'publish').ok, false);
   assert.equal(transition('RDS', 'D', undefined).ok, false);
 });
+
+// initialStatus — 최초 작성(create) 초기 상태. 기본 RDS, 보류는 (Z|D)→DDH·R→RRH (news.md "기사 생애주기").
+// transition('RDS',role,'hold')과 결과가 동일하다(단일 진실). 거부하지 않고 항상 유효한 상태 문자열을 반환한다.
+const INITIAL_HOLD = [
+  ['Z', 'DDH'],   // Z 보류 → DDH
+  ['D', 'DDH'],   // D 보류 → DDH
+  ['R', 'RRH'],   // R 보류 → RRH
+];
+
+for (const [role, next] of INITIAL_HOLD) {
+  test(`initialStatus: ${role}가 보류로 최초 작성하면 ${next}`, () => {
+    assert.equal(initialStatus(role, 'hold'), next);
+  });
+}
+
+const INITIAL_RDS = [
+  ['Z', 'send'],   // Z 송고 → RDS (신규 최초 송고는 권한 무관 RDS)
+  ['D', 'send'],
+  ['R', 'send'],
+  ['Z', 'kill'],   // 정의 외 action도 RDS (거부하지 않음)
+  ['Z', undefined],
+  [undefined, 'hold'],   // 거부되는 role(미지정)+hold 폴백 → RDS (보존)
+  [undefined, undefined],
+];
+
+for (const [role, action] of INITIAL_RDS) {
+  test(`initialStatus: role=${role} action=${action} → RDS`, () => {
+    assert.equal(initialStatus(role, action), 'RDS');
+  });
+}

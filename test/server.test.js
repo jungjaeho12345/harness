@@ -156,6 +156,36 @@ test('action: D 송고는 DPS, 삭제승인은 DPD로 전이한다', async () =>
   } finally { await ctx.close(); }
 });
 
+test('action: 엠바고 설정된 RDS를 D가 송고하면 EPS, EPS 기사 KILL→EEK·보류→EEH', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+
+    const mkEps = async () => {
+      const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+        sid, body: { title: 't', markupVersion: END_MARKUP, embargoAt: '2026-06-25T09:00:00.000Z' },
+      })).body;
+      const sent = await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+      assert.equal(sent.body.status, 'EPS');
+      return articleId;
+    };
+
+    const killId = await mkEps();
+    const killed = await api(ctx.base, 'POST', `/api/articles/${killId}/action`, { sid, body: { action: 'kill' } });
+    assert.equal(killed.body.status, 'EEK');
+
+    const holdId = await mkEps();
+    const held = await api(ctx.base, 'POST', `/api/articles/${holdId}/action`, { sid, body: { action: 'hold' } });
+    assert.equal(held.body.status, 'EEH');
+
+    // 회귀: 엠바고 미설정 RDS를 D가 송고하면 여전히 DPS.
+    const { articleId: plain } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+    const plainSent = await api(ctx.base, 'POST', `/api/articles/${plain}/action`, { sid, body: { action: 'send' } });
+    assert.equal(plainSent.body.status, 'DPS');
+  } finally { await ctx.close(); }
+});
+
 test('action: 송고는 "(끝)" 마커가 없으면 400 (no-end-marker)', async () => {
   const ctx = await start();
   try {
@@ -296,6 +326,45 @@ test('POST /api/articles: 작성자 미전송 시 세션 사용자 이름으로 
     const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
     const row = (await api(ctx.base, 'GET', `/api/articles?articleId=${articleId}`, { sid })).body.items[0];
     assert.equal(row.author, '김기자', '작성자 미전송 시 세션 사용자로 보정');
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/articles: 최초 작성 초기 상태는 세션 role+action으로 결정 ((Z|D)+hold→DDH, R+hold→RRH, send/그 외 RDS)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'admin', name: '관리자', role: 'Z', department: '편집부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'desk', name: '데스크', role: 'D', department: '편집부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const zsid = (await login(ctx.base, 'admin', 'pw')).sessionId;
+    const dsid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const rsid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+
+    // 세션 role Z + action:hold → DDH.
+    const zHold = (await api(ctx.base, 'POST', '/api/articles', { sid: zsid, body: { title: 't', markupVersion: '{}', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${zHold.articleId}`, { sid: zsid })).body.items[0].status, 'DDH');
+
+    // 세션 role D + action:hold → DDH (Z와 동일).
+    const dHold = (await api(ctx.base, 'POST', '/api/articles', { sid: dsid, body: { title: 't', markupVersion: '{}', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${dHold.articleId}`, { sid: dsid })).body.items[0].status, 'DDH');
+
+    // 세션 role R + action:hold → RRH.
+    const rHold = (await api(ctx.base, 'POST', '/api/articles', { sid: rsid, body: { title: 't', markupVersion: '{}', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${rHold.articleId}`, { sid: rsid })).body.items[0].status, 'RRH');
+
+    // 세션 role Z + action:send → RDS (신규 최초 송고는 RDS 유지).
+    const zSend = (await api(ctx.base, 'POST', '/api/articles', { sid: zsid, body: { title: 't', markupVersion: '{}', action: 'send' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${zSend.articleId}`, { sid: zsid })).body.items[0].status, 'RDS');
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/articles: body.role/body.status는 초기 상태 결정에 쓰이지 않는다 (ADR-004)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // R 세션이 body로 role:Z·status:DDH를 보내도 무시되고, 세션 role R + action:hold 기준 → RRH (DDH 아님).
+    const r = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', role: 'Z', status: 'DDH', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${r.articleId}`, { sid })).body.items[0].status, 'RRH');
   } finally { await ctx.close(); }
 });
 

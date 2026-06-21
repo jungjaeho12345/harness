@@ -34,6 +34,26 @@ test('create: status RDS로 저장하고 AKR 아이디를 생성한다', () => {
   assert.equal(row.article.title, '제목');
 });
 
+test('create: 최초 보류(hold)는 권한별로 결정한다 ((Z|D)→DDH, R→RRH)', () => {
+  const { service, articleModel } = setup();
+  const zHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'admin' }, { role: 'Z', action: 'hold' });
+  const dHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'desk' }, { role: 'D', action: 'hold' });
+  const rHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' }, { role: 'R', action: 'hold' });
+  assert.equal(articleModel.getById(zHold.articleId).contents.status, 'DDH');
+  assert.equal(articleModel.getById(dHold.articleId).contents.status, 'DDH');
+  assert.equal(articleModel.getById(rHold.articleId).contents.status, 'RRH');
+});
+
+test('create: 최초 송고·옵션 없음은 모두 RDS를 유지한다 (회귀 가드)', () => {
+  const { service, articleModel } = setup();
+  const zSend = service.create({ title: 'a', author: 'admin' }, { role: 'Z', action: 'send' });
+  const rSend = service.create({ title: 'b', author: 'kim' }, { role: 'R', action: 'send' });
+  const noOpts = service.create({ title: 'd', author: 'kim' }); // deriveArticle 등 기존 호출 경로
+  assert.equal(articleModel.getById(zSend.articleId).contents.status, 'RDS');
+  assert.equal(articleModel.getById(rSend.articleId).contents.status, 'RDS');
+  assert.equal(articleModel.getById(noOpts.articleId).contents.status, 'RDS');
+});
+
 test('create: 공통정보 필드를 Contents에 조립해 저장한다', () => {
   const { service, articleModel } = setup();
   const r = service.create({
@@ -117,6 +137,91 @@ test('applyAction: R이 RDS 기사를 송고("(끝)" 포함)하면 RDS를 유지
   const r = service.applyAction(articleId, 'R', 'send', { userId: 'kim', sessionId: 's1' });
   assert.deepEqual(r, { ok: true, status: 'RDS' });
   assert.equal(articleModel.getById(articleId).contents.status, 'RDS');
+});
+
+test('applyAction: 엠바고 설정된 RDS 기사를 D가 송고하면 EPS로 진입한다 (sender/sentAt 기록)', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'kim',
+    embargoAt: '2026-06-25T09:00:00.000Z',
+  });
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+  assert.deepEqual(r, { ok: true, status: 'EPS' });
+  const c = articleModel.getById(articleId).contents;
+  assert.equal(c.status, 'EPS');
+  assert.equal(c.sender, 'desk');
+  assert.ok(c.sentAt, 'sentAt이 기록된다');
+});
+
+test('applyAction: 2차 엠바고만 설정돼도 RDS→EPS, Z 송고도 동일', () => {
+  const { service, articleModel } = setup();
+  const a = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'kim',
+    secondEmbargoAt: '2026-06-26T09:00:00.000Z',
+  });
+  assert.deepEqual(service.applyAction(a.articleId, 'Z', 'send', { userId: 'admin' }), { ok: true, status: 'EPS' });
+  assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
+});
+
+test('applyAction: 엠바고 미설정 RDS 기사를 D가 송고하면 DPS를 유지한다 (회귀 보존)', () => {
+  const { service, articleModel } = setup();
+  const empty = service.create({ title: '빈엠바고', markupVersion: markup('본문', true), author: 'kim', embargoAt: '', secondEmbargoAt: '' });
+  assert.deepEqual(service.applyAction(empty.articleId, 'D', 'send', { userId: 'desk' }), { ok: true, status: 'DPS' });
+  assert.equal(articleModel.getById(empty.articleId).contents.status, 'DPS');
+});
+
+test('applyAction: 엠바고 설정된 RDS라도 R 송고는 RDS 유지 (EPS 진입은 D/Z 한정)', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'kim',
+    embargoAt: '2026-06-25T09:00:00.000Z',
+  });
+  assert.deepEqual(service.applyAction(articleId, 'R', 'send', { userId: 'kim' }), { ok: true, status: 'RDS' });
+  assert.equal(articleModel.getById(articleId).contents.status, 'RDS');
+});
+
+test('applyAction: 엠바고 설정된 DDH 기사를 D가 송고해도 DPS 유지 (EPS는 RDS 송고 한정)', () => {
+  const { service, articleModel } = setup();
+  // D 최초 보류 → DDH, 엠바고 설정.
+  const { articleId } = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'desk',
+    embargoAt: '2026-06-25T09:00:00.000Z',
+  }, { role: 'D', action: 'hold' });
+  assert.equal(articleModel.getById(articleId).contents.status, 'DDH');
+  assert.deepEqual(service.applyAction(articleId, 'D', 'send', { userId: 'desk' }), { ok: true, status: 'DPS' });
+  assert.equal(articleModel.getById(articleId).contents.status, 'DPS');
+});
+
+test('applyAction: EPS 기사를 D가 KILL하면 EEK, 보류하면 EEH', () => {
+  const { service, articleModel } = setup();
+  const mkEps = () => {
+    const a = service.create({
+      title: '제목', markupVersion: markup('본문', true), author: 'kim',
+      embargoAt: '2026-06-25T09:00:00.000Z',
+    });
+    service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → EPS
+    assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
+    return a.articleId;
+  };
+  const killId = mkEps();
+  assert.deepEqual(service.applyAction(killId, 'D', 'kill', { userId: 'desk' }), { ok: true, status: 'EEK' });
+  assert.equal(articleModel.getById(killId).contents.status, 'EEK');
+
+  const holdId = mkEps();
+  assert.deepEqual(service.applyAction(holdId, 'D', 'hold', { userId: 'desk' }), { ok: true, status: 'EEH' });
+  assert.equal(articleModel.getById(holdId).contents.status, 'EEH');
+});
+
+test('applyAction: EPS 기사 재송고(send)는 거부하고 status를 유지한다', () => {
+  const { service, articleModel } = setup();
+  const a = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'kim',
+    embargoAt: '2026-06-25T09:00:00.000Z',
+  });
+  service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → EPS
+  const r = service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // EPS + send = 거부
+  assert.equal(r.ok, false);
+  assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
 });
 
 test('applyAction: D가 DPS 기사를 삭제승인하면 DPD로 전이한다 (행 삭제 아님)', () => {
