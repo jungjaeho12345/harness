@@ -483,7 +483,17 @@ a { color: var(--yh-blue); }
   overflow: hidden;
 }
 
-/* 에디터 — 열 전체를 채우고 내부 스크롤. 지면 톤(넉넉한 여백·행간), 포커스 시 블루 강조 */
+/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 환경설정 바탕색을 입힌다(메뉴바/툴바/상태바 제외). */
+.yh-writer__canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--yh-radius-lg);
+}
+
+/* 에디터 — 열 전체를 채우고 내부 스크롤. 지면 톤(넉넉한 여백·행간), 포커스 시 블루 강조.
+   배경은 캔버스 래퍼(.yh-writer__canvas)가 담당하므로 투명(환경설정 바탕색이 비치도록). */
 .yh-editor {
   flex: 1 1 auto;
   min-height: 0;
@@ -492,7 +502,7 @@ a { color: var(--yh-blue); }
   border: 1px solid var(--yh-gray-line);
   border-radius: var(--yh-radius-lg);
   box-shadow: var(--yh-shadow-sm);
-  background: var(--yh-white);
+  background: transparent;
   font-size: 0.95rem;
   line-height: 1.8;
   outline: none;
@@ -788,6 +798,40 @@ a { color: var(--yh-blue); }
   padding: var(--yh-sp-xl);
   min-width: 20rem;
   max-width: 90vw;
+}
+
+/* 환경설정 모달(색상 탭) — 제목 + 색 입력 행 + 하단 버튼. */
+.yh-prefs__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin: 0 0 var(--yh-sp-lg);
+}
+.yh-prefs__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yh-sp-md);
+  margin-bottom: var(--yh-sp-lg);
+}
+.yh-prefs__fields .yh-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-md);
+}
+.yh-prefs__fields input[type='color'] {
+  width: 3rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.yh-prefs__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
 }
 
 /* 로그인 레이아웃 */

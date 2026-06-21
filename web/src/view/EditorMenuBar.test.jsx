@@ -143,4 +143,14 @@ describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
     await userEvent.click(screen.getByText('대문자로 바꾸기'));
     expect(onSelect).toHaveBeenCalledWith('view.toUpper');
   });
+
+  // Step 1(11-editor-color-prefs): 도움말>환경설정(help.preferences) 결선.
+  it("enabledIds=['help.preferences']면 도움말>환경설정이 활성·클릭 시 onSelect를 호출한다", async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['help.preferences']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    expect(screen.getByText('환경설정').closest('button')).toBeEnabled();
+    await userEvent.click(screen.getByText('환경설정'));
+    expect(onSelect).toHaveBeenCalledWith('help.preferences');
+  });
 });
