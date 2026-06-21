@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { transition } from '../src/services/lifecycle.js';
+import { transition, initialStatus } from '../src/services/lifecycle.js';
 
 // news.md 기사 생애주기 전이표 — 허용 칸. [status, role, action, expectedNext]
 const ALLOWED = [
@@ -80,3 +80,27 @@ test('transition 거부: 정의되지 않은 액션', () => {
   assert.equal(transition('RDS', 'D', 'publish').ok, false);
   assert.equal(transition('RDS', 'D', undefined).ok, false);
 });
+
+// initialStatus — 최초 작성(create) 초기 상태. 기본 RDS, 예외는 Z+hold→DDH (news.md "기사 생애주기").
+// transition과 달리 거부하지 않고 항상 유효한 상태 문자열을 반환한다.
+test('initialStatus: Z가 보류로 최초 작성하면 DDH', () => {
+  assert.equal(initialStatus('Z', 'hold'), 'DDH');
+});
+
+const INITIAL_RDS = [
+  ['Z', 'send'],   // Z 송고 → RDS (신규 최초 송고는 권한 무관 RDS)
+  ['D', 'hold'],   // D 보류 → RDS
+  ['R', 'hold'],   // R 보류 → RDS
+  ['D', 'send'],
+  ['R', 'send'],
+  ['Z', 'kill'],   // 정의 외 action도 RDS (거부하지 않음)
+  ['Z', undefined],
+  [undefined, 'hold'],
+  [undefined, undefined],
+];
+
+for (const [role, action] of INITIAL_RDS) {
+  test(`initialStatus: role=${role} action=${action} → RDS`, () => {
+    assert.equal(initialStatus(role, action), 'RDS');
+  });
+}

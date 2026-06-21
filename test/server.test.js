@@ -299,6 +299,39 @@ test('POST /api/articles: 작성자 미전송 시 세션 사용자 이름으로 
   } finally { await ctx.close(); }
 });
 
+test('POST /api/articles: 최초 작성 초기 상태는 세션 role+action으로 결정 (Z+hold→DDH, 그 외 RDS)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'admin', name: '관리자', role: 'Z', department: '편집부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'desk', name: '데스크', role: 'D', department: '편집부', password: 'pw' });
+    const zsid = (await login(ctx.base, 'admin', 'pw')).sessionId;
+    const dsid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+
+    // 세션 role Z + action:hold → DDH.
+    const zHold = (await api(ctx.base, 'POST', '/api/articles', { sid: zsid, body: { title: 't', markupVersion: '{}', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${zHold.articleId}`, { sid: zsid })).body.items[0].status, 'DDH');
+
+    // 세션 role D + action:hold → RDS (예외는 Z만).
+    const dHold = (await api(ctx.base, 'POST', '/api/articles', { sid: dsid, body: { title: 't', markupVersion: '{}', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${dHold.articleId}`, { sid: dsid })).body.items[0].status, 'RDS');
+
+    // 세션 role Z + action:send → RDS (신규 최초 송고는 RDS 유지).
+    const zSend = (await api(ctx.base, 'POST', '/api/articles', { sid: zsid, body: { title: 't', markupVersion: '{}', action: 'send' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${zSend.articleId}`, { sid: zsid })).body.items[0].status, 'RDS');
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/articles: body.role/body.status는 초기 상태 결정에 쓰이지 않는다 (ADR-004)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', name: '김기자', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // R 세션이 body로 role:Z·status:DDH·action:hold를 보내도 세션 role R 기준 → RDS.
+    const r = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}', role: 'Z', status: 'DDH', action: 'hold' } })).body;
+    assert.equal((await api(ctx.base, 'GET', `/api/articles?articleId=${r.articleId}`, { sid })).body.items[0].status, 'RDS');
+  } finally { await ctx.close(); }
+});
+
 test('POST /api/articles: 명시한 작성자는 세션 stamp가 덮어쓰지 않는다', async () => {
   const ctx = await start();
   try {

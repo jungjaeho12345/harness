@@ -20,6 +20,14 @@ const REPORTER_TABLE = {
   RDS: { send: 'RDS', hold: 'RRH', kill: 'RRK' },
 };
 
+// 최초 작성(create) 시 초기 상태를 결정한다. 기본 RDS.
+// 예외: Z가 보류로 최초 작성하면 DDH (news.md "기사 생애주기").
+// transition()(편집 컨텍스트 전이)과는 별개다 — 항상 유효한 상태를 반환하며 거부하지 않는다.
+export function initialStatus(role, action) {
+  if (role === 'Z' && action === 'hold') return 'DDH';
+  return 'RDS';
+}
+
 // 다음 status를 { ok:true, status } 로 반환하거나, 정의 외 조합은 { ok:false, reason } 로 거부.
 export function transition(status, role, action) {
   if (!ACTIONS.has(action)) return { ok: false, reason: 'unknown-action' };

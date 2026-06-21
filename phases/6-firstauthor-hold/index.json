@@ -2,7 +2,18 @@
   "project": "기사 작성기",
   "phase": "6-firstauthor-hold",
   "steps": [
-    { "step": 0, "name": "backend-initial-status", "status": "pending" },
-    { "step": 1, "name": "frontend-pass-action", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "backend-initial-status",
+      "status": "completed",
+      "started_at": "2026-06-21T09:00:46+0900",
+      "summary": "최초 작성 초기 상태를 세션 role+의도 action으로 서버가 결정. lifecycle.js에 순수 함수 initialStatus(role, action)→'RDS'|'DDH'(Z+hold만 DDH, 거부 없음) 추가; articleService.create(dto, {role, action}={})가 status:'RDS' 하드코딩 대신 initialStatus 사용(옵션 미전달 시 RDS 하위호환); controllers.article.create(dto, opts) 패스스루; POST /api/articles가 me.role+req.body.action을 전달(body.status/role은 status 결정에 불사용, ADR-004). transition/DESK_TABLE/deriveArticle 무변경. 테스트 338개 통과·lint 0."
+    },
+    {
+      "step": 1,
+      "name": "frontend-pass-action",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-06-21T09:00:46+0900"
 }

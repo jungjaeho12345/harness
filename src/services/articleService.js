@@ -3,7 +3,7 @@
 // role은 항상 인자로 받는다(클라이언트 신뢰 아님 — 신뢰 검증은 step8 HTTP 계층).
 
 import { generateArticleId } from '../db/articleId.js';
-import { transition } from './lifecycle.js';
+import { transition, initialStatus } from './lifecycle.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -62,15 +62,17 @@ export function createArticleService({ articleModel, db, historyModel }) {
     catch { /* 이력 기록 실패는 본 기능을 막지 않는다 */ }
   }
 
-  // 신규 기사 — articleId 생성, status RDS, Article+Contents 트랜잭션 저장.
-  function create(dto = {}) {
+  // 신규 기사 — articleId 생성, 초기 status 결정, Article+Contents 트랜잭션 저장.
+  // 초기 status는 세션 role + 의도 action으로 결정한다(initialStatus, 기본 RDS / Z+hold만 DDH).
+  // 옵션 미전달 시(deriveArticle 등 기존 호출) role/action=undefined → RDS 유지(하위호환).
+  function create(dto = {}, { role, action } = {}) {
     const articleId = generateArticleId(db);
     const article = { articleId, ...pick(dto, ARTICLE_FIELDS) };
     const createdAt = nowISO();
     const contents = {
       articleId,
       ...pick(dto, CONTENTS_FIELDS),
-      status: 'RDS',
+      status: initialStatus(role, action),
       createdAt,
     };
     articleModel.insert({ article, contents });

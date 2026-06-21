@@ -67,7 +67,7 @@ export function createControllers(db, {
   const article = {
     query: (filters) => articleService.query(filters),
     search: (q) => articleService.search(q),
-    create: (dto) => articleService.create(dto),
+    create: (dto, opts) => articleService.create(dto, opts),
     update: (articleId, fields) => articleService.update(articleId, fields),
     getById: (articleId) => articleService.getById(articleId),
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
