@@ -298,7 +298,9 @@ export function useWriteController() {
     if (!tab) return { ok: false, reason: 'no-tab' };
 
     if (!tab.articleId) {
-      const r = await model.saveArticle(toSaveDto(tab), tab.clientId);
+      // 신규(create)는 누른 의도 action(send/hold)을 함께 넘긴다 — 서버 initialStatus가 Z+hold만 DDH로,
+      // 그 외/송고는 RDS로 저장한다(전이 없음). 편집 경로(아래)는 action을 PUT에 싣지 않는다.
+      const r = await model.saveArticle(toSaveDto(tab), tab.clientId, action);
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }

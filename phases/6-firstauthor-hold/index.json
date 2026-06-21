@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "frontend-pass-action",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-21T09:04:30+0900",
+      "summary": "신규 저장(create) 시 누른 의도 action('send'/'hold')을 서버로 전송. useWriteController.submit(action)의 신규 분기(!tab.articleId)가 model.saveArticle(dto, clientId, action)로 action을 넘김(편집 PUT 경로는 불변, applyAction이 전이 담당); httpModel.saveArticle(dto, clientId, action)이 create(POST)에서만 body에 action을 추가(PUT/미전달 시 키 없음, 하위호환), role은 미전송(ADR-004). 이로써 Z가 신규 보류 시 서버 initialStatus가 DDH로 저장. web 테스트 388개·백엔드 338개 통과·lint 0·build 성공.",
+      "completed_at": "2026-06-21T09:07:55+0900"
     }
   ],
   "created_at": "2026-06-21T09:00:46+0900"

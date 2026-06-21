@@ -122,11 +122,14 @@ export function createHttpModel({ base = '' } = {}) {
     // articleId 유무로 신규 생성(POST)/부분 수정(PUT, 잠금 보유자)을 한 메서드가 분기한다.
     // clientId(편집 탭 식별자)는 x-edit-client 헤더로 실어 PUT 저장 시 서버가 잠금 보유 탭인지 검증하게 한다
     // (assertLockHolder — 2번째 탭의 저장을 차단). 신규(POST)에도 무해하게 동행한다.
-    saveArticle(dto = {}, clientId) {
+    // action(send/hold)은 신규(create=POST)에서만 body에 싣는다 — 서버 initialStatus가 Z+hold를 DDH로 둔다(step0).
+    // PUT(편집 저장)에는 싣지 않는다(상태 전이는 applyAction 담당). action 미전달이면 키 없음(하위호환). role은 안 싣는다(ADR-004).
+    saveArticle(dto = {}, clientId, action) {
       if (dto.articleId) {
         return request(`/api/articles/${encodeURIComponent(dto.articleId)}`, { method: 'PUT', body: dto, clientId });
       }
-      return request('/api/articles', { method: 'POST', body: dto, clientId });
+      const body = action ? { ...dto, action } : dto;
+      return request('/api/articles', { method: 'POST', body, clientId });
     },
 
     // --- 메뉴 액션: 이력 / 파생 / 번역 (role은 서버 세션에서 도출 — body로 보내지 않는다, ADR-004) ---
