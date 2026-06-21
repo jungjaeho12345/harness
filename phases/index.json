@@ -34,6 +34,10 @@
       "dir": "5-editor-newline-embed",
       "status": "completed",
       "completed_at": "2026-06-18T06:13:59+0900"
+    },
+    {
+      "dir": "6-firstauthor-hold",
+      "status": "pending"
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "6-firstauthor-hold",
+  "steps": [
+    { "step": 0, "name": "backend-initial-status", "status": "pending" },
+    { "step": 1, "name": "frontend-pass-action", "status": "pending" }
+  ]
+}
