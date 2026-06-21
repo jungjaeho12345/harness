@@ -800,12 +800,15 @@ a { color: var(--yh-blue); }
   max-width: 90vw;
 }
 
-/* 환경설정 모달(색상 탭) — 제목 + 색 입력 행 + 하단 버튼. */
+/* 환경설정 모달(색상/날짜형식 탭) — 제목 + 탭 네비 + 폼 행 + 하단 버튼. */
 .yh-prefs__title {
   font-family: var(--yh-serif);
   font-weight: 700;
   font-size: 1.05rem;
-  margin: 0 0 var(--yh-sp-lg);
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-prefs__tabs {
+  margin-bottom: var(--yh-sp-lg);
 }
 .yh-prefs__fields {
   display: flex;

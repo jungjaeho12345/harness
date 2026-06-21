@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
 import { ListPage } from './ListPage.jsx';
 import { createFakeModel } from '../test/fakeModel.js';
+import { setDateFormat, DEFAULT_DATE_FORMAT } from './listFormat.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'D', department: '정치' }) {
   const model = createFakeModel(seed);
@@ -25,6 +26,8 @@ const bodyRows = (c) => c.querySelectorAll('tbody tr');
 
 describe('ListPage', () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  // 마운트 effect가 module-level 날짜형식을 바꾸므로(setDateFormat) 테스트 간 누수를 막기 위해 기본으로 복원.
+  afterEach(() => { setDateFormat(DEFAULT_DATE_FORMAT); });
 
   it('4개 메뉴와 실시간 상태바를 보여준다', async () => {
     setup({ articles: [] });
@@ -110,10 +113,18 @@ describe('ListPage', () => {
     expect(screen.getByTestId('pager')).toHaveTextContent('1 / 3');
   });
 
-  it('작성시간을 YYYY-MM-DD HH:mm로 표시한다', async () => {
+  it('작성시간을 YYYY-MM-DD HH:mm로 표시한다(저장값 없으면 기본 형식)', async () => {
     const { container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
     expect(container).toHaveTextContent('2026-06-14 03:09');
+  });
+
+  it('마운트 시 저장된 날짜형식(editorPrefs.dateFormat)을 적용해 날짜 셀을 그 형식으로 표시한다', async () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ dateFormat: 'YYYY.MM.DD' }));
+    const { container } = setup({ articles: rds(1) });
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+    expect(container).toHaveTextContent('2026.06.14');
+    expect(container).not.toHaveTextContent('2026-06-14 03:09');
   });
 
   it('상태 배지에 UI_GUIDE 색(RDS=회색)을 적용한다', async () => {

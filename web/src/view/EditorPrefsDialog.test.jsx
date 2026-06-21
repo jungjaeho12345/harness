@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
-import { loadEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
+import { setDateFormat, DEFAULT_DATE_FORMAT } from './listFormat.js';
 
 // 색상 환경설정 모달 — 폼/적용/취소/기본값. editorPrefs(localStorage) + editorColoring(module 상태)을 직접 호출하므로
 // localStorage.clear()(영속 누수 차단) + resetEditorColors()(module 상태 복원)로 격리한다.
@@ -70,5 +71,58 @@ describe('EditorPrefsDialog — 색상 환경설정 모달', () => {
 
     fireEvent.click(screen.getByTestId('prefs-reset'));
     expect(subtitle).toHaveValue(DEFAULT_EDITOR_PREFS.colors.subtitle);
+  });
+});
+
+// 탭 구조(색상/날짜형식) + 날짜형식 탭 — phase 12. 색상 탭은 위 describe가 회귀를 지킨다.
+// 다이얼로그는 listFormat.setDateFormat을 직접 부르지 않지만(저장만, 적용은 ListPage), 격리 규칙대로 module 상태도 복원한다.
+describe('EditorPrefsDialog — 탭 구조 + 날짜형식', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('색상/날짜형식 탭을 보여주고 전환된다(기본은 색상 탭)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-colors')).toBeInTheDocument();
+    expect(screen.getByTestId('prefs-tab-dateFormat')).toBeInTheDocument();
+
+    // 기본은 색상 탭 — 색 입력이 보이고 날짜형식 select는 없다.
+    expect(screen.getByTestId('pref-color-title')).toBeInTheDocument();
+    expect(screen.queryByTestId('pref-dateFormat')).toBeNull();
+
+    // 날짜형식 탭으로 전환 — 날짜형식 select가 보이고 색 입력은 사라진다.
+    fireEvent.click(screen.getByTestId('prefs-tab-dateFormat'));
+    expect(screen.getByTestId('pref-dateFormat')).toBeInTheDocument();
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('날짜형식 select 초기값은 저장값(loadEditorPrefs().dateFormat)이다', () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), dateFormat: 'YYYY.MM.DD' });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-dateFormat'));
+    expect(screen.getByTestId('pref-dateFormat')).toHaveValue('YYYY.MM.DD');
+  });
+
+  it("날짜형식을 고르고 '적용'하면 editorPrefs.dateFormat에 저장되고 닫힌다", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-dateFormat'));
+    fireEvent.change(screen.getByTestId('pref-dateFormat'), { target: { value: 'YYYY.MM.DD' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    expect(loadEditorPrefs().dateFormat).toBe('YYYY.MM.DD');
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it("'적용'은 색과 날짜형식을 함께 저장한다(탭 전환해도 미적용 색이 보존된다)", () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    // 색상 탭에서 부제목 변경 → 날짜형식 탭으로 전환 후 날짜형식 변경 → 적용.
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#00ff00' } });
+    fireEvent.click(screen.getByTestId('prefs-tab-dateFormat'));
+    fireEvent.change(screen.getByTestId('pref-dateFormat'), { target: { value: 'YYYY/MM/DD HH:mm' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.dateFormat).toBe('YYYY/MM/DD HH:mm');
   });
 });
