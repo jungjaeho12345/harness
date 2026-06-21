@@ -13,6 +13,7 @@ const DESK_TABLE = {
   RDS: { send: 'DPS', hold: 'DDH', kill: 'DDK' },
   DPS: { send: 'DPS', hold: 'DDH', approveDelete: 'DPD' }, // DPS는 재송고만, 바로 KILL 불가
   DDH: { send: 'DPS', kill: 'DDK' },                       // 이미 보류이므로 hold 없음
+  EPS: { kill: 'EEK', hold: 'EEH' },                       // 엠바고 송고 대기 — send 없음(재송고 미정의)
 };
 
 // R(기자)는 RDS 기사만 다룰 수 있고, approveDelete는 불가하다.

@@ -26,6 +26,11 @@ const ALLOWED = [
   ['DPS', 'Z', 'approveDelete', 'DPD'],
   ['DDH', 'Z', 'send', 'DPS'],
   ['DDH', 'Z', 'kill', 'DDK'],
+  // EPS(엠바고 송고 대기) — D/Z 후속 전이만. send 키 없음(재송고 미정의).
+  ['EPS', 'D', 'kill', 'EEK'],
+  ['EPS', 'D', 'hold', 'EEH'],
+  ['EPS', 'Z', 'kill', 'EEK'],
+  ['EPS', 'Z', 'hold', 'EEH'],
 ];
 
 for (const [status, role, action, next] of ALLOWED) {
@@ -55,6 +60,13 @@ const DENIED = [
   // approveDelete는 DPS에서만 — RDS/DDH는 거부
   ['RDS', 'D', 'approveDelete'],
   ['DDH', 'D', 'approveDelete'],
+  // EPS는 kill/hold만 — 재송고(send)·삭제승인은 미정의(거부), R은 EPS 전체 불가
+  ['EPS', 'D', 'send'],
+  ['EPS', 'Z', 'send'],
+  ['EPS', 'D', 'approveDelete'],
+  ['EPS', 'R', 'kill'],
+  ['EPS', 'R', 'hold'],
+  ['EPS', 'R', 'send'],
   // 터미널 상태는 전이 없음
   ['RRH', 'D', 'send'],
   ['RRK', 'D', 'send'],

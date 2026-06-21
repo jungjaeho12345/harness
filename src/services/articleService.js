@@ -118,7 +118,17 @@ export function createArticleService({ articleModel, db, historyModel }) {
       return { ok: false, reason: 'no-end-marker' };
     }
 
-    const contents = { status: result.status };
+    // 엠바고 송고 진입(RDS→EPS): "데스크 미송고에서 송고시" 엠바고 시간이 설정돼 있으면 DPS 대신 EPS.
+    // transition은 순수하게 유지하고(RDS+D/Z+send=DPS), 여기서만 후처리한다(news.md 엠바고 규칙).
+    // 엠바고 유형(1/2/1+2차)은 두 시간 컬럼 조합으로 도출되므로 별도 컬럼 없이 set 여부만 본다(DB 비파괴).
+    let finalStatus = result.status;
+    const embargoSet = !!(row.contents.embargoAt || row.contents.secondEmbargoAt);
+    if (action === 'send' && row.contents.status === 'RDS'
+      && (role === 'D' || role === 'Z') && result.status === 'DPS' && embargoSet) {
+      finalStatus = 'EPS';
+    }
+
+    const contents = { status: finalStatus };
     if (action === 'send') {
       contents.sender = userId ?? null;
       contents.sentAt = nowISO();
@@ -130,10 +140,10 @@ export function createArticleService({ articleModel, db, historyModel }) {
       eventType: 'status',
       action,
       fromStatus: row.contents.status,
-      toStatus: result.status,
+      toStatus: finalStatus,
       actorUserId: userId ?? null,
     });
-    return { ok: true, status: result.status };
+    return { ok: true, status: finalStatus };
   }
 
   // 후속기사작성(followUp)/계속기사작성(continue) — 원본을 바탕으로 "새 기사"를 작성한다.

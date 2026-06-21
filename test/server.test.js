@@ -156,6 +156,36 @@ test('action: D 송고는 DPS, 삭제승인은 DPD로 전이한다', async () =>
   } finally { await ctx.close(); }
 });
 
+test('action: 엠바고 설정된 RDS를 D가 송고하면 EPS, EPS 기사 KILL→EEK·보류→EEH', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+
+    const mkEps = async () => {
+      const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+        sid, body: { title: 't', markupVersion: END_MARKUP, embargoAt: '2026-06-25T09:00:00.000Z' },
+      })).body;
+      const sent = await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+      assert.equal(sent.body.status, 'EPS');
+      return articleId;
+    };
+
+    const killId = await mkEps();
+    const killed = await api(ctx.base, 'POST', `/api/articles/${killId}/action`, { sid, body: { action: 'kill' } });
+    assert.equal(killed.body.status, 'EEK');
+
+    const holdId = await mkEps();
+    const held = await api(ctx.base, 'POST', `/api/articles/${holdId}/action`, { sid, body: { action: 'hold' } });
+    assert.equal(held.body.status, 'EEH');
+
+    // 회귀: 엠바고 미설정 RDS를 D가 송고하면 여전히 DPS.
+    const { articleId: plain } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+    const plainSent = await api(ctx.base, 'POST', `/api/articles/${plain}/action`, { sid, body: { action: 'send' } });
+    assert.equal(plainSent.body.status, 'DPS');
+  } finally { await ctx.close(); }
+});
+
 test('action: 송고는 "(끝)" 마커가 없으면 400 (no-end-marker)', async () => {
   const ctx = await start();
   try {
