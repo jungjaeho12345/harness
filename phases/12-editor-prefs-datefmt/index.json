@@ -7,7 +7,8 @@
       "name": "listformat-dateformat",
       "status": "completed",
       "started_at": "2026-06-21T14:15:48+0900",
-      "summary": "listFormat.js에 9종 DATE_FORMATS·DEFAULT_DATE_FORMAT·순수 applyDateFormat(Date 비사용 정규식 토큰치환)·화이트리스트 setDateFormat 추가, formatDateTime을 module-level currentFormat로 인자화(시그니처·기본결과 불변). test:web 495 pass / build / lint 통과."
+      "summary": "listFormat.js에 9종 DATE_FORMATS·DEFAULT_DATE_FORMAT·순수 applyDateFormat(Date 비사용 정규식 토큰치환)·화이트리스트 setDateFormat 추가, formatDateTime을 module-level currentFormat로 인자화(시그니처·기본결과 불변). test:web 495 pass / build / lint 통과.",
+      "completed_at": "2026-06-21T14:19:47+0900"
     },
     {
       "step": 1,
