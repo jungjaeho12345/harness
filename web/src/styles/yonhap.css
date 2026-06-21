@@ -521,6 +521,63 @@ a { color: var(--yh-blue); }
 
 .yh-editor-statusbar__sep { color: var(--yh-gray-mid); }
 
+/* 에디터 상단 메뉴바 — 파일/편집/보기/맞춤법/표/도구/도움말 + 드롭다운(쉘, 비활성 placeholder). */
+.yh-editor-menubar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+  font-size: 0.82rem;
+}
+
+.yh-editor-menubar__group { position: relative; }
+
+.yh-editor-menubar__top {
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  background: transparent;
+  border: 0;
+  font-family: var(--yh-sans);
+  font-size: inherit;
+  color: var(--yh-ink);
+  cursor: pointer;
+}
+
+.yh-editor-menubar__top:hover,
+.yh-editor-menubar__top[aria-expanded='true'] { background: var(--yh-blue-light); }
+
+.yh-editor-menubar__dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  list-style: none;
+  margin: 0;
+  padding: var(--yh-sp-xs) 0;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-md);
+  z-index: 50;
+  min-width: 12rem;
+}
+
+.yh-editor-menubar__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-lg);
+  width: 100%;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  font-size: 0.82rem;
+  color: var(--yh-ink);
+}
+
+.yh-editor-menubar__item:disabled { color: var(--yh-gray-mid); cursor: default; }
+.yh-editor-menubar__shortcut { color: var(--yh-gray-mid); font-size: 0.75rem; }
+
 /* 임베드 */
 .yh-embed { display: block; }
 
