@@ -1,7 +1,7 @@
-// 에디터 상단 메뉴바(쉘) — 파일/편집/보기/맞춤법/표/도구/도움말 7개 메뉴 + 드롭다운.
+// 에디터 상단 메뉴바 — 파일/편집/보기/맞춤법/표/도구/도움말 7개 메뉴 + 드롭다운.
 // news.md "## 기사 상단 메뉴바"의 항목을 데이터 config(EDITOR_MENUS)로 둔다.
-// 이번 phase는 쉘이므로 드롭다운 항목은 모두 비활성(disabled) placeholder다 — 실제 편집 액션은 후속 phase에서 결선한다.
-// 순수 UI: model/fetch 없음. onSelect는 계약상 받아두지만(후속 phase 결선용) 이번 phase에선 호출되지 않는다.
+// 결선된 항목은 enabledIds로만 활성화된다(미전달 시 전부 비활성 — phase 8 쉘 하위호환). 그 외 항목은 placeholder.
+// 순수 UI: model/fetch 없음. 활성 항목 클릭 시 onSelect(item.id)로 부모(WriterPage)에 위임한다.
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -111,9 +111,12 @@ export const EDITOR_MENUS = Object.freeze([
   },
 ]);
 
-export function EditorMenuBar({ onSelect }) {
+export function EditorMenuBar({ onSelect, enabledIds }) {
   const [openId, setOpenId] = useState(null);
   const ref = useRef(null);
+
+  // 활성 항목 id 집합 — 배열/Set 모두 허용. 미전달(undefined)이면 빈 집합 → 전 항목 비활성(phase 8 하위호환).
+  const enabledSet = enabledIds instanceof Set ? enabledIds : new Set(enabledIds || []);
 
   // 메뉴가 열려 있을 때만 바깥 클릭·Esc 리스너를 단다(한 번에 하나만 열림).
   useEffect(() => {
@@ -152,10 +155,10 @@ export function EditorMenuBar({ onSelect }) {
                       type="button"
                       role="menuitem"
                       className="yh-editor-menubar__item"
-                      // 쉘 — 모든 항목은 비활성 placeholder다. 액션 결선은 후속 phase.
-                      disabled
-                      // 계약상 onSelect를 받아두지만 항목이 disabled라 이번 phase에선 호출되지 않는다.
-                      onClick={() => { if (onSelect) onSelect(item.id); }}
+                      // enabledIds에 든 항목만 활성. 그 외(미결선)는 비활성 placeholder.
+                      disabled={!enabledSet.has(item.id)}
+                      // 활성 항목만 onSelect 위임(disabled 항목은 호출되지 않음).
+                      onClick={() => { if (enabledSet.has(item.id) && onSelect) onSelect(item.id); }}
                     >
                       <span className="yh-editor-menubar__label">{item.label}</span>
                       {item.shortcut && (

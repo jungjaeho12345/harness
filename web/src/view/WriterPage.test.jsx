@@ -951,3 +951,116 @@ describe('WriterPage — 본문 개행 보존(여러 줄 입력 + Alt+Y)', () =>
     await waitFor(() => expect(editorLines(container)).toEqual(['줄1', '줄2', '줄3', '(끝)']));
   });
 });
+
+// Step 1(9-editor-text-transforms): (끝)/(계속)/대소문자 메뉴·단축키 결선.
+describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  // 마지막 캐럿(lastCaretRef)을 lineIndex 줄로 갱신(keyUp→onCaretChange — 검색패널 클릭 전 상태와 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    caretAtLine(container, lineIndex);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("보기>'대문자로 바꾸기'(view.toUpper) 클릭 시 캐럿 줄 텍스트가 대문자로 바뀐다", async () => {
+    const { container } = await openWith([textBlock('title abc'), textBlock('body def')]);
+    focusCaretAtLine(container, 0);
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '보기' }));
+    await userEvent.click(screen.getByText('대문자로 바꾸기'));
+
+    await waitFor(() => expect(editorLines(container)[0]).toBe('TITLE ABC'));
+    expect(editorLines(container)[1]).toBe('body def'); // 다른 줄 불변
+  });
+
+  it('Ctrl+Y keydown 시 본문에 "(계속)"이 삽입되고 preventDefault된다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'y', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // 브라우저 redo 가로채기
+    await waitFor(() => expect(editorLines(container)).toContain('(계속)'));
+  });
+
+  it('Alt+Y는 여전히 "(끝)"을 삽입한다(회귀 없음)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'y', altKey: true });
+    await waitFor(() => expect(editorLines(container)).toContain('(끝)'));
+  });
+
+  it("편집>'(끝)삽입'(edit.insertEnd) 메뉴 클릭도 (끝)을 삽입한다(키보드와 공용 핸들러)", async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await userEvent.click(screen.getByText('(끝)삽입'));
+    await waitFor(() => expect(editorLines(container)).toContain('(끝)'));
+  });
+
+  it("편집>'(계속)삽입'(edit.insertContinue) 메뉴 클릭 시 캐럿 줄 다음에 (계속)이 삽입된다", async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 0); // 헤드 줄
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await userEvent.click(screen.getByText('(계속)삽입'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
+  });
+
+  it('활성 6개 외 항목(표 삽입·찾기/바꾸기)은 여전히 비활성이다', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
+    await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
+    expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기').closest('button')).toBeDisabled();
+  });
+
+  it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문'), textBlock('다음')]);
+    focusCaretAtLine(container, 1); // 본문 줄
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '다음']));
+  });
+
+  it('매핑 모드에서는 메뉴 항목 클릭이 본문을 바꾸지 않는다(텍스트 잠금 가드)', async () => {
+    const { container } = await openWith(
+      [textBlock('title abc'), textBlock('본문')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    focusCaretAtLine(container, 0);
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '보기' }));
+    await userEvent.click(screen.getByText('대문자로 바꾸기'));
+
+    // 매핑은 본문-only 불변식 — 대문자 변환이 적용되지 않는다.
+    expect(editorLines(container)[0]).toBe('title abc');
+  });
+});
