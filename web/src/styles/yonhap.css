@@ -506,6 +506,21 @@ a { color: var(--yh-blue); }
 
 .yh-editor__line { min-height: 1.8em; white-space: pre-wrap; }
 
+/* 에디터 상태표시줄 — 워드수·Byte·단락/행/열·삽입/수정·언어. 신문형 밀도(좁은 행간·작은 글씨). */
+.yh-editor-statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-top: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+  font-size: 0.75rem;
+  color: var(--yh-gray-dark);
+}
+
+.yh-editor-statusbar__sep { color: var(--yh-gray-mid); }
+
 /* 임베드 */
 .yh-embed { display: block; }
 
