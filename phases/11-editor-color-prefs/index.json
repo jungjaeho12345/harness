@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "11-editor-color-prefs",
+  "steps": [
+    { "step": 0, "name": "editorcoloring-configurable", "status": "pending" },
+    { "step": 1, "name": "color-prefs-dialog", "status": "pending" }
+  ]
+}
