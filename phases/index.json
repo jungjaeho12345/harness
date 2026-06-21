@@ -57,7 +57,8 @@
     },
     {
       "dir": "10-editor-prefs-store",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-21T13:43:49+0900"
     }
   ]
 }
