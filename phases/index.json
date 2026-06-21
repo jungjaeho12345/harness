@@ -67,7 +67,8 @@
     },
     {
       "dir": "12-editor-prefs-datefmt",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-21T14:25:49+0900"
     }
   ]
 }
