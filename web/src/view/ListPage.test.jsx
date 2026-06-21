@@ -49,6 +49,31 @@ describe('ListPage', () => {
     expect(screen.queryByTestId('dept-selector')).toBeNull();
   });
 
+  it('엠바고 관리 메뉴 버튼을 보여주고(6번째 탭), 선택 시 EPS만 조회하며 부서 셀렉터가 없다', async () => {
+    const { model } = setup({ articles: [] });
+    expect(screen.getByRole('button', { name: '엠바고 관리' })).toBeInTheDocument();
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
+    // 엠바고 관리는 부서 무관 전체 EPS 목록 — 부서 키 없이 status만으로 조회한다.
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['EPS'] }));
+    expect(screen.queryByTestId('dept-selector')).toBeNull();
+  });
+
+  it('엠바고 관리 EPS 행 우클릭 편집 → 잠금 획득 후 writer.do로 편집 진입한다(edit 모드)', async () => {
+    const { model, navigate, container } = setup({ articles: [{ articleId: 'AKR-EPS', title: 't', status: 'EPS', lockYN: 'N' }] });
+    const lock = vi.spyOn(model, 'lockArticle');
+
+    await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+
+    fireEvent.contextMenu(bodyRows(container)[0]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+
+    // edit 모드 진입(enterEditor 'edit'): 잠금 획득(revise lock) 후 writer.do로 이동.
+    await waitFor(() => expect(lock).toHaveBeenCalledWith('AKR-EPS', 'revise'));
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR-EPS' });
+  });
+
   it('데스크 미송고에서도 부서 Select(기본 전체)를 보여주고, 열면 체크박스가 나온다', async () => {
     setup({
       articles: [],

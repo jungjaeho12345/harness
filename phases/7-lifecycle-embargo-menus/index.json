@@ -29,7 +29,10 @@
     {
       "step": 3,
       "name": "embargo-management-menu",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-06-21T10:53:55+0900",
+      "summary": "embargoMgmt 메뉴(VIEW_MENUS 6번째)·라벨('엠바고 관리') 추가, buildMenuFilter→{status:['EPS']}(부서 무관·셀렉터 비노출). ContextMenu embargoMgmt 분기는 읽기전용(상세·이력·송고이력·복사)+edit 항목만 노출하고 전이 액션(고침/포털고침/삭제요청/재송/후속/계속/매핑)은 차단 — EPS 편집은 기존 enterEditor 'edit' 재사용(잠금/인가 서버 강제, ADR-004)으로 1·2차 엠바고 시간 편집 가능. 배부 미구현(out-of-scope). 서버/백엔드 무변경. test:web 399 pass, build·lint 0.",
+      "completed_at": "2026-06-21T10:57:30+0900"
     }
   ],
   "created_at": "2026-06-21T10:38:36+0900"

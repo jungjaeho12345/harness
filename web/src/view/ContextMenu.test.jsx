@@ -173,6 +173,28 @@ describe('buildContextMenuItems — per-menu items', () => {
     }
   });
 
+  it('엠바고 관리 메뉴는 편집(edit)을 노출하고 EPS에 부적절한 전이 액션은 노출하지 않는다 (step3)', () => {
+    // EPS 기사 편집 진입을 위해 edit 항목을 노출한다(기존 enterEditor 'edit' 재사용).
+    // 권한과 무관하게 edit 항목이 보이고, 고침/포털고침·삭제요청·재송·후속/계속·매핑·번역 등 전이/부적절 액션은 노출하지 않는다.
+    for (const role of ['R', 'D', 'Z']) {
+      const items = buildContextMenuItems('embargoMgmt', { status: 'EPS' }, { role });
+      expect(keys(items)).toContain('edit');
+      for (const k of ['reviseNoPortal', 'revisePortal', 'requestDelete', 'resend', 'followUp', 'continue', 'mapping']) {
+        expect(keys(items)).not.toContain(k);
+      }
+    }
+  });
+
+  it('엠바고 관리 메뉴의 활성 편집 클릭 시 onSelect(edit, article) 호출 (step3)', async () => {
+    const onSelect = vi.fn();
+    const article = { articleId: 'AKR-EPS', status: 'EPS', lockYN: 'N' };
+    render(
+      <ContextMenu menu="embargoMgmt" article={article} identity={{ role: 'D' }} onSelect={onSelect} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(onSelect).toHaveBeenCalledWith('edit', article);
+  });
+
   it('deskUnsent 메뉴에는 followUp/continue/resend 항목이 없다 (회귀)', () => {
     const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
     expect(keys(items)).not.toContain('followUp');

@@ -41,12 +41,17 @@ describe('buildMenuFilter', () => {
     expect(buildMenuFilter('killArticles', me, null)).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
     expect(buildMenuFilter('killArticles', me, ['정치'])).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
   });
+  it('embargo mgmt → EPS만, 부서 무관(부서 키 없음)', () => {
+    // 엠바고 관리는 부서 무관 전체 EPS 목록 — departments를 줘도 부서 키를 붙이지 않는다(killArticles/personal 패턴).
+    expect(buildMenuFilter('embargoMgmt', me, null)).toEqual({ status: ['EPS'] });
+    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['EPS'] });
+  });
 });
 
 describe('VIEW_MENUS', () => {
-  it('5개 메뉴 — killArticles가 기존 4개 뒤에 추가된다', () => {
-    expect(VIEW_MENUS).toHaveLength(5);
-    expect(VIEW_MENUS).toEqual(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles']);
+  it('6개 메뉴 — killArticles·embargoMgmt가 기존 4개 뒤에 추가된다', () => {
+    expect(VIEW_MENUS).toHaveLength(6);
+    expect(VIEW_MENUS).toEqual(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles', 'embargoMgmt']);
   });
 });
 
