@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "12-editor-prefs-datefmt",
+  "steps": [
+    { "step": 0, "name": "listformat-dateformat", "status": "pending" },
+    { "step": 1, "name": "datefmt-dialog-tab", "status": "pending" }
+  ]
+}
