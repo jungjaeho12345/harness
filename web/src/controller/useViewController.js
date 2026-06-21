@@ -8,15 +8,19 @@ import { useAppContext } from '../app/context.js';
 // 모드는 URL에 싣지 않는다(편집 탭 주소창엔 기사아이디만) — useWriteController가 읽고 소비한다.
 export const PENDING_EDIT_KEY = 'yh.pendingEdit';
 
-export const VIEW_MENUS = Object.freeze(['deskUnsent', 'deptWrite', 'deptSend', 'personal']);
+export const VIEW_MENUS = Object.freeze(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles']);
 export const PAGE_SIZE = 10;
 
 // 메뉴별 조회 필터 (news.md 기사 조회페이지).
-// 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK.
+// 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK
+// / KILL기사: RRK·DDK·EEK(부서 무관 전체 KILL 목록).
 // 부서 다중 선택(departments)은 데스크 미송고·부서별 작성·부서별 송고에서 지원하며, 기본값은 '전체'(부서 미지정)다.
 export function buildMenuFilter(menu, identity, departments) {
   const depts = (departments && departments.length) ? departments : null; // null/[] = '전체'(부서 미지정)
   switch (menu) {
+    case 'killArticles':
+      // KILL 결과 상태: R의 RRK, D/Z의 DDK, EPS의 EEK. 부서 무관 전체 목록(부서 키 없이 status만 — personal 패턴).
+      return { status: ['RRK', 'DDK', 'EEK'] };
     case 'deptWrite': {
       const f = { excludeStatus: ['DPS', 'RRH'] };
       if (depts) f.departments = depts;

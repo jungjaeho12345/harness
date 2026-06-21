@@ -39,6 +39,16 @@ describe('ListPage', () => {
     });
   });
 
+  it('KILL기사 메뉴 버튼을 보여주고(5번째 탭), 선택 시 RRK·DDK·EEK만 조회하며 부서 셀렉터가 없다', async () => {
+    const { model } = setup({ articles: [] });
+    expect(screen.getByRole('button', { name: 'KILL기사' })).toBeInTheDocument();
+    const spy = vi.spyOn(model, 'queryArticles');
+    await userEvent.click(screen.getByRole('button', { name: 'KILL기사' }));
+    // KILL기사는 부서 무관 전체 KILL 목록 — 부서 키 없이 status만으로 조회한다.
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RRK', 'DDK', 'EEK'] }));
+    expect(screen.queryByTestId('dept-selector')).toBeNull();
+  });
+
   it('데스크 미송고에서도 부서 Select(기본 전체)를 보여주고, 열면 체크박스가 나온다', async () => {
     setup({
       articles: [],

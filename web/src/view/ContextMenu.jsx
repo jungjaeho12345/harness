@@ -45,6 +45,10 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
   if (menu === 'deskUnsent') {
     // 데스크 미송고: 편집(D/Z만 활성) / 상세보기 / 이력보기 / 본문복사 / 제목만복사.
     items = [{ ...edit, enabled: canDeskEdit }, detail, HISTORY, copyBody, copyTitle];
+  } else if (menu === 'killArticles') {
+    // KILL기사: 종료 상태(RRK/DDK/EEK)이므로 읽기전용 항목만 노출한다 — 상세보기·이력보기·송고이력보기·본문복사·제목만복사.
+    // 고침/포털고침·삭제요청·재송·후속/계속·매핑·번역 등 전이/편집 액션은 부적절하므로 노출하지 않는다.
+    items = [detail, HISTORY, SEND_HISTORY, copyBody, copyTitle];
   } else {
     // 부서별 작성·개인별 수정·부서별 송고 공통 항목.
     items = [

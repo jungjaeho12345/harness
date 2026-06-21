@@ -159,6 +159,20 @@ describe('buildContextMenuItems — per-menu items', () => {
     expect(find(buildContextMenuItems('deptWrite', { status: 'RDS' }, { role: 'D' }), 'resend').enabled).toBe(false);
   });
 
+  it('KILL기사 메뉴는 읽기전용 항목만 노출하고 전이 액션은 없다 (step2 — 종료 상태)', () => {
+    // 종료 상태(RRK/DDK/EEK)이므로 어떤 권한이든 읽기전용(상세보기·이력·복사)만 노출한다.
+    for (const status of ['RRK', 'DDK', 'EEK']) {
+      for (const role of ['R', 'D', 'Z']) {
+        const items = buildContextMenuItems('killArticles', { status }, { role });
+        expect(keys(items)).toEqual(['detail', 'history', 'sendHistory', 'copyBody', 'copyTitle']);
+        // 부적절한 전이/편집 액션은 노출하지 않는다.
+        for (const k of ['reviseNoPortal', 'revisePortal', 'requestDelete', 'resend', 'followUp', 'continue', 'mapping', 'translate', 'edit']) {
+          expect(keys(items)).not.toContain(k);
+        }
+      }
+    }
+  });
+
   it('deskUnsent 메뉴에는 followUp/continue/resend 항목이 없다 (회귀)', () => {
     const items = buildContextMenuItems('deskUnsent', { status: 'RDS' }, { role: 'D' });
     expect(keys(items)).not.toContain('followUp');
