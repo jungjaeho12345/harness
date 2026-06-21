@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "13-editor-autosave",
+  "steps": [
+    { "step": 0, "name": "editor-draft-store", "status": "pending" },
+    { "step": 1, "name": "autosave-timer-recover", "status": "pending" }
+  ]
+}
