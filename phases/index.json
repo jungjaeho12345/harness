@@ -54,6 +54,10 @@
       "dir": "9-editor-text-transforms",
       "status": "completed",
       "completed_at": "2026-06-21T12:39:20+0900"
+    },
+    {
+      "dir": "10-editor-prefs-store",
+      "status": "pending"
     }
   ]
 }

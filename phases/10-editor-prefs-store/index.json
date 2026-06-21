@@ -1,0 +1,7 @@
+{
+  "project": "기사 작성기",
+  "phase": "10-editor-prefs-store",
+  "steps": [
+    { "step": 0, "name": "editor-prefs-store", "status": "pending" }
+  ]
+}
