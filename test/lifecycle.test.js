@@ -81,21 +81,27 @@ test('transition 거부: 정의되지 않은 액션', () => {
   assert.equal(transition('RDS', 'D', undefined).ok, false);
 });
 
-// initialStatus — 최초 작성(create) 초기 상태. 기본 RDS, 예외는 Z+hold→DDH (news.md "기사 생애주기").
-// transition과 달리 거부하지 않고 항상 유효한 상태 문자열을 반환한다.
-test('initialStatus: Z가 보류로 최초 작성하면 DDH', () => {
-  assert.equal(initialStatus('Z', 'hold'), 'DDH');
-});
+// initialStatus — 최초 작성(create) 초기 상태. 기본 RDS, 보류는 (Z|D)→DDH·R→RRH (news.md "기사 생애주기").
+// transition('RDS',role,'hold')과 결과가 동일하다(단일 진실). 거부하지 않고 항상 유효한 상태 문자열을 반환한다.
+const INITIAL_HOLD = [
+  ['Z', 'DDH'],   // Z 보류 → DDH
+  ['D', 'DDH'],   // D 보류 → DDH
+  ['R', 'RRH'],   // R 보류 → RRH
+];
+
+for (const [role, next] of INITIAL_HOLD) {
+  test(`initialStatus: ${role}가 보류로 최초 작성하면 ${next}`, () => {
+    assert.equal(initialStatus(role, 'hold'), next);
+  });
+}
 
 const INITIAL_RDS = [
   ['Z', 'send'],   // Z 송고 → RDS (신규 최초 송고는 권한 무관 RDS)
-  ['D', 'hold'],   // D 보류 → RDS
-  ['R', 'hold'],   // R 보류 → RDS
   ['D', 'send'],
   ['R', 'send'],
   ['Z', 'kill'],   // 정의 외 action도 RDS (거부하지 않음)
   ['Z', undefined],
-  [undefined, 'hold'],
+  [undefined, 'hold'],   // 거부되는 role(미지정)+hold 폴백 → RDS (보존)
   [undefined, undefined],
 ];
 

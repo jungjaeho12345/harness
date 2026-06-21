@@ -34,22 +34,23 @@ test('create: status RDS로 저장하고 AKR 아이디를 생성한다', () => {
   assert.equal(row.article.title, '제목');
 });
 
-test('create: Z가 보류(hold) 의도로 최초 작성하면 status DDH로 저장한다', () => {
+test('create: 최초 보류(hold)는 권한별로 결정한다 ((Z|D)→DDH, R→RRH)', () => {
   const { service, articleModel } = setup();
-  const r = service.create({ title: '제목', markupVersion: markup('본문'), author: 'admin' }, { role: 'Z', action: 'hold' });
-  assert.equal(r.ok, true);
-  assert.equal(articleModel.getById(r.articleId).contents.status, 'DDH');
+  const zHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'admin' }, { role: 'Z', action: 'hold' });
+  const dHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'desk' }, { role: 'D', action: 'hold' });
+  const rHold = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' }, { role: 'R', action: 'hold' });
+  assert.equal(articleModel.getById(zHold.articleId).contents.status, 'DDH');
+  assert.equal(articleModel.getById(dHold.articleId).contents.status, 'DDH');
+  assert.equal(articleModel.getById(rHold.articleId).contents.status, 'RRH');
 });
 
-test('create: Z 송고·D 보류·옵션 없음은 모두 RDS를 유지한다 (회귀 가드)', () => {
+test('create: 최초 송고·옵션 없음은 모두 RDS를 유지한다 (회귀 가드)', () => {
   const { service, articleModel } = setup();
   const zSend = service.create({ title: 'a', author: 'admin' }, { role: 'Z', action: 'send' });
-  const dHold = service.create({ title: 'b', author: 'desk' }, { role: 'D', action: 'hold' });
-  const rHold = service.create({ title: 'c', author: 'kim' }, { role: 'R', action: 'hold' });
+  const rSend = service.create({ title: 'b', author: 'kim' }, { role: 'R', action: 'send' });
   const noOpts = service.create({ title: 'd', author: 'kim' }); // deriveArticle 등 기존 호출 경로
   assert.equal(articleModel.getById(zSend.articleId).contents.status, 'RDS');
-  assert.equal(articleModel.getById(dHold.articleId).contents.status, 'RDS');
-  assert.equal(articleModel.getById(rHold.articleId).contents.status, 'RDS');
+  assert.equal(articleModel.getById(rSend.articleId).contents.status, 'RDS');
   assert.equal(articleModel.getById(noOpts.articleId).contents.status, 'RDS');
 });
 

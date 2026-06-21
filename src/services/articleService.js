@@ -63,7 +63,7 @@ export function createArticleService({ articleModel, db, historyModel }) {
   }
 
   // 신규 기사 — articleId 생성, 초기 status 결정, Article+Contents 트랜잭션 저장.
-  // 초기 status는 세션 role + 의도 action으로 결정한다(initialStatus, 기본 RDS / Z+hold만 DDH).
+  // 초기 status는 세션 role + 의도 action으로 결정한다(initialStatus, 기본 RDS / (Z|D)+hold→DDH, R+hold→RRH).
   // 옵션 미전달 시(deriveArticle 등 기존 호출) role/action=undefined → RDS 유지(하위호환).
   function create(dto = {}, { role, action } = {}) {
     const articleId = generateArticleId(db);
