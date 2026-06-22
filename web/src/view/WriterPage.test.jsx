@@ -1485,6 +1485,28 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
   });
 
+  // 보강(tester): 매핑 Ctrl+F의 핵심 불변식은 "다이얼로그 비개방"이 아니라 "본문 불변"이다.
+  // WriterPage가 매핑 시 onKeyDown={undefined}로 Editor에 키 핸들러를 붙이지 않으므로(텍스트 잠금) Editor 위 Ctrl+F는
+  // 부모로 전파되지 않는다 — 브라우저 기본 찾기(읽기 동작)는 본문을 바꾸지 않아 무해하다. 여기서는 매핑 중 Ctrl+F가
+  // 본문(updateField('body'))을 절대 바꾸지 않음을 저장 PUT로 고정한다(다이얼로그 비개방 단언만으로는 본문 불변을 직접 보장하지 못함).
+  it('매핑 모드: Ctrl+F는 본문(updateField body)을 바꾸지 않는다(저장 시 원본 PUT)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 본문 불변
+  });
+
   it("매핑 모드: 메뉴 '찾기/바꾸기' 클릭도 다이얼로그를 열지 않고 본문(updateField)을 바꾸지 않는다", async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const original = serialize([textBlock('foo bar')]);
@@ -1703,5 +1725,65 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
 
     fireEvent.keyDown(ctxMenu(), { key: 'Escape' });
     await waitFor(() => expect(ctxMenu()).toBeNull());
+  });
+
+  // 보강(tester): 클립보드 항목(잘라내기/복사/붙여넣기)은 브라우저 기본 동작에 위임한다.
+  // jsdom에는 document.execCommand가 없으므로(typeof undefined) 구현의 `typeof === 'function'` 가드 + try/catch가
+  // 예외 없이 메뉴만 닫아야 한다. 핵심 회귀 방어: 클릭이 (1) 에러 없이 동작하고 (2) 본문(updateField('body'))을
+  // 절대 바꾸지 않으며(contentEditable/블록 직접 조작 금지 — Editor.handlePaste의 (끝) 차단/이미지 임베드 경로 보호)
+  // (3) 메뉴를 닫는다. 활성/비활성만 보던 기존 단언으로는 이 동작 회귀를 잡지 못한다.
+  for (const label of ['복사', '잘라내기', '붙여넣기']) {
+    it(`컨텍스트 메뉴 '${label}' 클릭은 에러 없이 메뉴를 닫고 본문(updateField body)을 바꾸지 않는다`, async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const original = serialize([textBlock('foo bar'), textBlock('(끝)')]);
+      const { container, model } = await openWith([textBlock('foo bar'), textBlock('(끝)')]);
+      const save = vi.spyOn(model, 'saveArticle');
+      const linesBefore = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+      // 클릭이 예외를 던지지 않아야 한다(jsdom: execCommand 미정의 → 가드로 no-op).
+      await userEvent.click(ctxItem(label));
+
+      // 메뉴가 닫힌다(항목 선택 → onClose).
+      await waitFor(() => expect(ctxMenu()).toBeNull());
+
+      // 본문(DOM 라인) 무변경 — 코드가 contentEditable 텍스트/블록을 직접 조작하지 않는다.
+      const linesAfter = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(linesAfter).toEqual(linesBefore);
+
+      // 저장 시 원본 body가 그대로 PUT — updateField('body',…)가 호출되지 않았다(본문 직렬화 경로 미사용).
+      await userEvent.click(actionBtn('보류'));
+      await waitFor(() => expect(save).toHaveBeenCalled());
+      expect(save.mock.calls[0][0].markupVersion).toBe(original);
+    });
+  }
+
+  // 보강(tester): 클립보드 위임 — execCommand가 존재하는 환경(브라우저)에서는 그 명령으로 위임됨을 고정한다.
+  // (구현은 에디터 root를 focus한 뒤 document.execCommand(cut|copy|paste)를 호출한다. 코드 직접 조작이 아님을 명시.)
+  it('클립보드 항목은 execCommand가 존재하면 해당 명령(cut/copy/paste)으로 위임한다(직접 본문 조작 아님)', async () => {
+    const { container } = await openWith([textBlock('foo bar')]);
+    // jsdom에 없는 execCommand를 임시로 주입해 위임 경로를 검증한다(afterEach에서 restoreAllMocks로 정리됨).
+    const exec = vi.fn(() => true);
+    document.execCommand = exec;
+    try {
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('복사'));
+      expect(exec).toHaveBeenCalledWith('copy');
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('잘라내기'));
+      expect(exec).toHaveBeenCalledWith('cut');
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('붙여넣기'));
+      expect(exec).toHaveBeenCalledWith('paste');
+    } finally {
+      delete document.execCommand; // jsdom 기본(미정의) 상태로 되돌린다 — 다른 테스트의 가드 경로 보존.
+    }
   });
 });

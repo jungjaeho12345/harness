@@ -6,7 +6,8 @@
 // 조회페이지 ContextMenu.jsx(yh-context-menu/buildContextMenuItems)와 충돌하지 않게 별도 클래스(yh-editor-context-menu)·
 // testid(editor-context-menu)를 쓴다. 위치/닫기는 ListPage 패턴(position.x/y + Esc/마우스 이탈 → onClose)을 따른다.
 
-// 항목 config — news.md L173 순서. {id, label, shortcut?}.
+// 항목 config — news.md L173 순서. {id, label, shortcut?, toggle?}.
+// toggle:true인 항목(보이기 토글)만 on/off 상태를 갖는 체크박스형 메뉴항목이다.
 export const EDITOR_CONTEXT_ITEMS = Object.freeze([
   { id: 'ctx.companyCode', label: '기업코드변환', shortcut: 'Ctrl+B' },
   { id: 'ctx.cut', label: '잘라내기', shortcut: 'Ctrl+X' },
@@ -17,9 +18,9 @@ export const EDITOR_CONTEXT_ITEMS = Object.freeze([
   { id: 'ctx.symbolInput', label: '약물입력', shortcut: 'Alt+O' },
   { id: 'ctx.findReplace', label: '찾기/바꾸기', shortcut: 'Ctrl+F' },
   { id: 'ctx.selectAll', label: '전체 선택', shortcut: 'Ctrl+A' },
-  { id: 'ctx.showMenuBar', label: '메뉴바 보이기' },
-  { id: 'ctx.showToolBar', label: '툴바 보이기' },
-  { id: 'ctx.showGlyphBar', label: '약물바 보이기' },
+  { id: 'ctx.showMenuBar', label: '메뉴바 보이기', toggle: true },
+  { id: 'ctx.showToolBar', label: '툴바 보이기', toggle: true },
+  { id: 'ctx.showGlyphBar', label: '약물바 보이기', toggle: true },
 ]);
 
 export function EditorContextMenu({
@@ -50,12 +51,14 @@ export function EditorContextMenu({
           <li key={item.id} role="none">
             <button
               type="button"
-              role="menuitem"
+              // 토글 항목만 체크박스형 메뉴항목(menuitemcheckbox)이다. 비토글(찾기/전체선택/cut 등)은 일반 menuitem —
+              // aria-checked를 붙이지 않는다(접근성: 비토글에 체크 상태를 노출하지 않음).
+              role={item.toggle ? 'menuitemcheckbox' : 'menuitem'}
               className="yh-editor-context-menu__item"
               // enabledIds에 든 항목만 활성. 그 외(미결선·aux placeholder)는 비활성.
               disabled={!enabled}
-              // 보이기 토글 항목의 현재 on/off 표시(선택). disabled와 무관.
-              aria-checked={checked}
+              // 보이기 토글 항목의 현재 on/off 표시(선택). disabled와 무관. 비토글은 aria-checked 생략.
+              aria-checked={item.toggle ? checked : undefined}
               // 활성 항목만 onSelect 위임(disabled 항목은 호출되지 않음 + 코드 가드).
               onClick={() => {
                 if (!enabled) return;
