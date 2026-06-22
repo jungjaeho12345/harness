@@ -37,10 +37,13 @@
     {
       "step": 3,
       "name": "editor-context-menu",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         2
-      ]
+      ],
+      "started_at": "2026-06-22T17:13:34+0900",
+      "summary": "web/src/view/EditorContextMenu.jsx 신규(순수 표시) + WriterPage 결선. EDITOR_CONTEXT_ITEMS=news.md L173 12항목(ctx.* namespaced, 순서·라벨·shortcut 고정). EditorMenuBar enabledSet 패턴 그대로: enabledIds(배열/Set) 미전달 시 전 항목 비활성, disabled=!set.has(id)·활성일 때만 onSelect(id)+onClose(라벨 라우팅 금지). checkedIds로 보이기 토글 aria-checked+✓ 표식. 클래스 yh-editor-context-menu·testid editor-context-menu(조회페이지 yh-context-menu/buildContextMenuItems 무수정·무재사용). WriterPage: showGlyphBar placeholder state(실제 약물바 미렌더)·ctxMenu 좌표 state 추가. yh-writer__canvas onContextMenu=preventDefault+setCtxMenu({x,y})(브라우저 기본 메뉴 차단), ctxMenu 있을 때만 EditorContextMenu 렌더(FindReplaceDialog 옆), 항목선택/Esc/마우스이탈 시 setCtxMenu(null). ctxEnabledIds: 항상 활성=findReplace/selectAll/showMenuBar·ToolBar·GlyphBar, 비매핑일 때만 cut/copy/paste 추가, aux(companyCode/pasteOriginal/pasteText/symbolInput) 항상 비활성. onCtxSelect: findReplace→!isMapping시 setShowFind(true), selectAll→selectAllInEditor(.yh-editor)(Step2 재사용), showMenuBar/ToolBar/GlyphBar→토글 setter, cut/copy/paste→에디터 root.focus()+document.execCommand(jsdom 미지원 try/catch no-op·contentEditable 직접 조작 안 함). Editor.jsx 무수정. EditorContextMenu.test.jsx 11개 + WriterPage.test.jsx 8개 신규. test:web 589 pass(이전 570+19), build·lint 통과.",
+      "completed_at": "2026-06-22T17:18:30+0900"
     }
   ],
   "created_at": "2026-06-22T16:50:23+0900"

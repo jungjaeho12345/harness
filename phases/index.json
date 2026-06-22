@@ -77,7 +77,8 @@
     },
     {
       "dir": "14-editor-find-context",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-22T17:18:30+0900"
     }
   ]
 }
