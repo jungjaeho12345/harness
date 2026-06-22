@@ -156,3 +156,39 @@ describe('editorFind — replaceAll', () => {
     expect(input).toEqual(snapshot); // 입력 불변
   });
 });
+
+describe('editorFind — plan-reviewer edge cases', () => {
+  // (a) 첫 Ctrl+F 직후 빈 query 상태에서 매치 0개 — 다이얼로그 초기 상태(query='')에서 카운트/하이라이트가 비어야 한다.
+  it('yields zero matches for an initial empty query state (just after Ctrl+F)', () => {
+    expect(isFindReplace({ ctrlKey: true, key: 'f' })).toBe(true); // Ctrl+F가 다이얼로그를 연다
+    // 다이얼로그가 막 열린 상태: query는 빈 문자열 — findMatches/nextMatchIndex 모두 비어야 한다.
+    const matches = findMatches('아무 본문 텍스트', '');
+    expect(matches).toEqual([]);
+    expect(nextMatchIndex(matches, 0)).toBe(-1);
+    // 바꾸기도 빈 query면 no-op이어야 한다.
+    expect(replaceOne([textBlock('아무 본문 텍스트')], '', 'X').replaced).toBe(false);
+    expect(replaceAll([textBlock('아무 본문 텍스트')], '', 'X').count).toBe(0);
+  });
+
+  // (b) replacement가 query를 다시 포함('foo'→'xfoox')해도, caretOffset를 다음 fromOffset으로 피드백하는
+  //     "바꾸고 계속" 루프가 같은 자리를 무한 재매치하지 않도록 caretOffset/matchStart 진행이 단조 증가해야 한다.
+  it('advances caretOffset monotonically when the replacement re-contains the query', () => {
+    let blocks = [textBlock('foo')];
+    let fromOffset = 0;
+    let prevCaret = -1;
+    let prevMatchStart = -1;
+    for (let i = 0; i < 4; i += 1) {
+      const r = replaceOne(blocks, 'foo', 'xfoox', { fromOffset });
+      expect(r.replaced).toBe(true);
+      // 진행 단조성: 매번 매치 시작/캐럿이 직전보다 엄격히 커야 한다(같은 자리 정체 금지).
+      expect(r.matchStart).toBeGreaterThan(prevMatchStart);
+      expect(r.caretOffset).toBeGreaterThan(prevCaret);
+      // caretOffset은 항상 방금 삽입한 replacement 끝 = matchStart + 'xfoox'.length.
+      expect(r.caretOffset).toBe(r.matchStart + 'xfoox'.length);
+      prevMatchStart = r.matchStart;
+      prevCaret = r.caretOffset;
+      blocks = r.blocks;
+      fromOffset = r.caretOffset; // 다이얼로그가 다음 탐색 시작점으로 caretOffset를 쓴다.
+    }
+  });
+});
