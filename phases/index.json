@@ -83,6 +83,10 @@
     {
       "dir": "15-editor-prefs-tabs",
       "status": "in_progress"
+    },
+    {
+      "dir": "16-editor-prefs-remaining",
+      "status": "pending"
     }
   ]
 }
