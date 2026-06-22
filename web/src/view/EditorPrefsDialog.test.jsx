@@ -319,3 +319,161 @@ describe('EditorPrefsDialog — 바이라인 탭', () => {
     expect(screen.getByTestId('pref-byline-blogValue')).toHaveValue('');
   });
 });
+
+// 편집 탭 — phase 16 step 1. 기존 색상/자동저장/바이라인/날짜형식 탭을 깨지 않고 편집 탭만 추가했는지 확인한다.
+// 편집 = { columnLimit, dragDrop, noCommonAbbr, companyCode, language, lineSpacing, inputMode } — localStorage(editorPrefs) 전용(저장만, effect 없음).
+describe('EditorPrefsDialog — 편집 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('편집 탭으로 전환하면 7개 필드를 보여주고 다른 탭 입력은 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-edit')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    expect(screen.getByTestId('pref-edit-columnLimit')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-dragDrop')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-noCommonAbbr')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-companyCode')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-language')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-lineSpacing')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-edit-inputMode')).toBeInTheDocument();
+    // 다른 탭의 입력은 보이지 않는다.
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('편집 입력 초기값은 저장값(loadEditorPrefs().edit)이다', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      edit: {
+        columnLimit: true,
+        dragDrop: true,
+        noCommonAbbr: true,
+        companyCode: 'auto',
+        language: 'ja',
+        lineSpacing: 1.5,
+        inputMode: 'ksc5601',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+
+    expect(screen.getByTestId('pref-edit-columnLimit')).toBeChecked();
+    expect(screen.getByTestId('pref-edit-dragDrop')).toBeChecked();
+    expect(screen.getByTestId('pref-edit-noCommonAbbr')).toBeChecked();
+    expect(screen.getByTestId('pref-edit-companyCode')).toHaveValue('auto');
+    expect(screen.getByTestId('pref-edit-language')).toHaveValue('ja');
+    expect(screen.getByTestId('pref-edit-lineSpacing')).toHaveValue('1.5');
+    expect(screen.getByTestId('pref-edit-inputMode')).toHaveValue('ksc5601');
+  });
+
+  it("컬럼제한 체크 + 언어 ja + 줄간격 1.5 후 '적용'하면 editorPrefs.edit에 영속된다(줄간격은 숫자)", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.change(screen.getByTestId('pref-edit-language'), { target: { value: 'ja' } });
+    fireEvent.change(screen.getByTestId('pref-edit-lineSpacing'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { edit } = loadEditorPrefs();
+    expect(edit.columnLimit).toBe(true);
+    expect(edit.language).toBe('ja');
+    expect(edit.lineSpacing).toBe(1.5); // 문자열이 아닌 숫자
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it('적용은 편집만 바꿔도 색·자동저장·바이라인·날짜형식을 보존한다(상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+      byline: {
+        email: true, emailValue: 'keep@me.com', blog: false, blogValue: '',
+      },
+      dateFormat: 'YYYY.MM.DD',
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-dragDrop'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    // 편집 반영
+    expect(prefs.edit.dragDrop).toBe(true);
+    // 나머지 보존
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.autosave.enabled).toBe(true);
+    expect(prefs.autosave.intervalSec).toBe(120);
+    expect(prefs.byline.email).toBe(true);
+    expect(prefs.byline.emailValue).toBe('keep@me.com');
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+  });
+
+  it('색상만 바꿔 적용해도 편집은 보존된다(반대 방향 상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      edit: {
+        columnLimit: true,
+        dragDrop: true,
+        noCommonAbbr: true,
+        companyCode: 'auto',
+        language: 'en',
+        lineSpacing: 2.0,
+        inputMode: 'ksc5601',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#123456' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.colors.subtitle).toBe('#123456');
+    expect(prefs.edit.columnLimit).toBe(true);
+    expect(prefs.edit.language).toBe('en');
+    expect(prefs.edit.lineSpacing).toBe(2.0);
+    expect(prefs.edit.inputMode).toBe('ksc5601');
+  });
+
+  it('재오픈하면 편집 폼이 저장값으로 초기화된다', () => {
+    const { rerender } = render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.change(screen.getByTestId('pref-edit-language'), { target: { value: 'zh' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 닫았다가 다시 연다.
+    rerender(<EditorPrefsDialog open={false} onClose={vi.fn()} />);
+    rerender(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    expect(screen.getByTestId('pref-edit-language')).toHaveValue('zh');
+  });
+
+  it("'기본값'은 편집 폼을 DEFAULT_EDITOR_PREFS.edit로 되돌린다", () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      edit: {
+        columnLimit: true,
+        dragDrop: true,
+        noCommonAbbr: true,
+        companyCode: 'auto',
+        language: 'ru',
+        lineSpacing: 2.0,
+        inputMode: 'ksc5601',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    expect(screen.getByTestId('pref-edit-columnLimit')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    const d = DEFAULT_EDITOR_PREFS.edit;
+    expect(screen.getByTestId('pref-edit-columnLimit')).not.toBeChecked();
+    expect(screen.getByTestId('pref-edit-dragDrop')).not.toBeChecked();
+    expect(screen.getByTestId('pref-edit-noCommonAbbr')).not.toBeChecked();
+    expect(screen.getByTestId('pref-edit-companyCode')).toHaveValue(d.companyCode);
+    expect(screen.getByTestId('pref-edit-language')).toHaveValue(d.language);
+    expect(screen.getByTestId('pref-edit-lineSpacing')).toHaveValue(String(d.lineSpacing));
+    expect(screen.getByTestId('pref-edit-inputMode')).toHaveValue(d.inputMode);
+  });
+});

@@ -20,12 +20,39 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 색상/자동저장/바이라인/날짜형식. (순서는 news.md 환경설정 순서를 따른다.)
+// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식. (순서는 news.md 환경설정 순서를 따른다.)
 const PREF_TABS = [
+  { key: 'edit', label: '편집' },
   { key: 'colors', label: '색상' },
   { key: 'autosave', label: '자동저장' },
   { key: 'byline', label: '바이라인' },
   { key: 'dateFormat', label: '날짜형식' },
+];
+
+// 편집 탭 — 언어 9종(news.md L190). value=enum 코드(store edit.language 허용값), label=한국어 표시.
+const EDIT_LANGUAGES = [
+  { value: 'ko', label: '한글' },
+  { value: 'en', label: '영어' },
+  { value: 'ja', label: '일어' },
+  { value: 'zh', label: '중국어' },
+  { value: 'es', label: '스페인' },
+  { value: 'fr', label: '프랑스' },
+  { value: 'ar', label: '아랍어' },
+  { value: 'vi', label: '베트남' },
+  { value: 'ru', label: '러시아어' },
+];
+
+// 편집 탭 — 줄간격 옵션(news.md L191). value=문자열, 저장 시 Number()로 변환.
+const EDIT_LINE_SPACINGS = [1.0, 1.2, 1.5, 1.8, 2.0];
+
+// 편집 탭 — 기업코드(수동/자동) · 입력모드(KSC-5601/Unicode) select 옵션.
+const EDIT_COMPANY_CODES = [
+  { value: 'manual', label: '수동' },
+  { value: 'auto', label: '자동' },
+];
+const EDIT_INPUT_MODES = [
+  { value: 'ksc5601', label: 'KSC-5601' },
+  { value: 'unicode', label: 'Unicode' },
 ];
 
 // 자동저장 저장 간격 옵션(news.md "# 에디터 환경설정 > 자동저장: 저장 간격 30초~5분").
@@ -48,6 +75,7 @@ export function EditorPrefsDialog({ open, onClose }) {
   const [dateFormat, setDateFormat] = useState(() => loadEditorPrefs().dateFormat);
   const [autosave, setAutosave] = useState(() => loadEditorPrefs().autosave);
   const [byline, setByline] = useState(() => loadEditorPrefs().byline);
+  const [edit, setEdit] = useState(() => loadEditorPrefs().edit);
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -57,6 +85,7 @@ export function EditorPrefsDialog({ open, onClose }) {
       setDateFormat(prefs.dateFormat);
       setAutosave(prefs.autosave);
       setByline(prefs.byline);
+      setEdit(prefs.edit);
     }
   }, [open]);
 
@@ -74,19 +103,35 @@ export function EditorPrefsDialog({ open, onClose }) {
     const {
       email, emailValue, blog, blogValue,
     } = byline;
-    // colors + autosave + byline을 setEditorPref로 합성하고 dateFormat은 spread로 보존(네 설정 상호 보존 못박음).
+    const {
+      columnLimit, dragDrop, noCommonAbbr, companyCode, language, lineSpacing, inputMode,
+    } = edit;
+    // colors + autosave + byline + edit를 setEditorPref로 합성하고 dateFormat은 spread로 보존
+    // (loadEditorPrefs() base spread로 spellcheck/glyph 등 미합성 카테고리도 함께 보존된다 — 상호 보존 못박음).
     const next = {
       ...setEditorPref(
         setEditorPref(
-          setEditorPref(loadEditorPrefs(), 'colors', {
-            title, subtitle, body, background,
-          }),
-          'autosave',
-          { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+          setEditorPref(
+            setEditorPref(loadEditorPrefs(), 'colors', {
+              title, subtitle, body, background,
+            }),
+            'autosave',
+            { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+          ),
+          'byline',
+          {
+            email, emailValue, blog, blogValue,
+          },
         ),
-        'byline',
+        'edit',
         {
-          email, emailValue, blog, blogValue,
+          columnLimit,
+          dragDrop,
+          noCommonAbbr,
+          companyCode,
+          language,
+          lineSpacing: Number(lineSpacing),
+          inputMode,
         },
       ),
       dateFormat,
@@ -108,6 +153,7 @@ export function EditorPrefsDialog({ open, onClose }) {
     setDateFormat(DEFAULT_EDITOR_PREFS.dateFormat);
     setAutosave(DEFAULT_EDITOR_PREFS.autosave);
     setByline(DEFAULT_EDITOR_PREFS.byline);
+    setEdit(DEFAULT_EDITOR_PREFS.edit);
   };
 
   return (
@@ -133,6 +179,93 @@ export function EditorPrefsDialog({ open, onClose }) {
             </button>
           ))}
         </div>
+
+        {tab === 'edit' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-edit-columnLimit">컬럼제한</label>
+              <input
+                id="pref-edit-columnLimit"
+                data-testid="pref-edit-columnLimit"
+                type="checkbox"
+                checked={edit.columnLimit}
+                onChange={(e) => setEdit((s) => ({ ...s, columnLimit: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-dragDrop">드래그앤드롭</label>
+              <input
+                id="pref-edit-dragDrop"
+                data-testid="pref-edit-dragDrop"
+                type="checkbox"
+                checked={edit.dragDrop}
+                onChange={(e) => setEdit((s) => ({ ...s, dragDrop: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-noCommonAbbr">공용약어 사용안함</label>
+              <input
+                id="pref-edit-noCommonAbbr"
+                data-testid="pref-edit-noCommonAbbr"
+                type="checkbox"
+                checked={edit.noCommonAbbr}
+                onChange={(e) => setEdit((s) => ({ ...s, noCommonAbbr: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-companyCode">기업코드</label>
+              <select
+                id="pref-edit-companyCode"
+                data-testid="pref-edit-companyCode"
+                value={edit.companyCode}
+                onChange={(e) => setEdit((s) => ({ ...s, companyCode: e.target.value }))}
+              >
+                {EDIT_COMPANY_CODES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-language">언어</label>
+              <select
+                id="pref-edit-language"
+                data-testid="pref-edit-language"
+                value={edit.language}
+                onChange={(e) => setEdit((s) => ({ ...s, language: e.target.value }))}
+              >
+                {EDIT_LANGUAGES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-lineSpacing">줄간격</label>
+              <select
+                id="pref-edit-lineSpacing"
+                data-testid="pref-edit-lineSpacing"
+                value={edit.lineSpacing}
+                onChange={(e) => setEdit((s) => ({ ...s, lineSpacing: e.target.value }))}
+              >
+                {EDIT_LINE_SPACINGS.map((v) => (
+                  <option key={v} value={v}>{v.toFixed(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-inputMode">입력모드</label>
+              <select
+                id="pref-edit-inputMode"
+                data-testid="pref-edit-inputMode"
+                value={edit.inputMode}
+                onChange={(e) => setEdit((s) => ({ ...s, inputMode: e.target.value }))}
+              >
+                {EDIT_INPUT_MODES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {tab === 'colors' && (
           <div className="yh-prefs__fields">
