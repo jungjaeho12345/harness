@@ -3,7 +3,7 @@
   "phase": "17-editor-glyph-tools",
   "steps": [
     { "step": 0, "name": "glyph-insert-pure", "status": "completed", "deps": [], "summary": "web/src/view/editorGlyph.js 순수 헬퍼 추가 — insertGlyphAtCaret(blocks,caret,glyph)→{blocks,caretTextLine}, normalizeGlyph(트림/빈값). blocksToText 좌표계로 lineAtOffset+textLineToBlockIndex 슬라이스(editorFind.replaceAtMatch 패턴), col=offset-lineStart. 빈/공백 glyph no-op, caret null/범위밖·'(끝)' 줄 가리킴 시 '(끝)' 아닌 마지막 텍스트 줄 끝 폴백(텍스트 블록 없으면 첫 텍스트 블록 생성), 임베드/'(끝)'/순서/개수 불변, 입력 mutate 금지. step0.md 63행 예시 리터럴('가※나다')은 '컬럼 2' 라벨·slice 알고리즘과 모순되는 오타로 판단해 알고리즘(컬럼 2→'가나※다')을 권위 계약으로 채택. editorGlyph.test.js 17 케이스. editorPrefs/Editor.jsx/server 미접촉." },
-    { "step": 1, "name": "glyph-bar-component", "status": "pending", "deps": [0] },
+    { "step": 1, "name": "glyph-bar-component", "status": "completed", "deps": [0], "summary": "web/src/view/EditorGlyphBar.jsx 순수 표시 컴포넌트 추가(ADR-003 — model/fetch/localStorage/window 없음, editorPrefs 미import). EditorGlyphBar({items=[], onPick}): items(string[]) 각 약물을 버튼 렌더, 클릭 시 onPick(glyph) 위임(미전달 시 가드). 전용 클래스 yh-editor-glyphbar·testid glyph-bar(툴바 yh-editor-toolbar/toolbar와 분리), 버튼 testid glyph-bar-item-${i}, key=`${glyph}-${i}`(중복 안정화, EditorPrefsDialog glyph-list 동일). role=toolbar+aria-label='약물바', 버튼 aria-label='약물 ${glyph} 삽입'. 빈/미전달 배열 graceful(버튼 0개). yonhap.css에 .yh-editor-glyphbar/.__btn 가로 나열 스타일 추가(툴바 인근, 기존 스타일 무영향). 약물 삽입/캐럴 계산 없음(Step 2 결선). EditorGlyphBar.test.jsx 9 케이스. Editor.jsx/WriterPage/server 미접촉." },
     { "step": 2, "name": "glyph-bar-wiring", "status": "pending", "deps": [0, 1] },
     { "step": 3, "name": "glyph-input-dialog", "status": "pending", "deps": [0] },
     { "step": 4, "name": "glyph-input-wiring", "status": "pending", "deps": [0, 2, 3] }
