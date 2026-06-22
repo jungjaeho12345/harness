@@ -8,7 +8,8 @@
       "status": "completed",
       "deps": [],
       "started_at": "2026-06-22T16:50:23+0900",
-      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F 인식), findMatches(리터럴·비중첩·대소문자옵션 절대오프셋), nextMatchIndex(순환 다음/이전), replaceOne(fromOffset 첫 매치 1개 치환·matchStart·caretOffset), replaceAll(모든 매치 치환·count). 임베드/블록 순서·개수 불변, 입력 비변형. editorFind.test.js 22개 통과."
+      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F 인식), findMatches(리터럴·비중첩·대소문자옵션 절대오프셋), nextMatchIndex(순환 다음/이전), replaceOne(fromOffset 첫 매치 1개 치환·matchStart·caretOffset), replaceAll(모든 매치 치환·count). 임베드/블록 순서·개수 불변, 입력 비변형. editorFind.test.js 22개 통과.",
+      "completed_at": "2026-06-22T16:55:03+0900"
     },
     {
       "step": 1,
