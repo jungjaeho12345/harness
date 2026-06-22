@@ -1155,6 +1155,74 @@ describe('WriterPage — 색상 환경설정(EditorPrefsDialog) 결선·적용',
   });
 });
 
+// Step 4(16-editor-prefs-remaining): 편집>컬럼제한(edit.columnLimit) effect를 WriterPage 캔버스 래퍼(editor-canvas)
+// 레벨에서 좌우 padding 10%로 적용(editorBg 패턴 — 마운트 적용 + onPrefsClose(applied) 게이트). Editor.jsx 무변경.
+describe('WriterPage — 편집>컬럼제한(editor-canvas 좌우 여백) 적용', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 편집 탭의 columnLimit만 저장(다른 카테고리는 기본값 유지).
+  const saveColumnLimit = (columnLimit) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    edit: { ...loadEditorPrefs().edit, columnLimit },
+  });
+
+  async function openPrefsViaMenu() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  it('columnLimit=true로 저장된 상태로 렌더하면 editor-canvas가 좌우 여백 10%를 반영한다', () => {
+    saveColumnLimit(true);
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(getByTestId('editor-canvas')).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' });
+  });
+
+  it('columnLimit=false(기본)면 좌우 여백이 적용되지 않는다(padding 없음)', () => {
+    saveColumnLimit(false);
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(canvas.style.paddingLeft).toBe('');
+    expect(canvas.style.paddingRight).toBe('');
+  });
+
+  it('컬럼제한은 배경색(editorBg) 적용과 무관하게 함께 동작한다(배경 회귀 없음)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...loadEditorPrefs().colors, background: '#123456' },
+      edit: { ...loadEditorPrefs().edit, columnLimit: true },
+    });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(canvas).toHaveStyle({ backgroundColor: '#123456' });
+    expect(canvas).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' });
+  });
+
+  it("편집 탭에서 컬럼제한을 켜고 '적용'하면 editor-canvas 좌우 여백이 반영된다", async () => {
+    setup({ identity: { role: 'R' } });
+    expect(screen.getByTestId('editor-canvas').style.paddingLeft).toBe(''); // 적용 전 여백 없음
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    await waitFor(() => expect(loadEditorPrefs().edit.columnLimit).toBe(true));
+    await waitFor(() => expect(screen.getByTestId('editor-canvas')).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' }));
+  });
+
+  it("'취소' 시 컬럼제한 적용이 바뀌지 않는다(editorBg 게이트와 동일 — 적용 시에만 갱신)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().edit.columnLimit).toBe(false); // 저장 불변
+    expect(screen.getByTestId('editor-canvas').style.paddingLeft).toBe(''); // 여백 불변
+  });
+});
+
 // Step 1(13-editor-autosave): 자동저장 타이머(간격마다 활성 탭 초안 스냅샷) + 파일>복구 + 송고/저장 후 초안 무효화.
 // editorPrefs(localStorage 자동저장 설정) + editorDraft(localStorage 초안)를 쓰므로 localStorage.clear()로 격리한다.
 describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
