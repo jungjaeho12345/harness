@@ -740,4 +740,332 @@ describe('EditorPrefsDialog — 맞춤법 탭', () => {
     });
     expect(screen.getByTestId('pref-spellcheck-errorStyle')).toHaveValue(d.errorStyle);
   });
+
+  // --- 보강(harness-tester): glyph 보존 + 오류유형 누적 토글 락다운 ---
+
+  it('맞춤법만 적용해도 미합성 카테고리(glyphFavorites/glyphKeymap)가 보존된다(loadEditorPrefs base spread)', () => {
+    // spellcheck apply 체인은 glyph를 setEditorPref로 합성하지 않고 loadEditorPrefs() base spread로만 보존한다.
+    // step3가 채울 glyph 저장값이 맞춤법 적용으로 사라지지 않는지(상호 보존 못박음).
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      glyphFavorites: { items: ['℃', '㎡'] },
+      glyphKeymap: { items: [{ keys: 'ctrl+1', glyph: '①' }] },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    fireEvent.change(screen.getByTestId('pref-spellcheck-checkOption'), { target: { value: 'procedure' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.spellcheck.checkOption).toBe('procedure'); // 맞춤법 반영
+    // 미합성 신규 카테고리 보존
+    expect(prefs.glyphFavorites.items).toEqual(['℃', '㎡']);
+    expect(prefs.glyphKeymap.items).toEqual([{ keys: 'ctrl+1', glyph: '①' }]);
+  });
+
+  it('오류유형 체크박스를 순차로 켜고 한 개를 다시 끄면 나머지 선택이 보존된다(중첩 errorTypes 누적 토글)', () => {
+    // onChange의 { ...s.errorTypes, [key]: checked } 갱신이 이전에 켠 키를 잃지 않는지(부분 손실 회귀 방지).
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-misuse')); // on
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-multiWord')); // on
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-others')); // on
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-multiWord')); // off (다시 끔)
+
+    // 폼 상태: misuse·others만 체크, multiWord 해제, 나머지 미체크.
+    expect(screen.getByTestId('pref-spellcheck-errorType-misuse')).toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorType-others')).toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorType-multiWord')).not.toBeChecked();
+
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+    expect(loadEditorPrefs().spellcheck.errorTypes).toEqual({
+      misuse: true, multiWord: false, semantic: false, circular: false, statSpacing: false, others: true,
+    });
+  });
+});
+
+// 자주쓰는 약물 탭 — phase 16 step 3. 기존 탭(색상/자동저장/바이라인/날짜형식/편집/맞춤법)을 깨지 않고
+// 자주쓰는 약물 탭만 추가했는지 확인한다. glyphFavorites = { items: string[] } — localStorage 전용(등록/목록/삭제 UI, 입력 effect 없음).
+describe('EditorPrefsDialog — 자주쓰는 약물 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('자주쓰는 약물 탭으로 전환하면 입력·등록·목록을 보여주고 다른 탭 입력은 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-glyphFavorites')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    expect(screen.getByTestId('pref-glyphFav-input')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-glyphFav-add')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-glyphFav-list')).toBeInTheDocument();
+    // 다른 탭의 입력은 보이지 않는다.
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('약물 문자열을 입력하고 등록하면 목록에 추가되고 입력칸이 비워진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+
+    expect(screen.getByTestId('pref-glyphFav-item-0')).toHaveTextContent('℃');
+    expect(screen.getByTestId('pref-glyphFav-input')).toHaveValue('');
+  });
+
+  it('빈 입력으로 등록 클릭은 no-op(항목이 늘지 않는다)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    expect(screen.queryByTestId('pref-glyphFav-item-0')).toBeNull();
+
+    // 공백만 입력해도 no-op.
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    expect(screen.queryByTestId('pref-glyphFav-item-0')).toBeNull();
+  });
+
+  it('항목 삭제 버튼을 누르면 그 항목이 목록에서 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '㎡' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    expect(screen.getByTestId('pref-glyphFav-item-0')).toHaveTextContent('℃');
+    expect(screen.getByTestId('pref-glyphFav-item-1')).toHaveTextContent('㎡');
+
+    fireEvent.click(screen.getByTestId('pref-glyphFav-remove-0'));
+    // 남은 항목이 ㎡ 하나(인덱스 재정렬).
+    expect(screen.getByTestId('pref-glyphFav-item-0')).toHaveTextContent('㎡');
+    expect(screen.queryByTestId('pref-glyphFav-item-1')).toBeNull();
+  });
+
+  it("등록 후 '적용'하면 editorPrefs.glyphFavorites.items에 영속되고 닫힌다", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    expect(loadEditorPrefs().glyphFavorites.items).toEqual(['℃']);
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it("등록한 뒤 '취소'하면 목록 변경이 버려진다(변경 전 상태로 남음)", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().glyphFavorites.items).toEqual([]);
+    expect(onClose).toHaveBeenCalledWith(false);
+  });
+
+  it('재오픈하면 저장된 items로 목록이 렌더된다', () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items: ['℃', '㎡'] } });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+
+    expect(screen.getByTestId('pref-glyphFav-item-0')).toHaveTextContent('℃');
+    expect(screen.getByTestId('pref-glyphFav-item-1')).toHaveTextContent('㎡');
+  });
+
+  it('약물만 바꿔 적용해도 색·자동저장·바이라인·편집·맞춤법·날짜형식이 보존된다(상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+      byline: {
+        email: true, emailValue: 'keep@me.com', blog: false, blogValue: '',
+      },
+      edit: {
+        ...DEFAULT_EDITOR_PREFS.edit, columnLimit: true, language: 'ja', lineSpacing: 1.5,
+      },
+      spellcheck: {
+        ...DEFAULT_EDITOR_PREFS.spellcheck, checkOption: 'procedure', errorStyle: 'underline',
+      },
+      dateFormat: 'YYYY.MM.DD',
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    // 약물 반영
+    expect(prefs.glyphFavorites.items).toEqual(['℃']);
+    // 나머지 보존
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.autosave.enabled).toBe(true);
+    expect(prefs.autosave.intervalSec).toBe(120);
+    expect(prefs.byline.email).toBe(true);
+    expect(prefs.byline.emailValue).toBe('keep@me.com');
+    expect(prefs.edit.columnLimit).toBe(true);
+    expect(prefs.edit.language).toBe('ja');
+    expect(prefs.edit.lineSpacing).toBe(1.5);
+    expect(prefs.spellcheck.checkOption).toBe('procedure');
+    expect(prefs.spellcheck.errorStyle).toBe('underline');
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+  });
+
+  it("'기본값'은 자주쓰는 약물 목록을 빈 배열로 되돌린다", () => {
+    saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items: ['℃', '㎡'] } });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    expect(screen.getByTestId('pref-glyphFav-item-0')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    expect(screen.queryByTestId('pref-glyphFav-item-0')).toBeNull();
+  });
+});
+
+// 사용자 키보드 약물 탭 — phase 16 step 3. glyphKeymap = { items: { keys, glyph }[] } — localStorage 전용
+// (키조합+약물 등록/목록/삭제 UI, 키조합 인터셉트 effect 없음).
+describe('EditorPrefsDialog — 사용자 키보드 약물 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('사용자 키보드 약물 탭으로 전환하면 키조합·약물 입력·등록·목록을 보여주고 다른 탭 입력은 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-glyphKeymap')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    expect(screen.getByTestId('pref-glyphKey-keys')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-glyphKey-glyph')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-glyphKey-add')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-glyphKey-list')).toBeInTheDocument();
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('키조합+약물을 입력하고 등록하면 목록에 { keys, glyph } 항목이 추가되고 입력칸이 비워진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+
+    const item = screen.getByTestId('pref-glyphKey-item-0');
+    expect(item).toHaveTextContent('ctrl+1');
+    expect(item).toHaveTextContent('①');
+    expect(screen.getByTestId('pref-glyphKey-keys')).toHaveValue('');
+    expect(screen.getByTestId('pref-glyphKey-glyph')).toHaveValue('');
+  });
+
+  it('keys 또는 glyph 한쪽이라도 비면 등록 no-op', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    // keys만 입력 → no-op.
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    expect(screen.queryByTestId('pref-glyphKey-item-0')).toBeNull();
+
+    // glyph만 입력 → no-op.
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: '' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    expect(screen.queryByTestId('pref-glyphKey-item-0')).toBeNull();
+  });
+
+  it('항목 삭제 버튼을 누르면 그 매핑이 목록에서 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+2' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '②' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+
+    fireEvent.click(screen.getByTestId('pref-glyphKey-remove-0'));
+    const item = screen.getByTestId('pref-glyphKey-item-0');
+    expect(item).toHaveTextContent('ctrl+2');
+    expect(item).toHaveTextContent('②');
+    expect(screen.queryByTestId('pref-glyphKey-item-1')).toBeNull();
+  });
+
+  it("등록 후 '적용'하면 editorPrefs.glyphKeymap.items에 { keys, glyph }가 영속된다", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    expect(loadEditorPrefs().glyphKeymap.items).toEqual([{ keys: 'ctrl+1', glyph: '①' }]);
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it("등록한 뒤 '취소'하면 매핑 변경이 버려진다", () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().glyphKeymap.items).toEqual([]);
+  });
+
+  it('재오픈하면 저장된 매핑 items로 목록이 렌더된다', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      glyphKeymap: { items: [{ keys: 'ctrl+1', glyph: '①' }, { keys: 'ctrl+2', glyph: '②' }] },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+
+    expect(screen.getByTestId('pref-glyphKey-item-0')).toHaveTextContent('ctrl+1');
+    expect(screen.getByTestId('pref-glyphKey-item-0')).toHaveTextContent('①');
+    expect(screen.getByTestId('pref-glyphKey-item-1')).toHaveTextContent('ctrl+2');
+    expect(screen.getByTestId('pref-glyphKey-item-1')).toHaveTextContent('②');
+  });
+
+  it('두 약물 카테고리(glyphFavorites/glyphKeymap)를 함께 적용해도 8개 카테고리가 모두 보존된다(상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      glyphFavorites: { items: ['℃'] },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    // 키보드 약물만 추가 등록 → 자주쓰는 약물(℃)은 base에서 보존되어야 한다.
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.glyphKeymap.items).toEqual([{ keys: 'ctrl+1', glyph: '①' }]);
+    expect(prefs.glyphFavorites.items).toEqual(['℃']);
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+  });
+
+  it("'기본값'은 사용자 키보드 약물 목록을 빈 배열로 되돌린다", () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      glyphKeymap: { items: [{ keys: 'ctrl+1', glyph: '①' }] },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    expect(screen.getByTestId('pref-glyphKey-item-0')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    expect(screen.queryByTestId('pref-glyphKey-item-0')).toBeNull();
+  });
 });

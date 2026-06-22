@@ -20,13 +20,16 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식/맞춤법. (순서는 news.md 환경설정 순서를 따른다.)
+// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식/자주쓰는 약물/사용자 키보드 약물/맞춤법.
+// (순서는 news.md 환경설정 순서 L185~213을 따른다 — 약물군은 날짜형식과 맞춤법 사이.)
 const PREF_TABS = [
   { key: 'edit', label: '편집' },
   { key: 'colors', label: '색상' },
   { key: 'autosave', label: '자동저장' },
   { key: 'byline', label: '바이라인' },
   { key: 'dateFormat', label: '날짜형식' },
+  { key: 'glyphFavorites', label: '자주쓰는 약물' },
+  { key: 'glyphKeymap', label: '사용자 키보드 약물' },
   { key: 'spellcheck', label: '맞춤법' },
 ];
 
@@ -103,6 +106,13 @@ export function EditorPrefsDialog({ open, onClose }) {
   const [byline, setByline] = useState(() => loadEditorPrefs().byline);
   const [edit, setEdit] = useState(() => loadEditorPrefs().edit);
   const [spellcheck, setSpellcheck] = useState(() => loadEditorPrefs().spellcheck);
+  const [glyphFav, setGlyphFav] = useState(() => loadEditorPrefs().glyphFavorites);
+  const [glyphKey, setGlyphKey] = useState(() => loadEditorPrefs().glyphKeymap);
+
+  // 미커밋 등록 입력 버퍼(목록에 등록 전까지의 로컬 입력 — '적용'이 아닌 '등록' 시점에 form state로 커밋).
+  const [favInput, setFavInput] = useState('');
+  const [keyInputKeys, setKeyInputKeys] = useState('');
+  const [keyInputGlyph, setKeyInputGlyph] = useState('');
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -114,12 +124,39 @@ export function EditorPrefsDialog({ open, onClose }) {
       setByline(prefs.byline);
       setEdit(prefs.edit);
       setSpellcheck(prefs.spellcheck);
+      setGlyphFav(prefs.glyphFavorites);
+      setGlyphKey(prefs.glyphKeymap);
+      setFavInput('');
+      setKeyInputKeys('');
+      setKeyInputGlyph('');
     }
   }, [open]);
 
   if (!open) return null;
 
   const setColor = (key, value) => setColors((c) => ({ ...c, [key]: value }));
+
+  // 약물 등록/삭제 — 순수 배열 연산(mutate 금지). form state에만 반영하고 '적용' 시점에 영속(취소하면 버려짐).
+  const addGlyphFav = () => {
+    const v = favInput.trim();
+    if (!v) return; // 빈/공백 입력은 no-op.
+    setGlyphFav((g) => ({ ...g, items: [...g.items, v] }));
+    setFavInput('');
+  };
+  const removeGlyphFav = (index) => setGlyphFav(
+    (g) => ({ ...g, items: g.items.filter((_, i) => i !== index) }),
+  );
+  const addGlyphKey = () => {
+    const keys = keyInputKeys.trim();
+    const glyph = keyInputGlyph.trim();
+    if (!keys || !glyph) return; // 둘 중 하나라도 비면 no-op.
+    setGlyphKey((g) => ({ ...g, items: [...g.items, { keys, glyph }] }));
+    setKeyInputKeys('');
+    setKeyInputGlyph('');
+  };
+  const removeGlyphKey = (index) => setGlyphKey(
+    (g) => ({ ...g, items: g.items.filter((_, i) => i !== index) }),
+  );
 
   // 적용 — 색·자동저장·바이라인을 함께 영속(saveEditorPrefs) + 텍스트색 적용(setEditorColors, background 제외) + applied=true로 닫기.
   // 날짜형식은 writer 화면에 즉시 보일 대상이 없어 setDateFormat을 부르지 않는다(ListPage가 마운트 시 적용).
@@ -135,38 +172,49 @@ export function EditorPrefsDialog({ open, onClose }) {
       columnLimit, dragDrop, noCommonAbbr, companyCode, language, lineSpacing, inputMode,
     } = edit;
     const { checkOption, errorTypes, errorStyle } = spellcheck;
-    // colors + autosave + byline + edit + spellcheck를 setEditorPref로 합성하고 dateFormat은 spread로 보존
-    // (loadEditorPrefs() base spread로 glyph 등 미합성 카테고리도 함께 보존된다 — 상호 보존 못박음).
+    // colors + autosave + byline + edit + spellcheck + glyphFavorites + glyphKeymap을 setEditorPref로
+    // 합성하고 dateFormat은 spread로 보존(loadEditorPrefs() base spread로 미합성 카테고리도 보존 — 상호 보존 못박음).
     // errorTypes는 6키 객체 전체를 통째로 넘긴다(setEditorPref 한 단계 병합이라 부분만 넘기면 나머지 키 손실).
+    // 약물(glyphFavorites/glyphKeymap)은 items 배열 전체를 통째로 넘긴다.
     const next = {
       ...setEditorPref(
         setEditorPref(
           setEditorPref(
             setEditorPref(
-              setEditorPref(loadEditorPrefs(), 'colors', {
-                title, subtitle, body, background,
-              }),
-              'autosave',
-              { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+              setEditorPref(
+                setEditorPref(
+                  setEditorPref(loadEditorPrefs(), 'colors', {
+                    title, subtitle, body, background,
+                  }),
+                  'autosave',
+                  {
+                    enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays),
+                  },
+                ),
+                'byline',
+                {
+                  email, emailValue, blog, blogValue,
+                },
+              ),
+              'edit',
+              {
+                columnLimit,
+                dragDrop,
+                noCommonAbbr,
+                companyCode,
+                language,
+                lineSpacing: Number(lineSpacing),
+                inputMode,
+              },
             ),
-            'byline',
-            {
-              email, emailValue, blog, blogValue,
-            },
+            'spellcheck',
+            { checkOption, errorTypes, errorStyle },
           ),
-          'edit',
-          {
-            columnLimit,
-            dragDrop,
-            noCommonAbbr,
-            companyCode,
-            language,
-            lineSpacing: Number(lineSpacing),
-            inputMode,
-          },
+          'glyphFavorites',
+          { items: glyphFav.items },
         ),
-        'spellcheck',
-        { checkOption, errorTypes, errorStyle },
+        'glyphKeymap',
+        { items: glyphKey.items },
       ),
       dateFormat,
     };
@@ -189,6 +237,11 @@ export function EditorPrefsDialog({ open, onClose }) {
     setByline(DEFAULT_EDITOR_PREFS.byline);
     setEdit(DEFAULT_EDITOR_PREFS.edit);
     setSpellcheck(DEFAULT_EDITOR_PREFS.spellcheck);
+    setGlyphFav(DEFAULT_EDITOR_PREFS.glyphFavorites);
+    setGlyphKey(DEFAULT_EDITOR_PREFS.glyphKeymap);
+    setFavInput('');
+    setKeyInputKeys('');
+    setKeyInputGlyph('');
   };
 
   return (
@@ -418,6 +471,94 @@ export function EditorPrefsDialog({ open, onClose }) {
                 {DATE_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </div>
+          </div>
+        )}
+
+        {tab === 'glyphFavorites' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-glyphFav-input">약물</label>
+              <input
+                id="pref-glyphFav-input"
+                data-testid="pref-glyphFav-input"
+                type="text"
+                value={favInput}
+                onChange={(e) => setFavInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="yh-btn"
+                data-testid="pref-glyphFav-add"
+                onClick={addGlyphFav}
+              >
+                등록
+              </button>
+            </div>
+            <ul className="yh-prefs__glyph-list" data-testid="pref-glyphFav-list">
+              {glyphFav.items.map((g, i) => (
+                <li className="yh-field" key={`${g}-${i}`} data-testid={`pref-glyphFav-item-${i}`}>
+                  <span>{g}</span>
+                  <button
+                    type="button"
+                    className="yh-btn"
+                    data-testid={`pref-glyphFav-remove-${i}`}
+                    onClick={() => removeGlyphFav(i)}
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tab === 'glyphKeymap' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-glyphKey-keys">키조합</label>
+              <input
+                id="pref-glyphKey-keys"
+                data-testid="pref-glyphKey-keys"
+                type="text"
+                value={keyInputKeys}
+                onChange={(e) => setKeyInputKeys(e.target.value)}
+              />
+              <label htmlFor="pref-glyphKey-glyph">약물</label>
+              <input
+                id="pref-glyphKey-glyph"
+                data-testid="pref-glyphKey-glyph"
+                type="text"
+                value={keyInputGlyph}
+                onChange={(e) => setKeyInputGlyph(e.target.value)}
+              />
+              <button
+                type="button"
+                className="yh-btn"
+                data-testid="pref-glyphKey-add"
+                onClick={addGlyphKey}
+              >
+                등록
+              </button>
+            </div>
+            <ul className="yh-prefs__glyph-list" data-testid="pref-glyphKey-list">
+              {glyphKey.items.map((m, i) => (
+                <li
+                  className="yh-field"
+                  key={`${m.keys}-${m.glyph}-${i}`}
+                  data-testid={`pref-glyphKey-item-${i}`}
+                >
+                  <span>{`${m.keys} → ${m.glyph}`}</span>
+                  <button
+                    type="button"
+                    className="yh-btn"
+                    data-testid={`pref-glyphKey-remove-${i}`}
+                    onClick={() => removeGlyphKey(i)}
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
