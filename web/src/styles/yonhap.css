@@ -616,6 +616,40 @@ a { color: var(--yh-blue); }
 .yh-editor-menubar__item:disabled { color: var(--yh-gray-mid); cursor: default; }
 .yh-editor-menubar__shortcut { color: var(--yh-gray-mid); font-size: 0.75rem; }
 
+/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173). 조회페이지 yh-context-menu와 별도 컴포넌트/클래스(충돌 금지). */
+.yh-editor-context-menu {
+  position: absolute;
+  list-style: none;
+  margin: 0;
+  padding: var(--yh-sp-xs) 0;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-md);
+  z-index: 55;
+  min-width: 12rem;
+}
+
+.yh-editor-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-sm);
+  width: 100%;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  font-size: 0.82rem;
+  color: var(--yh-ink);
+  cursor: pointer;
+}
+
+.yh-editor-context-menu__item:hover:not(:disabled) { background: var(--yh-blue-light); }
+.yh-editor-context-menu__item:disabled { color: var(--yh-gray-mid); cursor: default; }
+.yh-editor-context-menu__check { width: 1rem; flex-shrink: 0; color: var(--yh-blue); }
+.yh-editor-context-menu__label { flex: 1; }
+.yh-editor-context-menu__shortcut { margin-left: auto; color: var(--yh-gray-mid); font-size: 0.75rem; }
+
 /* 에디터 툴바 — 메뉴바 아래 글꼴/크기 셀렉트 + 버튼군(쉘, 비활성 placeholder). */
 .yh-editor-toolbar {
   display: flex;

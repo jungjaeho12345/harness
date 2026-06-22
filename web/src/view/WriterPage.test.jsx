@@ -1526,3 +1526,140 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(findDialog()).toBeNull(); // 찾기 다이얼로그는 안 열림
   });
 });
+
+// Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
+// editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
+// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바는 토글 상태만(실제 바 없음).
+describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // editor-canvas 래퍼를 우클릭(contextmenu)해 커스텀 메뉴를 띄운다. preventDefault 검증용 spy를 함께 반환.
+  function rightClickCanvas(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    const ev = createEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(canvas, ev);
+    return spy;
+  }
+
+  const ctxMenu = () => screen.queryByTestId('editor-context-menu');
+  const findDialog = () => screen.queryByRole('dialog', { name: '찾기/바꾸기' });
+  const ctxItem = (label) => within(ctxMenu()).getByText(label).closest('button');
+
+  it('editor-canvas 우클릭 시 editor-context-menu가 뜨고 브라우저 기본 메뉴가 막힌다(preventDefault)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(ctxMenu()).toBeNull();
+
+    const spy = rightClickCanvas(container);
+
+    expect(spy).toHaveBeenCalled(); // 브라우저 기본 컨텍스트 메뉴 차단
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    // 조회페이지 메뉴(yh-context-menu)는 뜨지 않는다.
+    expect(container.querySelector('.yh-context-menu')).toBeNull();
+  });
+
+  it("컨텍스트 메뉴 '찾기/바꾸기' 클릭 시 찾기 다이얼로그가 열린다", async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(ctxItem('찾기/바꾸기'));
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+    expect(ctxMenu()).toBeNull(); // 선택 후 메뉴 닫힘
+  });
+
+  it("컨텍스트 메뉴 '메뉴바 보이기' 클릭 시 메뉴바가 토글된다", async () => {
+    const { container, queryByTestId } = await openWith([textBlock('헤드')]);
+    expect(queryByTestId('menubar')).toBeInTheDocument();
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    await userEvent.click(ctxItem('메뉴바 보이기'));
+
+    await waitFor(() => expect(queryByTestId('menubar')).toBeNull());
+  });
+
+  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 에러 없이 토글 상태만 바꾼다(실제 바 없음·체크 표식 갱신)", async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    // 처음엔 약물바 off → aria-checked=false.
+    expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(ctxItem('약물바 보이기')); // 토글 — 에러 없이 동작
+    expect(ctxMenu()).toBeNull(); // 선택 후 닫힘
+
+    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존). 실제 약물바 컴포넌트는 렌더하지 않는다.
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'true');
+    expect(container.querySelector('[data-testid="glyphbar"]')).toBeNull(); // 실제 바 미렌더
+  });
+
+  it('aux 항목(기업코드변환/약물입력/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    for (const label of ['기업코드변환', '약물입력', '원본 붙여넣기', '텍스트 붙여넣기']) {
+      expect(ctxItem(label)).toBeDisabled();
+    }
+  });
+
+  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·보이기 토글이 활성이다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+      expect(ctxItem(label)).toBeEnabled();
+    }
+  });
+
+  it('매핑 모드: 컨텍스트 찾기/바꾸기 클릭이 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다 + 잘라내기/붙여넣기 비활성', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    // 매핑: 잘라내기/붙여넣기 비활성(본문 텍스트 잠금).
+    expect(ctxItem('잘라내기')).toBeDisabled();
+    expect(ctxItem('붙여넣기')).toBeDisabled();
+
+    await userEvent.click(ctxItem('찾기/바꾸기'));
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('Esc 키로 컨텍스트 메뉴가 닫힌다', async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    fireEvent.keyDown(ctxMenu(), { key: 'Escape' });
+    await waitFor(() => expect(ctxMenu()).toBeNull());
+  });
+});

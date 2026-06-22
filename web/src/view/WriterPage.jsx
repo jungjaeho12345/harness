@@ -13,6 +13,7 @@ import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
+import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
 } from './editorFind.js';
@@ -82,6 +83,11 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(true);
   const [showToolBar, setShowToolBar] = useState(true);
+  // 약물바 보이기(우클릭 컨텍스트 메뉴) — placeholder 토글 상태만 보존한다.
+  // 약물바(glyph bar) 컴포넌트는 이번 범위 밖(news.md 경계)이라 실제 바는 렌더하지 않는다(토글만 동작).
+  const [showGlyphBar, setShowGlyphBar] = useState(false);
+  // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
+  const [ctxMenu, setCtxMenu] = useState(null);
 
   // 색상 환경설정(도움말>환경설정) — 모달 표시 + 에디터 바탕색(editorBg). 저장값은 localStorage(editorPrefs)에 영속.
   const [showPrefs, setShowPrefs] = useState(false);
@@ -254,6 +260,50 @@ export function WriterPage() {
     setPendingCaretLine(caretLine); // 같은 줄 유지(메뉴 클릭으로 빠진 포커스를 그 줄로 되돌림).
   };
 
+  // 우클릭 컨텍스트 메뉴(EditorContextMenu) 활성 항목(ctx.*) — EditorMenuBar enabledIds 패턴.
+  //  - 항상 활성: 찾기/바꾸기·전체 선택·보이기 토글(메뉴바/툴바/약물바). 선택 연산·레이아웃 토글이라 본문-only 불변식과 무관.
+  //  - 표준 편집(잘라내기/복사/붙여넣기): 비매핑(텍스트 편집 가능)일 때만 활성. 매핑(텍스트 잠금)에서는 복사도 일관되게 비활성으로
+  //    단순화한다(본문 변경 항목과 같은 가드 — 잘라내기/붙여넣기는 텍스트를 바꾸므로 반드시 비활성).
+  //  - aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력): 항상 비활성 placeholder(미구현).
+  const ctxEnabledIds = [
+    'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste']),
+  ];
+  // 보이기 토글의 현재 on 상태(체크 표식용).
+  const ctxCheckedIds = [
+    ...(showMenuBar ? ['ctx.showMenuBar'] : []),
+    ...(showToolBar ? ['ctx.showToolBar'] : []),
+    ...(showGlyphBar ? ['ctx.showGlyphBar'] : []),
+  ];
+
+  // 우클릭 컨텍스트 메뉴 선택(ctx.*) 라우팅. 찾기/전체선택은 메뉴바와 동일 동작을 공유한다(중복 금지).
+  const onCtxSelect = (id) => {
+    switch (id) {
+      // 찾기/바꾸기 — 매핑에선 본문 변경 가능이라 다이얼로그를 열지 않는다(Ctrl+F·편집 메뉴와 동일 가드).
+      case 'ctx.findReplace': if (!isMapping) setShowFind(true); break;
+      // 전체 선택 — Step 2 selectAllInEditor 재사용(선택 연산만, 본문/DOM 무변경).
+      case 'ctx.selectAll': selectAllInEditor(document.querySelector('.yh-editor')); break;
+      case 'ctx.showMenuBar': setShowMenuBar((v) => !v); break;
+      case 'ctx.showToolBar': setShowToolBar((v) => !v); break;
+      // 약물바 — placeholder 토글 상태만 바꾼다(실제 바 미렌더 — 범위 밖).
+      case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
+      // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
+      // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
+      // 에디터로 되돌린 뒤 document.execCommand를 시도하되, 미지원 환경(jsdom)에서는 no-op으로 두고 메뉴만 닫는다(브라우저 단축키 정상).
+      case 'ctx.cut':
+      case 'ctx.copy':
+      case 'ctx.paste': {
+        const cmd = id === 'ctx.cut' ? 'cut' : id === 'ctx.copy' ? 'copy' : 'paste';
+        const root = document.querySelector('.yh-editor');
+        if (root && typeof root.focus === 'function') root.focus();
+        try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
+        break;
+      }
+      // aux 항목(ctx.companyCode/pasteOriginal/pasteText/symbolInput)은 비활성이라 호출되지 않는다.
+      default: break;
+    }
+  };
+
   // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
@@ -395,8 +445,14 @@ export function WriterPage() {
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
-          {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음). */}
-          <div className="yh-writer__canvas" data-testid="editor-canvas" style={{ backgroundColor: editorBg }}>
+          {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음).
+              에디터 본문 우클릭 → 브라우저 기본 메뉴 대신 커스텀 컨텍스트 메뉴(EditorContextMenu)를 좌표에 띄운다(ListPage 패턴). */}
+          <div
+            className="yh-writer__canvas"
+            data-testid="editor-canvas"
+            style={{ backgroundColor: editorBg }}
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+          >
             <Editor
               key={activeTabId}
               blocks={blocks}
@@ -501,6 +557,18 @@ export function WriterPage() {
         onReplaceAll={onReplaceAll}
         onClose={() => setShowFind(false)}
       />
+
+      {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
+          잘라내기/복사/붙여넣기는 브라우저 기본 동작에 위임하고(onCtxSelect), aux 항목은 비활성 placeholder다. */}
+      {ctxMenu && (
+        <EditorContextMenu
+          position={ctxMenu}
+          enabledIds={ctxEnabledIds}
+          checkedIds={ctxCheckedIds}
+          onSelect={onCtxSelect}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </main>
   );
 }
