@@ -693,6 +693,32 @@ a { color: var(--yh-blue); }
 .yh-editor-toolbar__btn:hover { background: var(--yh-blue-light); }
 .yh-editor-toolbar__btn:disabled { color: var(--yh-gray-mid); background: var(--yh-gray-bg); cursor: default; }
 
+/* 약물바(glyph bar) — 자주쓰는 약물 버튼 가로 나열. 툴바와 별개 막대. */
+.yh-editor-glyphbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+}
+
+.yh-editor-glyphbar__btn {
+  min-width: 1.75rem;
+  padding: 2px var(--yh-sp-sm);
+  font-family: var(--yh-sans);
+  font-size: 0.9rem;
+  color: var(--yh-ink);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+}
+
+.yh-editor-glyphbar__btn:hover { background: var(--yh-blue-light); }
+
 /* 임베드 */
 .yh-embed { display: block; }
 
