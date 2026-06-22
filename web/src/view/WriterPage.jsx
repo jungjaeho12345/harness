@@ -143,6 +143,14 @@ export function WriterPage() {
   // query/대소문자 즉시 매치 수를 구하는 헬퍼(onQueryChange에서 activeIndex 초기화 판단용 — state 반영 전 동기 계산).
   const matchesFor = (q, caseSensitive) => findMatches(bodyText, q, { caseSensitive });
 
+  // 찾기/바꾸기 다이얼로그 열기 — 부모 findQuery/activeIndex를 함께 초기화한다.
+  // (재개방 직후 다이얼로그 입력은 비어 있는데 부모에 이전 query/activeIndex가 남아 find-status가 잠깐 'N/M'을 보이는 불일치 방지.)
+  const openFind = () => {
+    setFindQuery('');
+    setActiveIndex(-1);
+    setShowFind(true);
+  };
+
   // 활성 탭 미러 ref — 자동저장 타이머가 매 타이핑마다 재설정되지 않도록 활성 탭을 ref로 읽되, 항상 최신값을
   // 보게 동기화한다(lastCaretRef와 동일 미러링 패턴). 이게 없으면 타이머 클로저가 초기 activeTab에 stale된다.
   const activeTabRef = useRef(activeTab);
@@ -194,11 +202,16 @@ export function WriterPage() {
     setPendingCaretLine(lineIndex);
   };
 
-  // 다음/이전 찾기 — 현재 활성 매치 끝(없으면 마지막 캐럿 offset, 없으면 0) 기준으로 순환 인덱스를 구해 그 줄로 이동.
+  // 다음/이전 찾기 — 현재 활성 매치 기준으로 순환 인덱스를 구해 그 줄로 이동.
+  // forward는 현재 매치 끝(cur.end)부터 다음 매치를, backward는 현재 매치 시작(cur.start)부터 이전 매치를 찾는다.
+  // (backward에 cur.end를 쓰면 현재 매치 자신이 start<cur.end를 항상 만족해 제자리에 정체된다 — onReplaceOne과 동일하게 cur.start 사용.)
+  // 활성 매치가 없으면(activeIndex<0) 마지막 캐럿 offset(없으면 0)부터 탐색한다.
   const findStep = (forward) => {
     if (!findQuery || matches.length === 0) return; // 빈 query/매치 없음 no-op
     const cur = activeIndex >= 0 && activeIndex < matches.length ? matches[activeIndex] : null;
-    const fromOffset = cur ? cur.end : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
+    const fromOffset = cur
+      ? (forward ? cur.end : cur.start)
+      : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
     const idx = nextMatchIndex(matches, fromOffset, { forward });
     if (idx < 0) return;
     setActiveIndex(idx);
@@ -244,7 +257,7 @@ export function WriterPage() {
       return;
     }
     // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
-    if (id === 'edit.findReplace') { setShowFind(true); return; }
+    if (id === 'edit.findReplace') { openFind(); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -280,7 +293,7 @@ export function WriterPage() {
   const onCtxSelect = (id) => {
     switch (id) {
       // 찾기/바꾸기 — 매핑에선 본문 변경 가능이라 다이얼로그를 열지 않는다(Ctrl+F·편집 메뉴와 동일 가드).
-      case 'ctx.findReplace': if (!isMapping) setShowFind(true); break;
+      case 'ctx.findReplace': if (!isMapping) openFind(); break;
       // 전체 선택 — Step 2 selectAllInEditor 재사용(선택 연산만, 본문/DOM 무변경).
       case 'ctx.selectAll': selectAllInEditor(document.querySelector('.yh-editor')); break;
       case 'ctx.showMenuBar': setShowMenuBar((v) => !v); break;
@@ -311,7 +324,7 @@ export function WriterPage() {
     // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
     if (isFindReplace(e)) {
       e.preventDefault();
-      if (!isMapping) setShowFind(true);
+      if (!isMapping) openFind();
       return;
     }
     if (isInsertEndMarker(e)) {

@@ -1525,6 +1525,48 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     await waitFor(() => expect(editorLines()).toContain('(끝)'));
     expect(findDialog()).toBeNull(); // 찾기 다이얼로그는 안 열림
   });
+
+  // 회귀(머지 게이트 fix): '이전 찾기'(find-prev)가 현재 활성 매치에 정체되지 않고 직전 매치로 이동해야 한다.
+  // 버그: forward/backward 공통으로 fromOffset=cur.end를 써서 backward일 때 현재 매치가 start<cur.end를 항상 만족 →
+  // nextMatchIndex가 자기 자신을 반환했다. 수정: backward는 fromOffset=cur.start(onReplaceOne과 일관).
+  // find-status('pos/total')의 pos=activeIndex+1로 활성 인덱스를 검증한다.
+  const findStatus = () => screen.getByTestId('find-status').textContent;
+  it("'이전 찾기'는 직전 매치로 이동하고 처음 매치에서 누르면 마지막으로 wrap된다", async () => {
+    const { container } = await openWith([textBlock('foo foo foo')]); // 매치 3개: [0,3],[4,7],[8,11]
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await waitFor(() => expect(findStatus()).toBe('1/3')); // activeIndex=0(첫 매치)
+
+    // 첫 매치에서 '이전 찾기' → 마지막으로 wrap(3/3). 버그 상태였다면 1/3에 정체.
+    await userEvent.click(screen.getByTestId('find-prev'));
+    await waitFor(() => expect(findStatus()).toBe('3/3'));
+
+    // 다시 '이전 찾기' → 직전 매치(2/3). 버그 상태였다면 3/3에 정체.
+    await userEvent.click(screen.getByTestId('find-prev'));
+    await waitFor(() => expect(findStatus()).toBe('2/3'));
+  });
+
+  it("'다음 찾기'는 회귀 없이 다음 매치로 이동하고 마지막에서 처음으로 wrap된다", async () => {
+    const { container } = await openWith([textBlock('foo foo foo')]); // 매치 3개
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await waitFor(() => expect(findStatus()).toBe('1/3')); // activeIndex=0
+
+    await userEvent.click(screen.getByTestId('find-next'));
+    await waitFor(() => expect(findStatus()).toBe('2/3'));
+    await userEvent.click(screen.getByTestId('find-next'));
+    await waitFor(() => expect(findStatus()).toBe('3/3'));
+    await userEvent.click(screen.getByTestId('find-next')); // 마지막 → 처음으로 wrap
+    await waitFor(() => expect(findStatus()).toBe('1/3'));
+  });
 });
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
