@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "16-editor-prefs-remaining",
+  "steps": [
+    { "step": 0, "name": "prefs-store-categories", "status": "completed", "summary": "editorPrefs.js DEFAULT에 신규 카테고리 4종(edit/spellcheck/glyphFavorites/glyphKeymap) 추가 + loadEditorPrefs 한 단계 병합 확장. editorPrefs.test.js에 6개 단언 추가(기본값/부분병합/round-trip/비-mutate/graceful). 기존 colors/autosave/byline/dateFormat 및 saveEditorPrefs/setEditorPref 시그니처 불변. UI·Editor.jsx·server 무변경. AC(test:web 616 pass, build, lint) 전부 통과." },
+    { "step": 1, "name": "edit-tab", "status": "pending" },
+    { "step": 2, "name": "spellcheck-tab", "status": "pending" },
+    { "step": 3, "name": "glyph-tabs", "status": "pending" },
+    { "step": 4, "name": "column-limit-apply", "status": "pending" }
+  ]
+}
