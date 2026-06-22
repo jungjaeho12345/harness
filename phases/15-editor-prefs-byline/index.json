@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "15-editor-prefs-byline",
   "steps": [
-    { "step": 0, "name": "byline-prefs-tab", "status": "pending" },
+    { "step": 0, "name": "byline-prefs-tab", "status": "completed", "summary": "EditorPrefsDialog에 '바이라인' 탭(자동저장↔날짜형식 사이) 추가 — email/emailValue/blog/blogValue 4필드. DEFAULT_EDITOR_PREFS.byline 확장({email,emailValue,blog,blogValue}, 얕은병합으로 하위호환). apply()가 colors·autosave·byline·dateFormat 4설정 상호보존 저장. localStorage 전용(서버 무관). 신규 6 테스트 통과(총 602)." },
     { "step": 1, "name": "byline-detail-apply", "status": "pending" }
   ]
 }
