@@ -837,6 +837,58 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 찾기/바꾸기 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(우상단 고정). */
+.yh-find-replace {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-find-replace__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-find-replace__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-find-replace__fields .yh-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yh-sp-md);
+}
+.yh-find-replace__fields input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+.yh-find-replace__case {
+  justify-content: flex-start !important;
+}
+.yh-find-replace__status {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+  min-height: 1.2em;
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-find-replace__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 로그인 레이아웃 */
 .yh-login {
   display: flex;
