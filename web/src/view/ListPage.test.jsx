@@ -175,6 +175,29 @@ describe('ListPage', () => {
     expect(html).toContain('본문 단락 텍스트'); // 본문 블록
   });
 
+  it('상세보기 새 창에 editorPrefs.byline(작성자 부가 라인)을 주입한다', async () => {
+    // 날짜형식 적용과 동일한 call-site prefs 패턴 — 상세보기 렌더에 뷰어 브라우저의 byline을 넘긴다.
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({
+      byline: { email: true, emailValue: 'hong@yna.co.kr', blog: false, blogValue: '' },
+    }));
+    const written = [];
+    const win = { document: { open: vi.fn(), write: (h) => written.push(h), close: vi.fn() } };
+    vi.spyOn(window, 'open').mockReturnValue(win);
+
+    const { model, container } = setup({ articles: [{ articleId: 'AKR0', title: 't0', status: 'RDS', lockYN: 'N' }] });
+    vi.spyOn(model, 'getArticle').mockResolvedValue({
+      ok: true,
+      article: { articleId: 'AKR0', title: '제목', markupVersion: '' },
+      contents: { articleId: 'AKR0', author: '홍길동' },
+    });
+
+    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+    await userEvent.click(bodyRows(container)[0]);
+
+    await waitFor(() => expect(written.length).toBeGreaterThan(0));
+    expect(written.join('')).toContain('hong@yna.co.kr');
+  });
+
   it('실시간 SSE 신호가 오면 목록을 재조회한다', async () => {
     const { model, container } = setup({ articles: rds(1) });
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));

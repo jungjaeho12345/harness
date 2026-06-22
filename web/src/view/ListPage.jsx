@@ -38,7 +38,8 @@ async function openDetail(article, loadDetail) {
     if (f) full = f;
   } catch { /* 조회 실패 — 목록 행만으로 폴백 렌더 */ }
   w.document.open();
-  w.document.write(renderDetailHtml(full));
+  // 날짜형식 적용과 동일한 call-site prefs 패턴 — 뷰어 브라우저의 byline(작성자 부가 라인)을 주입한다.
+  w.document.write(renderDetailHtml(full, loadEditorPrefs().byline));
   w.document.close();
 }
 
