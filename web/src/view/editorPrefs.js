@@ -11,6 +11,20 @@ export const DEFAULT_EDITOR_PREFS = Object.freeze({
   byline: {
     email: false, emailValue: '', blog: false, blogValue: '',
   },
+  // 편집(edit): columnLimit effect는 step4(래퍼 margin). language 허용 9종 ko/en/ja/zh/es/fr/ar/vi/ru.
+  edit: {
+    columnLimit: false, dragDrop: false, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: 1.0, inputMode: 'unicode',
+  },
+  // 맞춤법(spellcheck): checkOption 단일 enum, errorTypes 다중 bool 6종, errorStyle bold/underline.
+  spellcheck: {
+    checkOption: 'spacing',
+    errorTypes: {
+      misuse: false, multiWord: false, semantic: false, circular: false, statSpacing: false, others: false,
+    },
+    errorStyle: 'bold',
+  },
+  glyphFavorites: { items: [] }, // 자주쓰는 약물: items string[]
+  glyphKeymap: { items: [] }, // 사용자 키보드 약물: items { keys, glyph }[]
   dateFormat: 'YYYY-MM-DD HH:mm',
 });
 
@@ -30,6 +44,10 @@ export function loadEditorPrefs() {
     colors: { ...DEFAULT_EDITOR_PREFS.colors, ...(saved.colors || {}) },
     autosave: { ...DEFAULT_EDITOR_PREFS.autosave, ...(saved.autosave || {}) },
     byline: { ...DEFAULT_EDITOR_PREFS.byline, ...(saved.byline || {}) },
+    edit: { ...DEFAULT_EDITOR_PREFS.edit, ...(saved.edit || {}) },
+    spellcheck: { ...DEFAULT_EDITOR_PREFS.spellcheck, ...(saved.spellcheck || {}) },
+    glyphFavorites: { ...DEFAULT_EDITOR_PREFS.glyphFavorites, ...(saved.glyphFavorites || {}) },
+    glyphKeymap: { ...DEFAULT_EDITOR_PREFS.glyphKeymap, ...(saved.glyphKeymap || {}) },
     dateFormat: typeof saved.dateFormat === 'string' ? saved.dateFormat : DEFAULT_EDITOR_PREFS.dateFormat,
   };
 }
