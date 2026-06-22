@@ -86,3 +86,53 @@ describe('articleDetail — embed media rendering', () => {
     expect(html).not.toContain('<iframe');
   });
 });
+
+describe('articleDetail — byline (작성자 부가 라인)', () => {
+  it('email 사용여부 ON + 값이 있으면 작성자 영역에 email을 부가 라인으로 보여준다', () => {
+    const byline = { email: true, emailValue: 'hong@yna.co.kr', blog: false, blogValue: '' };
+    const html = renderDetailHtml({ author: '홍길동' }, byline);
+    expect(html).toContain('홍길동');
+    expect(html).toContain('hong@yna.co.kr');
+  });
+
+  it('blog는 ON + 값이 있을 때만 보여주고, email OFF면 값이 있어도 나타나지 않는다', () => {
+    const byline = {
+      email: false, emailValue: 'hidden@yna.co.kr', blog: true, blogValue: 'https://blog.example.com',
+    };
+    const html = renderDetailHtml({ author: '홍길동' }, byline);
+    expect(html).toContain('https://blog.example.com');
+    expect(html).not.toContain('hidden@yna.co.kr');
+  });
+
+  it('부가 라인은 작성자(author) 필드에만 붙는다(다른 공통정보 필드는 불변)', () => {
+    const byline = { email: true, emailValue: 'hong@yna.co.kr', blog: false, blogValue: '' };
+    const { common } = buildDetail({ author: '홍길동' }, byline);
+    const author = common.find((f) => f.key === 'author');
+    expect(author.extra).toEqual(['hong@yna.co.kr']);
+    common.filter((f) => f.key !== 'author').forEach((f) => expect(f.extra).toBeUndefined());
+  });
+
+  it('사용여부 ON이지만 값이 빈/공백 문자열이면 부가 라인이 나타나지 않는다', () => {
+    const byline = { email: true, emailValue: '   ', blog: true, blogValue: '' };
+    const { common } = buildDetail({ author: '홍길동' }, byline);
+    const author = common.find((f) => f.key === 'author');
+    expect(author.extra).toBeUndefined();
+    const html = renderDetailHtml({ author: '홍길동' }, byline);
+    expect(html).not.toContain('<div class="yh-detail__byline">');
+  });
+
+  it('부가 라인 값도 escapeHtml로 이스케이프한다(raw script 미노출)', () => {
+    const byline = { email: true, emailValue: '<script>alert(1)</script>', blog: false, blogValue: '' };
+    const html = renderDetailHtml({ author: '홍길동' }, byline);
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  it('하위호환: byline 인자 없이 호출하면 부가 라인 없이 동작한다', () => {
+    const { common } = buildDetail({ author: '홍길동' });
+    expect(common.find((f) => f.key === 'author').extra).toBeUndefined();
+    const html = renderDetailHtml({ author: '홍길동' });
+    expect(html).toContain('홍길동');
+    expect(html).not.toContain('<div class="yh-detail__byline">');
+  });
+});

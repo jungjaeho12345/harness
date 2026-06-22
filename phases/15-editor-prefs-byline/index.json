@@ -1,0 +1,22 @@
+{
+  "project": "기사 작성기",
+  "phase": "15-editor-prefs-byline",
+  "steps": [
+    {
+      "step": 0,
+      "name": "byline-prefs-tab",
+      "status": "completed",
+      "summary": "EditorPrefsDialog에 '바이라인' 탭(자동저장↔날짜형식 사이) 추가 — email/emailValue/blog/blogValue 4필드. DEFAULT_EDITOR_PREFS.byline 확장({email,emailValue,blog,blogValue}, 얕은병합으로 하위호환). apply()가 colors·autosave·byline·dateFormat 4설정 상호보존 저장. localStorage 전용(서버 무관). 신규 6 테스트 통과(총 602).",
+      "completed_at": "2026-06-22T19:09:23+0900"
+    },
+    {
+      "step": 1,
+      "name": "byline-detail-apply",
+      "status": "completed",
+      "started_at": "2026-06-22T19:09:25+0900",
+      "completed_at": "2026-06-22T19:14:35+0900",
+      "summary": "상세보기(articleDetail) 새 창 작성자 필드 아래 byline(email/blog) 부가 라인 출력. buildDetail/renderDetailHtml에 선택적 byline 2번째 인자 추가(기본 {}, 하위호환) — 사용여부 ON+값 비어있지 않은 항목만 author.extra로, 값은 escapeHtml 이스케이프(XSS 비실행 유지). ListPage.openDetail이 dateFormat과 동일한 call-site prefs 패턴으로 loadEditorPrefs().byline 주입. DETAIL_STYLE에 .yh-detail__byline 정적 스타일 추가. 신규 7 테스트 통과(총 609)."
+    }
+  ],
+  "completed_at": "2026-06-22T19:14:36+0900"
+}

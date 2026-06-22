@@ -1,7 +1,7 @@
-// 에디터 환경설정 모달 — 이번 phase(12)는 '색상'(phase 11) + '날짜형식' 탭.
-// 후속 phase가 같은 다이얼로그에 자동저장/바이라인 등 탭을 더한다.
-// '적용' = 영속(saveEditorPrefs: 색 + 날짜형식 함께) + 텍스트색 적용(setEditorColors) + onClose(true) → 부모가 배경 적용·Editor 재렌더.
+// 에디터 환경설정 모달 — 색상(phase 11) + 날짜형식(phase 12) + 자동저장(phase 13) + 바이라인(phase 15) 탭.
+// '적용' = 영속(saveEditorPrefs: 색·자동저장·바이라인·날짜형식 함께) + 텍스트색 적용(setEditorColors) + onClose(true) → 부모가 배경 적용·Editor 재렌더.
 // 날짜형식은 조회페이지(ListPage)가 마운트 시 setDateFormat으로 적용하므로 여기서는 저장만 한다(저장+적용 분리).
+// 바이라인(email/blog 사용여부+값)은 localStorage 전용 — 상세보기 출력 결선은 후속 step.
 // 순수 폼/표시 컴포넌트 — model/fetch 없음(ADR-003). editorPrefs(localStorage)·editorColoring(module 상태)은
 // view 모듈이라 직접 호출해도 ADR-003 위반이 아니다(서버 호출 아님).
 
@@ -20,10 +20,11 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 색상/자동저장/날짜형식. (후속 phase가 바이라인 등을 추가한다.)
+// 환경설정 탭 — 색상/자동저장/바이라인/날짜형식. (순서는 news.md 환경설정 순서를 따른다.)
 const PREF_TABS = [
   { key: 'colors', label: '색상' },
   { key: 'autosave', label: '자동저장' },
+  { key: 'byline', label: '바이라인' },
   { key: 'dateFormat', label: '날짜형식' },
 ];
 
@@ -46,6 +47,7 @@ export function EditorPrefsDialog({ open, onClose }) {
   const [colors, setColors] = useState(() => loadEditorPrefs().colors);
   const [dateFormat, setDateFormat] = useState(() => loadEditorPrefs().dateFormat);
   const [autosave, setAutosave] = useState(() => loadEditorPrefs().autosave);
+  const [byline, setByline] = useState(() => loadEditorPrefs().byline);
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -54,6 +56,7 @@ export function EditorPrefsDialog({ open, onClose }) {
       setColors(prefs.colors);
       setDateFormat(prefs.dateFormat);
       setAutosave(prefs.autosave);
+      setByline(prefs.byline);
     }
   }, [open]);
 
@@ -61,21 +64,30 @@ export function EditorPrefsDialog({ open, onClose }) {
 
   const setColor = (key, value) => setColors((c) => ({ ...c, [key]: value }));
 
-  // 적용 — 색 + 날짜형식을 함께 영속(saveEditorPrefs) + 텍스트색 적용(setEditorColors, background 제외) + applied=true로 닫기.
+  // 적용 — 색·자동저장·바이라인을 함께 영속(saveEditorPrefs) + 텍스트색 적용(setEditorColors, background 제외) + applied=true로 닫기.
   // 날짜형식은 writer 화면에 즉시 보일 대상이 없어 setDateFormat을 부르지 않는다(ListPage가 마운트 시 적용).
   const apply = () => {
     const {
       title, subtitle, body, background,
     } = colors;
     const { enabled, intervalSec, retentionDays } = autosave;
-    // colors + autosave를 setEditorPref로 합성하고 dateFormat은 spread로 보존(세 설정 상호 보존 못박음).
+    const {
+      email, emailValue, blog, blogValue,
+    } = byline;
+    // colors + autosave + byline을 setEditorPref로 합성하고 dateFormat은 spread로 보존(네 설정 상호 보존 못박음).
     const next = {
       ...setEditorPref(
-        setEditorPref(loadEditorPrefs(), 'colors', {
-          title, subtitle, body, background,
-        }),
-        'autosave',
-        { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+        setEditorPref(
+          setEditorPref(loadEditorPrefs(), 'colors', {
+            title, subtitle, body, background,
+          }),
+          'autosave',
+          { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+        ),
+        'byline',
+        {
+          email, emailValue, blog, blogValue,
+        },
       ),
       dateFormat,
     };
@@ -87,7 +99,7 @@ export function EditorPrefsDialog({ open, onClose }) {
   // 취소 — 저장·적용·배경 갱신 없이 닫기만(applied=false).
   const cancel = () => onClose(false);
 
-  // 기본값 — 폼 색 + 날짜형식을 DEFAULT_EDITOR_PREFS로 리셋(end는 폼에 없어 건드리지 않음). 저장은 '적용' 시.
+  // 기본값 — 폼 색 + 날짜형식 + 자동저장 + 바이라인을 DEFAULT_EDITOR_PREFS로 리셋(end는 폼에 없어 건드리지 않음). 저장은 '적용' 시.
   const reset = () => {
     const d = DEFAULT_EDITOR_PREFS.colors;
     setColors((c) => ({
@@ -95,6 +107,7 @@ export function EditorPrefsDialog({ open, onClose }) {
     }));
     setDateFormat(DEFAULT_EDITOR_PREFS.dateFormat);
     setAutosave(DEFAULT_EDITOR_PREFS.autosave);
+    setByline(DEFAULT_EDITOR_PREFS.byline);
   };
 
   return (
@@ -175,6 +188,51 @@ export function EditorPrefsDialog({ open, onClose }) {
                   <option key={d} value={d}>{`${d}일`}</option>
                 ))}
               </select>
+            </div>
+          </div>
+        )}
+
+        {tab === 'byline' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-byline-email">E-MAIL 사용</label>
+              <input
+                id="pref-byline-email"
+                data-testid="pref-byline-email"
+                type="checkbox"
+                checked={byline.email}
+                onChange={(e) => setByline((b) => ({ ...b, email: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-byline-emailValue">E-MAIL</label>
+              <input
+                id="pref-byline-emailValue"
+                data-testid="pref-byline-emailValue"
+                type="text"
+                value={byline.emailValue}
+                onChange={(e) => setByline((b) => ({ ...b, emailValue: e.target.value }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-byline-blog">Blog 사용</label>
+              <input
+                id="pref-byline-blog"
+                data-testid="pref-byline-blog"
+                type="checkbox"
+                checked={byline.blog}
+                onChange={(e) => setByline((b) => ({ ...b, blog: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-byline-blogValue">Blog</label>
+              <input
+                id="pref-byline-blogValue"
+                data-testid="pref-byline-blogValue"
+                type="text"
+                value={byline.blogValue}
+                onChange={(e) => setByline((b) => ({ ...b, blogValue: e.target.value }))}
+              />
             </div>
           </div>
         )}

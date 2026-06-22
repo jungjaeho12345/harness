@@ -8,7 +8,9 @@ const STORAGE_KEY = 'yh.editorPrefs';
 export const DEFAULT_EDITOR_PREFS = Object.freeze({
   colors: { title: '#0a4da6', subtitle: '#c8102e', body: '#1a1a1a', end: '#d4af37', background: '#ffffff' },
   autosave: { enabled: false, intervalSec: 60, retentionDays: 1 },
-  byline: { email: false, blog: false },
+  byline: {
+    email: false, emailValue: '', blog: false, blogValue: '',
+  },
   dateFormat: 'YYYY-MM-DD HH:mm',
 });
 

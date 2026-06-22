@@ -206,3 +206,116 @@ describe('EditorPrefsDialog — 자동저장 탭', () => {
       .toHaveValue(String(DEFAULT_EDITOR_PREFS.autosave.retentionDays));
   });
 });
+
+// 바이라인 탭 — phase 15 step 0. 색상/자동저장/날짜형식 탭(위 describe)을 깨지 않고 바이라인 탭만 추가했는지 확인한다.
+// 바이라인 = { email(사용여부), emailValue(값), blog(사용여부), blogValue(값) } — localStorage(editorPrefs) 전용.
+describe('EditorPrefsDialog — 바이라인 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  it('바이라인 탭으로 전환하면 email/emailValue/blog/blogValue 입력 4개를 보여준다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-byline')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-byline'));
+    expect(screen.getByTestId('pref-byline-email')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-byline-emailValue')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-byline-blog')).toBeInTheDocument();
+    expect(screen.getByTestId('pref-byline-blogValue')).toBeInTheDocument();
+    // 다른 탭의 입력은 보이지 않는다.
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('바이라인 입력 초기값은 저장값(loadEditorPrefs().byline)이다', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      byline: {
+        email: true, emailValue: 'a@b.com', blog: false, blogValue: 'blog.example',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-byline'));
+
+    expect(screen.getByTestId('pref-byline-email')).toBeChecked();
+    expect(screen.getByTestId('pref-byline-emailValue')).toHaveValue('a@b.com');
+    expect(screen.getByTestId('pref-byline-blog')).not.toBeChecked();
+    expect(screen.getByTestId('pref-byline-blogValue')).toHaveValue('blog.example');
+  });
+
+  it("email 사용 체크 + 값 입력 후 '적용'하면 editorPrefs.byline에 영속된다", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-byline'));
+
+    fireEvent.click(screen.getByTestId('pref-byline-email'));
+    fireEvent.change(screen.getByTestId('pref-byline-emailValue'), { target: { value: 'reporter@yna.co.kr' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { byline } = loadEditorPrefs();
+    expect(byline.email).toBe(true);
+    expect(byline.emailValue).toBe('reporter@yna.co.kr');
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it('적용은 색·자동저장·날짜형식·바이라인을 함께 저장한다(상호 보존 — 바이라인만 바꿔도 나머지 유지)', () => {
+    // 색/자동저장/날짜형식을 먼저 저장해 두고, 바이라인만 바꿔 적용해도 나머지가 보존되는지 확인.
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+      dateFormat: 'YYYY.MM.DD',
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-byline'));
+    fireEvent.click(screen.getByTestId('pref-byline-blog'));
+    fireEvent.change(screen.getByTestId('pref-byline-blogValue'), { target: { value: 'blog.yna.co.kr' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    // 바이라인 반영
+    expect(prefs.byline.blog).toBe(true);
+    expect(prefs.byline.blogValue).toBe('blog.yna.co.kr');
+    // 나머지 보존
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.autosave.enabled).toBe(true);
+    expect(prefs.autosave.intervalSec).toBe(120);
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+  });
+
+  it('색상만 바꿔 적용해도 바이라인은 보존된다(반대 방향 상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      byline: {
+        email: true, emailValue: 'keep@me.com', blog: true, blogValue: 'keep.blog',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#123456' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.colors.subtitle).toBe('#123456');
+    expect(prefs.byline.email).toBe(true);
+    expect(prefs.byline.emailValue).toBe('keep@me.com');
+    expect(prefs.byline.blog).toBe(true);
+    expect(prefs.byline.blogValue).toBe('keep.blog');
+  });
+
+  it("'기본값'은 바이라인 폼을 DEFAULT_EDITOR_PREFS.byline로 되돌린다", () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      byline: {
+        email: true, emailValue: 'x@y.com', blog: true, blogValue: 'z.blog',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-byline'));
+    expect(screen.getByTestId('pref-byline-email')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    expect(screen.getByTestId('pref-byline-email')).not.toBeChecked();
+    expect(screen.getByTestId('pref-byline-emailValue')).toHaveValue('');
+    expect(screen.getByTestId('pref-byline-blog')).not.toBeChecked();
+    expect(screen.getByTestId('pref-byline-blogValue')).toHaveValue('');
+  });
+});

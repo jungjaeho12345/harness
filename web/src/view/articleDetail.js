@@ -39,11 +39,26 @@ function fieldValue(v) {
   return (v === undefined || v === null || v === '') ? EMPTY_FIELD : String(v);
 }
 
+// 바이라인(에디터 환경설정) → 작성자 부가 라인. 사용여부 ON이고 값이 공백 아닌 항목만 노출(뷰어 prefs 기준).
+// 값은 사용자 입력이므로 여기서는 원본을 모으고 렌더 시 escapeHtml로 이스케이프한다(XSS 비실행 규칙).
+function bylineExtra(byline = {}) {
+  const extra = [];
+  if (byline.email === true && String(byline.emailValue ?? '').trim() !== '') extra.push(byline.emailValue);
+  if (byline.blog === true && String(byline.blogValue ?? '').trim() !== '') extra.push(byline.blogValue);
+  return extra;
+}
+
 // 상세보기 구조 데이터(공통정보 + 본문 블록 + 창 제목). 컴포넌트/새창 렌더 양쪽이 쓴다.
-export function buildDetail(article = {}) {
-  const common = DETAIL_COMMON_FIELDS.map(({ key, label }) => ({
-    key, label, value: fieldValue(article[key]),
-  }));
+// byline은 선택적(기본 {}) — 작성자(author) 항목에만 부가 라인(extra)을 붙인다(하위호환: 없으면 부가 라인 없음).
+export function buildDetail(article = {}, byline = {}) {
+  const common = DETAIL_COMMON_FIELDS.map(({ key, label }) => {
+    const item = { key, label, value: fieldValue(article[key]) };
+    if (key === 'author') {
+      const extra = bylineExtra(byline);
+      if (extra.length) item.extra = extra;
+    }
+    return item;
+  });
   const blocks = deserialize(article.markupVersion ?? article.body ?? article.content ?? '');
   const windowTitle = article.title ? String(article.title) : NO_TITLE;
   return { common, blocks, windowTitle };
@@ -79,6 +94,7 @@ body{
 .yh-detail__field dt{font-size:.68rem;font-weight:700;color:var(--b);letter-spacing:.05em;}
 .yh-detail__field dd{margin:0;font-size:.85rem;color:var(--ink);white-space:pre-wrap;word-break:break-word;}
 .yh-detail__field dd.is-empty{color:var(--gm);}
+.yh-detail__byline{margin-top:2px;font-size:.72rem;color:var(--gm);}
 .yh-detail__body{padding:20px 24px 28px;font-family:'Nanum Myeongjo','Noto Serif KR',serif;}
 .yh-detail__line{margin:0 0 .7em;font-size:1.02rem;line-height:1.85;color:var(--ink);white-space:pre-wrap;word-break:break-word;}
 .yh-detail__line:first-child{
@@ -129,14 +145,18 @@ function embedHtml(b) {
 }
 
 // 상세보기 새 창에 write할 HTML 문서 문자열 — 모든 값 이스케이프(스크립트 실행 불가).
-export function renderDetailHtml(article = {}) {
-  const { common, blocks, windowTitle } = buildDetail(article);
+// byline은 선택적(기본 {}) — 작성자 <dd> 안에 부가 라인을 줄 단위로 렌더한다(값은 반드시 escapeHtml).
+export function renderDetailHtml(article = {}, byline = {}) {
+  const { common, blocks, windowTitle } = buildDetail(article, byline);
 
   const commonHtml = common
     .map((f) => {
       const cls = f.value === EMPTY_FIELD ? ' class="is-empty"' : '';
+      const extraHtml = (f.extra || [])
+        .map((line) => `<div class="yh-detail__byline">${escapeHtml(line)}</div>`)
+        .join('');
       return `<div class="yh-detail__field"><dt>${escapeHtml(f.label)}</dt>`
-        + `<dd${cls}>${escapeHtml(f.value)}</dd></div>`;
+        + `<dd${cls}>${escapeHtml(f.value)}${extraHtml}</dd></div>`;
     })
     .join('');
 
