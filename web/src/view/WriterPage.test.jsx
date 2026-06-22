@@ -1037,13 +1037,15 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 6개 외 항목(표 삽입·찾기/바꾸기)은 여전히 비활성이다', async () => {
+  it('활성 항목 외(표 삽입·잘라내기)는 여전히 비활성이다', async () => {
+    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐으므로,
+    // 미결선 예시는 여전히 비활성인 '잘라내기'(edit.cut)로 검증한다(표 삽입은 그대로).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
     expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
     await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
-    expect(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -1347,5 +1349,180 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
 
     await waitFor(() => expect(save).toHaveBeenCalled());
     await waitFor(() => expect(loadDraft('AKR9')).toBeNull());
+  });
+});
+
+// Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
+// Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
+describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 다이얼로그 자체(role=dialog '찾기/바꾸기')만 본다(메뉴 라벨 '찾기/바꾸기'와 혼동 방지).
+  const findDialog = () => screen.queryByRole('dialog', { name: '찾기/바꾸기' });
+
+  it('Ctrl+F keydown 시 찾기/바꾸기 다이얼로그가 열리고 preventDefault된다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(findDialog()).toBeNull();
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'f', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // 브라우저 기본 찾기 가로채기
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+  });
+
+  it("편집 메뉴 '찾기/바꾸기'(edit.findReplace) 클릭 시 다이얼로그가 열린다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    // 편집 드롭다운 안의 항목만 본다(다이얼로그 라벨과 분리).
+    await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+  });
+
+  it("편집 메뉴 '찾기/바꾸기'·'전체 선택'이 활성(enabled)이다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    const menu = screen.getByTestId('menu-편집');
+    expect(within(menu).getByText('찾기/바꾸기').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
+  });
+
+  it("활성 항목 외(잘라내기·표 삽입)는 여전히 비활성이다(회귀)", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
+    await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
+    expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
+  });
+
+  // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
+  // body를 직접 못 보므로, 모두 바꾸기 후 저장(보류)으로 PUT된 markupVersion을 deserialize해 검증한다.
+  it("find-query='foo' + 모두 바꾸기('X') → 본문 모든 'foo'가 'X'로 바뀐다(임베드 불변)", async () => {
+    const { container } = await openWith([
+      textBlock('foo bar'),
+      embedBlock({ embedType: 'image', src: 'x.png' }),
+      textBlock('foo baz foo'),
+    ]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+
+    // 본문 텍스트 라인의 모든 foo가 X로 바뀐다(blocksToText 기준).
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual(['X bar', 'X baz X']);
+    });
+    // 임베드는 위치·내용 불변(이미지 1개 그대로).
+    expect(container.querySelectorAll('[data-embed-type="image"]').length).toBe(1);
+  });
+
+  it("'바꾸기'(replaceOne)는 첫 매치만 치환한다", async () => {
+    const { container } = await openWith([textBlock('foo and foo')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual(['X and foo']); // 첫 매치만
+    });
+  });
+
+  it('빈 query로 바꾸기/모두 바꾸기 클릭 시 본문이 바뀌지 않는다(updateField 미호출)', async () => {
+    const { container } = await openWith([textBlock('foo bar')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    // query를 비운 채(바꿀 내용만 입력) 바꾸기/모두 바꾸기.
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+
+    // 본문 무변경.
+    const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+    expect(lines).toEqual(['foo bar']);
+  });
+
+  it('매핑 모드: Ctrl+F는 다이얼로그를 열지 않고 preventDefault만 한다', async () => {
+    const { container } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+
+    // 매핑은 onKeyDown이 Editor에 전달되지 않으므로(textEditable=false) Editor 위 Ctrl+F는 가로채지지 않는다.
+    // 매핑에서 키로 다이얼로그가 열리지 않음을 확인한다(본문-only 불변식).
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+  });
+
+  it("매핑 모드: 메뉴 '찾기/바꾸기' 클릭도 다이얼로그를 열지 않고 본문(updateField)을 바꾸지 않는다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
+
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('닫기 버튼으로 다이얼로그가 닫힌다', async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('find-close'));
+    await waitFor(() => expect(findDialog()).toBeNull());
+  });
+
+  it('Alt+Y/(끝)·Ctrl+Y/(계속)·Ctrl+D 라인삭제는 회귀 없이 동작한다(isFindReplace 분기 추가 무영향)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문'), textBlock('다음')]);
+    const box = container.querySelector('.yh-editor');
+    const editorLines = () => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+
+    // Alt+Y → (끝). isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다.
+    fireEvent.keyDown(box, { key: 'y', altKey: true });
+    await waitFor(() => expect(editorLines()).toContain('(끝)'));
+    expect(findDialog()).toBeNull(); // 찾기 다이얼로그는 안 열림
   });
 });

@@ -3,7 +3,7 @@
 // 가드: 송고는 "(끝)" 필요, 송고/보류는 제목(첫 줄) 필요. 각 액션은 확인창 후에만 진행.
 // 데이터는 useWriteController/useSearchController 경유(transport 직접 호출 금지, ADR-003).
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
@@ -12,6 +12,11 @@ import { StatusBar } from './StatusBar.jsx';
 import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
+import { FindReplaceDialog } from './FindReplaceDialog.jsx';
+import {
+  isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
+} from './editorFind.js';
+import { selectAllInEditor } from './editorSelect.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
@@ -50,7 +55,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -117,6 +122,21 @@ export function WriterPage() {
     if (pendingCaretLine !== null) setPendingCaretLine(null);
   }, [pendingCaretLine]);
 
+  // 찾기/바꾸기(Ctrl+F·편집 메뉴) — 다이얼로그 표시 + 찾기 컨트롤 상태(Step 2 결선).
+  // 매치는 effect/타이머 없이 렌더 중 파생 계산한다(본문 텍스트 기준 — blocksToText). 본문 변경은 안전 경로(updateField+serialize)로만.
+  const [showFind, setShowFind] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findCase, setFindCase] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const bodyText = blocksToText(blocks);
+  // 현재 query의 매치(파생) — body/query/대소문자 변경 시에만 재계산.
+  const matches = useMemo(
+    () => findMatches(bodyText, findQuery, { caseSensitive: findCase }),
+    [bodyText, findQuery, findCase],
+  );
+  // query/대소문자 즉시 매치 수를 구하는 헬퍼(onQueryChange에서 activeIndex 초기화 판단용 — state 반영 전 동기 계산).
+  const matchesFor = (q, caseSensitive) => findMatches(bodyText, q, { caseSensitive });
+
   // 활성 탭 미러 ref — 자동저장 타이머가 매 타이핑마다 재설정되지 않도록 활성 탭을 ref로 읽되, 항상 최신값을
   // 보게 동기화한다(lastCaretRef와 동일 미러링 패턴). 이게 없으면 타이머 클로저가 초기 activeTab에 stale된다.
   const activeTabRef = useRef(activeTab);
@@ -161,7 +181,46 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
-  // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 6개 항목만 동작한다.
+  // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
+  // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
+  const focusMatchLine = (offset) => {
+    const { lineIndex } = lineAtOffset(bodyText, offset);
+    setPendingCaretLine(lineIndex);
+  };
+
+  // 다음/이전 찾기 — 현재 활성 매치 끝(없으면 마지막 캐럿 offset, 없으면 0) 기준으로 순환 인덱스를 구해 그 줄로 이동.
+  const findStep = (forward) => {
+    if (!findQuery || matches.length === 0) return; // 빈 query/매치 없음 no-op
+    const cur = activeIndex >= 0 && activeIndex < matches.length ? matches[activeIndex] : null;
+    const fromOffset = cur ? cur.end : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
+    const idx = nextMatchIndex(matches, fromOffset, { forward });
+    if (idx < 0) return;
+    setActiveIndex(idx);
+    focusMatchLine(matches[idx].start);
+  };
+
+  // 바꾸기(replaceOne) — 첫(또는 활성 이후) 매치 하나만 치환. 매핑/빈 query는 no-op(본문-only 불변식).
+  const onReplaceOne = (replacement) => {
+    if (isMapping || !findQuery) return;
+    const cur = activeIndex >= 0 && activeIndex < matches.length ? matches[activeIndex] : null;
+    const fromOffset = cur ? cur.start : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
+    const r = replaceOne(blocks, findQuery, replacement, { caseSensitive: findCase, fromOffset });
+    if (!r.replaced) return; // 매치 없음 no-op
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretOffset === 'number') focusMatchLine(r.caretOffset);
+    setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 인덱스 무효 → 리셋(다음 찾기는 캐럿/0부터).
+  };
+
+  // 모두 바꾸기(replaceAll) — 모든 매치 치환. 다이얼로그는 열린 채 유지(현황 갱신). 매핑/빈 query no-op.
+  const onReplaceAll = (replacement) => {
+    if (isMapping || !findQuery) return;
+    const r = replaceAll(blocks, findQuery, replacement, { caseSensitive: findCase });
+    if (r.count <= 0) return; // 매치 없음 no-op
+    updateField('body', serialize(r.blocks));
+    setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 무효.
+  };
+
+  // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
@@ -178,6 +237,11 @@ export function WriterPage() {
       clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
       return;
     }
+    // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
+    if (id === 'edit.findReplace') { setShowFind(true); return; }
+    // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
+    // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
+    if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
     const fn = VIEW_TRANSFORMS[id];
@@ -193,6 +257,13 @@ export function WriterPage() {
   // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
+    // Ctrl+F → 찾기/바꾸기 다이얼로그(브라우저 기본 찾기 가로채기). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
+    // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
+    if (isFindReplace(e)) {
+      e.preventDefault();
+      if (!isMapping) setShowFind(true);
+      return;
+    }
     if (isInsertEndMarker(e)) {
       e.preventDefault();
       insertEnd();
@@ -413,6 +484,23 @@ export function WriterPage() {
 
       {/* 색상 환경설정 모달 — 도움말>환경설정으로 열림. 적용 시 onPrefsClose(true)로 배경 적용. */}
       <EditorPrefsDialog open={showPrefs} onClose={onPrefsClose} />
+
+      {/* 찾기/바꾸기 다이얼로그 — Ctrl+F·편집 메뉴로 열림(매핑에서는 안 열림). 본문 변경은 안전 경로(updateField+serialize)로만. */}
+      <FindReplaceDialog
+        open={showFind}
+        matchCount={matches.length}
+        activeIndex={activeIndex}
+        onQueryChange={(q, { caseSensitive }) => {
+          setFindQuery(q);
+          setFindCase(caseSensitive);
+          setActiveIndex(matchesFor(q, caseSensitive).length ? 0 : -1);
+        }}
+        onFindNext={() => findStep(true)}
+        onFindPrev={() => findStep(false)}
+        onReplaceOne={onReplaceOne}
+        onReplaceAll={onReplaceAll}
+        onClose={() => setShowFind(false)}
+      />
     </main>
   );
 }
