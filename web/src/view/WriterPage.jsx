@@ -13,6 +13,7 @@ import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { loadEditorPrefs } from './editorPrefs.js';
+import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
@@ -49,7 +50,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -81,6 +82,10 @@ export function WriterPage() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [editorBg, setEditorBg] = useState(() => loadEditorPrefs().colors.background);
 
+  // 자동저장 설정(환경설정>자동저장: enabled/intervalSec/retentionDays) — 타이머 effect의 단일 의존성.
+  // 모달 적용(onPrefsClose(true)) 시 저장값으로 갱신한다(취소 시 불필요 — editorBg와 동일 게이트).
+  const [autosaveCfg, setAutosaveCfg] = useState(() => loadEditorPrefs().autosave);
+
   // 마운트 시 저장된 색을 적용한다(새로고침 후에도 반영). 텍스트색은 setEditorColors, 바탕색은 editorBg로.
   useEffect(() => {
     const c = loadEditorPrefs().colors;
@@ -91,7 +96,10 @@ export function WriterPage() {
   // 모달 닫힘 — applied=true(적용)면 바탕색을 저장값으로 갱신(모달이 이미 setEditorColors 호출 → 자연 재렌더로 텍스트색 반영).
   // applied가 아니면(취소) 색/배경 갱신 없이 닫기만 한다.
   const onPrefsClose = (applied) => {
-    if (applied) setEditorBg(loadEditorPrefs().colors.background);
+    if (applied) {
+      setEditorBg(loadEditorPrefs().colors.background);
+      setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
+    }
     setShowPrefs(false);
   };
 
@@ -108,6 +116,27 @@ export function WriterPage() {
   useEffect(() => {
     if (pendingCaretLine !== null) setPendingCaretLine(null);
   }, [pendingCaretLine]);
+
+  // 활성 탭 미러 ref — 자동저장 타이머가 매 타이핑마다 재설정되지 않도록 활성 탭을 ref로 읽되, 항상 최신값을
+  // 보게 동기화한다(lastCaretRef와 동일 미러링 패턴). 이게 없으면 타이머 클로저가 초기 activeTab에 stale된다.
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+  // 자동저장 타이머 — 설정이 켜져 있으면 간격마다 활성 탭 내용을 초안(localStorage)으로 스냅샷하고 만료분을 정리한다.
+  // 서버 저장이 아니다(localStorage 초안만). 의존성은 [autosaveCfg]만 — 활성 탭은 ref로 읽어 타이핑마다 재설정하지 않는다.
+  useEffect(() => {
+    if (!autosaveCfg.enabled) return undefined; // 꺼져 있으면 타이머 없음
+    const ms = autosaveCfg.intervalSec * 1000;
+    const id = setInterval(() => {
+      const tab = activeTabRef.current; // 최신 활성 탭(미러 ref)
+      const key = tab.articleId || tab.id; // 기존=articleId(안정), 신규=tab.id(best-effort)
+      const hasContent = !!(tab.fields.body || tab.fields.title);
+      if (!hasContent) return; // 빈 탭은 스냅샷 안 함
+      saveDraft(key, { ...tab.fields }, Date.now()); // 시각은 런타임에서 주입(저장소는 시계를 모름).
+      expireDrafts(autosaveCfg.retentionDays, Date.now());
+    }, ms);
+    return () => clearInterval(id); // 설정 변경/unmount 시 타이머 정리(누수 없음).
+  }, [autosaveCfg]);
 
   // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화 + 제목(첫 줄) 동기화.
   // 임베드는 "(끝)"만 최종 블록으로 보낼 뿐 위치를 옮기지 않는다(news.md 156·167행 — 커서 위치/블록 순서 보존).
@@ -138,6 +167,17 @@ export function WriterPage() {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
     if (id === 'help.preferences') { setShowPrefs(true); return; }
     if (isMapping) return;
+    // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
+    if (id === 'file.recover') {
+      const tab = activeTab;
+      const key = tab.articleId || tab.id;
+      const draft = loadDraft(key);
+      if (!draft) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
+      if (!window.confirm('자동저장된 내용으로 복구하시겠습니까?')) return;
+      Object.entries(draft).forEach(([k, v]) => updateField(k, v)); // updateField가 EDITABLE_FIELDS만 통과(메타 무시)
+      clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
+      return;
+    }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
     const fn = VIEW_TRANSFORMS[id];
@@ -221,13 +261,18 @@ export function WriterPage() {
       return;
     }
     if (!window.confirm(`${ACTION_VERB[action]}하시겠습니까?`)) return;
-    await submit(action);
+    // 전이 직전 탭 키를 잡아둔다 — 성공 후 초안을 무효화(빈 새 기사 탭에서 복구 시 송고/제출 내용 부활 방지).
+    const key = activeTab.articleId || activeTab.id;
+    const r = await submit(action);
+    if (r && r.ok) clearDraft(key);
   };
 
   // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
   const onSaveMapping = async () => {
     if (!window.confirm('저장하시겠습니까?')) return;
-    await saveMapping();
+    const key = activeTab.articleId || activeTab.id; // 저장 직전 키 — 성공 후 초안 무효화.
+    const r = await saveMapping();
+    if (r && r.ok) clearDraft(key);
   };
 
   const buttons = submitButtons({

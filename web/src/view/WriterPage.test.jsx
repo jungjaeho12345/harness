@@ -9,6 +9,7 @@ import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
 
 function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, pendingEdit, seed } = {}) {
@@ -1149,5 +1150,202 @@ describe('WriterPage — 색상 환경설정(EditorPrefsDialog) 결선·적용',
     expect(colorForRole('subtitle')).toBe(DEFAULT_EDITOR_PREFS.colors.subtitle);
     expect(getByTestId('editor-canvas')).toHaveStyle({ backgroundColor: '#abcdef' }); // 배경 불변
     expect(screen.queryByTestId('pref-color-subtitle')).toBeNull();
+  });
+});
+
+// Step 1(13-editor-autosave): 자동저장 타이머(간격마다 활성 탭 초안 스냅샷) + 파일>복구 + 송고/저장 후 초안 무효화.
+// editorPrefs(localStorage 자동저장 설정) + editorDraft(localStorage 초안)를 쓰므로 localStorage.clear()로 격리한다.
+describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // localStorage 초안 저장소(yh.editorDrafts) 원본을 파싱한다(키를 모르는 신규 탭 초안 검증용).
+  const readDraftsStore = () => {
+    try { return JSON.parse(localStorage.getItem('yh.editorDrafts')) || {}; }
+    catch { return {}; }
+  };
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  // 자동저장 설정을 저장값으로 미리 심는다(마운트 시 useState 초기화가 이 값을 읽는다).
+  const enableAutosave = (over = {}) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    autosave: { enabled: true, intervalSec: 30, retentionDays: 1, ...over },
+  });
+
+  it('자동저장이 켜져 있으면 간격마다 활성 탭 내용을 초안으로 저장한다', () => {
+    enableAutosave();
+    vi.useFakeTimers();
+    const { container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '자동저장본문';
+    fireEvent.input(editor);
+
+    expect(Object.keys(readDraftsStore())).toHaveLength(0); // 간격 전에는 저장 없음
+    vi.advanceTimersByTime(30000);
+
+    const store = readDraftsStore();
+    const keys = Object.keys(store);
+    expect(keys).toHaveLength(1); // 활성 탭 1개의 키로 초안 저장
+    const draft = store[keys[0]].data;
+    expect(blocksToText(deserialize(draft.body))).toContain('자동저장본문');
+  });
+
+  it('본문을 여러 번 바꿔도 저장된 초안은 초기값이 아니라 최신 본문이다(activeTabRef 미러)', () => {
+    enableAutosave();
+    vi.useFakeTimers();
+    const { container } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+
+    editor.textContent = '첫번째본문';
+    fireEvent.input(editor);
+    editor.textContent = '두번째최신본문';
+    fireEvent.input(editor);
+
+    vi.advanceTimersByTime(30000);
+
+    const store = readDraftsStore();
+    const text = blocksToText(deserialize(store[Object.keys(store)[0]].data.body));
+    expect(text).toContain('두번째최신본문');
+    expect(text).not.toContain('첫번째본문');
+  });
+
+  it('자동저장이 꺼져 있으면 타이머가 진행돼도 초안을 저장하지 않는다', () => {
+    enableAutosave({ enabled: false });
+    vi.useFakeTimers();
+    const { container } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '본문';
+    fireEvent.input(editor);
+
+    vi.advanceTimersByTime(30000 * 5);
+    expect(Object.keys(readDraftsStore())).toHaveLength(0);
+  });
+
+  it('본문/제목이 빈 탭은 간격이 지나도 스냅샷하지 않는다', () => {
+    enableAutosave();
+    vi.useFakeTimers();
+    setup({ identity: { role: 'R' } }); // 빈 새 기사 탭(본문/제목 없음)
+
+    vi.advanceTimersByTime(30000);
+    expect(Object.keys(readDraftsStore())).toHaveLength(0);
+  });
+
+  it('unmount 시 자동저장 타이머를 정리한다(clearInterval — 누수 없음)', () => {
+    enableAutosave();
+    vi.useFakeTimers();
+    const { container, unmount } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '본문';
+    fireEvent.input(editor);
+
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    unmount();
+    expect(clearSpy).toHaveBeenCalled();
+
+    localStorage.clear();
+    vi.advanceTimersByTime(30000 * 3); // unmount 후엔 더 이상 저장하지 않는다
+    expect(Object.keys(readDraftsStore())).toHaveLength(0);
+  });
+
+  // 본문(markupVersion)을 가진 기사로 편집 진입한 WriterPage를 띄운다(키=articleId로 안정적 복구 검증).
+  async function openEdit(blocks, { articleId = 'AKR1', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId, title: '제목', status }, mode: 'edit' },
+      seed: { articles: [{ articleId, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 파일>복구 클릭. 메뉴는 항목 선택 후에도 열린 채 유지되므로(EditorMenuBar 규약), 이미 열려 있으면
+  // '파일'을 다시 누르지 않는다(다시 누르면 토글로 닫힌다). 재복구(연속 호출)에서도 안전하게 동작한다.
+  async function clickRecover() {
+    if (!screen.queryByTestId('menu-파일')) {
+      await userEvent.click(screen.getByRole('menuitem', { name: '파일' }));
+    }
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText('복구'));
+  }
+
+  it('파일>복구: 초안이 있으면 confirm 후 본문/필드를 초안 값으로 복원하고 초안을 제거한다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const draftBody = serialize([textBlock('복구된제목'), textBlock('복구된본문')]);
+    saveDraft('AKR1', { title: '복구된제목', body: draftBody, author: '초안작성자' }, 1000);
+
+    const { container } = await openEdit([textBlock('원본제목'), textBlock('원본본문')]);
+    expect(editorLines(container)).toEqual(['원본제목', '원본본문']); // 복구 전 — 원본
+
+    await clickRecover();
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['복구된제목', '복구된본문']));
+    expect(screen.getByLabelText('작성자')).toHaveValue('초안작성자');
+    expect(loadDraft('AKR1')).toBeNull(); // 복구 후 초안 제거(재복구 부활 방지)
+
+    // 재복구 시도 — 초안이 없으므로 alert.
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    await clickRecover();
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining('없습니다'));
+  });
+
+  it('파일>복구: 초안이 없으면 alert만 띄우고 본문을 바꾸지 않는다', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = await openEdit([textBlock('원본제목'), textBlock('원본본문')]);
+
+    await clickRecover();
+
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining('복구할 자동저장 내용이 없습니다'));
+    expect(editorLines(container)).toEqual(['원본제목', '원본본문']);
+  });
+
+  it('파일>복구: confirm 취소 시 본문을 복원하지 않고 초안도 유지한다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const draftBody = serialize([textBlock('복구된제목'), textBlock('복구된본문')]);
+    saveDraft('AKR1', { title: '복구된제목', body: draftBody }, 1000);
+
+    const { container } = await openEdit([textBlock('원본제목'), textBlock('원본본문')]);
+    await clickRecover();
+
+    expect(editorLines(container)).toEqual(['원본제목', '원본본문']); // 무변경
+    expect(loadDraft('AKR1')).not.toBeNull(); // 초안 유지(취소 → 제거 안 함)
+  });
+
+  it('송고가 성공하면 해당 탭 키의 초안이 무효화된다(빈 새 기사 탭 부활 방지)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const body = serialize([textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]);
+    saveDraft('AKR1', { title: '헤드', body }, 1000);
+    const { model } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '헤드', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'send'));
+    await waitFor(() => expect(loadDraft('AKR1')).toBeNull());
+  });
+
+  it('매핑 저장이 성공하면 해당 탭 키의 초안이 무효화된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const body = serialize([textBlock('제목'), textBlock('본문')]);
+    saveDraft('AKR9', { title: '제목', body }, 1000);
+    const { model } = setup({
+      identity: { role: 'D', name: '김기자' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '제목', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR9', status: 'DPS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(actionBtn('저장')).toBeInTheDocument());
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('저장'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    await waitFor(() => expect(loadDraft('AKR9')).toBeNull());
   });
 });
