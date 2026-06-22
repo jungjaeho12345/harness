@@ -93,6 +93,10 @@ export function WriterPage() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [editorBg, setEditorBg] = useState(() => loadEditorPrefs().colors.background);
 
+  // 편집>컬럼제한(edit.columnLimit) — 캔버스 래퍼(editor-canvas) 좌우 여백 10%로 적용(news.md L185).
+  // editorBg와 동일 게이트: 마운트 적용 + onPrefsClose(applied) 갱신. Editor.jsx 내부는 미접촉(여백은 바깥 래퍼에서만).
+  const [columnLimit, setColumnLimit] = useState(() => loadEditorPrefs().edit.columnLimit);
+
   // 자동저장 설정(환경설정>자동저장: enabled/intervalSec/retentionDays) — 타이머 effect의 단일 의존성.
   // 모달 적용(onPrefsClose(true)) 시 저장값으로 갱신한다(취소 시 불필요 — editorBg와 동일 게이트).
   const [autosaveCfg, setAutosaveCfg] = useState(() => loadEditorPrefs().autosave);
@@ -102,6 +106,7 @@ export function WriterPage() {
     const c = loadEditorPrefs().colors;
     setEditorColors({ title: c.title, subtitle: c.subtitle, body: c.body });
     setEditorBg(c.background);
+    setColumnLimit(loadEditorPrefs().edit.columnLimit); // 새로고침 후에도 컬럼제한 반영.
   }, []);
 
   // 모달 닫힘 — applied=true(적용)면 바탕색을 저장값으로 갱신(모달이 이미 setEditorColors 호출 → 자연 재렌더로 텍스트색 반영).
@@ -110,6 +115,7 @@ export function WriterPage() {
     if (applied) {
       setEditorBg(loadEditorPrefs().colors.background);
       setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
+      setColumnLimit(loadEditorPrefs().edit.columnLimit); // 컬럼제한(좌우 여백) 변경 반영 — 취소 시 불변(editorBg와 동일 게이트).
     }
     setShowPrefs(false);
   };
@@ -463,7 +469,11 @@ export function WriterPage() {
           <div
             className="yh-writer__canvas"
             data-testid="editor-canvas"
-            style={{ backgroundColor: editorBg }}
+            style={{
+              backgroundColor: editorBg,
+              // 컬럼제한 on → 에디터 캔버스 좌우 여백 10%씩(위/아래는 불변). 래퍼 레벨이라 Editor 내부 미접촉.
+              ...(columnLimit ? { paddingLeft: '10%', paddingRight: '10%' } : null),
+            }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
           >
             <Editor

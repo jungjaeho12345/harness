@@ -81,8 +81,20 @@
       "completed_at": "2026-06-22T17:21:33+0900"
     },
     {
+      "dir": "15-editor-prefs-byline",
+      "status": "completed",
+      "completed_at": "2026-06-22T20:13:15+0900",
+      "note": "환경설정 바이라인 탭 + 상세보기 작성자 부가표시 — PR #43으로 머지"
+    },
+    {
       "dir": "15-editor-prefs-tabs",
-      "status": "in_progress"
+      "status": "superseded",
+      "note": "넓은 '환경설정 잔여 탭' 계획 — 바이라인(15-editor-prefs-byline/#43) + 나머지 4탭(16-editor-prefs-remaining)으로 분할 실행됨"
+    },
+    {
+      "dir": "16-editor-prefs-remaining",
+      "status": "completed",
+      "completed_at": "2026-06-22T21:14:34+0900"
     }
   ]
 }

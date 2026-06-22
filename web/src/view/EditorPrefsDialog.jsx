@@ -20,12 +20,43 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 색상/자동저장/바이라인/날짜형식. (순서는 news.md 환경설정 순서를 따른다.)
+// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식/자주쓰는 약물/사용자 키보드 약물/맞춤법.
+// (순서는 news.md 환경설정 순서 L185~213을 따른다 — 약물군은 날짜형식과 맞춤법 사이.)
 const PREF_TABS = [
+  { key: 'edit', label: '편집' },
   { key: 'colors', label: '색상' },
   { key: 'autosave', label: '자동저장' },
   { key: 'byline', label: '바이라인' },
   { key: 'dateFormat', label: '날짜형식' },
+  { key: 'glyphFavorites', label: '자주쓰는 약물' },
+  { key: 'glyphKeymap', label: '사용자 키보드 약물' },
+  { key: 'spellcheck', label: '맞춤법' },
+];
+
+// 편집 탭 — 언어 9종(news.md L190). value=enum 코드(store edit.language 허용값), label=한국어 표시.
+const EDIT_LANGUAGES = [
+  { value: 'ko', label: '한글' },
+  { value: 'en', label: '영어' },
+  { value: 'ja', label: '일어' },
+  { value: 'zh', label: '중국어' },
+  { value: 'es', label: '스페인' },
+  { value: 'fr', label: '프랑스' },
+  { value: 'ar', label: '아랍어' },
+  { value: 'vi', label: '베트남' },
+  { value: 'ru', label: '러시아어' },
+];
+
+// 편집 탭 — 줄간격 옵션(news.md L191). value=문자열, 저장 시 Number()로 변환.
+const EDIT_LINE_SPACINGS = [1.0, 1.2, 1.5, 1.8, 2.0];
+
+// 편집 탭 — 기업코드(수동/자동) · 입력모드(KSC-5601/Unicode) select 옵션.
+const EDIT_COMPANY_CODES = [
+  { value: 'manual', label: '수동' },
+  { value: 'auto', label: '자동' },
+];
+const EDIT_INPUT_MODES = [
+  { value: 'ksc5601', label: 'KSC-5601' },
+  { value: 'unicode', label: 'Unicode' },
 ];
 
 // 자동저장 저장 간격 옵션(news.md "# 에디터 환경설정 > 자동저장: 저장 간격 30초~5분").
@@ -41,6 +72,31 @@ const AUTOSAVE_INTERVALS = [
 // 보존 기한 옵션(1~7일).
 const AUTOSAVE_RETENTIONS = [1, 2, 3, 4, 5, 6, 7];
 
+// 맞춤법 탭 — 검사옵션 5종(news.md L211, 단일 enum). value=store spellcheck.checkOption 허용값, label=한국어 표시.
+const SPELLCHECK_OPTIONS = [
+  { value: 'procedure', label: '절차오류' },
+  { value: 'spacing', label: '띄어쓰기' },
+  { value: 'joining', label: '붙여쓰기' },
+  { value: 'spacingJoining', label: '띄어쓰기+붙여쓰기' },
+  { value: 'circularLoan', label: '순환용어·외래어' },
+];
+
+// 맞춤법 탭 — 오류유형 6종(news.md L212, 다중 bool). key=store spellcheck.errorTypes 키.
+const SPELLCHECK_ERROR_TYPES = [
+  { key: 'misuse', label: '오용어' },
+  { key: 'multiWord', label: '다수어절' },
+  { key: 'semantic', label: '의미문체' },
+  { key: 'circular', label: '순환용어' },
+  { key: 'statSpacing', label: '통계붙여쓰기' },
+  { key: 'others', label: '그외' },
+];
+
+// 맞춤법 탭 — 오류표현 2종(news.md L213, enum). value=store spellcheck.errorStyle 허용값.
+const SPELLCHECK_ERROR_STYLES = [
+  { value: 'bold', label: '굵게' },
+  { value: 'underline', label: '밑줄' },
+];
+
 export function EditorPrefsDialog({ open, onClose }) {
   // 활성 탭(색상이 기본). 폼 상태(colors/dateFormat)는 모달 레벨에 둬 탭 전환해도 미적용 값이 보존된다.
   const [tab, setTab] = useState('colors');
@@ -48,6 +104,15 @@ export function EditorPrefsDialog({ open, onClose }) {
   const [dateFormat, setDateFormat] = useState(() => loadEditorPrefs().dateFormat);
   const [autosave, setAutosave] = useState(() => loadEditorPrefs().autosave);
   const [byline, setByline] = useState(() => loadEditorPrefs().byline);
+  const [edit, setEdit] = useState(() => loadEditorPrefs().edit);
+  const [spellcheck, setSpellcheck] = useState(() => loadEditorPrefs().spellcheck);
+  const [glyphFav, setGlyphFav] = useState(() => loadEditorPrefs().glyphFavorites);
+  const [glyphKey, setGlyphKey] = useState(() => loadEditorPrefs().glyphKeymap);
+
+  // 미커밋 등록 입력 버퍼(목록에 등록 전까지의 로컬 입력 — '적용'이 아닌 '등록' 시점에 form state로 커밋).
+  const [favInput, setFavInput] = useState('');
+  const [keyInputKeys, setKeyInputKeys] = useState('');
+  const [keyInputGlyph, setKeyInputGlyph] = useState('');
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -57,12 +122,41 @@ export function EditorPrefsDialog({ open, onClose }) {
       setDateFormat(prefs.dateFormat);
       setAutosave(prefs.autosave);
       setByline(prefs.byline);
+      setEdit(prefs.edit);
+      setSpellcheck(prefs.spellcheck);
+      setGlyphFav(prefs.glyphFavorites);
+      setGlyphKey(prefs.glyphKeymap);
+      setFavInput('');
+      setKeyInputKeys('');
+      setKeyInputGlyph('');
     }
   }, [open]);
 
   if (!open) return null;
 
   const setColor = (key, value) => setColors((c) => ({ ...c, [key]: value }));
+
+  // 약물 등록/삭제 — 순수 배열 연산(mutate 금지). form state에만 반영하고 '적용' 시점에 영속(취소하면 버려짐).
+  const addGlyphFav = () => {
+    const v = favInput.trim();
+    if (!v) return; // 빈/공백 입력은 no-op.
+    setGlyphFav((g) => ({ ...g, items: [...g.items, v] }));
+    setFavInput('');
+  };
+  const removeGlyphFav = (index) => setGlyphFav(
+    (g) => ({ ...g, items: g.items.filter((_, i) => i !== index) }),
+  );
+  const addGlyphKey = () => {
+    const keys = keyInputKeys.trim();
+    const glyph = keyInputGlyph.trim();
+    if (!keys || !glyph) return; // 둘 중 하나라도 비면 no-op.
+    setGlyphKey((g) => ({ ...g, items: [...g.items, { keys, glyph }] }));
+    setKeyInputKeys('');
+    setKeyInputGlyph('');
+  };
+  const removeGlyphKey = (index) => setGlyphKey(
+    (g) => ({ ...g, items: g.items.filter((_, i) => i !== index) }),
+  );
 
   // 적용 — 색·자동저장·바이라인을 함께 영속(saveEditorPrefs) + 텍스트색 적용(setEditorColors, background 제외) + applied=true로 닫기.
   // 날짜형식은 writer 화면에 즉시 보일 대상이 없어 setDateFormat을 부르지 않는다(ListPage가 마운트 시 적용).
@@ -74,20 +168,53 @@ export function EditorPrefsDialog({ open, onClose }) {
     const {
       email, emailValue, blog, blogValue,
     } = byline;
-    // colors + autosave + byline을 setEditorPref로 합성하고 dateFormat은 spread로 보존(네 설정 상호 보존 못박음).
+    const {
+      columnLimit, dragDrop, noCommonAbbr, companyCode, language, lineSpacing, inputMode,
+    } = edit;
+    const { checkOption, errorTypes, errorStyle } = spellcheck;
+    // colors + autosave + byline + edit + spellcheck + glyphFavorites + glyphKeymap을 setEditorPref로
+    // 합성하고 dateFormat은 spread로 보존(loadEditorPrefs() base spread로 미합성 카테고리도 보존 — 상호 보존 못박음).
+    // errorTypes는 6키 객체 전체를 통째로 넘긴다(setEditorPref 한 단계 병합이라 부분만 넘기면 나머지 키 손실).
+    // 약물(glyphFavorites/glyphKeymap)은 items 배열 전체를 통째로 넘긴다.
     const next = {
       ...setEditorPref(
         setEditorPref(
-          setEditorPref(loadEditorPrefs(), 'colors', {
-            title, subtitle, body, background,
-          }),
-          'autosave',
-          { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+          setEditorPref(
+            setEditorPref(
+              setEditorPref(
+                setEditorPref(
+                  setEditorPref(loadEditorPrefs(), 'colors', {
+                    title, subtitle, body, background,
+                  }),
+                  'autosave',
+                  {
+                    enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays),
+                  },
+                ),
+                'byline',
+                {
+                  email, emailValue, blog, blogValue,
+                },
+              ),
+              'edit',
+              {
+                columnLimit,
+                dragDrop,
+                noCommonAbbr,
+                companyCode,
+                language,
+                lineSpacing: Number(lineSpacing),
+                inputMode,
+              },
+            ),
+            'spellcheck',
+            { checkOption, errorTypes, errorStyle },
+          ),
+          'glyphFavorites',
+          { items: glyphFav.items },
         ),
-        'byline',
-        {
-          email, emailValue, blog, blogValue,
-        },
+        'glyphKeymap',
+        { items: glyphKey.items },
       ),
       dateFormat,
     };
@@ -108,6 +235,13 @@ export function EditorPrefsDialog({ open, onClose }) {
     setDateFormat(DEFAULT_EDITOR_PREFS.dateFormat);
     setAutosave(DEFAULT_EDITOR_PREFS.autosave);
     setByline(DEFAULT_EDITOR_PREFS.byline);
+    setEdit(DEFAULT_EDITOR_PREFS.edit);
+    setSpellcheck(DEFAULT_EDITOR_PREFS.spellcheck);
+    setGlyphFav(DEFAULT_EDITOR_PREFS.glyphFavorites);
+    setGlyphKey(DEFAULT_EDITOR_PREFS.glyphKeymap);
+    setFavInput('');
+    setKeyInputKeys('');
+    setKeyInputGlyph('');
   };
 
   return (
@@ -133,6 +267,93 @@ export function EditorPrefsDialog({ open, onClose }) {
             </button>
           ))}
         </div>
+
+        {tab === 'edit' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-edit-columnLimit">컬럼제한</label>
+              <input
+                id="pref-edit-columnLimit"
+                data-testid="pref-edit-columnLimit"
+                type="checkbox"
+                checked={edit.columnLimit}
+                onChange={(e) => setEdit((s) => ({ ...s, columnLimit: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-dragDrop">드래그앤드롭</label>
+              <input
+                id="pref-edit-dragDrop"
+                data-testid="pref-edit-dragDrop"
+                type="checkbox"
+                checked={edit.dragDrop}
+                onChange={(e) => setEdit((s) => ({ ...s, dragDrop: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-noCommonAbbr">공용약어 사용안함</label>
+              <input
+                id="pref-edit-noCommonAbbr"
+                data-testid="pref-edit-noCommonAbbr"
+                type="checkbox"
+                checked={edit.noCommonAbbr}
+                onChange={(e) => setEdit((s) => ({ ...s, noCommonAbbr: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-companyCode">기업코드</label>
+              <select
+                id="pref-edit-companyCode"
+                data-testid="pref-edit-companyCode"
+                value={edit.companyCode}
+                onChange={(e) => setEdit((s) => ({ ...s, companyCode: e.target.value }))}
+              >
+                {EDIT_COMPANY_CODES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-language">언어</label>
+              <select
+                id="pref-edit-language"
+                data-testid="pref-edit-language"
+                value={edit.language}
+                onChange={(e) => setEdit((s) => ({ ...s, language: e.target.value }))}
+              >
+                {EDIT_LANGUAGES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-lineSpacing">줄간격</label>
+              <select
+                id="pref-edit-lineSpacing"
+                data-testid="pref-edit-lineSpacing"
+                value={edit.lineSpacing}
+                onChange={(e) => setEdit((s) => ({ ...s, lineSpacing: e.target.value }))}
+              >
+                {EDIT_LINE_SPACINGS.map((v) => (
+                  <option key={v} value={v}>{v.toFixed(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-edit-inputMode">입력모드</label>
+              <select
+                id="pref-edit-inputMode"
+                data-testid="pref-edit-inputMode"
+                value={edit.inputMode}
+                onChange={(e) => setEdit((s) => ({ ...s, inputMode: e.target.value }))}
+              >
+                {EDIT_INPUT_MODES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {tab === 'colors' && (
           <div className="yh-prefs__fields">
@@ -248,6 +469,139 @@ export function EditorPrefsDialog({ open, onClose }) {
                 onChange={(e) => setDateFormat(e.target.value)}
               >
                 {DATE_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {tab === 'glyphFavorites' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-glyphFav-input">약물</label>
+              <input
+                id="pref-glyphFav-input"
+                data-testid="pref-glyphFav-input"
+                type="text"
+                value={favInput}
+                onChange={(e) => setFavInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="yh-btn"
+                data-testid="pref-glyphFav-add"
+                onClick={addGlyphFav}
+              >
+                등록
+              </button>
+            </div>
+            <ul className="yh-prefs__glyph-list" data-testid="pref-glyphFav-list">
+              {glyphFav.items.map((g, i) => (
+                <li className="yh-field" key={`${g}-${i}`} data-testid={`pref-glyphFav-item-${i}`}>
+                  <span>{g}</span>
+                  <button
+                    type="button"
+                    className="yh-btn"
+                    data-testid={`pref-glyphFav-remove-${i}`}
+                    onClick={() => removeGlyphFav(i)}
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tab === 'glyphKeymap' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-glyphKey-keys">키조합</label>
+              <input
+                id="pref-glyphKey-keys"
+                data-testid="pref-glyphKey-keys"
+                type="text"
+                value={keyInputKeys}
+                onChange={(e) => setKeyInputKeys(e.target.value)}
+              />
+              <label htmlFor="pref-glyphKey-glyph">약물</label>
+              <input
+                id="pref-glyphKey-glyph"
+                data-testid="pref-glyphKey-glyph"
+                type="text"
+                value={keyInputGlyph}
+                onChange={(e) => setKeyInputGlyph(e.target.value)}
+              />
+              <button
+                type="button"
+                className="yh-btn"
+                data-testid="pref-glyphKey-add"
+                onClick={addGlyphKey}
+              >
+                등록
+              </button>
+            </div>
+            <ul className="yh-prefs__glyph-list" data-testid="pref-glyphKey-list">
+              {glyphKey.items.map((m, i) => (
+                <li
+                  className="yh-field"
+                  key={`${m.keys}-${m.glyph}-${i}`}
+                  data-testid={`pref-glyphKey-item-${i}`}
+                >
+                  <span>{`${m.keys} → ${m.glyph}`}</span>
+                  <button
+                    type="button"
+                    className="yh-btn"
+                    data-testid={`pref-glyphKey-remove-${i}`}
+                    onClick={() => removeGlyphKey(i)}
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tab === 'spellcheck' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-spellcheck-checkOption">검사옵션</label>
+              <select
+                id="pref-spellcheck-checkOption"
+                data-testid="pref-spellcheck-checkOption"
+                value={spellcheck.checkOption}
+                onChange={(e) => setSpellcheck((s) => ({ ...s, checkOption: e.target.value }))}
+              >
+                {SPELLCHECK_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            {SPELLCHECK_ERROR_TYPES.map(({ key, label }) => (
+              <div className="yh-field" key={key}>
+                <label htmlFor={`pref-spellcheck-errorType-${key}`}>{label}</label>
+                <input
+                  id={`pref-spellcheck-errorType-${key}`}
+                  data-testid={`pref-spellcheck-errorType-${key}`}
+                  type="checkbox"
+                  checked={spellcheck.errorTypes[key]}
+                  onChange={(e) => setSpellcheck((s) => ({
+                    ...s, errorTypes: { ...s.errorTypes, [key]: e.target.checked },
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="yh-field">
+              <label htmlFor="pref-spellcheck-errorStyle">오류표현</label>
+              <select
+                id="pref-spellcheck-errorStyle"
+                data-testid="pref-spellcheck-errorStyle"
+                value={spellcheck.errorStyle}
+                onChange={(e) => setSpellcheck((s) => ({ ...s, errorStyle: e.target.value }))}
+              >
+                {SPELLCHECK_ERROR_STYLES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
               </select>
             </div>
           </div>
