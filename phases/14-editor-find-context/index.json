@@ -1,0 +1,40 @@
+{
+  "project": "기사 작성기",
+  "phase": "14-editor-find-context",
+  "steps": [
+    {
+      "step": 0,
+      "name": "find-engine-pure",
+      "status": "completed",
+      "deps": [],
+      "started_at": "2026-06-22T16:50:23+0900",
+      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F 인식), findMatches(리터럴·비중첩·대소문자옵션 절대오프셋), nextMatchIndex(순환 다음/이전), replaceOne(fromOffset 첫 매치 1개 치환·matchStart·caretOffset), replaceAll(모든 매치 치환·count). 임베드/블록 순서·개수 불변, 입력 비변형. editorFind.test.js 22개 통과."
+    },
+    {
+      "step": 1,
+      "name": "find-replace-dialog",
+      "status": "pending",
+      "deps": [
+        0
+      ]
+    },
+    {
+      "step": 2,
+      "name": "find-replace-wiring",
+      "status": "pending",
+      "deps": [
+        0,
+        1
+      ]
+    },
+    {
+      "step": 3,
+      "name": "editor-context-menu",
+      "status": "pending",
+      "deps": [
+        2
+      ]
+    }
+  ],
+  "created_at": "2026-06-22T16:50:23+0900"
+}
