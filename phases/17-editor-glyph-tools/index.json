@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "17-editor-glyph-tools",
+  "steps": [
+    { "step": 0, "name": "glyph-insert-pure", "status": "completed", "deps": [], "summary": "web/src/view/editorGlyph.js 순수 헬퍼 추가 — insertGlyphAtCaret(blocks,caret,glyph)→{blocks,caretTextLine}, normalizeGlyph(트림/빈값). blocksToText 좌표계로 lineAtOffset+textLineToBlockIndex 슬라이스(editorFind.replaceAtMatch 패턴), col=offset-lineStart. 빈/공백 glyph no-op, caret null/범위밖·'(끝)' 줄 가리킴 시 '(끝)' 아닌 마지막 텍스트 줄 끝 폴백(텍스트 블록 없으면 첫 텍스트 블록 생성), 임베드/'(끝)'/순서/개수 불변, 입력 mutate 금지. step0.md 63행 예시 리터럴('가※나다')은 '컬럼 2' 라벨·slice 알고리즘과 모순되는 오타로 판단해 알고리즘(컬럼 2→'가나※다')을 권위 계약으로 채택. editorGlyph.test.js 17 케이스. editorPrefs/Editor.jsx/server 미접촉." },
+    { "step": 1, "name": "glyph-bar-component", "status": "pending", "deps": [0] },
+    { "step": 2, "name": "glyph-bar-wiring", "status": "pending", "deps": [0, 1] },
+    { "step": 3, "name": "glyph-input-dialog", "status": "pending", "deps": [0] },
+    { "step": 4, "name": "glyph-input-wiring", "status": "pending", "deps": [0, 2, 3] }
+  ]
+}
