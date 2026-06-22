@@ -8,8 +8,8 @@
       "status": "completed",
       "deps": [],
       "started_at": "2026-06-22T16:50:23+0900",
-      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F 인식), findMatches(리터럴·비중첩·대소문자옵션 절대오프셋), nextMatchIndex(순환 다음/이전), replaceOne(fromOffset 첫 매치 1개 치환·matchStart·caretOffset), replaceAll(모든 매치 치환·count). 임베드/블록 순서·개수 불변, 입력 비변형. editorFind.test.js 22개 통과.",
-      "completed_at": "2026-06-22T16:55:03+0900"
+      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F·code=KeyF·metaKey 무시), findMatches(text,query,{caseSensitive})→비중첩 리터럴 매치 [{start,end}], nextMatchIndex(matches,fromOffset,{forward})→순환 인덱스(빈 배열 -1), replaceOne(blocks,query,replacement,{caseSensitive,fromOffset})→{blocks,replaced,matchStart,caretOffset}, replaceAll(blocks,query,replacement,{caseSensitive})→{blocks,count}. blocksToText 좌표 기준, lineAtOffset·textLineToBlockIndex 재사용해 텍스트 블록 text만 치환(임베드·순서·개수 불변, 입력 mutate 없음). editorFind.test.js 24개(빈 query no-op·재매치 caretOffset 단조성 등 plan-reviewer 케이스 포함). test:web 546 pass, build·lint 통과. 에디터/WriterPage/컴포넌트 무변경.",
+      "completed_at": "2026-06-22T16:56:10+0900"
     },
     {
       "step": 1,
@@ -17,7 +17,8 @@
       "status": "pending",
       "deps": [
         0
-      ]
+      ],
+      "started_at": "2026-06-22T16:55:04+0900"
     },
     {
       "step": 2,
