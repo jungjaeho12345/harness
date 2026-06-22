@@ -1068,4 +1068,59 @@ describe('EditorPrefsDialog — 사용자 키보드 약물 탭', () => {
     fireEvent.click(screen.getByTestId('prefs-reset'));
     expect(screen.queryByTestId('pref-glyphKey-item-0')).toBeNull();
   });
+
+  // --- 보강(harness-tester): 두 약물 탭 동시 편집 apply 경로 + 8개 카테고리 동시 보존 락다운 ---
+
+  it('한 세션에서 자주쓰는 약물·키보드 약물을 둘 다 등록하고 적용하면 두 in-session 편집이 모두 영속되고 다른 6개 카테고리도 보존된다', () => {
+    // glyphFav·glyphKey 두 setEditorPref 단계가 각자의 form 편집을 싣는지(base만이 아님) + 기존 6개 카테고리 동시 보존.
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+      byline: {
+        email: true, emailValue: 'keep@me.com', blog: false, blogValue: '',
+      },
+      edit: { ...DEFAULT_EDITOR_PREFS.edit, columnLimit: true, language: 'ja' },
+      spellcheck: { ...DEFAULT_EDITOR_PREFS.spellcheck, checkOption: 'procedure' },
+      dateFormat: 'YYYY.MM.DD',
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+
+    // 자주쓰는 약물 탭에서 등록.
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '℃' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    // 키보드 약물 탭으로 전환 후 등록(탭 전환해도 자주쓰는 약물 편집이 form에 보존돼야 한다).
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '①' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    // 두 약물 in-session 편집 모두 영속.
+    expect(prefs.glyphFavorites.items).toEqual(['℃']);
+    expect(prefs.glyphKeymap.items).toEqual([{ keys: 'ctrl+1', glyph: '①' }]);
+    // 나머지 6개 카테고리 보존.
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.autosave.enabled).toBe(true);
+    expect(prefs.autosave.intervalSec).toBe(120);
+    expect(prefs.byline.email).toBe(true);
+    expect(prefs.byline.emailValue).toBe('keep@me.com');
+    expect(prefs.edit.columnLimit).toBe(true);
+    expect(prefs.edit.language).toBe('ja');
+    expect(prefs.spellcheck.checkOption).toBe('procedure');
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+  });
+
+  it('빈 입력으로 등록만 시도하고 적용하면 glyphKeymap items가 빈 배열로 영속된다(no-op가 저장을 오염시키지 않음)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    // keys만 입력 후 등록(no-op) → 적용.
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'ctrl+1' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    expect(loadEditorPrefs().glyphKeymap.items).toEqual([]);
+  });
 });

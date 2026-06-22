@@ -1221,6 +1221,49 @@ describe('WriterPage — 편집>컬럼제한(editor-canvas 좌우 여백) 적용
     expect(loadEditorPrefs().edit.columnLimit).toBe(false); // 저장 불변
     expect(screen.getByTestId('editor-canvas').style.paddingLeft).toBe(''); // 여백 불변
   });
+
+  // 보강(harness-tester): 라이브 apply 경로(onPrefsClose 게이트) 회귀.
+  // 컬럼제한을 다이얼로그에서 켜고 '적용'하면 좌우 여백이 붙되, 저장돼 있던 배경색(editorBg)이 캔버스에서 사라지지 않아야 한다
+  // (onPrefsClose가 background와 columnLimit을 둘 다 다시 읽으므로 — 한쪽 게이트 누락 회귀를 함께 못박는다).
+  it("저장된 배경색이 있는 상태에서 컬럼제한을 켜고 '적용'해도 배경색이 캔버스에 보존된다(게이트 회귀)", async () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...loadEditorPrefs().colors, background: '#abcdef' },
+    });
+    setup({ identity: { role: 'R' } });
+    expect(screen.getByTestId('editor-canvas')).toHaveStyle({ backgroundColor: '#abcdef' });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    await waitFor(() => expect(screen.getByTestId('editor-canvas')).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' }));
+    // 배경색은 그대로 — 컬럼제한 적용이 editorBg를 떨구지 않는다.
+    expect(screen.getByTestId('editor-canvas')).toHaveStyle({ backgroundColor: '#abcdef' });
+  });
+
+  // 보강(harness-tester): 다이얼로그 apply의 setEditorPref 합성 회귀 — 컬럼제한만 켜도 다른 카테고리(맞춤법·약물·날짜형식)가 보존돼야 한다.
+  it('컬럼제한만 켜서 적용해도 다른 카테고리(맞춤법/약물/날짜형식) 저장값이 보존된다(합성 회귀)', async () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      dateFormat: 'YYYY.MM.DD',
+      spellcheck: { ...loadEditorPrefs().spellcheck, errorStyle: 'underline' },
+      glyphFavorites: { items: ['℃'] },
+    });
+    setup({ identity: { role: 'R' } });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    await waitFor(() => expect(loadEditorPrefs().edit.columnLimit).toBe(true));
+    const prefs = loadEditorPrefs();
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD'); // 날짜형식 보존
+    expect(prefs.spellcheck.errorStyle).toBe('underline'); // 맞춤법 보존
+    expect(prefs.glyphFavorites.items).toEqual(['℃']); // 약물 보존
+  });
 });
 
 // Step 1(13-editor-autosave): 자동저장 타이머(간격마다 활성 탭 초안 스냅샷) + 파일>복구 + 송고/저장 후 초안 무효화.
