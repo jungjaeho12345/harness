@@ -72,7 +72,8 @@
     },
     {
       "dir": "13-editor-autosave",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-06-22T15:15:46+0900"
     }
   ]
 }
