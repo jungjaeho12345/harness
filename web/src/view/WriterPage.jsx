@@ -3,7 +3,7 @@
 // 가드: 송고는 "(끝)" 필요, 송고/보류는 제목(첫 줄) 필요. 각 액션은 확인창 후에만 진행.
 // 데이터는 useWriteController/useSearchController 경유(transport 직접 호출 금지, ADR-003).
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppContext } from '../app/context.js';
 import { useWriteController } from '../controller/useWriteController.js';
 import { useSearchController } from '../controller/useSearchController.js';
@@ -12,6 +12,12 @@ import { StatusBar } from './StatusBar.jsx';
 import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
+import { FindReplaceDialog } from './FindReplaceDialog.jsx';
+import { EditorContextMenu } from './EditorContextMenu.jsx';
+import {
+  isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
+} from './editorFind.js';
+import { selectAllInEditor } from './editorSelect.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
@@ -50,7 +56,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -77,6 +83,11 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(true);
   const [showToolBar, setShowToolBar] = useState(true);
+  // 약물바 보이기(우클릭 컨텍스트 메뉴) — placeholder 토글 상태만 보존한다.
+  // 약물바(glyph bar) 컴포넌트는 이번 범위 밖(news.md 경계)이라 실제 바는 렌더하지 않는다(토글만 동작).
+  const [showGlyphBar, setShowGlyphBar] = useState(false);
+  // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
+  const [ctxMenu, setCtxMenu] = useState(null);
 
   // 색상 환경설정(도움말>환경설정) — 모달 표시 + 에디터 바탕색(editorBg). 저장값은 localStorage(editorPrefs)에 영속.
   const [showPrefs, setShowPrefs] = useState(false);
@@ -116,6 +127,29 @@ export function WriterPage() {
   useEffect(() => {
     if (pendingCaretLine !== null) setPendingCaretLine(null);
   }, [pendingCaretLine]);
+
+  // 찾기/바꾸기(Ctrl+F·편집 메뉴) — 다이얼로그 표시 + 찾기 컨트롤 상태(Step 2 결선).
+  // 매치는 effect/타이머 없이 렌더 중 파생 계산한다(본문 텍스트 기준 — blocksToText). 본문 변경은 안전 경로(updateField+serialize)로만.
+  const [showFind, setShowFind] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findCase, setFindCase] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const bodyText = blocksToText(blocks);
+  // 현재 query의 매치(파생) — body/query/대소문자 변경 시에만 재계산.
+  const matches = useMemo(
+    () => findMatches(bodyText, findQuery, { caseSensitive: findCase }),
+    [bodyText, findQuery, findCase],
+  );
+  // query/대소문자 즉시 매치 수를 구하는 헬퍼(onQueryChange에서 activeIndex 초기화 판단용 — state 반영 전 동기 계산).
+  const matchesFor = (q, caseSensitive) => findMatches(bodyText, q, { caseSensitive });
+
+  // 찾기/바꾸기 다이얼로그 열기 — 부모 findQuery/activeIndex를 함께 초기화한다.
+  // (재개방 직후 다이얼로그 입력은 비어 있는데 부모에 이전 query/activeIndex가 남아 find-status가 잠깐 'N/M'을 보이는 불일치 방지.)
+  const openFind = () => {
+    setFindQuery('');
+    setActiveIndex(-1);
+    setShowFind(true);
+  };
 
   // 활성 탭 미러 ref — 자동저장 타이머가 매 타이핑마다 재설정되지 않도록 활성 탭을 ref로 읽되, 항상 최신값을
   // 보게 동기화한다(lastCaretRef와 동일 미러링 패턴). 이게 없으면 타이머 클로저가 초기 activeTab에 stale된다.
@@ -161,7 +195,51 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
-  // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 6개 항목만 동작한다.
+  // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
+  // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
+  const focusMatchLine = (offset) => {
+    const { lineIndex } = lineAtOffset(bodyText, offset);
+    setPendingCaretLine(lineIndex);
+  };
+
+  // 다음/이전 찾기 — 현재 활성 매치 기준으로 순환 인덱스를 구해 그 줄로 이동.
+  // forward는 현재 매치 끝(cur.end)부터 다음 매치를, backward는 현재 매치 시작(cur.start)부터 이전 매치를 찾는다.
+  // (backward에 cur.end를 쓰면 현재 매치 자신이 start<cur.end를 항상 만족해 제자리에 정체된다 — onReplaceOne과 동일하게 cur.start 사용.)
+  // 활성 매치가 없으면(activeIndex<0) 마지막 캐럿 offset(없으면 0)부터 탐색한다.
+  const findStep = (forward) => {
+    if (!findQuery || matches.length === 0) return; // 빈 query/매치 없음 no-op
+    const cur = activeIndex >= 0 && activeIndex < matches.length ? matches[activeIndex] : null;
+    const fromOffset = cur
+      ? (forward ? cur.end : cur.start)
+      : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
+    const idx = nextMatchIndex(matches, fromOffset, { forward });
+    if (idx < 0) return;
+    setActiveIndex(idx);
+    focusMatchLine(matches[idx].start);
+  };
+
+  // 바꾸기(replaceOne) — 첫(또는 활성 이후) 매치 하나만 치환. 매핑/빈 query는 no-op(본문-only 불변식).
+  const onReplaceOne = (replacement) => {
+    if (isMapping || !findQuery) return;
+    const cur = activeIndex >= 0 && activeIndex < matches.length ? matches[activeIndex] : null;
+    const fromOffset = cur ? cur.start : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
+    const r = replaceOne(blocks, findQuery, replacement, { caseSensitive: findCase, fromOffset });
+    if (!r.replaced) return; // 매치 없음 no-op
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretOffset === 'number') focusMatchLine(r.caretOffset);
+    setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 인덱스 무효 → 리셋(다음 찾기는 캐럿/0부터).
+  };
+
+  // 모두 바꾸기(replaceAll) — 모든 매치 치환. 다이얼로그는 열린 채 유지(현황 갱신). 매핑/빈 query no-op.
+  const onReplaceAll = (replacement) => {
+    if (isMapping || !findQuery) return;
+    const r = replaceAll(blocks, findQuery, replacement, { caseSensitive: findCase });
+    if (r.count <= 0) return; // 매치 없음 no-op
+    updateField('body', serialize(r.blocks));
+    setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 무효.
+  };
+
+  // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
@@ -178,6 +256,11 @@ export function WriterPage() {
       clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
       return;
     }
+    // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
+    if (id === 'edit.findReplace') { openFind(); return; }
+    // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
+    // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
+    if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
     const fn = VIEW_TRANSFORMS[id];
@@ -190,9 +273,60 @@ export function WriterPage() {
     setPendingCaretLine(caretLine); // 같은 줄 유지(메뉴 클릭으로 빠진 포커스를 그 줄로 되돌림).
   };
 
+  // 우클릭 컨텍스트 메뉴(EditorContextMenu) 활성 항목(ctx.*) — EditorMenuBar enabledIds 패턴.
+  //  - 항상 활성: 찾기/바꾸기·전체 선택·보이기 토글(메뉴바/툴바/약물바). 선택 연산·레이아웃 토글이라 본문-only 불변식과 무관.
+  //  - 표준 편집(잘라내기/복사/붙여넣기): 비매핑(텍스트 편집 가능)일 때만 활성. 매핑(텍스트 잠금)에서는 복사도 일관되게 비활성으로
+  //    단순화한다(본문 변경 항목과 같은 가드 — 잘라내기/붙여넣기는 텍스트를 바꾸므로 반드시 비활성).
+  //  - aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력): 항상 비활성 placeholder(미구현).
+  const ctxEnabledIds = [
+    'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste']),
+  ];
+  // 보이기 토글의 현재 on 상태(체크 표식용).
+  const ctxCheckedIds = [
+    ...(showMenuBar ? ['ctx.showMenuBar'] : []),
+    ...(showToolBar ? ['ctx.showToolBar'] : []),
+    ...(showGlyphBar ? ['ctx.showGlyphBar'] : []),
+  ];
+
+  // 우클릭 컨텍스트 메뉴 선택(ctx.*) 라우팅. 찾기/전체선택은 메뉴바와 동일 동작을 공유한다(중복 금지).
+  const onCtxSelect = (id) => {
+    switch (id) {
+      // 찾기/바꾸기 — 매핑에선 본문 변경 가능이라 다이얼로그를 열지 않는다(Ctrl+F·편집 메뉴와 동일 가드).
+      case 'ctx.findReplace': if (!isMapping) openFind(); break;
+      // 전체 선택 — Step 2 selectAllInEditor 재사용(선택 연산만, 본문/DOM 무변경).
+      case 'ctx.selectAll': selectAllInEditor(document.querySelector('.yh-editor')); break;
+      case 'ctx.showMenuBar': setShowMenuBar((v) => !v); break;
+      case 'ctx.showToolBar': setShowToolBar((v) => !v); break;
+      // 약물바 — placeholder 토글 상태만 바꾼다(실제 바 미렌더 — 범위 밖).
+      case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
+      // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
+      // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
+      // 에디터로 되돌린 뒤 document.execCommand를 시도하되, 미지원 환경(jsdom)에서는 no-op으로 두고 메뉴만 닫는다(브라우저 단축키 정상).
+      case 'ctx.cut':
+      case 'ctx.copy':
+      case 'ctx.paste': {
+        const cmd = id === 'ctx.cut' ? 'cut' : id === 'ctx.copy' ? 'copy' : 'paste';
+        const root = document.querySelector('.yh-editor');
+        if (root && typeof root.focus === 'function') root.focus();
+        try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
+        break;
+      }
+      // aux 항목(ctx.companyCode/pasteOriginal/pasteText/symbolInput)은 비활성이라 호출되지 않는다.
+      default: break;
+    }
+  };
+
   // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
+    // Ctrl+F → 찾기/바꾸기 다이얼로그(브라우저 기본 찾기 가로채기). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
+    // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
+    if (isFindReplace(e)) {
+      e.preventDefault();
+      if (!isMapping) openFind();
+      return;
+    }
     if (isInsertEndMarker(e)) {
       e.preventDefault();
       insertEnd();
@@ -324,8 +458,14 @@ export function WriterPage() {
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
-          {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음). */}
-          <div className="yh-writer__canvas" data-testid="editor-canvas" style={{ backgroundColor: editorBg }}>
+          {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음).
+              에디터 본문 우클릭 → 브라우저 기본 메뉴 대신 커스텀 컨텍스트 메뉴(EditorContextMenu)를 좌표에 띄운다(ListPage 패턴). */}
+          <div
+            className="yh-writer__canvas"
+            data-testid="editor-canvas"
+            style={{ backgroundColor: editorBg }}
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+          >
             <Editor
               key={activeTabId}
               blocks={blocks}
@@ -413,6 +553,35 @@ export function WriterPage() {
 
       {/* 색상 환경설정 모달 — 도움말>환경설정으로 열림. 적용 시 onPrefsClose(true)로 배경 적용. */}
       <EditorPrefsDialog open={showPrefs} onClose={onPrefsClose} />
+
+      {/* 찾기/바꾸기 다이얼로그 — Ctrl+F·편집 메뉴로 열림(매핑에서는 안 열림). 본문 변경은 안전 경로(updateField+serialize)로만. */}
+      <FindReplaceDialog
+        open={showFind}
+        matchCount={matches.length}
+        activeIndex={activeIndex}
+        onQueryChange={(q, { caseSensitive }) => {
+          setFindQuery(q);
+          setFindCase(caseSensitive);
+          setActiveIndex(matchesFor(q, caseSensitive).length ? 0 : -1);
+        }}
+        onFindNext={() => findStep(true)}
+        onFindPrev={() => findStep(false)}
+        onReplaceOne={onReplaceOne}
+        onReplaceAll={onReplaceAll}
+        onClose={() => setShowFind(false)}
+      />
+
+      {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
+          잘라내기/복사/붙여넣기는 브라우저 기본 동작에 위임하고(onCtxSelect), aux 항목은 비활성 placeholder다. */}
+      {ctxMenu && (
+        <EditorContextMenu
+          position={ctxMenu}
+          enabledIds={ctxEnabledIds}
+          checkedIds={ctxCheckedIds}
+          onSelect={onCtxSelect}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </main>
   );
 }

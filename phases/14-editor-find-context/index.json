@@ -1,0 +1,51 @@
+{
+  "project": "기사 작성기",
+  "phase": "14-editor-find-context",
+  "steps": [
+    {
+      "step": 0,
+      "name": "find-engine-pure",
+      "status": "completed",
+      "deps": [],
+      "started_at": "2026-06-22T16:50:23+0900",
+      "summary": "web/src/view/editorFind.js 순수 엔진 추가: isFindReplace(Ctrl+F·code=KeyF·metaKey 무시), findMatches(text,query,{caseSensitive})→비중첩 리터럴 매치 [{start,end}], nextMatchIndex(matches,fromOffset,{forward})→순환 인덱스(빈 배열 -1), replaceOne(blocks,query,replacement,{caseSensitive,fromOffset})→{blocks,replaced,matchStart,caretOffset}, replaceAll(blocks,query,replacement,{caseSensitive})→{blocks,count}. blocksToText 좌표 기준, lineAtOffset·textLineToBlockIndex 재사용해 텍스트 블록 text만 치환(임베드·순서·개수 불변, 입력 mutate 없음). editorFind.test.js 24개(빈 query no-op·재매치 caretOffset 단조성 등 plan-reviewer 케이스 포함). test:web 546 pass, build·lint 통과. 에디터/WriterPage/컴포넌트 무변경.",
+      "completed_at": "2026-06-22T16:56:10+0900"
+    },
+    {
+      "step": 1,
+      "name": "find-replace-dialog",
+      "status": "completed",
+      "deps": [
+        0
+      ],
+      "started_at": "2026-06-22T16:55:04+0900",
+      "summary": "web/src/view/FindReplaceDialog.jsx 순수 표시/폼 다이얼로그 추가: 찾을내용/바꿀내용 입력·대소문자 구분 체크·다음/이전 찾기·바꾸기·모두 바꾸기·닫기 버튼·매치 현황(3/12 또는 '검색 결과 없음'). query/caseSensitive 변경은 onQueryChange(query,{caseSensitive})로 즉시 부모 통지, 나머지는 콜백 위임(검색/치환·DOM·transport 없음, ADR-003). role=dialog+aria-label='찾기/바꾸기', Esc 닫기, open false→true 시에만 폼 초기화. yonhap.css yh-find-replace 떠있는 도구 패널 스타일 추가. FindReplaceDialog.test.jsx 10개 통과, test:web 556·build·lint 통과. 에디터/WriterPage/ContextMenu 무변경.",
+      "completed_at": "2026-06-22T16:59:46+0900"
+    },
+    {
+      "step": 2,
+      "name": "find-replace-wiring",
+      "status": "completed",
+      "deps": [
+        0,
+        1
+      ],
+      "started_at": "2026-06-22T16:59:47+0900",
+      "summary": "WriterPage.jsx에 Step0 엔진(editorFind)+Step1 다이얼로그(FindReplaceDialog) 결선. MENU_ENABLED에 'edit.findReplace','edit.selectAll' 추가. onKeyDown 최상단(라인삭제 조기 return 이전)에 isFindReplace(e)→e.preventDefault()+!isMapping시 setShowFind(true) 분기(Ctrl+F 브라우저 기본 가로채기). onMenuSelect 매핑 가드(if isMapping return) 뒤에 edit.findReplace→setShowFind(true), edit.selectAll→selectAllInEditor(document.querySelector('.yh-editor')) 분기 추가. 찾기 핸들러(findStep/onReplaceOne/onReplaceAll)는 매치를 useMemo로 렌더 중 파생(findMatches, effect/타이머 없음)하고, 바꾸기는 전부 updateField('body',serialize(...))+setPendingCaretLine(focusMatchLine) 안전 경로로만. 매핑/빈 query는 onReplaceOne/All 진입부에서 return(본문-only 불변식 방어). 전체선택은 web/src/view/editorSelect.js의 selectAllInEditor(root)로 분리 — window.getSelection+Range.selectNodeContents만 써 본문/DOM 무변경(Ctrl+A 키는 브라우저 기본 위임, 메뉴만 명시 selectAll). FindReplaceDialog는 EditorPrefsDialog 옆에 배치. Editor.jsx 무수정. editorSelect.test.js 3개 + WriterPage.test.jsx 10개 신규(기존 '찾기/바꾸기 비활성' 회귀 테스트는 결선으로 활성화돼 '잘라내기'(edit.cut)로 대체). test:web 570 pass, build·lint 통과.",
+      "completed_at": "2026-06-22T17:13:33+0900"
+    },
+    {
+      "step": 3,
+      "name": "editor-context-menu",
+      "status": "completed",
+      "deps": [
+        2
+      ],
+      "started_at": "2026-06-22T17:13:34+0900",
+      "summary": "web/src/view/EditorContextMenu.jsx 신규(순수 표시) + WriterPage 결선. EDITOR_CONTEXT_ITEMS=news.md L173 12항목(ctx.* namespaced, 순서·라벨·shortcut 고정). EditorMenuBar enabledSet 패턴 그대로: enabledIds(배열/Set) 미전달 시 전 항목 비활성, disabled=!set.has(id)·활성일 때만 onSelect(id)+onClose(라벨 라우팅 금지). checkedIds로 보이기 토글 aria-checked+✓ 표식. 클래스 yh-editor-context-menu·testid editor-context-menu(조회페이지 yh-context-menu/buildContextMenuItems 무수정·무재사용). WriterPage: showGlyphBar placeholder state(실제 약물바 미렌더)·ctxMenu 좌표 state 추가. yh-writer__canvas onContextMenu=preventDefault+setCtxMenu({x,y})(브라우저 기본 메뉴 차단), ctxMenu 있을 때만 EditorContextMenu 렌더(FindReplaceDialog 옆), 항목선택/Esc/마우스이탈 시 setCtxMenu(null). ctxEnabledIds: 항상 활성=findReplace/selectAll/showMenuBar·ToolBar·GlyphBar, 비매핑일 때만 cut/copy/paste 추가, aux(companyCode/pasteOriginal/pasteText/symbolInput) 항상 비활성. onCtxSelect: findReplace→!isMapping시 setShowFind(true), selectAll→selectAllInEditor(.yh-editor)(Step2 재사용), showMenuBar/ToolBar/GlyphBar→토글 setter, cut/copy/paste→에디터 root.focus()+document.execCommand(jsdom 미지원 try/catch no-op·contentEditable 직접 조작 안 함). Editor.jsx 무수정. EditorContextMenu.test.jsx 11개 + WriterPage.test.jsx 8개 신규. test:web 589 pass(이전 570+19), build·lint 통과.",
+      "completed_at": "2026-06-22T17:21:32+0900"
+    }
+  ],
+  "created_at": "2026-06-22T16:50:23+0900",
+  "completed_at": "2026-06-22T17:21:33+0900"
+}

@@ -74,6 +74,11 @@
       "dir": "13-editor-autosave",
       "status": "completed",
       "completed_at": "2026-06-22T15:15:46+0900"
+    },
+    {
+      "dir": "14-editor-find-context",
+      "status": "completed",
+      "completed_at": "2026-06-22T17:21:33+0900"
     }
   ]
 }

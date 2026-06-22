@@ -1037,13 +1037,15 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 6개 외 항목(표 삽입·찾기/바꾸기)은 여전히 비활성이다', async () => {
+  it('활성 항목 외(표 삽입·잘라내기)는 여전히 비활성이다', async () => {
+    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐으므로,
+    // 미결선 예시는 여전히 비활성인 '잘라내기'(edit.cut)로 검증한다(표 삽입은 그대로).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
     expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
     await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
-    expect(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -1347,5 +1349,441 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
 
     await waitFor(() => expect(save).toHaveBeenCalled());
     await waitFor(() => expect(loadDraft('AKR9')).toBeNull());
+  });
+});
+
+// Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
+// Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
+describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 다이얼로그 자체(role=dialog '찾기/바꾸기')만 본다(메뉴 라벨 '찾기/바꾸기'와 혼동 방지).
+  const findDialog = () => screen.queryByRole('dialog', { name: '찾기/바꾸기' });
+
+  it('Ctrl+F keydown 시 찾기/바꾸기 다이얼로그가 열리고 preventDefault된다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(findDialog()).toBeNull();
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'f', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // 브라우저 기본 찾기 가로채기
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+  });
+
+  it("편집 메뉴 '찾기/바꾸기'(edit.findReplace) 클릭 시 다이얼로그가 열린다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    // 편집 드롭다운 안의 항목만 본다(다이얼로그 라벨과 분리).
+    await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+  });
+
+  it("편집 메뉴 '찾기/바꾸기'·'전체 선택'이 활성(enabled)이다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    const menu = screen.getByTestId('menu-편집');
+    expect(within(menu).getByText('찾기/바꾸기').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
+  });
+
+  it("활성 항목 외(잘라내기·표 삽입)는 여전히 비활성이다(회귀)", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
+    await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
+    expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
+  });
+
+  // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
+  // body를 직접 못 보므로, 모두 바꾸기 후 저장(보류)으로 PUT된 markupVersion을 deserialize해 검증한다.
+  it("find-query='foo' + 모두 바꾸기('X') → 본문 모든 'foo'가 'X'로 바뀐다(임베드 불변)", async () => {
+    const { container } = await openWith([
+      textBlock('foo bar'),
+      embedBlock({ embedType: 'image', src: 'x.png' }),
+      textBlock('foo baz foo'),
+    ]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+
+    // 본문 텍스트 라인의 모든 foo가 X로 바뀐다(blocksToText 기준).
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual(['X bar', 'X baz X']);
+    });
+    // 임베드는 위치·내용 불변(이미지 1개 그대로).
+    expect(container.querySelectorAll('[data-embed-type="image"]').length).toBe(1);
+  });
+
+  it("'바꾸기'(replaceOne)는 첫 매치만 치환한다", async () => {
+    const { container } = await openWith([textBlock('foo and foo')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual(['X and foo']); // 첫 매치만
+    });
+  });
+
+  it('빈 query로 바꾸기/모두 바꾸기 클릭 시 본문이 바뀌지 않는다(updateField 미호출)', async () => {
+    const { container } = await openWith([textBlock('foo bar')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    // query를 비운 채(바꿀 내용만 입력) 바꾸기/모두 바꾸기.
+    await userEvent.type(screen.getByTestId('find-replacement'), 'X');
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+
+    // 본문 무변경.
+    const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+    expect(lines).toEqual(['foo bar']);
+  });
+
+  it('매핑 모드: Ctrl+F는 다이얼로그를 열지 않고 preventDefault만 한다', async () => {
+    const { container } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+
+    // 매핑은 onKeyDown이 Editor에 전달되지 않으므로(textEditable=false) Editor 위 Ctrl+F는 가로채지지 않는다.
+    // 매핑에서 키로 다이얼로그가 열리지 않음을 확인한다(본문-only 불변식).
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+  });
+
+  // 보강(tester): 매핑 Ctrl+F의 핵심 불변식은 "다이얼로그 비개방"이 아니라 "본문 불변"이다.
+  // WriterPage가 매핑 시 onKeyDown={undefined}로 Editor에 키 핸들러를 붙이지 않으므로(텍스트 잠금) Editor 위 Ctrl+F는
+  // 부모로 전파되지 않는다 — 브라우저 기본 찾기(읽기 동작)는 본문을 바꾸지 않아 무해하다. 여기서는 매핑 중 Ctrl+F가
+  // 본문(updateField('body'))을 절대 바꾸지 않음을 저장 PUT로 고정한다(다이얼로그 비개방 단언만으로는 본문 불변을 직접 보장하지 못함).
+  it('매핑 모드: Ctrl+F는 본문(updateField body)을 바꾸지 않는다(저장 시 원본 PUT)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 본문 불변
+  });
+
+  it("매핑 모드: 메뉴 '찾기/바꾸기' 클릭도 다이얼로그를 열지 않고 본문(updateField)을 바꾸지 않는다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
+
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('닫기 버튼으로 다이얼로그가 닫힌다', async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('find-close'));
+    await waitFor(() => expect(findDialog()).toBeNull());
+  });
+
+  it('Alt+Y/(끝)·Ctrl+Y/(계속)·Ctrl+D 라인삭제는 회귀 없이 동작한다(isFindReplace 분기 추가 무영향)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문'), textBlock('다음')]);
+    const box = container.querySelector('.yh-editor');
+    const editorLines = () => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+
+    // Alt+Y → (끝). isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다.
+    fireEvent.keyDown(box, { key: 'y', altKey: true });
+    await waitFor(() => expect(editorLines()).toContain('(끝)'));
+    expect(findDialog()).toBeNull(); // 찾기 다이얼로그는 안 열림
+  });
+
+  // 회귀(머지 게이트 fix): '이전 찾기'(find-prev)가 현재 활성 매치에 정체되지 않고 직전 매치로 이동해야 한다.
+  // 버그: forward/backward 공통으로 fromOffset=cur.end를 써서 backward일 때 현재 매치가 start<cur.end를 항상 만족 →
+  // nextMatchIndex가 자기 자신을 반환했다. 수정: backward는 fromOffset=cur.start(onReplaceOne과 일관).
+  // find-status('pos/total')의 pos=activeIndex+1로 활성 인덱스를 검증한다.
+  const findStatus = () => screen.getByTestId('find-status').textContent;
+  it("'이전 찾기'는 직전 매치로 이동하고 처음 매치에서 누르면 마지막으로 wrap된다", async () => {
+    const { container } = await openWith([textBlock('foo foo foo')]); // 매치 3개: [0,3],[4,7],[8,11]
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await waitFor(() => expect(findStatus()).toBe('1/3')); // activeIndex=0(첫 매치)
+
+    // 첫 매치에서 '이전 찾기' → 마지막으로 wrap(3/3). 버그 상태였다면 1/3에 정체.
+    await userEvent.click(screen.getByTestId('find-prev'));
+    await waitFor(() => expect(findStatus()).toBe('3/3'));
+
+    // 다시 '이전 찾기' → 직전 매치(2/3). 버그 상태였다면 3/3에 정체.
+    await userEvent.click(screen.getByTestId('find-prev'));
+    await waitFor(() => expect(findStatus()).toBe('2/3'));
+  });
+
+  it("'다음 찾기'는 회귀 없이 다음 매치로 이동하고 마지막에서 처음으로 wrap된다", async () => {
+    const { container } = await openWith([textBlock('foo foo foo')]); // 매치 3개
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), 'foo');
+    await waitFor(() => expect(findStatus()).toBe('1/3')); // activeIndex=0
+
+    await userEvent.click(screen.getByTestId('find-next'));
+    await waitFor(() => expect(findStatus()).toBe('2/3'));
+    await userEvent.click(screen.getByTestId('find-next'));
+    await waitFor(() => expect(findStatus()).toBe('3/3'));
+    await userEvent.click(screen.getByTestId('find-next')); // 마지막 → 처음으로 wrap
+    await waitFor(() => expect(findStatus()).toBe('1/3'));
+  });
+});
+
+// Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
+// editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
+// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바는 토글 상태만(실제 바 없음).
+describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // editor-canvas 래퍼를 우클릭(contextmenu)해 커스텀 메뉴를 띄운다. preventDefault 검증용 spy를 함께 반환.
+  function rightClickCanvas(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    const ev = createEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(canvas, ev);
+    return spy;
+  }
+
+  const ctxMenu = () => screen.queryByTestId('editor-context-menu');
+  const findDialog = () => screen.queryByRole('dialog', { name: '찾기/바꾸기' });
+  const ctxItem = (label) => within(ctxMenu()).getByText(label).closest('button');
+
+  it('editor-canvas 우클릭 시 editor-context-menu가 뜨고 브라우저 기본 메뉴가 막힌다(preventDefault)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(ctxMenu()).toBeNull();
+
+    const spy = rightClickCanvas(container);
+
+    expect(spy).toHaveBeenCalled(); // 브라우저 기본 컨텍스트 메뉴 차단
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    // 조회페이지 메뉴(yh-context-menu)는 뜨지 않는다.
+    expect(container.querySelector('.yh-context-menu')).toBeNull();
+  });
+
+  it("컨텍스트 메뉴 '찾기/바꾸기' 클릭 시 찾기 다이얼로그가 열린다", async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(findDialog()).toBeNull();
+
+    await userEvent.click(ctxItem('찾기/바꾸기'));
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+    expect(ctxMenu()).toBeNull(); // 선택 후 메뉴 닫힘
+  });
+
+  it("컨텍스트 메뉴 '메뉴바 보이기' 클릭 시 메뉴바가 토글된다", async () => {
+    const { container, queryByTestId } = await openWith([textBlock('헤드')]);
+    expect(queryByTestId('menubar')).toBeInTheDocument();
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    await userEvent.click(ctxItem('메뉴바 보이기'));
+
+    await waitFor(() => expect(queryByTestId('menubar')).toBeNull());
+  });
+
+  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 에러 없이 토글 상태만 바꾼다(실제 바 없음·체크 표식 갱신)", async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    // 처음엔 약물바 off → aria-checked=false.
+    expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(ctxItem('약물바 보이기')); // 토글 — 에러 없이 동작
+    expect(ctxMenu()).toBeNull(); // 선택 후 닫힘
+
+    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존). 실제 약물바 컴포넌트는 렌더하지 않는다.
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'true');
+    expect(container.querySelector('[data-testid="glyphbar"]')).toBeNull(); // 실제 바 미렌더
+  });
+
+  it('aux 항목(기업코드변환/약물입력/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    for (const label of ['기업코드변환', '약물입력', '원본 붙여넣기', '텍스트 붙여넣기']) {
+      expect(ctxItem(label)).toBeDisabled();
+    }
+  });
+
+  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·보이기 토글이 활성이다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+      expect(ctxItem(label)).toBeEnabled();
+    }
+  });
+
+  it('매핑 모드: 컨텍스트 찾기/바꾸기 클릭이 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다 + 잘라내기/붙여넣기 비활성', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    // 매핑: 잘라내기/붙여넣기 비활성(본문 텍스트 잠금).
+    expect(ctxItem('잘라내기')).toBeDisabled();
+    expect(ctxItem('붙여넣기')).toBeDisabled();
+
+    await userEvent.click(ctxItem('찾기/바꾸기'));
+    expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('Esc 키로 컨텍스트 메뉴가 닫힌다', async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+    fireEvent.keyDown(ctxMenu(), { key: 'Escape' });
+    await waitFor(() => expect(ctxMenu()).toBeNull());
+  });
+
+  // 보강(tester): 클립보드 항목(잘라내기/복사/붙여넣기)은 브라우저 기본 동작에 위임한다.
+  // jsdom에는 document.execCommand가 없으므로(typeof undefined) 구현의 `typeof === 'function'` 가드 + try/catch가
+  // 예외 없이 메뉴만 닫아야 한다. 핵심 회귀 방어: 클릭이 (1) 에러 없이 동작하고 (2) 본문(updateField('body'))을
+  // 절대 바꾸지 않으며(contentEditable/블록 직접 조작 금지 — Editor.handlePaste의 (끝) 차단/이미지 임베드 경로 보호)
+  // (3) 메뉴를 닫는다. 활성/비활성만 보던 기존 단언으로는 이 동작 회귀를 잡지 못한다.
+  for (const label of ['복사', '잘라내기', '붙여넣기']) {
+    it(`컨텍스트 메뉴 '${label}' 클릭은 에러 없이 메뉴를 닫고 본문(updateField body)을 바꾸지 않는다`, async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const original = serialize([textBlock('foo bar'), textBlock('(끝)')]);
+      const { container, model } = await openWith([textBlock('foo bar'), textBlock('(끝)')]);
+      const save = vi.spyOn(model, 'saveArticle');
+      const linesBefore = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+
+      // 클릭이 예외를 던지지 않아야 한다(jsdom: execCommand 미정의 → 가드로 no-op).
+      await userEvent.click(ctxItem(label));
+
+      // 메뉴가 닫힌다(항목 선택 → onClose).
+      await waitFor(() => expect(ctxMenu()).toBeNull());
+
+      // 본문(DOM 라인) 무변경 — 코드가 contentEditable 텍스트/블록을 직접 조작하지 않는다.
+      const linesAfter = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(linesAfter).toEqual(linesBefore);
+
+      // 저장 시 원본 body가 그대로 PUT — updateField('body',…)가 호출되지 않았다(본문 직렬화 경로 미사용).
+      await userEvent.click(actionBtn('보류'));
+      await waitFor(() => expect(save).toHaveBeenCalled());
+      expect(save.mock.calls[0][0].markupVersion).toBe(original);
+    });
+  }
+
+  // 보강(tester): 클립보드 위임 — execCommand가 존재하는 환경(브라우저)에서는 그 명령으로 위임됨을 고정한다.
+  // (구현은 에디터 root를 focus한 뒤 document.execCommand(cut|copy|paste)를 호출한다. 코드 직접 조작이 아님을 명시.)
+  it('클립보드 항목은 execCommand가 존재하면 해당 명령(cut/copy/paste)으로 위임한다(직접 본문 조작 아님)', async () => {
+    const { container } = await openWith([textBlock('foo bar')]);
+    // jsdom에 없는 execCommand를 임시로 주입해 위임 경로를 검증한다(afterEach에서 restoreAllMocks로 정리됨).
+    const exec = vi.fn(() => true);
+    document.execCommand = exec;
+    try {
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('복사'));
+      expect(exec).toHaveBeenCalledWith('copy');
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('잘라내기'));
+      expect(exec).toHaveBeenCalledWith('cut');
+
+      rightClickCanvas(container);
+      await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+      await userEvent.click(ctxItem('붙여넣기'));
+      expect(exec).toHaveBeenCalledWith('paste');
+    } finally {
+      delete document.execCommand; // jsdom 기본(미정의) 상태로 되돌린다 — 다른 테스트의 가드 경로 보존.
+    }
   });
 });
