@@ -14,7 +14,7 @@
       "name": "byline-detail-apply",
       "status": "completed",
       "started_at": "2026-06-22T19:09:25+0900",
-      "completed_at": "2026-06-22T19:13:00+0900",
+      "completed_at": "2026-06-22T19:14:35+0900",
       "summary": "상세보기(articleDetail) 새 창 작성자 필드 아래 byline(email/blog) 부가 라인 출력. buildDetail/renderDetailHtml에 선택적 byline 2번째 인자 추가(기본 {}, 하위호환) — 사용여부 ON+값 비어있지 않은 항목만 author.extra로, 값은 escapeHtml 이스케이프(XSS 비실행 유지). ListPage.openDetail이 dateFormat과 동일한 call-site prefs 패턴으로 loadEditorPrefs().byline 주입. DETAIL_STYLE에 .yh-detail__byline 정적 스타일 추가. 신규 7 테스트 통과(총 609)."
     }
   ]
