@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-06-22T15:03:40+0900",
       "summary": "WriterPage 자동저장 타이머(autosaveCfg 단일 의존성·activeTabRef 미러로 stale-closure 방지·간격마다 활성 탭 fields를 editorDraft localStorage 초안으로 스냅샷+expireDrafts·빈 탭/비활성 시 미저장·unmount clearInterval) + 파일>복구(file.recover: loadDraft→updateField 복원·confirm 가드·복구 후 clearDraft·매핑 차단) + 송고/보류/KILL·매핑저장 성공 시 clearDraft(초안 부활 방지). Editor.jsx 무변경·서버 무관. test:web 522 pass, build·lint 통과.",
-      "completed_at": "2026-06-22T15:14:00+0900"
+      "completed_at": "2026-06-22T15:15:46+0900"
     }
   ],
   "created_at": "2026-06-21T14:39:58+0900"
