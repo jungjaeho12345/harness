@@ -69,6 +69,11 @@
       "dir": "12-editor-prefs-datefmt",
       "status": "completed",
       "completed_at": "2026-06-21T14:25:49+0900"
+    },
+    {
+      "dir": "13-editor-autosave",
+      "status": "completed",
+      "completed_at": "2026-06-22T15:15:46+0900"
     }
   ]
 }

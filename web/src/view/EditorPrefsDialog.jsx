@@ -20,17 +20,32 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 이번 phase는 색상/날짜형식. (후속 phase가 자동저장/바이라인 등을 추가한다.)
+// 환경설정 탭 — 색상/자동저장/날짜형식. (후속 phase가 바이라인 등을 추가한다.)
 const PREF_TABS = [
   { key: 'colors', label: '색상' },
+  { key: 'autosave', label: '자동저장' },
   { key: 'dateFormat', label: '날짜형식' },
 ];
+
+// 자동저장 저장 간격 옵션(news.md "# 에디터 환경설정 > 자동저장: 저장 간격 30초~5분").
+const AUTOSAVE_INTERVALS = [
+  { sec: 30, label: '30초' },
+  { sec: 60, label: '1분' },
+  { sec: 120, label: '2분' },
+  { sec: 180, label: '3분' },
+  { sec: 240, label: '4분' },
+  { sec: 300, label: '5분' },
+];
+
+// 보존 기한 옵션(1~7일).
+const AUTOSAVE_RETENTIONS = [1, 2, 3, 4, 5, 6, 7];
 
 export function EditorPrefsDialog({ open, onClose }) {
   // 활성 탭(색상이 기본). 폼 상태(colors/dateFormat)는 모달 레벨에 둬 탭 전환해도 미적용 값이 보존된다.
   const [tab, setTab] = useState('colors');
   const [colors, setColors] = useState(() => loadEditorPrefs().colors);
   const [dateFormat, setDateFormat] = useState(() => loadEditorPrefs().dateFormat);
+  const [autosave, setAutosave] = useState(() => loadEditorPrefs().autosave);
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -38,6 +53,7 @@ export function EditorPrefsDialog({ open, onClose }) {
       const prefs = loadEditorPrefs();
       setColors(prefs.colors);
       setDateFormat(prefs.dateFormat);
+      setAutosave(prefs.autosave);
     }
   }, [open]);
 
@@ -51,10 +67,16 @@ export function EditorPrefsDialog({ open, onClose }) {
     const {
       title, subtitle, body, background,
     } = colors;
+    const { enabled, intervalSec, retentionDays } = autosave;
+    // colors + autosave를 setEditorPref로 합성하고 dateFormat은 spread로 보존(세 설정 상호 보존 못박음).
     const next = {
-      ...setEditorPref(loadEditorPrefs(), 'colors', {
-        title, subtitle, body, background,
-      }),
+      ...setEditorPref(
+        setEditorPref(loadEditorPrefs(), 'colors', {
+          title, subtitle, body, background,
+        }),
+        'autosave',
+        { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+      ),
       dateFormat,
     };
     saveEditorPrefs(next);
@@ -72,6 +94,7 @@ export function EditorPrefsDialog({ open, onClose }) {
       ...c, title: d.title, subtitle: d.subtitle, body: d.body, background: d.background,
     }));
     setDateFormat(DEFAULT_EDITOR_PREFS.dateFormat);
+    setAutosave(DEFAULT_EDITOR_PREFS.autosave);
   };
 
   return (
@@ -112,6 +135,47 @@ export function EditorPrefsDialog({ open, onClose }) {
                 />
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === 'autosave' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-autosave-enabled">사용</label>
+              <input
+                id="pref-autosave-enabled"
+                data-testid="pref-autosave-enabled"
+                type="checkbox"
+                checked={autosave.enabled}
+                onChange={(e) => setAutosave((a) => ({ ...a, enabled: e.target.checked }))}
+              />
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-autosave-interval">저장 간격</label>
+              <select
+                id="pref-autosave-interval"
+                data-testid="pref-autosave-interval"
+                value={autosave.intervalSec}
+                onChange={(e) => setAutosave((a) => ({ ...a, intervalSec: e.target.value }))}
+              >
+                {AUTOSAVE_INTERVALS.map(({ sec, label }) => (
+                  <option key={sec} value={sec}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="yh-field">
+              <label htmlFor="pref-autosave-retention">보존 기한</label>
+              <select
+                id="pref-autosave-retention"
+                data-testid="pref-autosave-retention"
+                value={autosave.retentionDays}
+                onChange={(e) => setAutosave((a) => ({ ...a, retentionDays: e.target.value }))}
+              >
+                {AUTOSAVE_RETENTIONS.map((d) => (
+                  <option key={d} value={d}>{`${d}일`}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
 
