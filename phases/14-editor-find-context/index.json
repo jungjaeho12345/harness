@@ -20,7 +20,7 @@
       ],
       "started_at": "2026-06-22T16:55:04+0900",
       "summary": "web/src/view/FindReplaceDialog.jsx 순수 표시/폼 다이얼로그 추가: 찾을내용/바꿀내용 입력·대소문자 구분 체크·다음/이전 찾기·바꾸기·모두 바꾸기·닫기 버튼·매치 현황(3/12 또는 '검색 결과 없음'). query/caseSensitive 변경은 onQueryChange(query,{caseSensitive})로 즉시 부모 통지, 나머지는 콜백 위임(검색/치환·DOM·transport 없음, ADR-003). role=dialog+aria-label='찾기/바꾸기', Esc 닫기, open false→true 시에만 폼 초기화. yonhap.css yh-find-replace 떠있는 도구 패널 스타일 추가. FindReplaceDialog.test.jsx 10개 통과, test:web 556·build·lint 통과. 에디터/WriterPage/ContextMenu 무변경.",
-      "completed_at": "2026-06-22T16:58:30+0900"
+      "completed_at": "2026-06-22T16:59:46+0900"
     },
     {
       "step": 2,
