@@ -25,11 +25,14 @@
     {
       "step": 2,
       "name": "find-replace-wiring",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         0,
         1
-      ]
+      ],
+      "started_at": "2026-06-22T16:59:47+0900",
+      "summary": "WriterPage.jsx에 Step0 엔진(editorFind)+Step1 다이얼로그(FindReplaceDialog) 결선. MENU_ENABLED에 'edit.findReplace','edit.selectAll' 추가. onKeyDown 최상단(라인삭제 조기 return 이전)에 isFindReplace(e)→e.preventDefault()+!isMapping시 setShowFind(true) 분기(Ctrl+F 브라우저 기본 가로채기). onMenuSelect 매핑 가드(if isMapping return) 뒤에 edit.findReplace→setShowFind(true), edit.selectAll→selectAllInEditor(document.querySelector('.yh-editor')) 분기 추가. 찾기 핸들러(findStep/onReplaceOne/onReplaceAll)는 매치를 useMemo로 렌더 중 파생(findMatches, effect/타이머 없음)하고, 바꾸기는 전부 updateField('body',serialize(...))+setPendingCaretLine(focusMatchLine) 안전 경로로만. 매핑/빈 query는 onReplaceOne/All 진입부에서 return(본문-only 불변식 방어). 전체선택은 web/src/view/editorSelect.js의 selectAllInEditor(root)로 분리 — window.getSelection+Range.selectNodeContents만 써 본문/DOM 무변경(Ctrl+A 키는 브라우저 기본 위임, 메뉴만 명시 selectAll). FindReplaceDialog는 EditorPrefsDialog 옆에 배치. Editor.jsx 무수정. editorSelect.test.js 3개 + WriterPage.test.jsx 10개 신규(기존 '찾기/바꾸기 비활성' 회귀 테스트는 결선으로 활성화돼 '잘라내기'(edit.cut)로 대체). test:web 570 pass, build·lint 통과.",
+      "completed_at": "2026-06-22T17:10:40+0900"
     },
     {
       "step": 3,
