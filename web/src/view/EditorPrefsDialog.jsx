@@ -20,13 +20,14 @@ const COLOR_FIELDS = [
   { key: 'background', label: '바탕색' },
 ];
 
-// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식. (순서는 news.md 환경설정 순서를 따른다.)
+// 환경설정 탭 — 편집/색상/자동저장/바이라인/날짜형식/맞춤법. (순서는 news.md 환경설정 순서를 따른다.)
 const PREF_TABS = [
   { key: 'edit', label: '편집' },
   { key: 'colors', label: '색상' },
   { key: 'autosave', label: '자동저장' },
   { key: 'byline', label: '바이라인' },
   { key: 'dateFormat', label: '날짜형식' },
+  { key: 'spellcheck', label: '맞춤법' },
 ];
 
 // 편집 탭 — 언어 9종(news.md L190). value=enum 코드(store edit.language 허용값), label=한국어 표시.
@@ -68,6 +69,31 @@ const AUTOSAVE_INTERVALS = [
 // 보존 기한 옵션(1~7일).
 const AUTOSAVE_RETENTIONS = [1, 2, 3, 4, 5, 6, 7];
 
+// 맞춤법 탭 — 검사옵션 5종(news.md L211, 단일 enum). value=store spellcheck.checkOption 허용값, label=한국어 표시.
+const SPELLCHECK_OPTIONS = [
+  { value: 'procedure', label: '절차오류' },
+  { value: 'spacing', label: '띄어쓰기' },
+  { value: 'joining', label: '붙여쓰기' },
+  { value: 'spacingJoining', label: '띄어쓰기+붙여쓰기' },
+  { value: 'circularLoan', label: '순환용어·외래어' },
+];
+
+// 맞춤법 탭 — 오류유형 6종(news.md L212, 다중 bool). key=store spellcheck.errorTypes 키.
+const SPELLCHECK_ERROR_TYPES = [
+  { key: 'misuse', label: '오용어' },
+  { key: 'multiWord', label: '다수어절' },
+  { key: 'semantic', label: '의미문체' },
+  { key: 'circular', label: '순환용어' },
+  { key: 'statSpacing', label: '통계붙여쓰기' },
+  { key: 'others', label: '그외' },
+];
+
+// 맞춤법 탭 — 오류표현 2종(news.md L213, enum). value=store spellcheck.errorStyle 허용값.
+const SPELLCHECK_ERROR_STYLES = [
+  { value: 'bold', label: '굵게' },
+  { value: 'underline', label: '밑줄' },
+];
+
 export function EditorPrefsDialog({ open, onClose }) {
   // 활성 탭(색상이 기본). 폼 상태(colors/dateFormat)는 모달 레벨에 둬 탭 전환해도 미적용 값이 보존된다.
   const [tab, setTab] = useState('colors');
@@ -76,6 +102,7 @@ export function EditorPrefsDialog({ open, onClose }) {
   const [autosave, setAutosave] = useState(() => loadEditorPrefs().autosave);
   const [byline, setByline] = useState(() => loadEditorPrefs().byline);
   const [edit, setEdit] = useState(() => loadEditorPrefs().edit);
+  const [spellcheck, setSpellcheck] = useState(() => loadEditorPrefs().spellcheck);
 
   // 다시 열릴 때마다 저장값으로 폼을 재초기화한다(이전 미적용 편집/적용 결과가 다음 열림에 반영되도록).
   useEffect(() => {
@@ -86,6 +113,7 @@ export function EditorPrefsDialog({ open, onClose }) {
       setAutosave(prefs.autosave);
       setByline(prefs.byline);
       setEdit(prefs.edit);
+      setSpellcheck(prefs.spellcheck);
     }
   }, [open]);
 
@@ -106,33 +134,39 @@ export function EditorPrefsDialog({ open, onClose }) {
     const {
       columnLimit, dragDrop, noCommonAbbr, companyCode, language, lineSpacing, inputMode,
     } = edit;
-    // colors + autosave + byline + edit를 setEditorPref로 합성하고 dateFormat은 spread로 보존
-    // (loadEditorPrefs() base spread로 spellcheck/glyph 등 미합성 카테고리도 함께 보존된다 — 상호 보존 못박음).
+    const { checkOption, errorTypes, errorStyle } = spellcheck;
+    // colors + autosave + byline + edit + spellcheck를 setEditorPref로 합성하고 dateFormat은 spread로 보존
+    // (loadEditorPrefs() base spread로 glyph 등 미합성 카테고리도 함께 보존된다 — 상호 보존 못박음).
+    // errorTypes는 6키 객체 전체를 통째로 넘긴다(setEditorPref 한 단계 병합이라 부분만 넘기면 나머지 키 손실).
     const next = {
       ...setEditorPref(
         setEditorPref(
           setEditorPref(
-            setEditorPref(loadEditorPrefs(), 'colors', {
-              title, subtitle, body, background,
-            }),
-            'autosave',
-            { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+            setEditorPref(
+              setEditorPref(loadEditorPrefs(), 'colors', {
+                title, subtitle, body, background,
+              }),
+              'autosave',
+              { enabled, intervalSec: Number(intervalSec), retentionDays: Number(retentionDays) },
+            ),
+            'byline',
+            {
+              email, emailValue, blog, blogValue,
+            },
           ),
-          'byline',
+          'edit',
           {
-            email, emailValue, blog, blogValue,
+            columnLimit,
+            dragDrop,
+            noCommonAbbr,
+            companyCode,
+            language,
+            lineSpacing: Number(lineSpacing),
+            inputMode,
           },
         ),
-        'edit',
-        {
-          columnLimit,
-          dragDrop,
-          noCommonAbbr,
-          companyCode,
-          language,
-          lineSpacing: Number(lineSpacing),
-          inputMode,
-        },
+        'spellcheck',
+        { checkOption, errorTypes, errorStyle },
       ),
       dateFormat,
     };
@@ -154,6 +188,7 @@ export function EditorPrefsDialog({ open, onClose }) {
     setAutosave(DEFAULT_EDITOR_PREFS.autosave);
     setByline(DEFAULT_EDITOR_PREFS.byline);
     setEdit(DEFAULT_EDITOR_PREFS.edit);
+    setSpellcheck(DEFAULT_EDITOR_PREFS.spellcheck);
   };
 
   return (
@@ -381,6 +416,51 @@ export function EditorPrefsDialog({ open, onClose }) {
                 onChange={(e) => setDateFormat(e.target.value)}
               >
                 {DATE_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {tab === 'spellcheck' && (
+          <div className="yh-prefs__fields">
+            <div className="yh-field">
+              <label htmlFor="pref-spellcheck-checkOption">검사옵션</label>
+              <select
+                id="pref-spellcheck-checkOption"
+                data-testid="pref-spellcheck-checkOption"
+                value={spellcheck.checkOption}
+                onChange={(e) => setSpellcheck((s) => ({ ...s, checkOption: e.target.value }))}
+              >
+                {SPELLCHECK_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            {SPELLCHECK_ERROR_TYPES.map(({ key, label }) => (
+              <div className="yh-field" key={key}>
+                <label htmlFor={`pref-spellcheck-errorType-${key}`}>{label}</label>
+                <input
+                  id={`pref-spellcheck-errorType-${key}`}
+                  data-testid={`pref-spellcheck-errorType-${key}`}
+                  type="checkbox"
+                  checked={spellcheck.errorTypes[key]}
+                  onChange={(e) => setSpellcheck((s) => ({
+                    ...s, errorTypes: { ...s.errorTypes, [key]: e.target.checked },
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="yh-field">
+              <label htmlFor="pref-spellcheck-errorStyle">오류표현</label>
+              <select
+                id="pref-spellcheck-errorStyle"
+                data-testid="pref-spellcheck-errorStyle"
+                value={spellcheck.errorStyle}
+                onChange={(e) => setSpellcheck((s) => ({ ...s, errorStyle: e.target.value }))}
+              >
+                {SPELLCHECK_ERROR_STYLES.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
               </select>
             </div>
           </div>

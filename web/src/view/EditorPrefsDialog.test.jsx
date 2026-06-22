@@ -476,4 +476,268 @@ describe('EditorPrefsDialog — 편집 탭', () => {
     expect(screen.getByTestId('pref-edit-lineSpacing')).toHaveValue(String(d.lineSpacing));
     expect(screen.getByTestId('pref-edit-inputMode')).toHaveValue(d.inputMode);
   });
+
+  // --- 보강(harness-tester): 명세 경계 + apply 경로 락다운 ---
+
+  it('언어 select에 news.md L190 9종이 모두 옵션으로 있다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    const langOptions = screen.getByTestId('pref-edit-language').querySelectorAll('option');
+    expect(langOptions).toHaveLength(9);
+    const values = Array.from(langOptions).map((o) => o.value);
+    // news.md L190: 한글/영어/일어/중국어/스페인/프랑스/아랍어/베트남/러시아어.
+    expect(values).toEqual(['ko', 'en', 'ja', 'zh', 'es', 'fr', 'ar', 'vi', 'ru']);
+  });
+
+  it('기업코드는 수동/자동, 입력모드는 KSC-5601/Unicode 두 옵션만 있다(명세 경계)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    const company = Array.from(
+      screen.getByTestId('pref-edit-companyCode').querySelectorAll('option'),
+    ).map((o) => o.value);
+    expect(company).toEqual(['manual', 'auto']);
+    const inputMode = Array.from(
+      screen.getByTestId('pref-edit-inputMode').querySelectorAll('option'),
+    ).map((o) => o.value);
+    expect(inputMode).toEqual(['ksc5601', 'unicode']);
+  });
+
+  it('기업코드 자동 + 입력모드 KSC-5601을 적용하면 그대로 영속된다(apply 경로)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.change(screen.getByTestId('pref-edit-companyCode'), { target: { value: 'auto' } });
+    fireEvent.change(screen.getByTestId('pref-edit-inputMode'), { target: { value: 'ksc5601' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { edit } = loadEditorPrefs();
+    expect(edit.companyCode).toBe('auto');
+    expect(edit.inputMode).toBe('ksc5601');
+  });
+
+  it('줄간격을 안 건드리고 적용해도 기본 1.0이 숫자 1로 영속된다(문자열/누락 방지)', () => {
+    // edit 폼을 전혀 손대지 않고 적용 → 기본 lineSpacing(1.0)이 Number()로 저장돼 number 1이어야 한다.
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { edit } = loadEditorPrefs();
+    expect(edit.lineSpacing).toBe(1);
+    expect(typeof edit.lineSpacing).toBe('number');
+  });
+
+  it('편집만 적용해도 미합성 카테고리(spellcheck/glyph)가 보존된다(loadEditorPrefs base spread)', () => {
+    // step0이 추가한 신규 카테고리 spellcheck/glyph 저장값이 편집 적용으로 사라지지 않는지(상호 보존 못박음).
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      spellcheck: {
+        checkOption: 'circular',
+        errorTypes: {
+          misuse: true, multiWord: false, semantic: false, circular: false, statSpacing: false, others: false,
+        },
+        errorStyle: 'underline',
+      },
+      glyphFavorites: { items: ['℃', '㎡'] },
+      glyphKeymap: { items: [{ keys: 'ctrl+1', glyph: '①' }] },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-columnLimit'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.edit.columnLimit).toBe(true); // 편집 반영
+    // 미합성 신규 카테고리 보존
+    expect(prefs.spellcheck.checkOption).toBe('circular');
+    expect(prefs.spellcheck.errorStyle).toBe('underline');
+    expect(prefs.spellcheck.errorTypes.misuse).toBe(true);
+    expect(prefs.glyphFavorites.items).toEqual(['℃', '㎡']);
+    expect(prefs.glyphKeymap.items).toEqual([{ keys: 'ctrl+1', glyph: '①' }]);
+  });
+});
+
+// 맞춤법 탭 — phase 16 step 2. 기존 색상/자동저장/바이라인/날짜형식/편집 탭을 깨지 않고 맞춤법 탭만 추가했는지 확인한다.
+// 맞춤법 = { checkOption(enum), errorTypes(6키 bool), errorStyle(enum) } — localStorage(editorPrefs) 전용(저장만, 검사 effect 없음).
+describe('EditorPrefsDialog — 맞춤법 탭', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); setDateFormat(DEFAULT_DATE_FORMAT); });
+
+  const ERROR_TYPE_KEYS = ['misuse', 'multiWord', 'semantic', 'circular', 'statSpacing', 'others'];
+
+  it('맞춤법 탭으로 전환하면 검사옵션·오류유형 6개·오류표현을 보여주고 다른 탭 입력은 사라진다', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    expect(screen.getByTestId('prefs-tab-spellcheck')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    expect(screen.getByTestId('pref-spellcheck-checkOption')).toBeInTheDocument();
+    ERROR_TYPE_KEYS.forEach((key) => {
+      expect(screen.getByTestId(`pref-spellcheck-errorType-${key}`)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('pref-spellcheck-errorStyle')).toBeInTheDocument();
+    // 다른 탭의 입력은 보이지 않는다.
+    expect(screen.queryByTestId('pref-color-title')).toBeNull();
+  });
+
+  it('검사옵션 select에 명세 5종, 오류표현 select에 명세 2종이 옵션으로 있다(명세 경계)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    const checkOptions = Array.from(
+      screen.getByTestId('pref-spellcheck-checkOption').querySelectorAll('option'),
+    ).map((o) => o.value);
+    // news.md L211: 절차오류/띄어쓰기/붙여쓰기/띄어쓰기+붙여쓰기/순환용어·외래어.
+    expect(checkOptions).toEqual(['procedure', 'spacing', 'joining', 'spacingJoining', 'circularLoan']);
+    const styleOptions = Array.from(
+      screen.getByTestId('pref-spellcheck-errorStyle').querySelectorAll('option'),
+    ).map((o) => o.value);
+    // news.md L213: 굵게/밑줄.
+    expect(styleOptions).toEqual(['bold', 'underline']);
+  });
+
+  it('맞춤법 입력 초기값은 저장값(loadEditorPrefs().spellcheck)이다', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      spellcheck: {
+        checkOption: 'joining',
+        errorTypes: {
+          misuse: true, multiWord: false, semantic: true, circular: false, statSpacing: false, others: true,
+        },
+        errorStyle: 'underline',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+
+    expect(screen.getByTestId('pref-spellcheck-checkOption')).toHaveValue('joining');
+    expect(screen.getByTestId('pref-spellcheck-errorType-misuse')).toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorType-multiWord')).not.toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorType-semantic')).toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorType-others')).toBeChecked();
+    expect(screen.getByTestId('pref-spellcheck-errorStyle')).toHaveValue('underline');
+  });
+
+  it("검사옵션 joining + 오류유형 misuse·semantic + 오류표현 underline 후 '적용'하면 영속된다", () => {
+    const onClose = vi.fn();
+    render(<EditorPrefsDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+
+    fireEvent.change(screen.getByTestId('pref-spellcheck-checkOption'), { target: { value: 'joining' } });
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-misuse'));
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-semantic'));
+    fireEvent.change(screen.getByTestId('pref-spellcheck-errorStyle'), { target: { value: 'underline' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { spellcheck } = loadEditorPrefs();
+    expect(spellcheck.checkOption).toBe('joining');
+    expect(spellcheck.errorTypes.misuse).toBe(true);
+    expect(spellcheck.errorTypes.semantic).toBe(true);
+    expect(spellcheck.errorStyle).toBe('underline');
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it('오류유형 두 개만 체크해도 저장된 errorTypes에 나머지 4키가 false로 남는다(통째 저장)', () => {
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-misuse'));
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-semantic'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const { errorTypes } = loadEditorPrefs().spellcheck;
+    expect(errorTypes).toEqual({
+      misuse: true, multiWord: false, semantic: true, circular: false, statSpacing: false, others: false,
+    });
+  });
+
+  it('적용은 맞춤법만 바꿔도 색·자동저장·바이라인·편집·날짜형식을 보존한다(상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...DEFAULT_EDITOR_PREFS.colors, subtitle: '#00ff00' },
+      autosave: { enabled: true, intervalSec: 120, retentionDays: 3 },
+      byline: {
+        email: true, emailValue: 'keep@me.com', blog: false, blogValue: '',
+      },
+      edit: {
+        ...DEFAULT_EDITOR_PREFS.edit, columnLimit: true, language: 'ja', lineSpacing: 1.5,
+      },
+      dateFormat: 'YYYY.MM.DD',
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-circular'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    // 맞춤법 반영
+    expect(prefs.spellcheck.errorTypes.circular).toBe(true);
+    // 나머지 보존
+    expect(prefs.colors.subtitle).toBe('#00ff00');
+    expect(prefs.autosave.enabled).toBe(true);
+    expect(prefs.autosave.intervalSec).toBe(120);
+    expect(prefs.byline.email).toBe(true);
+    expect(prefs.byline.emailValue).toBe('keep@me.com');
+    expect(prefs.edit.columnLimit).toBe(true);
+    expect(prefs.edit.language).toBe('ja');
+    expect(prefs.edit.lineSpacing).toBe(1.5);
+    expect(prefs.dateFormat).toBe('YYYY.MM.DD');
+  });
+
+  it('색상만 바꿔 적용해도 맞춤법은 보존된다(반대 방향 상호 보존)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      spellcheck: {
+        checkOption: 'circularLoan',
+        errorTypes: {
+          misuse: true, multiWord: true, semantic: false, circular: false, statSpacing: false, others: false,
+        },
+        errorStyle: 'underline',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('pref-color-subtitle'), { target: { value: '#123456' } });
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    const prefs = loadEditorPrefs();
+    expect(prefs.colors.subtitle).toBe('#123456');
+    expect(prefs.spellcheck.checkOption).toBe('circularLoan');
+    expect(prefs.spellcheck.errorTypes.misuse).toBe(true);
+    expect(prefs.spellcheck.errorTypes.multiWord).toBe(true);
+    expect(prefs.spellcheck.errorStyle).toBe('underline');
+  });
+
+  it('재오픈하면 맞춤법 폼이 저장값으로 초기화된다', () => {
+    const { rerender } = render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    fireEvent.change(screen.getByTestId('pref-spellcheck-checkOption'), { target: { value: 'procedure' } });
+    fireEvent.click(screen.getByTestId('pref-spellcheck-errorType-others'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 닫았다가 다시 연다.
+    rerender(<EditorPrefsDialog open={false} onClose={vi.fn()} />);
+    rerender(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    expect(screen.getByTestId('pref-spellcheck-checkOption')).toHaveValue('procedure');
+    expect(screen.getByTestId('pref-spellcheck-errorType-others')).toBeChecked();
+  });
+
+  it("'기본값'은 맞춤법 폼을 DEFAULT_EDITOR_PREFS.spellcheck로 되돌린다", () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      spellcheck: {
+        checkOption: 'procedure',
+        errorTypes: {
+          misuse: true, multiWord: true, semantic: true, circular: true, statSpacing: true, others: true,
+        },
+        errorStyle: 'underline',
+      },
+    });
+    render(<EditorPrefsDialog open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('prefs-tab-spellcheck'));
+    expect(screen.getByTestId('pref-spellcheck-errorType-misuse')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('prefs-reset'));
+    const d = DEFAULT_EDITOR_PREFS.spellcheck;
+    expect(screen.getByTestId('pref-spellcheck-checkOption')).toHaveValue(d.checkOption);
+    ERROR_TYPE_KEYS.forEach((key) => {
+      expect(screen.getByTestId(`pref-spellcheck-errorType-${key}`)).not.toBeChecked();
+    });
+    expect(screen.getByTestId('pref-spellcheck-errorStyle')).toHaveValue(d.errorStyle);
+  });
 });
