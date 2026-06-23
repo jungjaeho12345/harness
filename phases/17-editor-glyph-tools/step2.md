@@ -34,8 +34,9 @@ TDD로 진행한다(vitest). **`Editor.jsx`는 절대 수정하지 마라** — 
 ### 1. 약물바 렌더 + 토글 실동작 (`WriterPage.jsx`)
 
 - 자주쓰는 약물을 읽어 약물바에 주입한다. 색상 prefs(`editorBg`/`columnLimit`/`autosaveCfg`)와 동일 게이트 패턴으로:
-  - 마운트 시 `loadEditorPrefs().glyphFavorites.items`를 state로 읽고, `onPrefsClose(applied)`에서 적용 시 다시 읽어 갱신한다(환경설정에서 약물 등록 후 즉시 바에 반영 — `setAutosaveCfg(loadEditorPrefs().autosave)`와 동일 위치/패턴). state 예: `const [glyphFavorites, setGlyphFavorites] = useState(() => loadEditorPrefs().glyphFavorites.items);`
-- 크롬 배치(툴바 아래, 캔버스 위)에 `{showGlyphBar && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}`를 추가한다.
+  - **초기값은 `useState` lazy 초기화로만 읽는다**: `const [glyphFavorites, setGlyphFavorites] = useState(() => loadEditorPrefs().glyphFavorites.items);`. **마운트용 useEffect를 새로 추가하지 마라** — lazy 초기화로 충분하다(`autosaveCfg` state와 동일 패턴).
+  - 갱신은 **기존 `onPrefsClose(applied)` 분기에 `setGlyphFavorites(loadEditorPrefs().glyphFavorites.items)` 한 줄만 추가**한다(색상/autosave prefs 재로딩 `setAutosaveCfg(loadEditorPrefs().autosave)`와 **동일 위치·동일 패턴**). 환경설정에서 약물 등록 후 즉시 바에 반영하기 위함. 별도 effect/구독을 만들지 마라.
+- 크롬 배치(툴바 아래, 캔버스 위)에 약물바를 추가한다. 매핑 가드(§2 이중 방어)를 포함한 권장 형태: `{showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}`(매핑 모드에서는 바 미렌더).
 - `showGlyphBar`의 placeholder 주석(L86~88, L307)을 실동작 주석으로 갱신한다(더 이상 "범위 밖"/"미렌더" 아님 — `showMenuBar`/`showToolBar`와 동일하게 레이아웃 토글).
 
 ### 2. 약물 삽입 핸들러 (`WriterPage.jsx`)
@@ -53,7 +54,10 @@ const onGlyphPick = (glyph) => {
 
 - 캐럿 소스는 `lastCaretRef.current`(검색 임베드 삽입과 동일 — 약물바 버튼 클릭으로 에디터 포커스가 빠지므로 라이브 `readCaret` 대신 보관된 캐럿을 쓴다). caret이 null이면 Step 0 헬퍼가 폴백(줄 끝)으로 처리한다.
 - 본문 변경은 전부 `updateField('body', serialize(...))`. 캐럿 이동은 `setPendingCaretLine`(임베드/마커 삽입과 동일 포커스 경로). **contentEditable/DOM 직접 조작 금지.**
-- **매핑 가드**: `isMapping`이면 약물 삽입 no-op(본문-only 불변식 — 매핑은 임베드만 변경). 단순화를 위해 매핑에서는 약물바를 숨겨도 되고(권장: `{showGlyphBar && !isMapping && <EditorGlyphBar .../>}`), 렌더하더라도 `onGlyphPick`이 매핑에서 no-op이면 충분하다. 둘 중 하나를 택하고 주석으로 이유를 남겨라.
+- **매핑 가드(이중 방어 권장)**: `isMapping`이면 약물 삽입이 본문을 바꾸지 못하게 한다(본문-only 불변식 — 매핑은 임베드만 변경). **두 가드를 둘 다** 적용하는 것을 권장한다:
+  1. 약물바 숨김: `{showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}` — 매핑 모드에서는 바 자체를 렌더하지 않는다.
+  2. 핸들러 no-op: `onGlyphPick` 첫 줄 `if (isMapping) return;` — 바가 어떤 이유로든 렌더돼도 본문 변경을 차단(방어적 중복).
+  이중 방어가 부담되면 둘 중 하나만 적용해도 불변식은 만족하나, 권장은 둘 다이다. 어느 쪽이든 주석으로 이유를 남겨라. 블로커는 아니다.
 
 ## 핵심 규칙 (반드시 준수 — 위반 시 반려)
 
@@ -63,6 +67,8 @@ const onGlyphPick = (glyph) => {
 4. **editorPrefs 읽기 전용**: `loadEditorPrefs().glyphFavorites.items`를 **읽기만** 한다. glyphFavorites/glyphKeymap 구조·기본값·loadEditorPrefs 병합을 수정하지 마라(스키마 변경 불필요). 이유: phase16 스키마 그대로.
 5. **client 전용**: `server/` 디렉터리를 건드리지 마라(DB 비파괴, 약물은 client localStorage 전용). 이유: 이 phase는 client만.
 6. **회귀 금지**: 기존 토글(`showMenuBar`/`showToolBar`)·우클릭 컨텍스트 메뉴·찾기/바꾸기·검색 임베드 삽입·타이핑·Alt+Y/Ctrl+Y/Ctrl+D 불변. `ctx.showGlyphBar` 토글의 기존 테스트를 깨지 마라(이제 실제 바가 렌더된다는 점만 반영).
+   - **stale testid 교정(반드시 반영)**: `WriterPage.test.jsx`의 기존 '약물바 보이기' 토글 테스트(현재 L1770~1785, 테스트명 "…실제 바 없음…", L1784에서 `container.querySelector('[data-testid="glyphbar"]')`(하이픈 **없음**)가 `toBeNull()`임을 단언)는 **잘못된 셀렉터로 거짓 통과**한다 — step1 실제 컴포넌트(`EditorGlyphBar.jsx`)의 testid는 `glyph-bar`(하이픈 **있음**)이므로, step2가 바를 렌더해도 `glyphbar`(하이픈 없음) 셀렉터는 항상 `null`이라 단언이 거짓으로 통과해 회귀를 못 잡는다. 이 테스트를 **갱신**한다: ⓐ 잘못된 `[data-testid="glyphbar"]`(하이픈 없음) 셀렉터 단언을 제거하고, ⓑ 토글 ON 시 `getByTestId('glyph-bar')`(하이픈 **있음**)로 **약물바가 렌더됨**을 단언, ⓒ 다시 OFF 시 약물바가 사라짐을 단언한다. 기존 `aria-checked` 토글 상태 단언(L1776/L1783)은 **유지**한다. 테스트명·주석의 "실제 바 없음/미렌더"도 "실제 바 렌더/숨김"으로 갱신한다.
+   - 근거(한 줄): 이는 "기존 테스트를 깨는 것"이 아니라 **stale testid(`glyphbar`)로 거짓 통과하던 단언을 올바른 testid(`glyph-bar`)로 교정**하고 단언 방향을 step2 동작(바 렌더)에 맞게 뒤집는 것이다.
 
 ## Acceptance Criteria
 
@@ -73,7 +79,8 @@ npm run lint
 ```
 
 추가 단언(vitest, `WriterPage.test.jsx`):
-- 자주쓰는 약물 prefs(`saveEditorPrefs`로 `glyphFavorites.items: ['※','◇']` 시드)로 진입 후 우클릭 '약물바 보이기'(`ctx.showGlyphBar`)를 켜면 약물바(`data-testid="glyph-bar"`)가 보이고 약물 버튼 2개가 나타난다. 다시 끄면 사라진다.
+- **기존 '약물바 보이기' 토글 테스트 갱신(반드시 — stale testid 교정)**: 현재 L1770~1785의 테스트(테스트명 "…실제 바 없음…")에서 L1784의 잘못된 `container.querySelector('[data-testid="glyphbar"]')`(하이픈 **없음**) `toBeNull()` 단언을 **제거**하고, 토글 ON 시 `getByTestId('glyph-bar')`(하이픈 **있음**)로 **약물바가 렌더됨**을, 다시 OFF 시 약물바가 사라짐(`queryByTestId('glyph-bar')` → `toBeNull()`)을 단언한다. 기존 `aria-checked` 토글 상태 단언(off→`false`, 재오픈 시 on→`true`)은 **유지**한다. 테스트명·주석의 "실제 바 없음/미렌더" 문구도 "실제 바 렌더/숨김"으로 갱신한다. (근거: stale testid `glyphbar`로 거짓 통과하던 단언을 올바른 testid `glyph-bar`로 교정하고 step2 동작에 맞게 방향을 뒤집는 것 — §6 참조.)
+- 자주쓰는 약물 prefs(`saveEditorPrefs`로 `glyphFavorites.items: ['※','◇']` 시드)로 진입 후 우클릭 '약물바 보이기'(`ctx.showGlyphBar`)를 켜면 약물바(`data-testid="glyph-bar"`, 하이픈)가 보이고 약물 버튼 2개가 나타난다. 다시 끄면 사라진다.
 - 본문 블록을 가진 기사로 진입 → 에디터에 캐럿을 두고(또는 `onCaretChange`로 `lastCaretRef` 세팅) 약물바의 '※' 버튼 클릭 시, `updateField('body', …)`로 직렬화된 본문에 '※'가 삽입된다(Step 0 헬퍼 좌표 기준). 임베드 블록 위치·내용 불변.
 - 매핑 모드(`mode:'mapping'`)에서는 약물 클릭이 본문을 바꾸지 않는다(`updateField('body', …)` 미호출 또는 약물바 미표시).
 - 등록된 약물이 없을 때(`glyphFavorites.items: []`) 약물바를 켜면 버튼 0개로 graceful.
