@@ -4,7 +4,7 @@
   "steps": [
     { "step": 0, "name": "insert-date-pure", "status": "completed", "deps": [], "summary": "web/src/view/editorDate.js 신규 — insertDateAtCaret(blocks, caret, dateString)+normalizeDateString. editorGlyph 패턴 복제(blocksToText 좌표계, 캐럿 컬럼 slice 삽입, (끝)/임베드/순서/개수 불변, 입력 mutate 금지, caret null/범위밖/(끝) 폴백). new Date/applyDateFormat 미호출(순수). 테스트 25개(editorDate.test.js) 통과, 전체 web 769 통과." },
     { "step": 1, "name": "insert-date-wiring", "status": "completed", "deps": [0], "summary": "WriterPage.jsx 결선 — MENU_ENABLED에 tools.insertDate 추가, insertDate() 핸들러(매핑 가드 → loadEditorPrefs().dateFormat → applyDateFormat(new Date().toISOString(), fmt) → insertDateAtCaret(blocks, lastCaretRef.current, dateString) → updateField('body', serialize)+setPendingCaretLine), onMenuSelect 매핑 가드 뒤 분기. new Date는 WriterPage에만(헬퍼는 순수). Editor.jsx/server 무변경. 테스트 7개(WriterPage 날짜 삽입 describe, fakeTimers 시각 고정) 통과, 전체 web 776 통과." },
-    { "step": 2, "name": "url-embed-dialog", "status": "pending", "deps": [] },
+    { "step": 2, "name": "url-embed-dialog", "status": "completed", "deps": [], "summary": "web/src/view/UrlEmbedDialog.jsx 신규 — 순수 표시/폼 다이얼로그(ADR-003). props {open, kind('image'|'video'), onSubmit(url), onClose}. GlyphInputDialog+FindReplaceDialog 패턴: open false→null, role=dialog+kind별 aria-label('그림 삽입'/'유튜브 영상 삽입'), URL 입력 내부 state, 삽입/Enter 시 onSubmit(트림값), 빈 입력 no-op, Esc/닫기 onClose, open false→true useEffect로 입력 초기화, onSubmit/onClose 미전달 가드. 전용 className(yh-url-embed)·testid(url-embed/-input/-submit/-close). make*Embed/parseYouTubeId/isAllowedImageSrc/clipboardEmbed 미import. yonhap.css에 yh-url-embed 스타일 추가. 테스트 12개(UrlEmbedDialog.test.jsx) 통과, 전체 web 788 통과." },
     { "step": 3, "name": "url-embed-wiring", "status": "pending", "deps": [2] }
   ]
 }
