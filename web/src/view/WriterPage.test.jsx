@@ -2513,3 +2513,132 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(within(menu).getByText('파일 정보').closest('button')).toBeDisabled();
   });
 });
+
+// Step 3(18-editor-tools-menu): URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선 —
+// 도구 메뉴 '그림 삽입'/'유튜브 영상 삽입' 클릭 → UrlEmbedDialog 오픈 → URL 입력 후 '삽입' → 기존 make*Embed + insertEmbed
+// 경로로 캐럿 줄 뒤에 임베드 삽입(검색패널과 동일). 유튜브 아닌 URL은 makeVideoEmbed null → no-op. 매핑 모드에서도 허용.
+describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(날짜/약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다.
+  async function clickTool(label) {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  // URL 다이얼로그에 url을 입력하고 '삽입'을 누른다.
+  async function submitUrl(url) {
+    fireEvent.change(screen.getByTestId('url-embed-input'), { target: { value: url } });
+    await userEvent.click(screen.getByTestId('url-embed-submit'));
+  }
+
+  it("도구 '그림 삽입'/'유튜브 영상 삽입'은 활성, '오디오 삽입'은 비활성이다(MENU_ENABLED·회귀 없음)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('유튜브 영상 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('오디오 삽입').closest('button')).toBeDisabled();
+  });
+
+  it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    expect(screen.getByRole('dialog', { name: '그림 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://img.example.com/a.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 다이얼로그는 1회성 삽입 후 닫힌다.
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → 유튜브 URL 제출 시 video 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+    expect(screen.getByRole('dialog', { name: '유튜브 영상 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it('유튜브가 아닌 URL을 영상 삽입에 넣으면 임베드가 생기지 않고 크래시하지 않는다(makeVideoEmbed null → no-op)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://example.com/not-a-youtube');
+    // 임베드가 추가되지 않는다(텍스트 줄만 유지).
+    expect(container.querySelector('[data-embed-type="video"]')).toBeNull();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+
+  it('image 임베드 삽입 시 본문 텍스트는 변하지 않는다(임베드만 추가)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await submitUrl('https://img.example.com/b.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트 줄은 그대로, 임베드 1개만 추가됨.
+    const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text);
+    expect(texts).toEqual(['헤드', '본문', '']); // 임베드 뒤 빈 줄(커서 이동용)
+    expect(blocks.filter((b) => b.type === 'embed').length).toBe(1);
+  });
+
+  it("매핑 모드에서도 '그림 삽입'은 활성이고, URL 제출 시 임베드가 본문에 추가된다(검색패널과 동일)", async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('그림 삽입').closest('button'));
+
+    await submitUrl('https://img.example.com/c.png');
+    // 매핑은 "(끝)" 앞 append 폴백으로 임베드가 실제 삽입된다(WriterPage.test.jsx:710-723 패턴).
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+
+  it("'닫기'/Esc로 다이얼로그를 닫으면 임베드가 삽입되지 않는다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await userEvent.click(screen.getByTestId('url-embed-close'));
+
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+});
