@@ -35,7 +35,10 @@ import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
 import { insertDateAtCaret } from './editorDate.js';
 import { applyDateFormat } from './listFormat.js';
-import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
+import {
+  makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
+  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed,
+} from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
@@ -62,7 +65,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -293,6 +296,10 @@ export function WriterPage() {
     // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
     if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
     if (id === 'tools.insertYoutube') { setUrlEmbedKind('video'); return; }
+    // 오디오/링크/로컬영상 — 그림/유튜브와 동일 정책(임베드는 매핑에서도 허용 → 매핑 가드 앞).
+    if (id === 'tools.insertAudio') { setUrlEmbedKind('audio'); return; }
+    if (id === 'tools.insertLink') { setUrlEmbedKind('link'); return; }
+    if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -444,13 +451,17 @@ export function WriterPage() {
   // Ctrl+V 이미지 붙여넣기 — 동기로 확보한 캐럿 줄에 삽입(텍스트 직렬화 없이 — news.md 156행).
   const pasteEmbedAtCaret = (embed, caret) => insertEmbedAtLine(embed, caret ? caret.lineIndex : null);
 
-  // URL 직접 입력(도구>그림/유튜브 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed(검색패널 onPick과 동일 경로·팩토리).
-  // 매핑 가드를 두지 않는다 — insertEmbed→insertEmbedAtLine이 매핑 시 "(끝)" 앞 append 폴백으로 임베드를 삽입한다(검색패널과 동일).
-  // 유튜브가 아닌 URL은 makeVideoEmbed가 null → insertEmbed가 no-op(insertEmbedAtLine의 !embed 가드). URL 검증은 팩토리/렌더에 위임.
+  // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed
+  //   (검색패널 onPick과 동일 경로·팩토리). 매핑 가드를 두지 않는다 — insertEmbed→insertEmbedAtLine이 매핑 시
+  //   "(끝)" 앞 append 폴백으로 삽입한다(검색패널과 동일). 빈/비유튜브 등 부적격 URL은 팩토리가 null →
+  //   insertEmbed가 no-op(insertEmbedAtLine의 !embed 가드). URL 검증(악성 scheme)은 렌더(InlineEmbed/articleDetail) 단일 출처에 위임.
   const onUrlEmbedSubmit = (url) => {
-    const embed = urlEmbedKind === 'image'
-      ? makeImageEmbed(url, { alt: '' })
-      : makeVideoEmbed(url, { title: '' });
+    let embed = null;
+    if (urlEmbedKind === 'image') embed = makeImageEmbed(url, { alt: '' });
+    else if (urlEmbedKind === 'video') embed = makeVideoEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'audio') embed = makeAudioEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'link') embed = makeLinkEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'localVideo') embed = makeLocalVideoEmbed(url, { title: '' });
     insertEmbed(embed); // embed falsy면 no-op. 매핑 시엔 "(끝)" 앞 append 폴백.
     setUrlEmbedKind(null); // 1회성 삽입 후 닫는다(URL 1개).
   };

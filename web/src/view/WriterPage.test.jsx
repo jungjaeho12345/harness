@@ -2571,13 +2571,18 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     await userEvent.click(screen.getByTestId('url-embed-submit'));
   }
 
-  it("도구 '그림 삽입'/'유튜브 영상 삽입'은 활성, '오디오 삽입'은 비활성이다(MENU_ENABLED·회귀 없음)", async () => {
+  it("도구 '그림 삽입'/'유튜브 영상 삽입'/'오디오 삽입'/'링크 삽입'/'로컬영상 삽입'은 활성, 비결선은 비활성이다(MENU_ENABLED)", async () => {
     await openWith([textBlock('헤드')]);
     await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('유튜브 영상 삽입').closest('button')).toBeEnabled();
-    expect(within(menu).getByText('오디오 삽입').closest('button')).toBeDisabled();
+    // 19-step2: 세 임베드 항목이 활성으로 결선됨(이전 step에서 '오디오 삽입' 비활성 단언을 활성으로 갱신).
+    expect(within(menu).getByText('오디오 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('로컬영상 삽입').closest('button')).toBeEnabled();
+    // 비결선 도구 항목은 여전히 비활성(회귀 가드).
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
 
   it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
@@ -2673,5 +2678,98 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
 
     expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
     expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+
+  // 19-step2: 오디오/링크/로컬영상 결선 — 그림/유튜브와 동일 패턴(메뉴 클릭→다이얼로그→URL 제출→insertEmbed).
+  it("'오디오 삽입' 클릭 → 다이얼로그(kind=audio) 오픈, 허용 URL 제출 시 audio 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    expect(screen.getByRole('dialog', { name: '오디오 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://cdn.example.com/a.mp3');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="audio"]')).toBeTruthy());
+    // <audio>가 실제 렌더된다(검증 통과).
+    expect(container.querySelector('audio')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: '오디오 삽입' })).not.toBeInTheDocument();
+  });
+
+  it("'링크 삽입' 클릭 → 다이얼로그(kind=link) 오픈, 허용 URL 제출 시 link 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('링크 삽입');
+    expect(screen.getByRole('dialog', { name: '링크 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://example.com/article');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="link"]')).toBeTruthy());
+    // <a href>가 실제 렌더되고 rel 하드닝이 박힌다.
+    const a = container.querySelector('[data-embed-type="link"] a');
+    expect(a.getAttribute('href')).toBe('https://example.com/article');
+    expect(a.getAttribute('rel')).toContain('noopener');
+  });
+
+  it("'로컬영상 삽입' 클릭 → 다이얼로그(kind=localVideo) 오픈, 허용 URL 제출 시 localVideo 임베드(<video>, iframe 아님)가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('로컬영상 삽입');
+    expect(screen.getByRole('dialog', { name: '로컬영상 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://cdn.example.com/a.webm');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="localVideo"]')).toBeTruthy());
+    expect(container.querySelector('[data-embed-type="localVideo"] video')).toBeTruthy();
+    expect(container.querySelector('[data-embed-type="localVideo"] iframe')).toBeNull();
+  });
+
+  // 보안 회귀(필수): 악성 URL은 onUrlEmbedSubmit이 예외 없이 임베드를 만들어도 렌더 경로(InlineEmbed)에서 거부된다.
+  // WriterPage는 검증하지 않는다(검증 단일 출처=렌더). 결선 후에도 step0 보안 단언이 유효함을 end-to-end로 확인.
+  it('악성 오디오 URL(javascript:)을 제출해도 <audio>가 렌더되지 않는다(검증은 렌더 단일 출처)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    await submitUrl('javascript:alert(1)');
+    // 임베드 블록은 추가될 수 있으나(WriterPage는 검증 안 함) <audio>는 렌더되지 않는다.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '오디오 삽입' })).not.toBeInTheDocument());
+    expect(container.querySelector('audio')).toBeNull();
+  });
+
+  it('악성 링크 URL(javascript:)을 제출해도 <a href>가 렌더되지 않는다(검증은 렌더 단일 출처)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('링크 삽입');
+    await submitUrl('javascript:alert(1)');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '링크 삽입' })).not.toBeInTheDocument());
+    expect(container.querySelector('[data-embed-type="link"] a')).toBeNull();
+  });
+
+  it('오디오 임베드 삽입 시 본문 텍스트(blocksToText)는 변하지 않는다(임베드만 추가)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    await submitUrl('https://cdn.example.com/a.mp3');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="audio"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text);
+    expect(texts).toEqual(['헤드', '본문', '']); // 임베드 뒤 빈 줄(커서 이동용)
+    expect(blocks.filter((b) => b.type === 'embed' && b.embedType === 'audio').length).toBe(1);
+  });
+
+  it("매핑 모드에서도 '링크 삽입'으로 임베드를 추가할 수 있다(\"(끝)\" 앞 append — 그림/유튜브와 동일)", async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('링크 삽입').closest('button'));
+
+    await submitUrl('https://example.com/m');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="link"]')).toBeTruthy());
   });
 });

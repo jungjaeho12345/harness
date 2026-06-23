@@ -5,7 +5,9 @@
 // CRITICAL: 모든 내용은 HTML 이스케이프되어 스크립트가 실행되지 않는다(<style>은 정적이라 사용자 값을 담지 않는다).
 
 import { deserialize, isEmbedBlock } from './editorContent.js';
-import { parseYouTubeId, isAllowedImageSrc } from './clipboardEmbed.js';
+import {
+  parseYouTubeId, isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
+} from './clipboardEmbed.js';
 
 export const EMPTY_FIELD = '—';
 const NO_TITLE = '(제목 없음)';
@@ -115,6 +117,8 @@ body{
 .yh-detail__embed--media::before{content:none;}
 .yh-detail__embed--media img{max-width:100%;height:auto;display:block;border:1px solid var(--gl);border-radius:3px;}
 .yh-detail__embed--media iframe{width:100%;max-width:560px;aspect-ratio:16/9;border:0;border-radius:3px;}
+.yh-detail__embed--media video{max-width:100%;height:auto;display:block;border-radius:3px;}
+.yh-detail__embed--media audio{max-width:100%;display:block;}
 .yh-detail__empty{margin:0;color:var(--gm);font-style:italic;font-family:'Noto Sans KR',system-ui,sans-serif;}
 `;
 
@@ -139,6 +143,22 @@ function embedHtml(b) {
   if (type === 'article') {
     return '<figure class="yh-detail__embed" data-embed-type="article">'
       + `${escapeHtml(b.title || b.articleId || '기사')}</figure>`;
+  }
+  // 19: 오디오 — 허용 scheme(isAllowedMediaSrc, https:/상대)만 <audio>. 거부면 폴백(원본 src 미노출).
+  if (type === 'audio' && isAllowedMediaSrc(b.src)) {
+    return '<figure class="yh-detail__embed yh-detail__embed--media" data-embed-type="audio">'
+      + `<audio controls src="${escapeHtml(b.src)}" referrerpolicy="no-referrer"></audio></figure>`;
+  }
+  // 19: 로컬영상 — 허용 src만 <video>(유튜브 iframe과 별개). 거부면 폴백.
+  if (type === 'localVideo' && isAllowedMediaSrc(b.src)) {
+    return '<figure class="yh-detail__embed yh-detail__embed--media" data-embed-type="localVideo">'
+      + `<video controls src="${escapeHtml(b.src)}"></video></figure>`;
+  }
+  // 19: 링크 — 허용 href만 새 탭 <a>(rel=noopener noreferrer). 표시 텍스트=title||href. 거부면 폴백.
+  if (type === 'link' && isAllowedHref(b.href)) {
+    return '<figure class="yh-detail__embed" data-embed-type="link">'
+      + `<a href="${escapeHtml(b.href)}" rel="noopener noreferrer" target="_blank">`
+      + `${escapeHtml(b.title || b.href)}</a></figure>`;
   }
   // 알 수 없거나 허용되지 않은 임베드 — 원본 값(src 등)을 노출하지 않는다.
   return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(type ?? '')}">[${escapeHtml(type || '임베드')}]</figure>`;

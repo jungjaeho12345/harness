@@ -78,6 +78,23 @@ describe('UrlEmbedDialog — URL 직접 임베드 다이얼로그', () => {
     expect(imagePlaceholder).not.toBe(videoPlaceholder);
   });
 
+  // 19-step1: 오디오/링크/로컬영상 kind 라벨 추가(news.md L180 메뉴 명칭과 일치).
+  it("kind='audio'면 dialog 라벨이 '오디오 삽입'이고 placeholder도 오디오용이다", () => {
+    render(<UrlEmbedDialog {...noopProps({ kind: 'audio' })} />);
+    expect(screen.getByRole('dialog', { name: '오디오 삽입' })).toBeInTheDocument();
+    expect(screen.getByTestId('url-embed-input').getAttribute('placeholder')).toMatch(/오디오/);
+  });
+
+  it("kind='link'면 dialog 라벨이 '링크 삽입'이다", () => {
+    render(<UrlEmbedDialog {...noopProps({ kind: 'link' })} />);
+    expect(screen.getByRole('dialog', { name: '링크 삽입' })).toBeInTheDocument();
+  });
+
+  it("kind='localVideo'면 dialog 라벨이 '로컬영상 삽입'이다", () => {
+    render(<UrlEmbedDialog {...noopProps({ kind: 'localVideo' })} />);
+    expect(screen.getByRole('dialog', { name: '로컬영상 삽입' })).toBeInTheDocument();
+  });
+
   it("Esc 키 또는 '닫기' 버튼으로 onClose가 호출된다", () => {
     const onClose = vi.fn();
     render(<UrlEmbedDialog {...noopProps({ onClose })} />);
