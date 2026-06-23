@@ -243,6 +243,28 @@ describe('InlineEmbed', () => {
       render(<InlineEmbed embed={{ embedType: 'link', title: '없음' }} onRemove={() => {}} />);
       expect(document.querySelector('a')).toBeNull();
     });
+
+    it('does not render an <a href> for a mixed-case JavaScript: href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: 'JavaScript:alert(1)', title: '대문자' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    // 19-보안: 선행 공백/탭/개행으로 위험 스킴을 숨긴 href는 앵커로 렌더되면 안 된다.
+    // 브라우저는 href의 선행 ASCII 공백·제어문자를 제거하므로 "  javascript:" 도 클릭 시 실행된다.
+    it('does not render an <a href> for a whitespace-prefixed javascript: href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: '  javascript:alert(1)', title: '클릭' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    // 19-보안(보강): 스킴 내부 제어문자·프로토콜상대·단일슬래시 https:/ 우회도 앵커로 렌더되면 안 된다.
+    it('does not render an <a href> for internal-control / protocol-relative / single-slash bypass hrefs', () => {
+      const { rerender } = render(<InlineEmbed embed={{ embedType: 'link', href: 'java\tscript:alert(1)', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+      rerender(<InlineEmbed embed={{ embedType: 'link', href: '//evil.com/x', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+      rerender(<InlineEmbed embed={{ embedType: 'link', href: 'https:/evil.com', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
   });
 
   // 19-step1: 팩토리 필드명이 렌더가 읽는 키와 일치하는지(빈 figure 회귀 가드) 통합 단언.

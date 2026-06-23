@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   EMBED_SIZE, parseYouTubeId, makeImageEmbed, makeVideoEmbed, makeArticleEmbed, embedFromPaste,
-  isAllowedMediaSrc, isAllowedHref,
+  isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
   makeAudioEmbed, makeLocalVideoEmbed, makeLinkEmbed,
 } from './clipboardEmbed.js';
 
@@ -57,6 +57,76 @@ describe('clipboardEmbed — media/href scheme allowlist', () => {
     expect(isAllowedHref('http://x')).toBe(false);
     expect(isAllowedHref('')).toBe(false);
     expect(isAllowedHref(null)).toBe(false);
+  });
+
+  // 19: 스킴 비교는 대소문자 무관(toLowerCase)이어야 한다 — 대문자/혼합 javascript:로 우회 불가.
+  it('rejects mixed/upper-case dangerous schemes (case-insensitive scheme match)', () => {
+    expect(isAllowedMediaSrc('JavaScript:alert(1)')).toBe(false);
+    expect(isAllowedMediaSrc('JAVASCRIPT:alert(1)')).toBe(false);
+    expect(isAllowedMediaSrc('Data:text/html,x')).toBe(false);
+    expect(isAllowedHref('JavaScript:alert(1)')).toBe(false);
+    expect(isAllowedHref('JAVASCRIPT:alert(1)')).toBe(false);
+    expect(isAllowedHref('JaVaScRiPt:alert(1)')).toBe(false);
+    expect(isAllowedHref('VBScript:msgbox(1)')).toBe(false);
+  });
+
+  // 19: 허용 스킴(https) 자체는 대소문자 무관으로 통과해야 한다(스킴 정규화 회귀 가드).
+  it('allows https regardless of scheme letter case', () => {
+    expect(isAllowedMediaSrc('HTTPS://cdn.example.com/a.mp3')).toBe(true);
+    expect(isAllowedHref('Https://example.com')).toBe(true);
+  });
+
+  // 19-보안: 선행 공백/제어문자로 위험 스킴을 숨기는 우회를 막아야 한다.
+  // 브라우저는 href/src의 선행 ASCII 공백·탭·개행을 제거하므로 "  javascript:" 도 클릭 시 실행된다 →
+  // 앵커/미디어로 렌더되면 안 된다(발행 기사 신뢰 경계). isAllowedHref/isAllowedMediaSrc가 false여야 한다.
+  it('rejects dangerous schemes hidden behind leading whitespace/control chars', () => {
+    expect(isAllowedHref('  javascript:alert(1)')).toBe(false);
+    expect(isAllowedHref('\tjavascript:alert(1)')).toBe(false);
+    expect(isAllowedHref('\njavascript:alert(1)')).toBe(false);
+    expect(isAllowedHref('\r\njavascript:alert(1)')).toBe(false);
+    expect(isAllowedMediaSrc('  javascript:alert(1)')).toBe(false);
+    expect(isAllowedMediaSrc(' data:text/html,x')).toBe(false);
+  });
+
+  // 19-보안(보강): 적대적 워크플로가 찾은 추가 우회 벡터를 3함수 전부에서 거부한다.
+  // 선행 제어/공백·스킴 내부 제어문자·NUL·프로토콜상대(//)·백슬래시·단일슬래시 https:/ 등.
+  const BYPASS_VECTORS = [
+    ' javascript:alert(1)',
+    '\tjavascript:',
+    '\njavascript:',
+    '\rjavascript:',
+    '\x00javascript:',
+    'java\tscript:',
+    'java\nscript:',
+    '//evil.com/x',
+    '/\\evil.com/x',
+    '\\\\evil.com\\x',
+    'https:/evil.com',
+  ];
+
+  it('rejects all known bypass vectors in isAllowedHref', () => {
+    BYPASS_VECTORS.forEach((v) => expect(isAllowedHref(v)).toBe(false));
+  });
+
+  it('rejects all known bypass vectors in isAllowedMediaSrc', () => {
+    BYPASS_VECTORS.forEach((v) => expect(isAllowedMediaSrc(v)).toBe(false));
+  });
+
+  it('rejects all known bypass vectors in isAllowedImageSrc', () => {
+    BYPASS_VECTORS.forEach((v) => expect(isAllowedImageSrc(v)).toBe(false));
+  });
+
+  // 19-보안: 정상 케이스 회귀 가드 — https://·상대경로·(이미지)data:image/ 는 계속 허용된다.
+  it('still allows legit https/relative URLs (and data:image/ for images) after hardening', () => {
+    ['https://good.com/x.jpg', '/a/b.png', 'b.png'].forEach((v) => {
+      expect(isAllowedHref(v)).toBe(true);
+      expect(isAllowedMediaSrc(v)).toBe(true);
+      expect(isAllowedImageSrc(v)).toBe(true);
+    });
+    // data:image/ 는 이미지 전용 — media/href는 거부, image는 허용(기존 정책 보존).
+    expect(isAllowedImageSrc('data:image/png;base64,AAAA')).toBe(true);
+    expect(isAllowedMediaSrc('data:image/png;base64,AAAA')).toBe(false);
+    expect(isAllowedHref('data:image/png;base64,AAAA')).toBe(false);
   });
 });
 

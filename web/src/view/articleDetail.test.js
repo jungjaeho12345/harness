@@ -139,6 +139,51 @@ describe('articleDetail — embed media rendering', () => {
     expect(html).not.toContain('href="javascript:alert(1)"');
     expect(html).not.toContain('javascript:alert(1)');
   });
+
+  // 19-보안: 허용된 https URL이라도 title/href에 따옴표·꺾쇠가 있으면 escapeHtml로 속성/태그 탈출이 막혀야 한다.
+  // (검증을 통과한 안전 스킴 위에서도 속성 컨텍스트 인젝션을 차단 — 새 창은 정적 HTML 문자열이라 이스케이프 누락 = XSS.)
+  it('escapes a quote/angle-bracket bearing title on an allowed link href (no attribute/tag breakout)', () => {
+    const markupVersion = serialize([embedBlock({
+      embedType: 'link', href: 'https://example.com/x', title: '"><img src=x onerror=alert(1)>',
+    })]);
+    const html = renderDetailHtml({ markupVersion });
+    // 원본 탈출 시퀀스가 그대로 들어가면 안 된다(태그가 닫히고 <img>가 주입됨).
+    expect(html).not.toContain('"><img src=x onerror=alert(1)>');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    // 이스케이프된 형태로만 존재하고, 합법 href 속성은 보존된다.
+    expect(html).toContain('&quot;&gt;&lt;img');
+    expect(html).toContain('href="https://example.com/x"');
+  });
+
+  it('escapes a quote-bearing query string on an allowed media src (no attribute breakout)', () => {
+    const markupVersion = serialize([embedBlock({
+      embedType: 'audio', src: 'https://cdn.example.com/a.mp3?x="><script>alert(1)</script>',
+    })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('"><script>alert(1)</script>');
+    expect(html).toContain('&quot;&gt;&lt;script&gt;');
+  });
+
+  // 19-보안: 선행 공백으로 위험 스킴을 숨긴 링크는 앵커로 렌더되면 안 된다(브라우저가 공백을 트림 후 실행).
+  it('does not render <a href> nor leak the raw href for a whitespace-prefixed javascript: link', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'link', href: '  javascript:alert(1)', title: '클릭' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toMatch(/<a[^>]*href=/);
+    expect(html).not.toContain('javascript:alert(1)');
+  });
+
+  // 19-보안(보강): 프로토콜상대·단일슬래시·백슬래시 우회도 발행 HTML(실제 XSS 싱크)에서 앵커/미디어로 렌더되면 안 된다.
+  it('does not render <a>/<audio>/<video> for protocol-relative, single-slash and backslash bypass URLs', () => {
+    const linkPR = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'link', href: '//evil.com/x', title: 'x' })]) });
+    expect(linkPR).not.toMatch(/<a[^>]*href=/);
+    const linkSS = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'link', href: 'https:/evil.com', title: 'x' })]) });
+    expect(linkSS).not.toMatch(/<a[^>]*href=/);
+    expect(linkSS).not.toContain('https:/evil.com');
+    const audioBS = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'audio', src: '\\\\evil.com\\x.mp3' })]) });
+    expect(audioBS).not.toContain('<audio');
+    const videoPR = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'localVideo', src: '//evil.com/x.webm' })]) });
+    expect(videoPR).not.toContain('<video');
+  });
 });
 
 describe('articleDetail — byline (작성자 부가 라인)', () => {
