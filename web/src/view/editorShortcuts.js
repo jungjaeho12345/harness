@@ -23,6 +23,11 @@ export function isInsertContinueMarker(e) {
   return !!(e && e.ctrlKey && !e.altKey && (e.key === 'y' || e.key === 'Y' || e.code === 'KeyY'));
 }
 
+// Alt+O — 약물입력 다이얼로그 열기. 레이아웃 무관하게 code(KeyO)도 본다. ctrl/meta 없이 alt만(Alt+Y와 key가 달라 충돌하지 않음).
+export function isGlyphInput(e) {
+  return !!(e && e.altKey && !e.ctrlKey && (e.key === 'o' || e.key === 'O' || e.code === 'KeyO'));
+}
+
 // Alt+Y — "(끝)"을 최종 블록으로 삽입한다(본문 텍스트 → 임베드 → "(끝)" 순). 중복이면 삽입하지 않는다.
 // 맞춤법 검사는 이 시점부터 켠다(spellcheck=true). 반환 spellcheck는 항상 true(Alt+Y 처리됨).
 export function insertEndMarker(blocks) {

@@ -1797,22 +1797,22 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환/약물입력/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다', async () => {
+  it('aux 항목(기업코드변환/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다(약물입력은 phase17 step4에서 결선됨)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['기업코드변환', '약물입력', '원본 붙여넣기', '텍스트 붙여넣기']) {
+    for (const label of ['기업코드변환', '원본 붙여넣기', '텍스트 붙여넣기']) {
       expect(ctxItem(label)).toBeDisabled();
     }
   });
 
-  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·보이기 토글이 활성이다', async () => {
+  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
@@ -2126,5 +2126,181 @@ describe('WriterPage — 약물바(EditorGlyphBar) 결선', () => {
     bar = await screen.findByTestId('glyph-bar');
     await waitFor(() => expect(within(bar).getAllByRole('button')).toHaveLength(2));
     expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['※', '◇']);
+  });
+});
+
+// Step 4(17-editor-glyph-tools): 약물입력 다이얼로그(GlyphInputDialog) 결선 —
+// Alt+O / 도구 메뉴(tools.symbolInput) / 우클릭(ctx.symbolInput)으로 다이얼로그를 열고,
+// 자주쓰는 약물(glyphFavorites) 선택 시 Step 2 onGlyphPick 안전 경로로 캐럿 위치에 삽입한다.
+// keymap(glyphKeymap)은 참조 표시만. 매핑 모드에서는 열지 않고 본문도 바꾸지 않는다(본문-only 불변식).
+// glyphFavorites/glyphKeymap은 localStorage(editorPrefs)에 영속되므로 localStorage.clear()로 격리한다.
+describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 자주쓰는 약물 + 사용자 키보드 약물을 함께 시드한다(마운트 lazy 초기화가 읽는다).
+  const seedPrefs = ({ favorites = [], keymap = [] } = {}) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    glyphFavorites: { items: favorites },
+    glyphKeymap: { items: keymap },
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 약물입력 다이얼로그 자체(role=dialog '약물 입력')만 본다.
+  const glyphDialog = () => screen.queryByRole('dialog', { name: '약물 입력' });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시킨다(약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  function rightClickCanvas(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    fireEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+  }
+
+  it('Alt+O keydown 시 약물입력 다이얼로그가 열리고 preventDefault된다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(glyphDialog()).toBeNull();
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'o', altKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // Alt+O 가로채기
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input')).toBeInTheDocument();
+  });
+
+  it("도구 메뉴 '약물 입력'(tools.symbolInput)이 활성이고 클릭 시 다이얼로그가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    expect(glyphDialog()).toBeNull();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    const item = within(menu).getByText('약물 입력').closest('button');
+    expect(item).toBeEnabled();
+    await userEvent.click(item);
+
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+  });
+
+  it("우클릭 '약물입력'(ctx.symbolInput)이 비매핑에서 활성이고 클릭 시 다이얼로그가 열린다", async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    const ctx = await screen.findByTestId('editor-context-menu');
+    const item = within(ctx).getByText('약물입력').closest('button');
+    expect(item).toBeEnabled();
+
+    await userEvent.click(item);
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.queryByTestId('editor-context-menu')).toBeNull(); // 선택 후 닫힘
+  });
+
+  it("자주쓰는 약물('※') 클릭 시 캐럿 줄에 '※'가 삽입된다(updateField body 안전 경로, 임베드 불변)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ favorites: ['※'] });
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('glyph-input-fav-0'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 캐럿 줄 시작에 삽입
+  });
+
+  it("사용자 키보드 약물(glyphKeymap)이 다이얼로그에 'Ctrl+1 → ★'로 참조 표시된다", async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    expect(screen.getByTestId('glyph-input-key-0')).toHaveTextContent('Ctrl+1 → ★');
+  });
+
+  it('약물 선택 후에도 다이얼로그가 열려 있다(연속 삽입 — Step 3 닫기 정책)', async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('glyph-input-fav-0'));
+    expect(glyphDialog()).toBeInTheDocument(); // 닫기 버튼/Esc 전까지 열린 채
+
+    await userEvent.click(screen.getByTestId('glyph-input-close'));
+    await waitFor(() => expect(glyphDialog()).toBeNull());
+  });
+
+  it('매핑 모드: Alt+O가 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ favorites: ['※'] });
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    expect(glyphDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it("매핑 모드: 우클릭 '약물입력'이 비활성이다", async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    rightClickCanvas(container);
+    const ctx = await screen.findByTestId('editor-context-menu');
+    expect(within(ctx).getByText('약물입력').closest('button')).toBeDisabled();
+  });
+
+  it("환경설정 약물 미등록(빈 배열)이어도 다이얼로그가 graceful 안내로 열린다", async () => {
+    seedPrefs({ favorites: [], keymap: [] });
+    const { container } = await openWith([textBlock('헤드')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-fav-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('glyph-input-key-empty')).toBeInTheDocument();
   });
 });
