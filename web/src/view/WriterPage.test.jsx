@@ -2366,3 +2366,150 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
     expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument(); // 찾기 불변
   });
 });
+
+// Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
+// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
+// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). new Date는 WriterPage에만.
+// 시각은 vi.useFakeTimers + setSystemTime으로 고정하고, dateFormat은 saveEditorPrefs로 주입한다(localStorage.clear 격리).
+describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true }); // userEvent의 타이머 의존을 위해 실시간 진행 허용.
+    vi.setSystemTime(new Date('2026-06-24T01:23:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // 날짜형식 prefs를 시드한다(마운트 lazy 초기화/loadEditorPrefs가 읽는다).
+  const seedDateFormat = (dateFormat) => saveEditorPrefs({ ...loadEditorPrefs(), dateFormat });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 '날짜 삽입' 항목을 클릭한다.
+  async function clickInsertDate() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('날짜 삽입').closest('button'));
+  }
+
+  it("도구 메뉴 '날짜 삽입'(tools.insertDate)이 활성이다(MENU_ENABLED)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('날짜 삽입').closest('button')).toBeEnabled();
+  });
+
+  it("'날짜 삽입' 클릭 시 캐럿 줄에 날짜형식 prefs대로 포맷된 날짜가 삽입된다(안전 경로, 임베드 불변)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n2026.06.24본문'); // 고정 시각 포맷, 캐럿 줄 시작에 삽입
+  });
+
+  it('날짜형식 prefs를 바꾸면 삽입 문자열도 그 형식을 따른다(YYYY-MM-DD)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24본문');
+  });
+
+  it('시각 포맷(HH:mm 포함)도 prefs 형식대로 삽입된다(applyDateFormat 정합)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD HH:mm');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 고정 시각 2026-06-24T01:23:00Z → 'YYYY-MM-DD HH:mm' = '2026-06-24 01:23'(UTC, applyDateFormat).
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
+  it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const embed = embedBlock({ type: 'image', src: 'https://img/y.png' });
+    const { model } = await openWith([
+      textBlock('첫줄'), embed, textBlock('마지막'), textBlock('(끝)'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickInsertDate(); // 캐럿 세팅 없음(lastCaretRef.current === null)
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks[1]).toEqual(embed); // 임베드 위치·내용 불변
+    // 폴백 = "(끝)"이 아닌 마지막 텍스트 줄('마지막') 끝, "(끝)"은 불변.
+    expect(blocksToText(blocks)).toBe('첫줄\n마지막2026.06.24\n(끝)');
+  });
+
+  it('매핑 모드: 도구 메뉴 \'날짜 삽입\' 클릭도 본문을 바꾸지 않는다(매핑 가드)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 0);
+    await clickInsertDate();
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('다른 비결선 도구 항목(tools.fileInfo)은 여전히 비활성이다(회귀 없음)', async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('파일 정보').closest('button')).toBeDisabled();
+  });
+});

@@ -32,6 +32,8 @@ import {
 } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
+import { insertDateAtCaret } from './editorDate.js';
+import { applyDateFormat } from './listFormat.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
@@ -59,7 +61,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -222,6 +224,19 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
+  // 도구>날짜 삽입 — 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
+  // 비결정성(new Date)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
+  // 약물입력(onGlyphPick)과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
+  const insertDate = () => {
+    if (isMapping) return;                                   // 매핑(텍스트 잠금) no-op — 본문-only 불변식.
+    const fmt = loadEditorPrefs().dateFormat;                // 읽기 전용(저장/변경 안 함).
+    const dateString = applyDateFormat(new Date().toISOString(), fmt);
+    const caret = lastCaretRef.current;                      // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
+    const r = insertDateAtCaret(blocks, caret, dateString);
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -287,6 +302,8 @@ export function WriterPage() {
     if (id === 'edit.findReplace') { openFind(); return; }
     // 약물 입력 — 매핑 가드 뒤(약물 삽입은 본문 변경 → 매핑에서는 열지 않는다, 찾기와 동일 정책).
     if (id === 'tools.symbolInput') { setShowGlyphInput(true); return; }
+    // 날짜 삽입 — 매핑 가드 뒤(본문 텍스트 변경 → 매핑 비활성, 약물입력과 동일 정책).
+    if (id === 'tools.insertDate') { insertDate(); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }

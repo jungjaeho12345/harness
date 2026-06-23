@@ -3,7 +3,7 @@
   "phase": "18-editor-tools-menu",
   "steps": [
     { "step": 0, "name": "insert-date-pure", "status": "completed", "deps": [], "summary": "web/src/view/editorDate.js 신규 — insertDateAtCaret(blocks, caret, dateString)+normalizeDateString. editorGlyph 패턴 복제(blocksToText 좌표계, 캐럿 컬럼 slice 삽입, (끝)/임베드/순서/개수 불변, 입력 mutate 금지, caret null/범위밖/(끝) 폴백). new Date/applyDateFormat 미호출(순수). 테스트 25개(editorDate.test.js) 통과, 전체 web 769 통과." },
-    { "step": 1, "name": "insert-date-wiring", "status": "pending", "deps": [0] },
+    { "step": 1, "name": "insert-date-wiring", "status": "completed", "deps": [0], "summary": "WriterPage.jsx 결선 — MENU_ENABLED에 tools.insertDate 추가, insertDate() 핸들러(매핑 가드 → loadEditorPrefs().dateFormat → applyDateFormat(new Date().toISOString(), fmt) → insertDateAtCaret(blocks, lastCaretRef.current, dateString) → updateField('body', serialize)+setPendingCaretLine), onMenuSelect 매핑 가드 뒤 분기. new Date는 WriterPage에만(헬퍼는 순수). Editor.jsx/server 무변경. 테스트 7개(WriterPage 날짜 삽입 describe, fakeTimers 시각 고정) 통과, 전체 web 776 통과." },
     { "step": 2, "name": "url-embed-dialog", "status": "pending", "deps": [] },
     { "step": 3, "name": "url-embed-wiring", "status": "pending", "deps": [2] }
   ]
