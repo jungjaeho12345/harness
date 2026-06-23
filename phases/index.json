@@ -104,8 +104,9 @@
     },
     {
       "dir": "18-editor-tools-menu",
-      "status": "pending",
-      "note": "에디터 도구(tools) 메뉴 미결선 항목 중 자기완결·저위험만 결선 — 날짜 삽입(tools.insertDate) + URL 직접 그림/유튜브 삽입(tools.insertImage·tools.insertYoutube). step0 날짜 삽입 순수 헬퍼(editorGlyph 패턴, 날짜 문자열 주입)→step1 날짜 결선(new Date+applyDateFormat은 WriterPage만)→step2 URL 임베드 다이얼로그→step3 make*Embed/insertEmbed 재사용 결선. Editor.jsx 미접촉·기존 메뉴 id 재사용·매핑 본문-only 가드·client 전용·DB 비파괴. DEFER: 오디오/로컬영상/링크(InlineEmbed 미렌더), 약어변환·관리(사전+키 인터셉트), 사진발행/이력비교(DB/백엔드), 간체↔번체·파일정보·UI언어(변환표/i18n/외부의존)."
+      "status": "completed",
+      "completed_at": "2026-06-24T02:10:00+0900",
+      "note": "에디터 도구(tools) 메뉴 미결선 항목 중 자기완결·저위험만 결선 — 날짜 삽입(tools.insertDate) + URL 직접 그림/유튜브 삽입(tools.insertImage·tools.insertYoutube). step0 날짜 삽입 순수 헬퍼(editorGlyph 패턴, 날짜 문자열 주입)→step1 날짜 결선(new Date+applyDateFormat은 WriterPage만)→step2 URL 임베드 다이얼로그→step3 make*Embed/insertEmbed 재사용 결선. 매핑 정책: 임베드(그림/유튜브)=허용(검색패널 insertEmbed parity), 텍스트(날짜)=차단. Editor.jsx 미접촉·기존 메뉴 id 재사용·client 전용·DB 비파괴. test:web 798 통과. DEFER: 오디오/로컬영상/링크(InlineEmbed 미렌더 — 렌더 확장 동반 별도 phase), 약어변환·관리(사전+키 인터셉트), 사진발행/이력비교(DB/백엔드), 간체↔번체·파일정보·UI언어(변환표/i18n/외부의존)."
     }
   ]
 }
