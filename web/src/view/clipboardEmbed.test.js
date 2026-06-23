@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   EMBED_SIZE, parseYouTubeId, makeImageEmbed, makeVideoEmbed, makeArticleEmbed, embedFromPaste,
+  isAllowedMediaSrc, isAllowedHref,
 } from './clipboardEmbed.js';
 
 describe('clipboardEmbed — sizing', () => {
@@ -22,6 +23,39 @@ describe('clipboardEmbed — youtube parsing', () => {
   it('returns null for non-youtube text', () => {
     expect(parseYouTubeId('https://example.com')).toBeNull();
     expect(parseYouTubeId('not a url')).toBeNull();
+  });
+});
+
+// 19-step0: 오디오/로컬영상 src·링크 href 허용 scheme 검사(단일 출처). 이미지와 달리 data: 전면 불허.
+describe('clipboardEmbed — media/href scheme allowlist', () => {
+  it('isAllowedMediaSrc allows https: and relative paths', () => {
+    expect(isAllowedMediaSrc('https://cdn.example.com/a.mp3')).toBe(true);
+    expect(isAllowedMediaSrc('clip.webm')).toBe(true);
+    expect(isAllowedMediaSrc('/uploads/a.mp3')).toBe(true);
+  });
+
+  it('isAllowedMediaSrc rejects javascript:/data:/http:/blob: and empty/non-string', () => {
+    expect(isAllowedMediaSrc('javascript:alert(1)')).toBe(false);
+    expect(isAllowedMediaSrc('data:text/html,<b>x</b>')).toBe(false);
+    // 미디어는 data: 인라인을 허용하지 않는다(이미지의 data:image/ 예외와 구분).
+    expect(isAllowedMediaSrc('data:audio/mp3;base64,AAAA')).toBe(false);
+    expect(isAllowedMediaSrc('http://insecure/a.mp3')).toBe(false);
+    expect(isAllowedMediaSrc('blob:https://x/abc')).toBe(false);
+    expect(isAllowedMediaSrc('')).toBe(false);
+    expect(isAllowedMediaSrc(null)).toBe(false);
+  });
+
+  it('isAllowedHref allows https: and relative paths', () => {
+    expect(isAllowedHref('https://example.com')).toBe(true);
+    expect(isAllowedHref('/list.do')).toBe(true);
+  });
+
+  it('isAllowedHref rejects javascript:/data:/http: and empty/non-string', () => {
+    expect(isAllowedHref('javascript:alert(1)')).toBe(false);
+    expect(isAllowedHref('data:text/html,x')).toBe(false);
+    expect(isAllowedHref('http://x')).toBe(false);
+    expect(isAllowedHref('')).toBe(false);
+    expect(isAllowedHref(null)).toBe(false);
   });
 });
 

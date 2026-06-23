@@ -85,6 +85,60 @@ describe('articleDetail — embed media rendering', () => {
     expect(html).not.toContain('<img');
     expect(html).not.toContain('<iframe');
   });
+
+  // 19-step0: 상세/발행 렌더에서 오디오/로컬영상/링크 분기. 비허용 URL은 원본 미노출(폴백 자리표시자).
+  it('renders an <audio> for an allowed audio embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'audio', src: 'https://cdn.example.com/a.mp3' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<audio');
+    expect(html).toContain('src="https://cdn.example.com/a.mp3"');
+  });
+
+  it('does not render <audio> nor leak the raw src for a javascript: audio embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'audio', src: 'javascript:alert(1)' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<audio');
+    expect(html).not.toContain('javascript:alert(1)');
+  });
+
+  it('does not render <audio> nor leak the raw src for a data:audio embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'audio', src: 'data:audio/mp3;base64,AAAA' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<audio');
+    expect(html).not.toContain('data:audio/mp3');
+  });
+
+  it('renders a <video> for an allowed localVideo embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'localVideo', src: 'https://cdn.example.com/a.webm' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<video');
+    expect(html).toContain('src="https://cdn.example.com/a.webm"');
+  });
+
+  it('does not render <video> nor leak the raw src for a javascript:/http: localVideo embed', () => {
+    const js = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'localVideo', src: 'javascript:alert(1)' })]) });
+    expect(js).not.toContain('<video');
+    expect(js).not.toContain('javascript:alert(1)');
+    const http = renderDetailHtml({ markupVersion: serialize([embedBlock({ embedType: 'localVideo', src: 'http://insecure/a.webm' })]) });
+    expect(http).not.toContain('<video');
+    expect(http).not.toContain('http://insecure/a.webm');
+  });
+
+  it('renders an <a> with rel=noopener noreferrer for an allowed link embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'link', href: 'https://example.com/x', title: '원문' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<a');
+    expect(html).toContain('href="https://example.com/x"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain('원문');
+  });
+
+  it('does not render <a href> nor leak the raw href for a javascript: link embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'link', href: 'javascript:alert(1)', title: '나쁜링크' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('href="javascript:alert(1)"');
+    expect(html).not.toContain('javascript:alert(1)');
+  });
 });
 
 describe('articleDetail — byline (작성자 부가 라인)', () => {

@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "19-editor-embed-types",
   "steps": [
-    { "step": 0, "name": "embed-render-validators", "status": "pending", "deps": [], "summary": "" },
+    { "step": 0, "name": "embed-render-validators", "status": "completed", "deps": [], "summary": "clipboardEmbed.js에 isAllowedMediaSrc/isAllowedHref(https+상대만, data: 전면 불허) 단일 검증 출처 추가. InlineEmbed.jsx·articleDetail.js 양쪽에 audio(<audio controls referrerPolicy=no-referrer>)·localVideo(<video controls>, 유튜브 iframe과 별개)·link(<a rel=noopener noreferrer target=_blank>, 텍스트=title||href) 렌더 분기 추가. 비허용 URL은 렌더 거부(빈 figure/폴백 [type], 원본 미노출). articleDetail은 모든 값 escapeHtml. 보안 단언(javascript:/data:/http: 거부) 포함, 양쪽 렌더 경로 커버. web 822 통과·build·lint green." },
     { "step": 1, "name": "embed-factories-dialog-kinds", "status": "pending", "deps": [0], "summary": "" },
     { "step": 2, "name": "tools-menu-wiring", "status": "pending", "deps": [1], "summary": "" }
   ]

@@ -2,7 +2,9 @@
 // 폭: 영상 figure 612px, 기사 참조 카드 480px (clipboardEmbed EMBED_SIZE). transport 비의존(콜백만).
 // 이미지: 제품 결정대로 비율 유지·최대 200×200으로 캡하고 figure는 캡된 이미지에 맞춘다(612px 미예약).
 
-import { EMBED_SIZE, parseYouTubeId, isAllowedImageSrc } from './clipboardEmbed.js';
+import {
+  EMBED_SIZE, parseYouTubeId, isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
+} from './clipboardEmbed.js';
 
 // 이미지 src 허용 scheme 검사(https:/data:image/·상대경로만)는 임베드 모델 모듈(clipboardEmbed)로 단일화했다.
 // 상세보기 렌더(articleDetail)와 같은 규칙을 공유한다. 기존 import 경로 호환을 위해 여기서 재노출한다.
@@ -49,11 +51,31 @@ export function InlineEmbed({ embed, onRemove, readOnly = false, blockIndex }) {
         {embed.title || embed.articleId || '기사'}
       </a>
     );
+  } else if (type === 'audio') {
+    // 19: 오디오 — 허용 scheme(isAllowedMediaSrc, https:/상대)만 <audio> 렌더. 거부면 빈 figure(크래시 금지).
+    if (isAllowedMediaSrc(embed.src)) {
+      body = <audio controls src={embed.src} referrerPolicy="no-referrer" />;
+    }
+  } else if (type === 'localVideo') {
+    // 19: 로컬/업로드 영상 — <video> 엘리먼트(유튜브 iframe과 별개 타입). 허용 src만 렌더.
+    if (isAllowedMediaSrc(embed.src)) {
+      body = <video controls src={embed.src} style={{ width: '100%' }} />;
+    }
+  } else if (type === 'link') {
+    // 19: 링크 — 허용 href만 새 탭 <a>로 렌더. rel="noopener noreferrer"로 탭내빙·referrer 누출 차단.
+    if (isAllowedHref(embed.href)) {
+      body = (
+        <a href={embed.href} rel="noopener noreferrer" target="_blank">
+          {embed.title || embed.href}
+        </a>
+      );
+    }
   }
 
   // 이미지는 figure가 612px를 예약하지 않고 캡된 이미지(<=200px)에 맞춘다(fit-content).
-  // 영상은 figureWidthPx(기본 612px), 기사 참조 카드는 widthPx(기본 480px) 유지.
-  const figureWidth = type === 'image'
+  // 영상(유튜브)·로컬영상은 figureWidthPx(기본 612px), 기사 참조 카드는 widthPx(기본 480px) 유지.
+  // 오디오·링크는 콘텐츠 폭(fit-content)으로 둔다.
+  const figureWidth = type === 'image' || type === 'audio' || type === 'link'
     ? 'fit-content'
     : type === 'article'
       ? `${embed.widthPx ?? EMBED_SIZE.articleCardWidthPx}px`
