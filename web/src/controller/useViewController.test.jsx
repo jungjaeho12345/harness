@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AppContext } from '../app/context.js';
-import { useViewController, buildMenuFilter, VIEW_MENUS, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
+import { useViewController, buildMenuFilter, visibleMenus, VIEW_MENUS, PENDING_EDIT_KEY, PAGE_SIZE } from './useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 function setup(seed, identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }) {
@@ -36,15 +36,25 @@ describe('buildMenuFilter', () => {
   it('personal → logged-in author, RDS·RRK', () => {
     expect(buildMenuFilter('personal', me, null)).toEqual({ author: '김기자', status: ['RDS', 'RRK'] });
   });
-  it('kill articles → KILL 계열(RRK·DDK·EEK)만, 부서 무관(부서 키 없음)', () => {
-    // KILL기사는 부서 무관 전체 KILL 목록 — departments를 줘도 부서 키를 붙이지 않는다(personal 패턴).
+  it('kill articles → KILL 계열(RRK·DDK·EEK)만, 부서 다중 선택 지원', () => {
+    // KILL기사도 부서 멀티셀렉트로 좁힐 수 있다(기본 '전체'=부서 키 없음, deptSend 패턴).
     expect(buildMenuFilter('killArticles', me, null)).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
-    expect(buildMenuFilter('killArticles', me, ['정치'])).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
+    expect(buildMenuFilter('killArticles', me, ['정치', '경제'])).toEqual({ status: ['RRK', 'DDK', 'EEK'], departments: ['정치', '경제'] });
   });
-  it('embargo mgmt → EPS만, 부서 무관(부서 키 없음)', () => {
-    // 엠바고 관리는 부서 무관 전체 EPS 목록 — departments를 줘도 부서 키를 붙이지 않는다(killArticles/personal 패턴).
+  it('embargo mgmt → EPS만, 부서 다중 선택 지원', () => {
+    // 엠바고 관리도 부서 멀티셀렉트로 좁힐 수 있다(기본 '전체'=부서 키 없음, deptSend 패턴).
     expect(buildMenuFilter('embargoMgmt', me, null)).toEqual({ status: ['EPS'] });
-    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['EPS'] });
+    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['EPS'], departments: ['정치'] });
+  });
+});
+
+describe('visibleMenus', () => {
+  it('엠바고 관리 메뉴는 권한 D, Z에게만 보이고 R에게는 숨긴다', () => {
+    expect(visibleMenus({ role: 'R' })).toEqual(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles']);
+    expect(visibleMenus({ role: 'D' })).toEqual(VIEW_MENUS);
+    expect(visibleMenus({ role: 'Z' })).toEqual(VIEW_MENUS);
+    // 신원 미상(복원 전)에는 엠바고 관리를 숨긴다(안전 기본값).
+    expect(visibleMenus(null)).not.toContain('embargoMgmt');
   });
 });
 
