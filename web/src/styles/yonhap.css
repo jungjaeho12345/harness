@@ -1064,6 +1064,52 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 파일 정보(도구>파일 정보) 다이얼로그 — 본문 통계 읽기전용 표시 패널(찾기/약물입력/URL임베드와 동일 계열). */
+.yh-file-info {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-file-info__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-file-info__list {
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-file-info__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--yh-sp-md);
+  padding: var(--yh-sp-sm) 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+}
+.yh-file-info__label {
+  font-size: 0.85rem;
+  color: var(--yh-gray-dark);
+  margin: 0;
+}
+.yh-file-info__value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+}
+.yh-file-info__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 로그인 레이아웃 */
 .yh-login {
   display: flex;

@@ -17,6 +17,17 @@ export function byteLength(text) {
   return new TextEncoder().encode(String(text ?? '')).length;
 }
 
+// 개행(\n)을 제외한 글자 수. null/undefined/'' → 0.
+// 코드포인트 단위로 센다([...text] 전개) — 서러게이트 페어(이모지 등)를 1글자로 본다.
+export function charCount(text) {
+  return [...String(text ?? '')].filter((ch) => ch !== '\n').length;
+}
+
+// 줄 수 — lines(text).length 기준. 빈 문자열도 1줄(lines('') → ['']). null/undefined → 1.
+export function lineCount(text) {
+  return lines(text).length;
+}
+
 // 캐럿 줄까지의 "비빈 줄 그룹" 개수(빈 줄로 분리, 연속 빈 줄은 경계 1개). 최소 1.
 function paragraphIndex(linesArr, lineIndex) {
   let count = 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { wordCount, byteLength, caretPosition } from './editorStats.js';
+import { wordCount, byteLength, caretPosition, charCount, lineCount } from './editorStats.js';
 
 describe('editorStats.wordCount — 공백류로 분리된 단어 수', () => {
   it('연속 공백을 하나로 보고 단어를 센다', () => {
@@ -68,5 +68,43 @@ describe('editorStats.caretPosition — { paragraph, row, column } 1-based', () 
       row: 4,
       column: 1,
     });
+  });
+});
+
+describe('editorStats.charCount — 개행 제외 글자 수', () => {
+  it('개행은 글자로 세지 않는다', () => {
+    expect(charCount('가\n나')).toBe(2);
+  });
+  it('연속 개행도 모두 제외한다', () => {
+    expect(charCount('가\n\n다')).toBe(2);
+  });
+  it('ASCII 글자 수를 센다', () => {
+    expect(charCount('abc')).toBe(3);
+  });
+  it('공백은 글자로 센다(개행만 제외)', () => {
+    expect(charCount('a b')).toBe(3);
+  });
+  it('빈 문자열은 0', () => {
+    expect(charCount('')).toBe(0);
+  });
+  it('null/undefined는 0', () => {
+    expect(charCount(null)).toBe(0);
+    expect(charCount(undefined)).toBe(0);
+  });
+});
+
+describe('editorStats.lineCount — lines(text).length 기준 줄 수', () => {
+  it('빈 문자열도 1줄', () => {
+    expect(lineCount('')).toBe(1);
+  });
+  it('개행 1개면 2줄', () => {
+    expect(lineCount('가\n나')).toBe(2);
+  });
+  it('개행 2개(빈 줄 포함)면 3줄', () => {
+    expect(lineCount('가\n\n다')).toBe(3);
+  });
+  it('null/undefined는 1줄', () => {
+    expect(lineCount(null)).toBe(1);
+    expect(lineCount(undefined)).toBe(1);
   });
 });

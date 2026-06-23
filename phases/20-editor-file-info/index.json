@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "20-editor-file-info",
   "steps": [
-    { "step": 0, "name": "file-info-stats-dialog", "status": "pending" },
+    { "step": 0, "name": "file-info-stats-dialog", "status": "completed", "summary": "editorStats.js에 순수 charCount(개행 제외, 코드포인트 단위)·lineCount(lines(text).length, 빈문자열→1) 추가(기존 wordCount/byteLength/caretPosition export 불변). FileInfoDialog.jsx 읽기전용 표시 다이얼로그 신규 — props(stats/onClose)만, role=dialog '파일 정보', 전용 yh-file-info/file-info className·testid, 6항목(chars/words/bytes/lines/embeds/caret) 각 testid, Esc/닫기 onClose, stats 미주입 안전폴백, 입력폼 없음. yonhap.css에 yh-file-info 패널 스타일 추가. editorStats 10건+FileInfoDialog 9건 신규 테스트, 전체 873건 통과·build·lint OK." },
     { "step": 1, "name": "writer-page-wiring", "status": "pending" }
   ]
 }
