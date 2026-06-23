@@ -1,0 +1,9 @@
+{
+  "project": "기사 작성기",
+  "phase": "19-editor-embed-types",
+  "steps": [
+    { "step": 0, "name": "embed-render-validators", "status": "pending", "deps": [], "summary": "" },
+    { "step": 1, "name": "embed-factories-dialog-kinds", "status": "pending", "deps": [0], "summary": "" },
+    { "step": 2, "name": "tools-menu-wiring", "status": "pending", "deps": [1], "summary": "" }
+  ]
+}
