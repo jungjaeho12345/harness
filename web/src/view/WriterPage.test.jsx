@@ -2468,6 +2468,21 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
   });
 
+  it('dateFormat prefs가 없으면 기본 형식(YYYY-MM-DD HH:mm)으로 삽입된다(loadEditorPrefs 기본값 폴백)', async () => {
+    // seedDateFormat을 부르지 않음 — localStorage가 비어 loadEditorPrefs().dateFormat이 기본값으로 폴백한다.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각이 그 형식으로 삽입.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
   it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     seedDateFormat('YYYY.MM.DD');
@@ -2584,6 +2599,24 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     expect(screen.getByRole('dialog', { name: '유튜브 영상 삽입' })).toBeInTheDocument();
 
     await submitUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → youtu.be 단축 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://youtu.be/dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → embed/ 형태 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://www.youtube.com/embed/dQw4w9WgXcQ');
     await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
   });
 
