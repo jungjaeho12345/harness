@@ -95,6 +95,11 @@
       "dir": "16-editor-prefs-remaining",
       "status": "completed",
       "completed_at": "2026-06-22T21:14:34+0900"
+    },
+    {
+      "dir": "17-editor-glyph-tools",
+      "status": "pending",
+      "note": "phase16 환경설정 약물(glyphFavorites/glyphKeymap) 실동작화 — 약물바(glyph bar)+약물입력(Alt+O). 약물 삽입 순수 헬퍼→약물바 컴포넌트+토글→약물입력 다이얼로그→메뉴/우클릭/Alt+O 결선. Editor.jsx 미접촉·안전 경로(updateField+setPendingCaretLine)만·client 전용. 키조합 인터셉트·기업코드변환 DEFER."
     }
   ]
 }
