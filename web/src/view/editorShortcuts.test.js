@@ -3,6 +3,7 @@ import {
   isInsertEndMarker, isDeleteLine, insertEndMarker, deleteLineAt,
   CONTINUE_MARKER, isInsertContinueMarker, insertContinueMarker,
   transformTextLine, toUpper, toLower, capitalizeFirst, toggleCase,
+  isGlyphInput,
 } from './editorShortcuts.js';
 import { textBlock, embedBlock, END_MARKER, blocksToText } from './editorContent.js';
 
@@ -18,6 +19,18 @@ describe('editorShortcuts — key recognition', () => {
     expect(isDeleteLine({ ctrlKey: true, key: 'd' })).toBe(true);
     expect(isDeleteLine({ ctrlKey: true, code: 'KeyD' })).toBe(true);
     expect(isDeleteLine({ key: 'd' })).toBe(false);
+  });
+
+  it('recognizes Alt+O (glyph input), and not Alt+Y / Ctrl+O', () => {
+    expect(isGlyphInput({ altKey: true, key: 'o' })).toBe(true);
+    expect(isGlyphInput({ altKey: true, key: 'O' })).toBe(true);
+    expect(isGlyphInput({ altKey: true, code: 'KeyO' })).toBe(true);
+    // ctrl 동반은 인식하지 않는다(다른 조합 오인 방지).
+    expect(isGlyphInput({ altKey: true, ctrlKey: true, key: 'o' })).toBe(false);
+    // alt 없는 'o'(타이핑)나 Alt+Y는 인식하지 않는다.
+    expect(isGlyphInput({ key: 'o' })).toBe(false);
+    expect(isGlyphInput({ altKey: true, key: 'y' })).toBe(false);
+    expect(isGlyphInput(null)).toBe(false);
   });
 });
 
