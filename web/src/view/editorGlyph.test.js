@@ -139,4 +139,55 @@ describe('editorGlyph — insertGlyphAtCaret', () => {
     expect(r.blocks).toEqual([textBlock('x')]);
     expect(r.caretTextLine).toBe(null);
   });
+
+  // --- 보강: 경계/에러 경로 (Step 2/4가 실제 statusCaret를 넘기므로 좌표 어긋남·클램프 계약을 고정) ---
+
+  it('trusts caret.lineIndex for the block and clamps the offset column to that block', () => {
+    // blocksToText='ab\ncd'; offset 4 = "cd" 시작이지만 lineIndex 0(블록 'ab')을 신뢰한다.
+    // col = offset(4) - start(3) = 1 → 'ab'의 col 1 ('aXb'). col은 대상 블록 길이로 클램프된다.
+    const r = insertGlyphAtCaret([textBlock('ab'), textBlock('cd')], { lineIndex: 0, offset: 4 }, 'X');
+    expect(blocksToText(r.blocks).split('\n')).toEqual(['aXb', 'cd']);
+    expect(r.caretTextLine).toBe(0);
+  });
+
+  it('clamps an over-large offset to the end of the target line', () => {
+    const r = insertGlyphAtCaret([textBlock('가나다')], { lineIndex: 0, offset: 999 }, 'X');
+    expect(blocksToText(r.blocks)).toBe('가나다X');
+    expect(r.caretTextLine).toBe(0);
+  });
+
+  it('clamps a negative offset to the start of the target line', () => {
+    const r = insertGlyphAtCaret([textBlock('가나다')], { lineIndex: 0, offset: -5 }, 'X');
+    expect(blocksToText(r.blocks)).toBe('X가나다');
+    expect(r.caretTextLine).toBe(0);
+  });
+
+  it('falls back when caret.lineIndex is not an integer', () => {
+    const r = insertGlyphAtCaret([textBlock('첫'), textBlock('둘')], { lineIndex: 0.5, offset: 0 }, 'X');
+    expect(blocksToText(r.blocks).split('\n')).toEqual(['첫', '둘X']);
+    expect(r.caretTextLine).toBe(1);
+  });
+
+  it('inserts a multi-character glyph intact at the column', () => {
+    const r = insertGlyphAtCaret([textBlock('가나다')], { lineIndex: 0, offset: 1 }, '☆★');
+    expect(blocksToText(r.blocks)).toBe('가☆★나다');
+    expect(r.caretTextLine).toBe(0);
+  });
+
+  it('creates a text block and preserves the embed when a non-null caret targets a non-existent text line (embed-only)', () => {
+    const r = insertGlyphAtCaret([embedBlock({ embedType: 'image', src: 'x' })], { lineIndex: 0, offset: 0 }, 'X');
+    expect(blocksToText(r.blocks)).toBe('X');
+    expect(r.caretTextLine).toBe(0);
+    expect(r.blocks.some((b) => b.type === 'embed')).toBe(true);
+    expect(r.blocks.length).toBe(2);
+  });
+
+  it('does not mutate the input on a no-op (empty glyph) either', () => {
+    const input = [textBlock('가나다'), embedBlock({ embedType: 'image', src: 'x' })];
+    const snapshot = JSON.parse(JSON.stringify(input));
+    const r = insertGlyphAtCaret(input, { lineIndex: 0, offset: 1 }, '   ');
+    expect(input).toEqual(snapshot);
+    expect(r.blocks).not.toBe(input);
+    expect(r.caretTextLine).toBe(null);
+  });
 });

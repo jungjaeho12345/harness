@@ -65,4 +65,33 @@ describe('EditorGlyphBar — 약물바(자주쓰는 약물 버튼군, 순수 표
     expect(bar.className).toContain('yh-editor-glyphbar');
     expect(bar.className).not.toContain('yh-editor-toolbar');
   });
+
+  // --- 보강: 첫 버튼 onPick 경로·버튼별 접근성 라벨·중복 약물 클릭 식별 ---
+
+  it('첫 번째(index 0) 버튼 클릭도 그 약물로 onPick을 호출한다', async () => {
+    const onPick = vi.fn();
+    render(<EditorGlyphBar items={['※', '◇', '▲']} onPick={onPick} />);
+    await userEvent.click(screen.getByTestId('glyph-bar-item-0'));
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledWith('※');
+  });
+
+  it('각 약물 버튼은 그 약물을 가리키는 접근성 라벨을 갖는다', () => {
+    render(<EditorGlyphBar items={['※', '◇']} />);
+    expect(screen.getByTestId('glyph-bar-item-0').getAttribute('aria-label')).toContain('※');
+    expect(screen.getByTestId('glyph-bar-item-1').getAttribute('aria-label')).toContain('◇');
+  });
+
+  it('약물 버튼은 type=button (form submit 부작용 없음)', () => {
+    render(<EditorGlyphBar items={['※']} />);
+    expect(screen.getByTestId('glyph-bar-item-0')).toHaveAttribute('type', 'button');
+  });
+
+  it('중복 약물도 클릭한 인덱스의 약물로 onPick을 호출한다', async () => {
+    const onPick = vi.fn();
+    render(<EditorGlyphBar items={['※', '※']} onPick={onPick} />);
+    await userEvent.click(screen.getByTestId('glyph-bar-item-1'));
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledWith('※');
+  });
 });
