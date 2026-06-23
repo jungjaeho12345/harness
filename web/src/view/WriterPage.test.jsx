@@ -2005,4 +2005,126 @@ describe('WriterPage — 약물바(EditorGlyphBar) 결선', () => {
     const bar = await screen.findByTestId('glyph-bar');
     expect(within(bar).queryAllByRole('button')).toHaveLength(0);
   });
+
+  // 보강(harness-tester): 캐럿이 한 번도 잡히지 않은 상태(lastCaretRef.current === null) 약물 클릭 →
+  // Step0 폴백("(끝)" 아닌 마지막 텍스트 줄 끝)으로 삽입되고 임베드 위치·내용·개수·순서가 불변임을 고정한다.
+  // (캐럿을 세팅하지 않으므로 focusCaretAtLine 미호출 — 약물바 버튼은 onCaretChange를 발생시키지 않는다.)
+  it('캐럿이 null이면 약물 클릭이 마지막 텍스트 줄 끝(Step0 폴백)에 삽입되고 임베드는 불변이다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const embed = embedBlock({ type: 'image', src: 'https://img/y.png' });
+    const { container, model } = await openWith([
+      textBlock('첫줄'), embed, textBlock('마지막'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container); // 캐럿은 세팅하지 않는다(lastCaretRef.current === null).
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocks[1]).toEqual(embed); // 임베드 위치·내용 불변
+    expect(blocksToText(blocks)).toBe('첫줄\n마지막※'); // 폴백 = 마지막 텍스트 줄 끝
+  });
+
+  // 보강(harness-tester): 여러 줄 본문에서 특정 줄 중간(offset)에 캐럿을 두고 삽입 시 그 컬럼에 정확히 들어가는지
+  // (Step0 좌표 계약 — col = caret.offset - lineStart). 줄 시작(col 0)만 검증하던 기존 삽입 테스트의 공백 보강.
+  it('여러 줄 본문에서 캐럿이 줄 중간(offset)이면 그 컬럼에 정확히 삽입된다(Step0 좌표 계약)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    // 텍스트 = "abcd\nefgh"(임베드 없음). 둘째 줄 'efgh' 시작 오프셋 5, offset 7 → 'ef' 다음 컬럼 2 → 'ef※gh'.
+    const { container, model } = await openWith([textBlock('abcd'), textBlock('efgh')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    // 둘째 줄(텍스트-줄 1)에 캐럿을 두되 컬럼 2(offset 7)에 콜랩스한다(줄 시작이 아님).
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const textNode = lineEls[1].firstChild ?? lineEls[1];
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(textNode, 2); // 'efgh'의 컬럼 2
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('abcd\nef※gh');
+  });
+
+  // 보강(harness-tester): 멀티문자 약물(예 '※※')도 그대로(분해/절단 없이) 삽입되는지 — 단일 약물만 보던 공백 보강.
+  it("멀티문자 약물('※※')도 그대로 캐럿 줄에 삽입된다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※※']);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작에 캐럿
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n※※본문');
+  });
+
+  // 보강(harness-tester): 약물 삽입 후 임베드 블록의 위치·내용(전체 객체 동등)·개수가 모두 불변임을 못박는다.
+  // (기존 삽입 테스트는 type 시퀀스만 검증 — embed의 src/속성 변형 회귀는 못 잡는다.)
+  it('약물 삽입 후 임베드 블록의 위치·내용·개수가 모두 불변이다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const embedA = embedBlock({ type: 'image', src: 'https://img/a.png', alt: '캡션' });
+    const embedB = embedBlock({ type: 'video', src: 'https://v/b', title: '제목' });
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedA, textBlock('본문'), embedB,
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문"
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(2); // 개수 불변
+    expect(blocks[1]).toEqual(embedA); // 위치·내용 불변(전체 객체 동등)
+    expect(blocks[3]).toEqual(embedB);
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 텍스트만 바뀜
+  });
+
+  // 보강(harness-tester): 환경설정에서 약물을 등록·'적용'하면 약물바가 onPrefsClose(applied)로 새 glyphFavorites를 즉시 반영한다
+  // (별도 effect/구독 없이 lazy state + onPrefsClose 게이트만으로 갱신 — 마운트 후 동적 등록 반영 회귀 방어).
+  it("환경설정에서 약물 등록 후 '적용'하면 약물바가 새 자주쓰는 약물로 즉시 갱신된다", async () => {
+    seedGlyphs(['※']); // 초기 약물 1개
+    const { container } = await openWith([textBlock('헤드')]);
+
+    await toggleGlyphBarOn(container);
+    let bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).getAllByRole('button')).toHaveLength(1); // 초기 1개
+
+    // 도움말>환경설정 → 자주쓰는 약물 탭에서 '◇' 추가 → 적용.
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '◇' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 적용 후 약물바가 새 약물(◇)을 포함해 버튼 2개로 갱신된다(별도 재오픈 없이 즉시 반영).
+    bar = await screen.findByTestId('glyph-bar');
+    await waitFor(() => expect(within(bar).getAllByRole('button')).toHaveLength(2));
+    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['※', '◇']);
+  });
 });
