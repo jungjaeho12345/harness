@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   EMBED_SIZE, parseYouTubeId, makeImageEmbed, makeVideoEmbed, makeArticleEmbed, embedFromPaste,
   isAllowedMediaSrc, isAllowedHref,
+  makeAudioEmbed, makeLocalVideoEmbed, makeLinkEmbed,
 } from './clipboardEmbed.js';
 
 describe('clipboardEmbed — sizing', () => {
@@ -88,5 +89,43 @@ describe('clipboardEmbed — embed builders', () => {
     expect(embedFromPaste({ text: 'https://youtu.be/dQw4w9WgXcQ' }).embedType).toBe('video');
     expect(embedFromPaste({ text: 'just text' })).toBeNull();
     expect(embedFromPaste({})).toBeNull();
+  });
+});
+
+// 19-step1: 오디오/로컬영상/링크 팩토리. 필드명(src/href/title)은 step0 렌더가 읽는 키와 일치.
+// 팩토리는 URL 검증을 하지 않는다(검증은 렌더 단일 출처). 빈/누락 입력은 null(insertEmbed no-op).
+describe('clipboardEmbed — audio/link/localVideo builders', () => {
+  it('makeAudioEmbed builds an audio block with src/title and 612px figure', () => {
+    expect(makeAudioEmbed('https://cdn/a.mp3', { title: '인터뷰' })).toMatchObject({
+      type: 'embed', embedType: 'audio', src: 'https://cdn/a.mp3', title: '인터뷰', figureWidthPx: 612,
+    });
+  });
+
+  it('makeLocalVideoEmbed builds a localVideo (not video) block with src and 612px figure', () => {
+    const e = makeLocalVideoEmbed('https://cdn/a.webm');
+    expect(e).toMatchObject({
+      type: 'embed', embedType: 'localVideo', src: 'https://cdn/a.webm', figureWidthPx: 612,
+    });
+    expect(e.embedType).not.toBe('video'); // 유튜브와 별개 타입
+  });
+
+  it('makeLinkEmbed builds a link block with href/title', () => {
+    expect(makeLinkEmbed('https://example.com', { title: '원문' })).toMatchObject({
+      type: 'embed', embedType: 'link', href: 'https://example.com', title: '원문',
+    });
+  });
+
+  it('does not validate the URL — a malicious src/href still builds (rejected at render)', () => {
+    expect(makeAudioEmbed('javascript:alert(1)')).toMatchObject({ embedType: 'audio', src: 'javascript:alert(1)' });
+    expect(makeLinkEmbed('javascript:alert(1)')).toMatchObject({ embedType: 'link', href: 'javascript:alert(1)' });
+  });
+
+  it('returns null for empty/missing input (insertEmbed no-op)', () => {
+    expect(makeAudioEmbed('')).toBeNull();
+    expect(makeAudioEmbed('   ')).toBeNull();
+    expect(makeAudioEmbed()).toBeNull();
+    expect(makeLocalVideoEmbed('')).toBeNull();
+    expect(makeLinkEmbed('')).toBeNull();
+    expect(makeLinkEmbed('   ')).toBeNull();
   });
 });

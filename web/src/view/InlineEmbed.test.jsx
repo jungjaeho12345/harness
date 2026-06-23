@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InlineEmbed, isAllowedImageSrc } from './InlineEmbed.jsx';
+import { makeAudioEmbed, makeLocalVideoEmbed, makeLinkEmbed } from './clipboardEmbed.js';
 
 describe('InlineEmbed', () => {
   it('renders an image embed capped to a 200x200 box (not 612px) with a remove (×) button', () => {
@@ -241,6 +242,24 @@ describe('InlineEmbed', () => {
     it('does not render an <a> for an empty/missing href', () => {
       render(<InlineEmbed embed={{ embedType: 'link', title: '없음' }} onRemove={() => {}} />);
       expect(document.querySelector('a')).toBeNull();
+    });
+  });
+
+  // 19-step1: 팩토리 필드명이 렌더가 읽는 키와 일치하는지(빈 figure 회귀 가드) 통합 단언.
+  describe('factory ↔ render field-name parity', () => {
+    it('makeAudioEmbed(allowed) renders an <audio>', () => {
+      render(<InlineEmbed embed={makeAudioEmbed('https://cdn.example.com/a.mp3')} onRemove={() => {}} />);
+      expect(document.querySelector('audio')).not.toBeNull();
+    });
+
+    it('makeLocalVideoEmbed(allowed) renders a <video>', () => {
+      render(<InlineEmbed embed={makeLocalVideoEmbed('https://cdn.example.com/a.webm')} onRemove={() => {}} />);
+      expect(document.querySelector('video')).not.toBeNull();
+    });
+
+    it('makeLinkEmbed(allowed) renders an <a href>', () => {
+      render(<InlineEmbed embed={makeLinkEmbed('https://example.com/x', { title: '원문' })} onRemove={() => {}} />);
+      expect(screen.getByRole('link', { name: '원문' }).getAttribute('href')).toBe('https://example.com/x');
     });
   });
 });

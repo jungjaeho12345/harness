@@ -88,6 +88,42 @@ export function makeArticleEmbed(article = {}) {
   });
 }
 
+// 오디오 임베드 — src는 사용자 입력 URL(검증은 렌더 시점 isAllowedMediaSrc에 위임).
+// 트림 후 빈 src면 null(insertEmbed no-op). 필드명 src/title은 step0 렌더(InlineEmbed/articleDetail)가 읽는 키와 일치.
+export function makeAudioEmbed(src, { title = '' } = {}) {
+  const value = String(src ?? '').trim();
+  if (!value) return null;
+  return embedBlock({
+    embedType: 'audio',
+    src: value,
+    title,
+    figureWidthPx: EMBED_SIZE.figureWidthPx,
+  });
+}
+
+// 로컬영상 임베드 — <video> 엘리먼트로 렌더(유튜브 iframe과 별개 타입). src는 사용자 입력 URL.
+export function makeLocalVideoEmbed(src, { title = '' } = {}) {
+  const value = String(src ?? '').trim();
+  if (!value) return null;
+  return embedBlock({
+    embedType: 'localVideo',
+    src: value,
+    title,
+    figureWidthPx: EMBED_SIZE.figureWidthPx,
+  });
+}
+
+// 링크 임베드 — href는 사용자 입력 URL. title 없으면 렌더 시점에 href를 표시 텍스트로 쓴다.
+export function makeLinkEmbed(href, { title = '' } = {}) {
+  const value = String(href ?? '').trim();
+  if (!value) return null;
+  return embedBlock({
+    embedType: 'link',
+    href: value,
+    title,
+  });
+}
+
 // 클립보드 페이로드({imageDataUrl?, text?}) → 임베드 블록(없으면 null).
 // 이미지가 있으면 이미지 우선, 없으면 텍스트가 유튜브 URL일 때 영상.
 export function embedFromPaste({ imageDataUrl, text } = {}) {

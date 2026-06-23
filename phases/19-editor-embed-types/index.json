@@ -3,7 +3,7 @@
   "phase": "19-editor-embed-types",
   "steps": [
     { "step": 0, "name": "embed-render-validators", "status": "completed", "deps": [], "summary": "clipboardEmbed.js에 isAllowedMediaSrc/isAllowedHref(https+상대만, data: 전면 불허) 단일 검증 출처 추가. InlineEmbed.jsx·articleDetail.js 양쪽에 audio(<audio controls referrerPolicy=no-referrer>)·localVideo(<video controls>, 유튜브 iframe과 별개)·link(<a rel=noopener noreferrer target=_blank>, 텍스트=title||href) 렌더 분기 추가. 비허용 URL은 렌더 거부(빈 figure/폴백 [type], 원본 미노출). articleDetail은 모든 값 escapeHtml. 보안 단언(javascript:/data:/http: 거부) 포함, 양쪽 렌더 경로 커버. web 822 통과·build·lint green." },
-    { "step": 1, "name": "embed-factories-dialog-kinds", "status": "pending", "deps": [0], "summary": "" },
+    { "step": 1, "name": "embed-factories-dialog-kinds", "status": "completed", "deps": [0], "summary": "clipboardEmbed.js에 makeAudioEmbed/makeLocalVideoEmbed(src+figureWidthPx:612)·makeLinkEmbed(href+title) 팩토리 추가 — 필드명(src/href/title)이 step0 렌더 키와 일치, 검증 미호출, 빈/누락 입력 시 null(insertEmbed no-op). UrlEmbedDialog.jsx KIND_META에 audio/link/localVideo 라벨·placeholder 추가(컴포넌트 순수성 유지, clipboardEmbed 미import). InlineEmbed.test에 팩토리↔렌더 필드명 parity 통합 단언 추가. web 833 통과·build·lint green." },
     { "step": 2, "name": "tools-menu-wiring", "status": "pending", "deps": [1], "summary": "" }
   ]
 }
