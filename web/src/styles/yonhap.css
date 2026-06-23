@@ -949,6 +949,81 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 약물입력(Alt+O) 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(우상단 고정, 찾기/바꾸기와 동일 계열). */
+.yh-glyph-input {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-glyph-input__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-glyph-input__section {
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-glyph-input__label {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+  margin-bottom: var(--yh-sp-sm);
+}
+.yh-glyph-input__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-sm);
+}
+.yh-glyph-input__glyph {
+  min-width: 2.2rem;
+  padding: var(--yh-sp-sm);
+  font-size: 1.1rem;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+  cursor: pointer;
+}
+.yh-glyph-input__glyph:hover {
+  border-color: var(--yh-blue);
+}
+.yh-glyph-input__keylist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yh-sp-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.yh-glyph-input__keybtn {
+  width: 100%;
+  text-align: left;
+  padding: var(--yh-sp-sm);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+  cursor: pointer;
+}
+.yh-glyph-input__keybtn:hover {
+  border-color: var(--yh-blue);
+}
+.yh-glyph-input__empty {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+}
+.yh-glyph-input__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 로그인 레이아웃 */
 .yh-login {
   display: flex;
