@@ -15,6 +15,7 @@ import { EditorGlyphBar } from './EditorGlyphBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
+import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -32,6 +33,8 @@ import {
 } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
+import { insertDateAtCaret } from './editorDate.js';
+import { applyDateFormat } from './listFormat.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
@@ -59,7 +62,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -96,6 +99,8 @@ export function WriterPage() {
   const [glyphKeymap, setGlyphKeymap] = useState(() => loadEditorPrefs().glyphKeymap.items);
   // 약물입력 다이얼로그 보이기(Alt+O·도구 메뉴·우클릭) — FindReplaceDialog의 showFind와 동일한 표시 토글.
   const [showGlyphInput, setShowGlyphInput] = useState(false);
+  // URL 직접 임베드 다이얼로그 — null(닫힘) | 'image' | 'video'. 도구>그림/유튜브 삽입으로 열린다(showGlyphInput 패턴 확장).
+  const [urlEmbedKind, setUrlEmbedKind] = useState(null);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -222,6 +227,19 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
+  // 도구>날짜 삽입 — 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
+  // 비결정성(new Date)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
+  // 약물입력(onGlyphPick)과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
+  const insertDate = () => {
+    if (isMapping) return;                                   // 매핑(텍스트 잠금) no-op — 본문-only 불변식.
+    const fmt = loadEditorPrefs().dateFormat;                // 읽기 전용(저장/변경 안 함).
+    const dateString = applyDateFormat(new Date().toISOString(), fmt);
+    const caret = lastCaretRef.current;                      // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
+    const r = insertDateAtCaret(blocks, caret, dateString);
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -271,6 +289,10 @@ export function WriterPage() {
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
     if (id === 'help.preferences') { setShowPrefs(true); return; }
+    // 그림/유튜브 URL 직접 삽입 — 매핑 가드 앞(임베드 변경은 매핑에서도 허용, 검색패널 onPick과 동일 정책).
+    // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
+    if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
+    if (id === 'tools.insertYoutube') { setUrlEmbedKind('video'); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -287,6 +309,8 @@ export function WriterPage() {
     if (id === 'edit.findReplace') { openFind(); return; }
     // 약물 입력 — 매핑 가드 뒤(약물 삽입은 본문 변경 → 매핑에서는 열지 않는다, 찾기와 동일 정책).
     if (id === 'tools.symbolInput') { setShowGlyphInput(true); return; }
+    // 날짜 삽입 — 매핑 가드 뒤(본문 텍스트 변경 → 매핑 비활성, 약물입력과 동일 정책).
+    if (id === 'tools.insertDate') { insertDate(); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -419,6 +443,17 @@ export function WriterPage() {
 
   // Ctrl+V 이미지 붙여넣기 — 동기로 확보한 캐럿 줄에 삽입(텍스트 직렬화 없이 — news.md 156행).
   const pasteEmbedAtCaret = (embed, caret) => insertEmbedAtLine(embed, caret ? caret.lineIndex : null);
+
+  // URL 직접 입력(도구>그림/유튜브 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed(검색패널 onPick과 동일 경로·팩토리).
+  // 매핑 가드를 두지 않는다 — insertEmbed→insertEmbedAtLine이 매핑 시 "(끝)" 앞 append 폴백으로 임베드를 삽입한다(검색패널과 동일).
+  // 유튜브가 아닌 URL은 makeVideoEmbed가 null → insertEmbed가 no-op(insertEmbedAtLine의 !embed 가드). URL 검증은 팩토리/렌더에 위임.
+  const onUrlEmbedSubmit = (url) => {
+    const embed = urlEmbedKind === 'image'
+      ? makeImageEmbed(url, { alt: '' })
+      : makeVideoEmbed(url, { title: '' });
+    insertEmbed(embed); // embed falsy면 no-op. 매핑 시엔 "(끝)" 앞 append 폴백.
+    setUrlEmbedKind(null); // 1회성 삽입 후 닫는다(URL 1개).
+  };
 
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
   const onAction = async (action) => {
@@ -626,6 +661,15 @@ export function WriterPage() {
         keymap={glyphKeymap}
         onPick={onGlyphPick}
         onClose={() => setShowGlyphInput(false)}
+      />
+
+      {/* URL 직접 임베드 다이얼로그 — 도구>그림/유튜브 삽입으로 열림(매핑에서도 허용). URL 제출 시 make*Embed+insertEmbed
+          (검색패널과 동일 경로)로 캐럿 줄 뒤에 임베드를 삽입한다. 유튜브 아닌 URL은 makeVideoEmbed가 null → no-op. */}
+      <UrlEmbedDialog
+        open={urlEmbedKind !== null}
+        kind={urlEmbedKind || 'image'}
+        onSubmit={onUrlEmbedSubmit}
+        onClose={() => setUrlEmbedKind(null)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.

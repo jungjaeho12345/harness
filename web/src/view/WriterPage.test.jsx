@@ -2366,3 +2366,312 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
     expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument(); // 찾기 불변
   });
 });
+
+// Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
+// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
+// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). new Date는 WriterPage에만.
+// 시각은 vi.useFakeTimers + setSystemTime으로 고정하고, dateFormat은 saveEditorPrefs로 주입한다(localStorage.clear 격리).
+describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true }); // userEvent의 타이머 의존을 위해 실시간 진행 허용.
+    vi.setSystemTime(new Date('2026-06-24T01:23:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // 날짜형식 prefs를 시드한다(마운트 lazy 초기화/loadEditorPrefs가 읽는다).
+  const seedDateFormat = (dateFormat) => saveEditorPrefs({ ...loadEditorPrefs(), dateFormat });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 '날짜 삽입' 항목을 클릭한다.
+  async function clickInsertDate() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('날짜 삽입').closest('button'));
+  }
+
+  it("도구 메뉴 '날짜 삽입'(tools.insertDate)이 활성이다(MENU_ENABLED)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('날짜 삽입').closest('button')).toBeEnabled();
+  });
+
+  it("'날짜 삽입' 클릭 시 캐럿 줄에 날짜형식 prefs대로 포맷된 날짜가 삽입된다(안전 경로, 임베드 불변)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n2026.06.24본문'); // 고정 시각 포맷, 캐럿 줄 시작에 삽입
+  });
+
+  it('날짜형식 prefs를 바꾸면 삽입 문자열도 그 형식을 따른다(YYYY-MM-DD)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24본문');
+  });
+
+  it('시각 포맷(HH:mm 포함)도 prefs 형식대로 삽입된다(applyDateFormat 정합)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD HH:mm');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 고정 시각 2026-06-24T01:23:00Z → 'YYYY-MM-DD HH:mm' = '2026-06-24 01:23'(UTC, applyDateFormat).
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
+  it('dateFormat prefs가 없으면 기본 형식(YYYY-MM-DD HH:mm)으로 삽입된다(loadEditorPrefs 기본값 폴백)', async () => {
+    // seedDateFormat을 부르지 않음 — localStorage가 비어 loadEditorPrefs().dateFormat이 기본값으로 폴백한다.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각이 그 형식으로 삽입.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
+  it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const embed = embedBlock({ type: 'image', src: 'https://img/y.png' });
+    const { model } = await openWith([
+      textBlock('첫줄'), embed, textBlock('마지막'), textBlock('(끝)'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickInsertDate(); // 캐럿 세팅 없음(lastCaretRef.current === null)
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks[1]).toEqual(embed); // 임베드 위치·내용 불변
+    // 폴백 = "(끝)"이 아닌 마지막 텍스트 줄('마지막') 끝, "(끝)"은 불변.
+    expect(blocksToText(blocks)).toBe('첫줄\n마지막2026.06.24\n(끝)');
+  });
+
+  it('매핑 모드: 도구 메뉴 \'날짜 삽입\' 클릭도 본문을 바꾸지 않는다(매핑 가드)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 0);
+    await clickInsertDate();
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('다른 비결선 도구 항목(tools.fileInfo)은 여전히 비활성이다(회귀 없음)', async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('파일 정보').closest('button')).toBeDisabled();
+  });
+});
+
+// Step 3(18-editor-tools-menu): URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선 —
+// 도구 메뉴 '그림 삽입'/'유튜브 영상 삽입' 클릭 → UrlEmbedDialog 오픈 → URL 입력 후 '삽입' → 기존 make*Embed + insertEmbed
+// 경로로 캐럿 줄 뒤에 임베드 삽입(검색패널과 동일). 유튜브 아닌 URL은 makeVideoEmbed null → no-op. 매핑 모드에서도 허용.
+describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(날짜/약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다.
+  async function clickTool(label) {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  // URL 다이얼로그에 url을 입력하고 '삽입'을 누른다.
+  async function submitUrl(url) {
+    fireEvent.change(screen.getByTestId('url-embed-input'), { target: { value: url } });
+    await userEvent.click(screen.getByTestId('url-embed-submit'));
+  }
+
+  it("도구 '그림 삽입'/'유튜브 영상 삽입'은 활성, '오디오 삽입'은 비활성이다(MENU_ENABLED·회귀 없음)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('유튜브 영상 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('오디오 삽입').closest('button')).toBeDisabled();
+  });
+
+  it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    expect(screen.getByRole('dialog', { name: '그림 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://img.example.com/a.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 다이얼로그는 1회성 삽입 후 닫힌다.
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → 유튜브 URL 제출 시 video 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+    expect(screen.getByRole('dialog', { name: '유튜브 영상 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → youtu.be 단축 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://youtu.be/dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → embed/ 형태 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://www.youtube.com/embed/dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it('유튜브가 아닌 URL을 영상 삽입에 넣으면 임베드가 생기지 않고 크래시하지 않는다(makeVideoEmbed null → no-op)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://example.com/not-a-youtube');
+    // 임베드가 추가되지 않는다(텍스트 줄만 유지).
+    expect(container.querySelector('[data-embed-type="video"]')).toBeNull();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+
+  it('image 임베드 삽입 시 본문 텍스트는 변하지 않는다(임베드만 추가)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await submitUrl('https://img.example.com/b.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트 줄은 그대로, 임베드 1개만 추가됨.
+    const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text);
+    expect(texts).toEqual(['헤드', '본문', '']); // 임베드 뒤 빈 줄(커서 이동용)
+    expect(blocks.filter((b) => b.type === 'embed').length).toBe(1);
+  });
+
+  it("매핑 모드에서도 '그림 삽입'은 활성이고, URL 제출 시 임베드가 본문에 추가된다(검색패널과 동일)", async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('그림 삽입').closest('button'));
+
+    await submitUrl('https://img.example.com/c.png');
+    // 매핑은 "(끝)" 앞 append 폴백으로 임베드가 실제 삽입된다(WriterPage.test.jsx:710-723 패턴).
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+
+  it("'닫기'/Esc로 다이얼로그를 닫으면 임베드가 삽입되지 않는다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await userEvent.click(screen.getByTestId('url-embed-close'));
+
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+});
