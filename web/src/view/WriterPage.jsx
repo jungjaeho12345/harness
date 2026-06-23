@@ -11,6 +11,7 @@ import { Editor, readCaret } from './Editor.jsx';
 import { StatusBar } from './StatusBar.jsx';
 import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
+import { EditorGlyphBar } from './EditorGlyphBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
@@ -29,6 +30,7 @@ import {
   toUpper, toLower, capitalizeFirst, toggleCase,
 } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
+import { insertGlyphAtCaret } from './editorGlyph.js';
 import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
@@ -83,9 +85,12 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(true);
   const [showToolBar, setShowToolBar] = useState(true);
-  // 약물바 보이기(우클릭 컨텍스트 메뉴) — placeholder 토글 상태만 보존한다.
-  // 약물바(glyph bar) 컴포넌트는 이번 범위 밖(news.md 경계)이라 실제 바는 렌더하지 않는다(토글만 동작).
+  // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
+  // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
   const [showGlyphBar, setShowGlyphBar] = useState(false);
+  // 자주쓰는 약물(editorPrefs.glyphFavorites.items) — 약물바 버튼 소스. editorBg/autosaveCfg와 동일 게이트:
+  // 마운트 lazy 초기화 + onPrefsClose(applied) 갱신만(별도 effect/구독 없음 — 환경설정 등록 후 즉시 반영용).
+  const [glyphFavorites, setGlyphFavorites] = useState(() => loadEditorPrefs().glyphFavorites.items);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -116,6 +121,7 @@ export function WriterPage() {
       setEditorBg(loadEditorPrefs().colors.background);
       setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
       setColumnLimit(loadEditorPrefs().edit.columnLimit); // 컬럼제한(좌우 여백) 변경 반영 — 취소 시 불변(editorBg와 동일 게이트).
+      setGlyphFavorites(loadEditorPrefs().glyphFavorites.items); // 환경설정에서 등록한 자주쓰는 약물을 약물바에 즉시 반영.
     }
     setShowPrefs(false);
   };
@@ -198,6 +204,15 @@ export function WriterPage() {
     const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
     const r = insertContinueMarker(blocks, caretLine);
     updateField('body', serialize(r.blocks));
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
+  // 약물바 약물 클릭 → 마지막 캐럿 위치에 약물 삽입(검색 임베드 insertEmbed와 동일 캐럿 소스·안전 경로).
+  const onGlyphPick = (glyph) => {
+    if (isMapping) return;                       // 매핑 모드(텍스트 잠금)에서는 본문 변경 금지 — no-op(약물바 숨김과 이중 방어).
+    const caret = lastCaretRef.current;          // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
+    const r = insertGlyphAtCaret(blocks, caret, glyph);
+    updateField('body', serialize(r.blocks));    // contentEditable 직접 조작 금지 — 직렬화 안전 경로만.
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
@@ -304,7 +319,7 @@ export function WriterPage() {
       case 'ctx.selectAll': selectAllInEditor(document.querySelector('.yh-editor')); break;
       case 'ctx.showMenuBar': setShowMenuBar((v) => !v); break;
       case 'ctx.showToolBar': setShowToolBar((v) => !v); break;
-      // 약물바 — placeholder 토글 상태만 바꾼다(실제 바 미렌더 — 범위 밖).
+      // 약물바 — showMenuBar/showToolBar와 동일한 레이아웃 토글(EditorGlyphBar 렌더/숨김).
       case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
       // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
       // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
@@ -464,6 +479,9 @@ export function WriterPage() {
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
+          {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
+              본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
+          {showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}
           {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음).
               에디터 본문 우클릭 → 브라우저 기본 메뉴 대신 커스텀 컨텍스트 메뉴(EditorContextMenu)를 좌표에 띄운다(ListPage 패턴). */}
           <div

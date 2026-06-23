@@ -1704,7 +1704,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
 // editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
-// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바는 토글 상태만(실제 바 없음).
+// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
 describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -1767,21 +1767,34 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(queryByTestId('menubar')).toBeNull());
   });
 
-  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 에러 없이 토글 상태만 바꾼다(실제 바 없음·체크 표식 갱신)", async () => {
+  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 토글 상태·실제 약물바 렌더를 토글한다(체크 표식 갱신)", async () => {
+    // 자주쓰는 약물을 시드해 토글 ON 시 실제 바(glyph-bar)가 버튼과 함께 렌더됨을 검증한다.
+    localStorage.clear();
+    saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items: ['※', '◇'] } });
     const { container } = await openWith([textBlock('헤드')]);
+    // 처음엔 약물바 off → 바 미렌더.
+    expect(screen.queryByTestId('glyph-bar')).toBeNull();
+
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
     // 처음엔 약물바 off → aria-checked=false.
     expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'false');
-    await userEvent.click(ctxItem('약물바 보이기')); // 토글 — 에러 없이 동작
+    await userEvent.click(ctxItem('약물바 보이기')); // 토글 ON — 에러 없이 동작
     expect(ctxMenu()).toBeNull(); // 선택 후 닫힘
 
-    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존). 실제 약물바 컴포넌트는 렌더하지 않는다.
+    // 토글 ON → 실제 약물바(glyph-bar, 하이픈)가 렌더되고 약물 버튼 2개가 보인다.
+    const bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).getAllByRole('button')).toHaveLength(2);
+
+    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존).
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
     expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'true');
-    expect(container.querySelector('[data-testid="glyphbar"]')).toBeNull(); // 실제 바 미렌더
+
+    // 다시 토글 OFF → 실제 약물바가 사라진다.
+    await userEvent.click(ctxItem('약물바 보이기'));
+    await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
   it('aux 항목(기업코드변환/약물입력/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다', async () => {
@@ -1896,5 +1909,100 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     } finally {
       delete document.execCommand; // jsdom 기본(미정의) 상태로 되돌린다 — 다른 테스트의 가드 경로 보존.
     }
+  });
+});
+
+// Step 2(17-editor-glyph-tools): 약물바(EditorGlyphBar) 결선 — 자주쓰는 약물 렌더 + 캐럿 삽입(안전 경로) + 매핑 보호.
+// glyphFavorites는 localStorage(editorPrefs)에 영속되므로 localStorage.clear()로 격리한다(마운트 lazy 초기화 오염 차단).
+describe('WriterPage — 약물바(EditorGlyphBar) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 자주쓰는 약물을 시드한다(마운트 시 useState lazy 초기화가 이 값을 읽는다).
+  const seedGlyphs = (items) => saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items } });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(검색패널 삽입과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // editor-canvas 우클릭 → '약물바 보이기' 클릭으로 바를 켠다(phase14 컨텍스트 메뉴 토글 재사용).
+  async function toggleGlyphBarOn(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    fireEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    const menu = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(menu).getByText('약물바 보이기').closest('button'));
+  }
+
+  it('자주쓰는 약물을 시드하고 약물바를 켜면 약물 버튼이 렌더된다', async () => {
+    seedGlyphs(['※', '◇']);
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(screen.queryByTestId('glyph-bar')).toBeNull(); // 처음엔 꺼짐
+
+    await toggleGlyphBarOn(container);
+
+    const bar = await screen.findByTestId('glyph-bar');
+    const buttons = within(bar).getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveTextContent('※');
+    expect(buttons[1]).toHaveTextContent('◇');
+  });
+
+  it('약물 버튼 클릭 시 마지막 캐럿 줄에 약물이 삽입된다(updateField body 안전 경로, 임베드 불변)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문"(임베드 제외 좌표) 시작에 캐럿
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    // 저장 시 본문 텍스트 줄에 '※'가 삽입되고 임베드 블록은 그대로 보존된다.
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 캐럿 줄 시작(col 0)에 삽입
+  });
+
+  it('매핑 모드에서는 약물바가 렌더되지 않아 본문이 바뀌지 않는다(본문-only 불변식)', async () => {
+    seedGlyphs(['※']);
+    const { container } = await openWith([textBlock('헤드')], { mode: 'mapping', status: 'DPS', role: 'D' });
+
+    // 매핑 모드: 우클릭으로 약물바를 켜도 바 자체가 미렌더(매핑 가드).
+    await toggleGlyphBarOn(container);
+    expect(screen.queryByTestId('glyph-bar')).toBeNull();
+  });
+
+  it('등록된 약물이 없으면 약물바를 켜도 버튼 0개로 graceful', async () => {
+    seedGlyphs([]);
+    const { container } = await openWith([textBlock('헤드')]);
+
+    await toggleGlyphBarOn(container);
+
+    const bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).queryAllByRole('button')).toHaveLength(0);
   });
 });
