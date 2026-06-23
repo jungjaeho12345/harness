@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "20-editor-file-info",
+  "steps": [
+    { "step": 0, "name": "file-info-stats-dialog", "status": "pending" },
+    { "step": 1, "name": "writer-page-wiring", "status": "pending" }
+  ]
+}
