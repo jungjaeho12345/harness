@@ -91,4 +91,51 @@ describe('GlyphInputDialog — 약물입력 다이얼로그', () => {
     expect(screen.getByTestId('glyph-input-fav-0')).toHaveTextContent('※');
     expect(screen.getByTestId('glyph-input-fav-1')).toHaveTextContent('※');
   });
+
+  it('open false→true 재렌더 시 다이얼로그가 나타나고 favorites가 그대로 렌더된다', () => {
+    const { container, rerender } = render(
+      <GlyphInputDialog {...noopProps({ open: false, favorites: ['※', '◇'] })} />,
+    );
+    expect(container.firstChild).toBeNull();
+
+    rerender(<GlyphInputDialog {...noopProps({ open: true, favorites: ['※', '◇'] })} />);
+    expect(screen.getByRole('dialog', { name: '약물 입력' })).toBeInTheDocument();
+    expect(screen.getByTestId('glyph-input-fav-0')).toHaveTextContent('※');
+    expect(screen.getByTestId('glyph-input-fav-1')).toHaveTextContent('◇');
+  });
+
+  it('멀티문자 약물(\'※※\')도 한 버튼으로 렌더하고 그 문자열로 onPick을 호출한다', () => {
+    const onPick = vi.fn();
+    render(<GlyphInputDialog {...noopProps({ favorites: ['※※'], onPick })} />);
+    expect(screen.getByTestId('glyph-input-fav-0')).toHaveTextContent('※※');
+    fireEvent.click(screen.getByTestId('glyph-input-fav-0'));
+    expect(onPick).toHaveBeenCalledWith('※※');
+  });
+
+  it('favorites 다수일 때 각 버튼이 testid 인덱스로 독립 매핑되어 해당 약물로 onPick한다', () => {
+    const onPick = vi.fn();
+    const favorites = ['①', '②', '③', '④'];
+    render(<GlyphInputDialog {...noopProps({ favorites, onPick })} />);
+    favorites.forEach((glyph, i) => {
+      expect(screen.getByTestId(`glyph-input-fav-${i}`)).toHaveTextContent(glyph);
+    });
+    fireEvent.click(screen.getByTestId('glyph-input-fav-2'));
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledWith('③');
+  });
+
+  it('keymap 다수 항목도 각 행이 testid 인덱스로 독립 표시·삽입되고 중복 glyph도 안정적이다', () => {
+    const onPick = vi.fn();
+    const keymap = [
+      { keys: 'Ctrl+1', glyph: '★' },
+      { keys: 'Ctrl+2', glyph: '☆' },
+      { keys: 'Ctrl+3', glyph: '★' }, // 같은 glyph 중복 → 인덱스로 안정화
+    ];
+    render(<GlyphInputDialog {...noopProps({ keymap, onPick })} />);
+    expect(screen.getByTestId('glyph-input-key-0')).toHaveTextContent('Ctrl+1 → ★');
+    expect(screen.getByTestId('glyph-input-key-1')).toHaveTextContent('Ctrl+2 → ☆');
+    expect(screen.getByTestId('glyph-input-key-2')).toHaveTextContent('Ctrl+3 → ★');
+    fireEvent.click(screen.getByTestId('glyph-input-key-2'));
+    expect(onPick).toHaveBeenCalledWith('★');
+  });
 });
