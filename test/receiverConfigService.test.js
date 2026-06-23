@@ -78,3 +78,53 @@ test('remove는 설정 행만 삭제한다 — 수집된 Article/Contents는 보
   assert.ok(db.prepare('SELECT 1 FROM Article WHERE articleId = ?').get('AKR1'), 'Article 보존');
   assert.ok(db.prepare('SELECT 1 FROM Contents WHERE articleId = ?').get('AKR1'), 'Contents 보존');
 });
+
+test('query 응답은 시크릿(password/apiKey)을 노출하지 않고 식별 필드만 통과시킨다', () => {
+  const { service, sessionService } = setup();
+  const z = sessionFor(sessionService, 'Z', 'admin');
+
+  service.create(z, {
+    sourceId: 'src-secret', type: 'FTP', name: 'ftp-1',
+    host: 'ftp.example.com', port: '21', username: 'ftpuser',
+    password: 'plain-ftp-pw', apiEndpoint: 'https://api.example.com',
+    apiKey: 'plain-api-key', active: 'Y',
+  });
+
+  const q = service.query(z, { sourceId: 'src-secret' });
+  assert.equal(q.ok, true);
+  assert.equal(q.items.length, 1);
+  const item = q.items[0];
+
+  // 시크릿은 응답에 절대 포함되지 않는다.
+  assert.equal(item.password, undefined);
+  assert.equal(item.apiKey, undefined);
+  assert.ok(!('password' in item), 'password 키 자체가 없어야 한다');
+  assert.ok(!('apiKey' in item), 'apiKey 키 자체가 없어야 한다');
+
+  // 화면이 쓰는 식별 필드는 그대로 존재한다.
+  assert.ok(Number(item.id) > 0);
+  assert.equal(item.sourceId, 'src-secret');
+  assert.equal(item.type, 'FTP');
+  assert.equal(item.name, 'ftp-1');
+  assert.equal(item.host, 'ftp.example.com');
+  assert.equal(item.port, '21');
+  assert.equal(item.username, 'ftpuser');
+  assert.equal(item.apiEndpoint, 'https://api.example.com');
+  assert.equal(item.active, 'Y');
+});
+
+test('create는 평문 시크릿을 그대로 저장한다 — 정제는 조회 응답에서만 일어난다 (쓰기 무변경)', () => {
+  const { service, sessionService, receiverConfigModel } = setup();
+  const z = sessionFor(sessionService, 'Z', 'admin');
+
+  const { id } = service.create(z, {
+    sourceId: 'src-write', type: 'FTP',
+    password: 'plain-ftp-pw', apiKey: 'plain-api-key',
+  });
+
+  // 모델 직접 조회(서비스 정제를 거치지 않음)에는 평문이 보존돼 있어야 한다.
+  const rows = receiverConfigModel.query({ id });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].password, 'plain-ftp-pw');
+  assert.equal(rows[0].apiKey, 'plain-api-key');
+});
