@@ -2303,4 +2303,66 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
     expect(screen.getByTestId('glyph-input-fav-empty')).toBeInTheDocument();
     expect(screen.getByTestId('glyph-input-key-empty')).toBeInTheDocument();
   });
+
+  // 보강(harness-tester): 매핑 모드 도구 메뉴 '약물 입력'은 (찾기/바꾸기 메뉴와 동일하게) 클릭 가능하나
+  // onMenuSelect의 매핑 가드(early return)에 막혀 다이얼로그를 열지 않는다(본문-only 불변식). 메뉴 경로 공백 보강.
+  it("매핑 모드: 도구 메뉴 '약물 입력' 클릭도 다이얼로그를 열지 않는다(매핑 가드)", async () => {
+    seedPrefs({ favorites: ['※'] });
+    await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('약물 입력').closest('button'));
+    expect(glyphDialog()).toBeNull(); // 매핑 가드로 미개봉(찾기/바꾸기 메뉴와 동일 정책)
+  });
+
+  // 보강(harness-tester): glyphFavorites와 동일한 onPrefsClose(applied) 게이트로 keymap(참조 표시)도 즉시 갱신돼야 한다.
+  // 환경설정에서 키보드 약물을 등록·'적용'한 뒤 다이얼로그를 열면 새 keymap이 'keys → glyph'로 참조 표시된다(마운트 후 동적 등록 반영 회귀 방어).
+  it("환경설정에서 키보드 약물 등록 후 '적용'하면 다이얼로그 참조 표시가 즉시 갱신된다", async () => {
+    seedPrefs({ favorites: [], keymap: [] }); // 초기 keymap 없음
+    const { container } = await openWith([textBlock('헤드')]);
+
+    // 먼저 다이얼로그를 열어 '등록된 약물 없음'(key-empty)을 확인한다.
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-key-empty')).toBeInTheDocument();
+    // 다이얼로그를 닫고 환경설정으로 등록한다(닫지 않으면 prefs 모달과 겹쳐도 무방하나, 게이트 갱신만 검증).
+    await userEvent.click(screen.getByTestId('glyph-input-close'));
+
+    // 도움말>환경설정 → 사용자 키보드 약물 탭에서 'Ctrl+2 → ◎' 추가 → 적용.
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'Ctrl+2' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '◎' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 다시 다이얼로그를 열면 새 keymap이 참조 표시된다(별도 재마운트 없이 onPrefsClose 게이트로 즉시 반영).
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-key-0')).toHaveTextContent('Ctrl+2 → ◎');
+    expect(screen.queryByTestId('glyph-input-key-empty')).toBeNull();
+  });
+
+  // 보강(harness-tester): 회귀 — Ctrl+F(찾기)와 Alt+O(약물입력)는 서로 간섭하지 않는다.
+  // 두 분기 모두 라인삭제 조기 return 위에 있고 key가 달라(f vs o) 서로의 다이얼로그를 열지 않아야 한다.
+  it('회귀: Ctrl+F는 찾기만, Alt+O는 약물입력만 열고 서로 간섭하지 않는다', async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+
+    // Ctrl+F → 찾기/바꾸기만 열고 약물입력은 열지 않는다.
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument());
+    expect(glyphDialog()).toBeNull(); // Alt+O 다이얼로그는 안 열림
+
+    // Alt+O → 약물입력만 열고(찾기는 그대로) 두 다이얼로그가 공존해도 충돌하지 않는다.
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument(); // 찾기 불변
+  });
 });
