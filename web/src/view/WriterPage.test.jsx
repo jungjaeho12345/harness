@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  render, screen, waitFor, fireEvent, createEvent, within,
+  render, screen, waitFor, fireEvent, createEvent, within, act,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
@@ -467,22 +467,13 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
   });
 });
 
-// Ctrl+V 이미지 붙여넣기 — 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드를 삽입한다(news.md 156행).
-describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', () => {
-  const realFileReader = globalThis.FileReader;
-
+// Ctrl+V 이미지 붙여넣기 — Editor가 raw File을 위임하면 WriterPage가 model.uploadFile로 서버 업로드하고
+// 반환 path(/uploads/...)로 image 임베드를 캐럿 줄에 삽입한다(base64 미생성 — news.md 156행, ADR-003).
+describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임베드', () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
-    class FakeFileReader {
-      readAsDataURL() {
-        this.result = 'data:image/png;base64,AAA';
-        setTimeout(() => { if (this.onload) this.onload({ target: this }); }, 0);
-      }
-    }
-    globalThis.FileReader = FakeFileReader;
   });
-  afterEach(() => { globalThis.FileReader = realFileReader; });
 
   function pasteImageEvent(el) {
     const ev = createEvent.paste(el, {});
@@ -508,29 +499,53 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
   ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
 
-  async function openWith(blocks) {
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
     const body = serialize(blocks);
     const utils = setup({
-      identity: { role: 'R' },
-      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
-      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
     });
     await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
     return utils;
   }
 
-  it('첫 줄에 캐럿을 두고 붙여넣으면 그 줄 바로 뒤에 임베드가 삽입된다(맨 뒤가 아님)', async () => {
-    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+  it('업로드 성공 → 반환 path로 이미지 임베드가 캐럿 줄 뒤에 삽입된다(본문 텍스트 불변·base64 없음)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/abc.png' });
     caretAtLine(container, 0); // 제목 줄
     const box = container.querySelector('.yh-editor');
     fireEvent(box, pasteImageEvent(box));
 
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
     expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']); // 제목 → [이미지] → 빈 줄 → 본문
+    // 반환 path가 임베드 src로 들어가고(=업로드 경유), base64(data:)가 아니다.
+    const img = container.querySelector('[data-embed-type="image"] img');
+    expect(img.getAttribute('src')).toBe('/uploads/abc.png');
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy();
+    // 본문 텍스트(제목/본문)는 불변.
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts).toContain('제목');
+    expect(texts).toContain('본문');
+  });
+
+  it('업로드 실패(too-large) → 임베드 미삽입 + window.alert + base64 없음', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: false, reason: 'too-large' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 0);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy(); // 미삽입
+    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 불변
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 폴백 없음
   });
 
   it('붙여넣은 이미지는 이후 타이핑(input)에도 커서 위치에 보존된다(끝으로 밀리지 않음)', async () => {
-    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/abc.png' });
     caretAtLine(container, 0);
     const box = container.querySelector('.yh-editor');
     fireEvent(box, pasteImageEvent(box));
@@ -539,6 +554,65 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     // 본문을 수정(input)해도 임베드는 제목과 본문 사이에 그대로 남는다.
     fireEvent.input(box);
     await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']));
+  });
+
+  it('매핑 모드 → 업로드 성공 임베드는 "(끝)" 앞 append로 삽입된다(parity)', async () => {
+    const { container, model } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/map.png' });
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 캐럿 없음 + 매핑 → "(끝)" 앞 append: 제목·본문 → [이미지] → (끝)
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed', 'text']);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/map.png');
+  });
+
+  // 업로드는 네트워크 왕복(비동기)이라 대기 창이 넓다. 대기 중 상태가 바뀌면 붙여넣기 시점의 stale body/탭
+  // 클로저로 덮어써 데이터가 유실될 수 있다 — 삽입 시점 최신 body를 읽고 붙여넣은 탭과 동일할 때만 삽입한다.
+  it('연속 붙여넣기: 업로드 대기 중 두 번째 붙여넣기해도 두 이미지가 모두 보존된다(stale body 덮어쓰기 방지)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const resolvers = [];
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolvers.push(res); }));
+    caretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box)); // 업로드 A in-flight
+    fireEvent(box, pasteImageEvent(box)); // 업로드 B in-flight(같은 렌더 클로저 — stale body 위험 구간)
+    await waitFor(() => expect(resolvers.length).toBe(2));
+    await act(async () => { resolvers[0]({ ok: true, path: '/uploads/a.png' }); });
+    await act(async () => { resolvers[1]({ ok: true, path: '/uploads/b.png' }); });
+    // stale body로 덮어쓰면 A가 사라져 1개만 남는다. 최신 body 위에 얹으면 둘 다 보존.
+    await waitFor(() => expect(container.querySelectorAll('[data-embed-type="image"]').length).toBe(2));
+    const srcs = Array.from(container.querySelectorAll('[data-embed-type="image"] img')).map((i) => i.getAttribute('src'));
+    expect(srcs).toContain('/uploads/a.png');
+    expect(srcs).toContain('/uploads/b.png');
+  });
+
+  it('업로드 대기 중 다른 탭으로 이동하면 새 탭 본문이 파손되지 않는다(삽입 취소 + 안내)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box)); // T0에서 업로드 in-flight
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+    // 업로드 대기 중 새 작성 탭으로 전환(addTab → 새 탭 활성). 에디터에서 이전 탭 본문('제목')이
+    // 사라지면 전환 완료(빈 탭은 본문 라인이 없을 수 있으므로 라인 존재가 아니라 텍스트 부재로 확인).
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+      expect(lines).not.toContain('제목');
+    });
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    // 탭이 바뀌었으므로 삽입은 취소되고 안내만 뜬다 — 새 탭에 이미지·이전 탭 텍스트가 새지 않는다.
+    await waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts).not.toContain('제목'); // 이전 탭(T0) 본문이 새 탭으로 새지 않음
   });
 });
 

@@ -69,6 +69,15 @@ describe('articleDetail — embed media rendering', () => {
     expect(html).not.toContain('javascript:alert(1)');
   });
 
+  // 20-step2: 신규 /uploads 상대경로(위)와 레거시 data:image base64(위)는 <img> 렌더 회귀 잠금 완료.
+  // data:text/html 이미지(악성)는 발행 HTML에 <img> 미렌더 + 원본 src 미노출이어야 한다(폴백 자리표시자).
+  it('does not render an <img> nor leak the raw src for a data:text/html image embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'image', src: 'data:text/html,x' })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('data:text/html,x');
+  });
+
   it('renders a canonical YouTube <iframe> for a video embed', () => {
     const markupVersion = serialize([embedBlock({
       embedType: 'video', videoId: 'dQw4w9WgXcQ', src: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',

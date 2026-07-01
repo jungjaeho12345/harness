@@ -1,0 +1,39 @@
+{
+  "project": "기사 작성기",
+  "phase": "20-editor-image-upload-embed",
+  "steps": [
+    {
+      "step": 0,
+      "name": "model-upload-filename",
+      "status": "completed",
+      "deps": [],
+      "started_at": "2026-07-01T23:09:46+0900",
+      "summary": "httpModel.js에 순수 함수 resolveUploadFilename(name,type) 추가·export 후 uploadFile(file) 결선 — 확장자 있는 파일명은 그대로(첨부/자료 하위호환), 확장자 없는 클립보드 이미지는 MIME 맵(png/jpeg→jpg/gif/webp)으로 pasted-<ts>.<ext> 합성, 맵 미스(image/bmp 등)+빈 name은 원본 그대로 전송해 서버가 invalid-file로 거부. 시그니처·요청 body{filename,contentBase64}·응답 shape·contract.js MODEL_KEYS 불변, server/index.js 미수정. httpModel.test.js에 순수 함수/uploadFile 합성 테스트 추가(web 863 통과, build·lint 클린).",
+      "completed_at": "2026-07-01T23:14:16+0900"
+    },
+    {
+      "step": 1,
+      "name": "paste-upload-embed",
+      "status": "completed",
+      "deps": [
+        0
+      ],
+      "started_at": "2026-07-01T23:14:16+0900",
+      "summary": "붙여넣기 신규 base64 생성 벡터 제거 + 업로드→경로 임베드. Editor.jsx handlePaste 이미지 분기에서 FileReader/readAsDataURL/embedFromPaste(base64 생성)를 전부 제거하고 props onPasteEmbed→onPasteImageFile(file, caret)로 교체 — 동기 readCaret 스냅샷과 raw File만 상위로 위임(핸들러 없으면 이미지 붙여넣기 비활성). WriterPage.jsx는 pasteEmbedAtCaret→async pasteImageAtCaret로 교체해 model.uploadFile(file) 왕복 후 성공(r&&r.ok&&r.path) 시 makeImageEmbed(path)를 insertEmbedAtLine으로 캐럿 줄에 삽입, 실패/too-large면 window.alert만 띄우고 삽입 취소(base64 폴백 없음). caretBlocked('(끝)' 차단)·여러 줄 텍스트 emitInsert·composition·insertEmbedAtLine/lastCaretRef 캐럿 계약·매핑 '(끝)' 앞 append parity 불변. server/·DB·clipboardEmbed.js(isAllowedImageSrc) 미변경. Editor.test.jsx(FileReader 미사용 위임 검증)·WriterPage.test.jsx(성공 src/실패 alert/매핑 parity·base64 부재) 새 계약으로 동반 갱신. web 865 통과, build·lint 클린.",
+      "completed_at": "2026-07-01T23:24:00+0900"
+    },
+    {
+      "step": 2,
+      "name": "render-backcompat-regression",
+      "status": "completed",
+      "deps": [
+        1
+      ],
+      "started_at": "2026-07-01T23:24:01+0900",
+      "summary": "신규 /uploads 상대경로 + 레거시 data:image base64 이미지 src가 InlineEmbed(에디터)·articleDetail(상세/발행) 양쪽에서 계속 <img>로 렌더되는지 회귀 테스트로 잠금. 프로덕션 코드(isAllowedImageSrc/classifyUrl·렌더 분기·referrerPolicy·escapeHtml) 무변경 — 테스트만 +6개 추가. clipboardEmbed.test.js: isAllowedImageSrc('/uploads/…')·data:image base64 허용 + javascript:/data:text/html 거부 회귀 describe. InlineEmbed.test.jsx: /uploads·레거시 base64 <img> 렌더 describe. articleDetail.test.js: data:text/html 이미지 폴백(원본 미노출) 케이스(/uploads·base64·javascript:는 기존 커버, 중복 회피). web 871 통과, build·lint 클린. server 코드 미변경(DB 비파괴 유지).",
+      "completed_at": "2026-07-01T23:27:58+0900"
+    }
+  ],
+  "created_at": "2026-07-01T23:09:46+0900",
+  "completed_at": "2026-07-01T23:27:59+0900"
+}

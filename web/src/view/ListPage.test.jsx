@@ -42,24 +42,49 @@ describe('ListPage', () => {
     });
   });
 
-  it('KILL기사 메뉴 버튼을 보여주고(5번째 탭), 선택 시 RRK·DDK·EEK만 조회하며 부서 셀렉터가 없다', async () => {
+  it('KILL기사 메뉴 버튼을 보여주고(5번째 탭), 선택 시 RRK·DDK·EEK를 조회하며 부서 셀렉터가 있다', async () => {
     const { model } = setup({ articles: [] });
     expect(screen.getByRole('button', { name: 'KILL기사' })).toBeInTheDocument();
     const spy = vi.spyOn(model, 'queryArticles');
     await userEvent.click(screen.getByRole('button', { name: 'KILL기사' }));
-    // KILL기사는 부서 무관 전체 KILL 목록 — 부서 키 없이 status만으로 조회한다.
+    // 진입 시 기본 '전체'(부서 미지정) — status만으로 조회하고, 부서 멀티셀렉트로 좁힐 수 있다.
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RRK', 'DDK', 'EEK'] }));
-    expect(screen.queryByTestId('dept-selector')).toBeNull();
+    expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
   });
 
-  it('엠바고 관리 메뉴 버튼을 보여주고(6번째 탭), 선택 시 EPS만 조회하며 부서 셀렉터가 없다', async () => {
+  it('엠바고 관리 메뉴 버튼을 보여주고(6번째 탭), 선택 시 EPS를 조회하며 부서 셀렉터가 있다', async () => {
     const { model } = setup({ articles: [] });
     expect(screen.getByRole('button', { name: '엠바고 관리' })).toBeInTheDocument();
     const spy = vi.spyOn(model, 'queryArticles');
     await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
-    // 엠바고 관리는 부서 무관 전체 EPS 목록 — 부서 키 없이 status만으로 조회한다.
+    // 진입 시 기본 '전체'(부서 미지정) — status만으로 조회하고, 부서 멀티셀렉트로 좁힐 수 있다.
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['EPS'] }));
-    expect(screen.queryByTestId('dept-selector')).toBeNull();
+    expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
+  });
+
+  it('엠바고 관리 메뉴는 권한 D/Z에게만 보이고, 권한 R에게는 숨긴다', async () => {
+    const { unmount } = setup({ articles: [] }, { userId: 'park', name: '박기자', role: 'R', department: '정치' });
+    // 권한 R: 엠바고 관리 탭이 없고 KILL기사까지 5개 메뉴만 보인다.
+    expect(await screen.findByRole('button', { name: 'KILL기사' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '엠바고 관리' })).toBeNull();
+    unmount();
+    // 권한 D: 엠바고 관리 탭이 보인다.
+    setup({ articles: [] }, { userId: 'kim', name: '김데스크', role: 'D', department: '정치' });
+    expect(await screen.findByRole('button', { name: '엠바고 관리' })).toBeInTheDocument();
+  });
+
+  it('KILL기사에서 부서를 좁히면 status와 departments로 재조회한다', async () => {
+    const { model } = setup({
+      articles: [],
+      users: [{ userId: 'kim', name: '김기자', department: '정치' }, { userId: 'lee', name: '이기자', department: '경제' }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'KILL기사' }));
+    await userEvent.click(await screen.findByTestId('dept-trigger')); // 부서 드롭다운 열기
+    await screen.findByLabelText('경제');
+    const spy = vi.spyOn(model, 'queryArticles');
+    // 기본 '전체'에서 경제를 끄면 정치만 남아 departments=['정치']로 재조회한다.
+    await userEvent.click(screen.getByLabelText('경제'));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RRK', 'DDK', 'EEK'], departments: ['정치'] }));
   });
 
   it('엠바고 관리 EPS 행 우클릭 편집 → 잠금 획득 후 writer.do로 편집 진입한다(edit 모드)', async () => {

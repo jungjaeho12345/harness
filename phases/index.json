@@ -113,6 +113,12 @@
       "status": "completed",
       "completed_at": "2026-06-24T06:05:00+0900",
       "note": "phase18에서 DEFER한 오디오/링크/로컬영상 임베드 결선 — InlineEmbed.jsx 렌더 확장(audio=<audio controls>·localVideo=<video controls>·link=<a rel=noopener noreferrer>) + 상세보기(articleDetail.js embedHtml) 동형 확장 + 도구 메뉴 tools.insertAudio/insertLink/insertLocalVideo를 phase18 UrlEmbedDialog 재사용으로 결선. URL 검증 단일출처: clipboardEmbed.js 공유 classifyUrl/isHttpsAuthority(3함수 isAllowedImageSrc/Media/Href 일괄) — 에디터·상세 양쪽 동일 규칙 import. step0 렌더+검증유틸→step1 팩토리+다이얼로그 kind→step2 WriterPage 결선. 🔒 보안: 1차 구현이 발행기사 XSS(스킴 정규식 미정규화로 제어문자/공백/프로토콜상대// 우회 → ListPage document.write 싱크에서 클릭 시 실행)에 노출 → 적대적 XSS 검증(5렌즈 워크플로)+reviewer+tester 3중 반려 → classifyUrl이 제어문자/공백·백슬래시·//·단일슬래시 https 거부 + https:// authority만 허용으로 fix(3dd21f7), 재검증 verdict=secure. inherited isAllowedImageSrc 약점도 공통헬퍼로 함께 차단. Editor.jsx 미접촉·기존 메뉴 id 재사용·insertEmbed 안전경로만·client 전용·DB 비파괴·매핑 허용(parity). test:web 854 통과. 후속 위생후보(비차단): articleDetail youtube videoId를 parseYouTubeId 결과로 통일(11자)."
+    },
+    {
+      "dir": "20-editor-image-upload-embed",
+      "status": "completed",
+      "completed_at": "2026-07-01T23:27:59+0900",
+      "note": "붙여넣기(Ctrl+V) 이미지가 본문(markupVersion)에 base64를 인라인 저장하던 것을 /api/upload 경로 참조로 전환 — 본문 크기 폭증 근본해결. step0 model-upload-filename(httpModel.resolveUploadFilename: 확장자 없는 클립보드 File을 MIME→pasted-<ts>.<ext> 합성, 맵 미스(bmp/svg)+빈 name은 서버가 invalid-file 거부, 계약·서버 미변경)→step1 paste-upload-embed(Editor.jsx FileReader/base64 제거·onPasteEmbed→onPasteImageFile(file,caret) 위임, WriterPage async pasteImageAtCaret가 model.uploadFile 후 makeImageEmbed(path) 삽입·실패/too-large는 alert+삽입취소·base64 폴백 없음, Editor·WriterPage 테스트 동반 갱신)→step2 render-backcompat-regression(신규 /uploads + 레거시 data:image base64 둘 다 InlineEmbed·articleDetail 렌더 회귀 잠금, isAllowedImageSrc 불변). 정책: 실패=alert+취소·5MB 서버판정·placeholder 없음·레거시 렌더 보존(마이그레이션 별도 phase). 🔎 코드리뷰(⑤ 3차원+적대적검증)가 MAJOR 데이터 무결성 버그 적발 — pasteImageAtCaret가 async 업로드 대기 후 stale body/탭 클로저로 삽입해 (1)대기중 타이핑 유실 (2)연속 붙여넣기 앞 임베드 유실 (3)탭 전환 시 다른 기사 본문 파손 가능(네트워크 왕복이 await 창 확대) → fix(c98871c): insertEmbedAtLine에 srcBody/mapping 명시 인자(기본값=클로저, 동기 호출부 무변경) + pasteImageAtCaret가 tabId 고정·activeTabRef로 동일 탭일 때만 최신 body 위에 삽입, TDD 회귀 2건. nit 4건(선행점 파일명·embedFromPaste 死코드·네트워크 reject 무피드백·await 레이스) 비차단 수용. Editor.jsx 붙여넣기만 변경·server/·DB·스키마 미변경(비파괴). test:web 873·server 359·build·lint green."
     }
   ]
 }

@@ -10,6 +10,36 @@
 
 const SESSION_STORAGE_KEY = 'yh.sessionId';
 
+// 클립보드(Ctrl+V) 이미지 File은 file.name이 비어 있고 확장자가 없어 서버 확장자 화이트리스트에서
+// invalid-file로 거부된다. MIME → 이미지 확장자 맵(서버 UPLOAD_EXT_ALLOWLIST의 이미지 항목과 정합).
+const IMAGE_EXT_BY_MIME = Object.freeze({
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+});
+
+// 확장자 유무 판정 — 마지막 '.' 뒤가 비어있지 않으면(trailing dot 제외) 확장자가 있다고 본다.
+function hasExtension(name) {
+  const s = typeof name === 'string' ? name : '';
+  const dot = s.lastIndexOf('.');
+  return dot >= 0 && dot < s.length - 1;
+}
+
+// 서버 /api/upload로 보낼 파일명을 결정하는 순수 함수(신뢰경계=서버 — 이 합성은 편의일 뿐 서버의
+// 확장자 화이트리스트·5MB 검증을 대체하지 않는다).
+//  1) 원본 name에 확장자가 있으면 그대로 사용(첨부/자료 파일 하위호환 — 재작성하지 않는다).
+//  2) 확장자가 없고(빈 name 포함) MIME이 이미지 맵에 있으면 pasted-<ts>.<ext>로 합성.
+//  3) 맵에 없는 MIME + 확장자 없음이면 임의 확장자를 지어내지 않고 원본 name을 그대로 전송한다
+//     → 서버가 invalid-file로 안전 거부(화이트리스트 우회 시도 방지).
+export function resolveUploadFilename(name, type) {
+  const original = typeof name === 'string' ? name : '';
+  if (hasExtension(original)) return original;
+  const ext = IMAGE_EXT_BY_MIME[type];
+  if (!ext) return original;
+  return `pasted-${Date.now()}.${ext}`;
+}
+
 function readSessionId() {
   try {
     return globalThis.sessionStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
@@ -154,10 +184,12 @@ export function createHttpModel({ base = '' } = {}) {
       });
     },
 
-    // --- 파일 업로드(첨부파일/자료파일) ---
+    // --- 파일 업로드(첨부파일/자료파일 + 클립보드 이미지) ---
     // File을 FileReader로 data URL로 읽어 "data:...;base64," 접두사를 떼어낸 raw base64만 서버로 보낸다
     // (server /api/upload 계약은 prefix 없는 raw base64를 받는다). 응답 { ok, path, filename }을 그대로 반환한다.
-    // path 문자열이 Contents.attachmentFile/referenceFile(VARCHAR)에 저장된다.
+    // path 문자열이 Contents.attachmentFile/referenceFile(VARCHAR) 또는 임베드 src에 저장된다.
+    // 파일명은 resolveUploadFilename으로 결정한다 — 확장자 있는 파일은 그대로, 확장자 없는 클립보드
+    // 이미지는 MIME에서 유효 파일명을 합성한다(시그니처·요청/응답 shape은 불변).
     async uploadFile(file) {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -166,9 +198,10 @@ export function createHttpModel({ base = '' } = {}) {
         reader.readAsDataURL(file);
       });
       const contentBase64 = String(dataUrl).replace(/^data:[^;]*;base64,/, '');
+      const filename = resolveUploadFilename(file.name, file.type);
       return request('/api/upload', {
         method: 'POST',
-        body: { filename: file.name, contentBase64 },
+        body: { filename, contentBase64 },
       });
     },
 

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
-import { useViewController, VIEW_MENUS } from '../controller/useViewController.js';
+import { useViewController, visibleMenus } from '../controller/useViewController.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { statusBadge } from './statusBadge.js';
 import { formatCell, setDateFormat } from './listFormat.js';
@@ -146,13 +146,15 @@ export function ListPage() {
     return formatCell(col.key, row[col.key]);
   };
 
-  const showDeptSelector = menu === 'deskUnsent' || menu === 'deptWrite' || menu === 'deptSend';
+  const showDeptSelector = menu === 'deskUnsent' || menu === 'deptWrite' || menu === 'deptSend'
+    || menu === 'killArticles' || menu === 'embargoMgmt';
 
   return (
     <main className="yh-page">
       <div className="yh-list-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="yh-menubar" data-testid="menubar">
-          {VIEW_MENUS.map((m) => (
+          {/* 엠바고 관리는 권한 D, Z에게만 노출(visibleMenus) — TopBar의 Z 전용 링크와 동일 패턴. */}
+          {visibleMenus(identity).map((m) => (
             <button
               key={m}
               type="button"

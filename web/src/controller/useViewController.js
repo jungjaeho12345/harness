@@ -11,19 +11,36 @@ export const PENDING_EDIT_KEY = 'yh.pendingEdit';
 export const VIEW_MENUS = Object.freeze(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles', 'embargoMgmt']);
 export const PAGE_SIZE = 10;
 
+// 엠바고 관리 메뉴는 권한 D, Z에게만 보인다(R 숨김). 서버가 실제 인가를 강제(ADR-004) — 프론트는 메뉴 노출만 담당.
+export const DZ_ONLY_MENUS = Object.freeze(['embargoMgmt']);
+
+// 로그인 사용자 권한에 따라 노출할 메뉴를 거른다(TopBar의 Z 전용 링크 패턴과 정합).
+// 신원 미상(세션 복원 전)에는 D/Z 전용 메뉴를 숨긴다(안전 기본값). 실제 인가는 서버가 강제(ADR-004).
+export function visibleMenus(identity) {
+  const role = identity && identity.role;
+  const canDZ = role === 'D' || role === 'Z';
+  return VIEW_MENUS.filter((m) => canDZ || !DZ_ONLY_MENUS.includes(m));
+}
+
 // 메뉴별 조회 필터 (news.md 기사 조회페이지).
 // 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK
-// / KILL기사: RRK·DDK·EEK(부서 무관 전체 KILL 목록) / 엠바고 관리: EPS(부서 무관 전체 EPS 목록).
-// 부서 다중 선택(departments)은 데스크 미송고·부서별 작성·부서별 송고에서 지원하며, 기본값은 '전체'(부서 미지정)다.
+// / KILL기사: RRK·DDK·EEK / 엠바고 관리: EPS.
+// 부서 다중 선택(departments)은 개인별 수정을 제외한 모든 메뉴에서 지원하며, 기본값은 '전체'(부서 미지정)다.
 export function buildMenuFilter(menu, identity, departments) {
   const depts = (departments && departments.length) ? departments : null; // null/[] = '전체'(부서 미지정)
   switch (menu) {
-    case 'killArticles':
-      // KILL 결과 상태: R의 RRK, D/Z의 DDK, EPS의 EEK. 부서 무관 전체 목록(부서 키 없이 status만 — personal 패턴).
-      return { status: ['RRK', 'DDK', 'EEK'] };
-    case 'embargoMgmt':
-      // 엠바고 송고 대기(EPS) 목록. 부서 무관 전체 EPS 목록(부서 키 없이 status만 — killArticles 패턴).
-      return { status: ['EPS'] };
+    case 'killArticles': {
+      // KILL 결과 상태: R의 RRK, D/Z의 DDK, EPS의 EEK. 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴).
+      const f = { status: ['RRK', 'DDK', 'EEK'] };
+      if (depts) f.departments = depts;
+      return f;
+    }
+    case 'embargoMgmt': {
+      // 엠바고 송고 대기(EPS) 목록. 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴).
+      const f = { status: ['EPS'] };
+      if (depts) f.departments = depts;
+      return f;
+    }
     case 'deptWrite': {
       const f = { excludeStatus: ['DPS', 'RRH'] };
       if (depts) f.departments = depts;

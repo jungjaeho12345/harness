@@ -130,6 +130,24 @@ describe('clipboardEmbed — media/href scheme allowlist', () => {
   });
 });
 
+// 20-step2: 붙여넣기 신규 이미지는 /uploads 상대경로 src로, 이미 저장된 레거시 기사는 data:image base64 src로
+// 본문에 남는다(마이그레이션하지 않음). 두 형식이 계속 허용되는지 회귀 잠금 — 규칙은 조이지/완화하지 않는다
+// (레거시 base64 렌더·하위호환 보존). 악성 스킴은 계속 거부되어야 한다.
+describe('clipboardEmbed — image src backcompat regression (신규 /uploads + 레거시 base64)', () => {
+  it('allows the new pasted /uploads relative path', () => {
+    expect(isAllowedImageSrc('/uploads/deadbeef.png')).toBe(true);
+  });
+
+  it('still allows a legacy data:image base64 src (backcompat)', () => {
+    expect(isAllowedImageSrc('data:image/png;base64,AAAA')).toBe(true);
+  });
+
+  it('still rejects malicious image src (javascript: / data:text/html)', () => {
+    expect(isAllowedImageSrc('javascript:alert(1)')).toBe(false);
+    expect(isAllowedImageSrc('data:text/html,x')).toBe(false);
+  });
+});
+
 describe('clipboardEmbed — embed builders', () => {
   it('makeImageEmbed builds an image block with sizing', () => {
     const e = makeImageEmbed('data:image/png;base64,AAA', { alt: '사진' });
