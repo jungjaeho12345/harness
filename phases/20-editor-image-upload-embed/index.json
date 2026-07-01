@@ -8,7 +8,8 @@
       "status": "completed",
       "deps": [],
       "started_at": "2026-07-01T23:09:46+0900",
-      "summary": "httpModel.js에 순수 함수 resolveUploadFilename(name,type) 추가·export 후 uploadFile(file) 결선 — 확장자 있는 파일명은 그대로(첨부/자료 하위호환), 확장자 없는 클립보드 이미지는 MIME 맵(png/jpeg→jpg/gif/webp)으로 pasted-<ts>.<ext> 합성, 맵 미스(image/bmp 등)+빈 name은 원본 그대로 전송해 서버가 invalid-file로 거부. 시그니처·요청 body{filename,contentBase64}·응답 shape·contract.js MODEL_KEYS 불변, server/index.js 미수정. httpModel.test.js에 순수 함수/uploadFile 합성 테스트 추가(web 863 통과, build·lint 클린)."
+      "summary": "httpModel.js에 순수 함수 resolveUploadFilename(name,type) 추가·export 후 uploadFile(file) 결선 — 확장자 있는 파일명은 그대로(첨부/자료 하위호환), 확장자 없는 클립보드 이미지는 MIME 맵(png/jpeg→jpg/gif/webp)으로 pasted-<ts>.<ext> 합성, 맵 미스(image/bmp 등)+빈 name은 원본 그대로 전송해 서버가 invalid-file로 거부. 시그니처·요청 body{filename,contentBase64}·응답 shape·contract.js MODEL_KEYS 불변, server/index.js 미수정. httpModel.test.js에 순수 함수/uploadFile 합성 테스트 추가(web 863 통과, build·lint 클린).",
+      "completed_at": "2026-07-01T23:14:16+0900"
     },
     {
       "step": 1,
