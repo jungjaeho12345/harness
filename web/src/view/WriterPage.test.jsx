@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  render, screen, waitFor, fireEvent, createEvent, within,
+  render, screen, waitFor, fireEvent, createEvent, within, act,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
@@ -569,6 +569,50 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
     // 캐럿 없음 + 매핑 → "(끝)" 앞 append: 제목·본문 → [이미지] → (끝)
     expect(blockTypes(container)).toEqual(['text', 'text', 'embed', 'text']);
     expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/map.png');
+  });
+
+  // 업로드는 네트워크 왕복(비동기)이라 대기 창이 넓다. 대기 중 상태가 바뀌면 붙여넣기 시점의 stale body/탭
+  // 클로저로 덮어써 데이터가 유실될 수 있다 — 삽입 시점 최신 body를 읽고 붙여넣은 탭과 동일할 때만 삽입한다.
+  it('연속 붙여넣기: 업로드 대기 중 두 번째 붙여넣기해도 두 이미지가 모두 보존된다(stale body 덮어쓰기 방지)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const resolvers = [];
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolvers.push(res); }));
+    caretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box)); // 업로드 A in-flight
+    fireEvent(box, pasteImageEvent(box)); // 업로드 B in-flight(같은 렌더 클로저 — stale body 위험 구간)
+    await waitFor(() => expect(resolvers.length).toBe(2));
+    await act(async () => { resolvers[0]({ ok: true, path: '/uploads/a.png' }); });
+    await act(async () => { resolvers[1]({ ok: true, path: '/uploads/b.png' }); });
+    // stale body로 덮어쓰면 A가 사라져 1개만 남는다. 최신 body 위에 얹으면 둘 다 보존.
+    await waitFor(() => expect(container.querySelectorAll('[data-embed-type="image"]').length).toBe(2));
+    const srcs = Array.from(container.querySelectorAll('[data-embed-type="image"] img')).map((i) => i.getAttribute('src'));
+    expect(srcs).toContain('/uploads/a.png');
+    expect(srcs).toContain('/uploads/b.png');
+  });
+
+  it('업로드 대기 중 다른 탭으로 이동하면 새 탭 본문이 파손되지 않는다(삽입 취소 + 안내)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box)); // T0에서 업로드 in-flight
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+    // 업로드 대기 중 새 작성 탭으로 전환(addTab → 새 탭 활성). 에디터에서 이전 탭 본문('제목')이
+    // 사라지면 전환 완료(빈 탭은 본문 라인이 없을 수 있으므로 라인 존재가 아니라 텍스트 부재로 확인).
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+      expect(lines).not.toContain('제목');
+    });
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    // 탭이 바뀌었으므로 삽입은 취소되고 안내만 뜬다 — 새 탭에 이미지·이전 탭 텍스트가 새지 않는다.
+    await waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts).not.toContain('제목'); // 이전 탭(T0) 본문이 새 탭으로 새지 않음
   });
 });
 
