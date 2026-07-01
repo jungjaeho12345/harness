@@ -1704,7 +1704,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
 // editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
-// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바는 토글 상태만(실제 바 없음).
+// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
 describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -1767,39 +1767,52 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(queryByTestId('menubar')).toBeNull());
   });
 
-  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 에러 없이 토글 상태만 바꾼다(실제 바 없음·체크 표식 갱신)", async () => {
+  it("컨텍스트 메뉴 '약물바 보이기' 클릭은 토글 상태·실제 약물바 렌더를 토글한다(체크 표식 갱신)", async () => {
+    // 자주쓰는 약물을 시드해 토글 ON 시 실제 바(glyph-bar)가 버튼과 함께 렌더됨을 검증한다.
+    localStorage.clear();
+    saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items: ['※', '◇'] } });
     const { container } = await openWith([textBlock('헤드')]);
+    // 처음엔 약물바 off → 바 미렌더.
+    expect(screen.queryByTestId('glyph-bar')).toBeNull();
+
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
     // 처음엔 약물바 off → aria-checked=false.
     expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'false');
-    await userEvent.click(ctxItem('약물바 보이기')); // 토글 — 에러 없이 동작
+    await userEvent.click(ctxItem('약물바 보이기')); // 토글 ON — 에러 없이 동작
     expect(ctxMenu()).toBeNull(); // 선택 후 닫힘
 
-    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존). 실제 약물바 컴포넌트는 렌더하지 않는다.
+    // 토글 ON → 실제 약물바(glyph-bar, 하이픈)가 렌더되고 약물 버튼 2개가 보인다.
+    const bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).getAllByRole('button')).toHaveLength(2);
+
+    // 다시 열면 약물바 on → aria-checked=true(토글 상태 보존).
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
     expect(ctxItem('약물바 보이기')).toHaveAttribute('aria-checked', 'true');
-    expect(container.querySelector('[data-testid="glyphbar"]')).toBeNull(); // 실제 바 미렌더
+
+    // 다시 토글 OFF → 실제 약물바가 사라진다.
+    await userEvent.click(ctxItem('약물바 보이기'));
+    await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환/약물입력/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다', async () => {
+  it('aux 항목(기업코드변환/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다(약물입력은 phase17 step4에서 결선됨)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['기업코드변환', '약물입력', '원본 붙여넣기', '텍스트 붙여넣기']) {
+    for (const label of ['기업코드변환', '원본 붙여넣기', '텍스트 붙여넣기']) {
       expect(ctxItem(label)).toBeDisabled();
     }
   });
 
-  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·보이기 토글이 활성이다', async () => {
+  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
@@ -1896,5 +1909,867 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     } finally {
       delete document.execCommand; // jsdom 기본(미정의) 상태로 되돌린다 — 다른 테스트의 가드 경로 보존.
     }
+  });
+});
+
+// Step 2(17-editor-glyph-tools): 약물바(EditorGlyphBar) 결선 — 자주쓰는 약물 렌더 + 캐럿 삽입(안전 경로) + 매핑 보호.
+// glyphFavorites는 localStorage(editorPrefs)에 영속되므로 localStorage.clear()로 격리한다(마운트 lazy 초기화 오염 차단).
+describe('WriterPage — 약물바(EditorGlyphBar) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 자주쓰는 약물을 시드한다(마운트 시 useState lazy 초기화가 이 값을 읽는다).
+  const seedGlyphs = (items) => saveEditorPrefs({ ...loadEditorPrefs(), glyphFavorites: { items } });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(검색패널 삽입과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // editor-canvas 우클릭 → '약물바 보이기' 클릭으로 바를 켠다(phase14 컨텍스트 메뉴 토글 재사용).
+  async function toggleGlyphBarOn(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    fireEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    const menu = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(menu).getByText('약물바 보이기').closest('button'));
+  }
+
+  it('자주쓰는 약물을 시드하고 약물바를 켜면 약물 버튼이 렌더된다', async () => {
+    seedGlyphs(['※', '◇']);
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(screen.queryByTestId('glyph-bar')).toBeNull(); // 처음엔 꺼짐
+
+    await toggleGlyphBarOn(container);
+
+    const bar = await screen.findByTestId('glyph-bar');
+    const buttons = within(bar).getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveTextContent('※');
+    expect(buttons[1]).toHaveTextContent('◇');
+  });
+
+  it('약물 버튼 클릭 시 마지막 캐럿 줄에 약물이 삽입된다(updateField body 안전 경로, 임베드 불변)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문"(임베드 제외 좌표) 시작에 캐럿
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    // 저장 시 본문 텍스트 줄에 '※'가 삽입되고 임베드 블록은 그대로 보존된다.
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 캐럿 줄 시작(col 0)에 삽입
+  });
+
+  it('매핑 모드에서는 약물바가 렌더되지 않아 본문이 바뀌지 않는다(본문-only 불변식)', async () => {
+    seedGlyphs(['※']);
+    const { container } = await openWith([textBlock('헤드')], { mode: 'mapping', status: 'DPS', role: 'D' });
+
+    // 매핑 모드: 우클릭으로 약물바를 켜도 바 자체가 미렌더(매핑 가드).
+    await toggleGlyphBarOn(container);
+    expect(screen.queryByTestId('glyph-bar')).toBeNull();
+  });
+
+  it('등록된 약물이 없으면 약물바를 켜도 버튼 0개로 graceful', async () => {
+    seedGlyphs([]);
+    const { container } = await openWith([textBlock('헤드')]);
+
+    await toggleGlyphBarOn(container);
+
+    const bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  // 보강(harness-tester): 캐럿이 한 번도 잡히지 않은 상태(lastCaretRef.current === null) 약물 클릭 →
+  // Step0 폴백("(끝)" 아닌 마지막 텍스트 줄 끝)으로 삽입되고 임베드 위치·내용·개수·순서가 불변임을 고정한다.
+  // (캐럿을 세팅하지 않으므로 focusCaretAtLine 미호출 — 약물바 버튼은 onCaretChange를 발생시키지 않는다.)
+  it('캐럿이 null이면 약물 클릭이 마지막 텍스트 줄 끝(Step0 폴백)에 삽입되고 임베드는 불변이다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const embed = embedBlock({ type: 'image', src: 'https://img/y.png' });
+    const { container, model } = await openWith([
+      textBlock('첫줄'), embed, textBlock('마지막'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container); // 캐럿은 세팅하지 않는다(lastCaretRef.current === null).
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocks[1]).toEqual(embed); // 임베드 위치·내용 불변
+    expect(blocksToText(blocks)).toBe('첫줄\n마지막※'); // 폴백 = 마지막 텍스트 줄 끝
+  });
+
+  // 보강(harness-tester): 여러 줄 본문에서 특정 줄 중간(offset)에 캐럿을 두고 삽입 시 그 컬럼에 정확히 들어가는지
+  // (Step0 좌표 계약 — col = caret.offset - lineStart). 줄 시작(col 0)만 검증하던 기존 삽입 테스트의 공백 보강.
+  it('여러 줄 본문에서 캐럿이 줄 중간(offset)이면 그 컬럼에 정확히 삽입된다(Step0 좌표 계약)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    // 텍스트 = "abcd\nefgh"(임베드 없음). 둘째 줄 'efgh' 시작 오프셋 5, offset 7 → 'ef' 다음 컬럼 2 → 'ef※gh'.
+    const { container, model } = await openWith([textBlock('abcd'), textBlock('efgh')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    // 둘째 줄(텍스트-줄 1)에 캐럿을 두되 컬럼 2(offset 7)에 콜랩스한다(줄 시작이 아님).
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const textNode = lineEls[1].firstChild ?? lineEls[1];
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(textNode, 2); // 'efgh'의 컬럼 2
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('abcd\nef※gh');
+  });
+
+  // 보강(harness-tester): 멀티문자 약물(예 '※※')도 그대로(분해/절단 없이) 삽입되는지 — 단일 약물만 보던 공백 보강.
+  it("멀티문자 약물('※※')도 그대로 캐럿 줄에 삽입된다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※※']);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작에 캐럿
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n※※본문');
+  });
+
+  // 보강(harness-tester): 약물 삽입 후 임베드 블록의 위치·내용(전체 객체 동등)·개수가 모두 불변임을 못박는다.
+  // (기존 삽입 테스트는 type 시퀀스만 검증 — embed의 src/속성 변형 회귀는 못 잡는다.)
+  it('약물 삽입 후 임베드 블록의 위치·내용·개수가 모두 불변이다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedGlyphs(['※']);
+    const embedA = embedBlock({ type: 'image', src: 'https://img/a.png', alt: '캡션' });
+    const embedB = embedBlock({ type: 'video', src: 'https://v/b', title: '제목' });
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedA, textBlock('본문'), embedB,
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await toggleGlyphBarOn(container);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문"
+
+    const bar = await screen.findByTestId('glyph-bar');
+    await userEvent.click(within(bar).getByRole('button', { name: '약물 ※ 삽입' }));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(2); // 개수 불변
+    expect(blocks[1]).toEqual(embedA); // 위치·내용 불변(전체 객체 동등)
+    expect(blocks[3]).toEqual(embedB);
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 텍스트만 바뀜
+  });
+
+  // 보강(harness-tester): 환경설정에서 약물을 등록·'적용'하면 약물바가 onPrefsClose(applied)로 새 glyphFavorites를 즉시 반영한다
+  // (별도 effect/구독 없이 lazy state + onPrefsClose 게이트만으로 갱신 — 마운트 후 동적 등록 반영 회귀 방어).
+  it("환경설정에서 약물 등록 후 '적용'하면 약물바가 새 자주쓰는 약물로 즉시 갱신된다", async () => {
+    seedGlyphs(['※']); // 초기 약물 1개
+    const { container } = await openWith([textBlock('헤드')]);
+
+    await toggleGlyphBarOn(container);
+    let bar = await screen.findByTestId('glyph-bar');
+    expect(within(bar).getAllByRole('button')).toHaveLength(1); // 초기 1개
+
+    // 도움말>환경설정 → 자주쓰는 약물 탭에서 '◇' 추가 → 적용.
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
+    fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '◇' } });
+    fireEvent.click(screen.getByTestId('pref-glyphFav-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 적용 후 약물바가 새 약물(◇)을 포함해 버튼 2개로 갱신된다(별도 재오픈 없이 즉시 반영).
+    bar = await screen.findByTestId('glyph-bar');
+    await waitFor(() => expect(within(bar).getAllByRole('button')).toHaveLength(2));
+    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['※', '◇']);
+  });
+});
+
+// Step 4(17-editor-glyph-tools): 약물입력 다이얼로그(GlyphInputDialog) 결선 —
+// Alt+O / 도구 메뉴(tools.symbolInput) / 우클릭(ctx.symbolInput)으로 다이얼로그를 열고,
+// 자주쓰는 약물(glyphFavorites) 선택 시 Step 2 onGlyphPick 안전 경로로 캐럿 위치에 삽입한다.
+// keymap(glyphKeymap)은 참조 표시만. 매핑 모드에서는 열지 않고 본문도 바꾸지 않는다(본문-only 불변식).
+// glyphFavorites/glyphKeymap은 localStorage(editorPrefs)에 영속되므로 localStorage.clear()로 격리한다.
+describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 자주쓰는 약물 + 사용자 키보드 약물을 함께 시드한다(마운트 lazy 초기화가 읽는다).
+  const seedPrefs = ({ favorites = [], keymap = [] } = {}) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    glyphFavorites: { items: favorites },
+    glyphKeymap: { items: keymap },
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 약물입력 다이얼로그 자체(role=dialog '약물 입력')만 본다.
+  const glyphDialog = () => screen.queryByRole('dialog', { name: '약물 입력' });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시킨다(약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  function rightClickCanvas(container) {
+    const canvas = container.querySelector('[data-testid="editor-canvas"]');
+    fireEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+  }
+
+  it('Alt+O keydown 시 약물입력 다이얼로그가 열리고 preventDefault된다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    expect(glyphDialog()).toBeNull();
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'o', altKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).toHaveBeenCalled(); // Alt+O 가로채기
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input')).toBeInTheDocument();
+  });
+
+  it("도구 메뉴 '약물 입력'(tools.symbolInput)이 활성이고 클릭 시 다이얼로그가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    expect(glyphDialog()).toBeNull();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    const item = within(menu).getByText('약물 입력').closest('button');
+    expect(item).toBeEnabled();
+    await userEvent.click(item);
+
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+  });
+
+  it("우클릭 '약물입력'(ctx.symbolInput)이 비매핑에서 활성이고 클릭 시 다이얼로그가 열린다", async () => {
+    const { container } = await openWith([textBlock('헤드')]);
+    rightClickCanvas(container);
+    const ctx = await screen.findByTestId('editor-context-menu');
+    const item = within(ctx).getByText('약물입력').closest('button');
+    expect(item).toBeEnabled();
+
+    await userEvent.click(item);
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.queryByTestId('editor-context-menu')).toBeNull(); // 선택 후 닫힘
+  });
+
+  it("자주쓰는 약물('※') 클릭 시 캐럿 줄에 '※'가 삽입된다(updateField body 안전 경로, 임베드 불변)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ favorites: ['※'] });
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('glyph-input-fav-0'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n※본문'); // 캐럿 줄 시작에 삽입
+  });
+
+  it("사용자 키보드 약물(glyphKeymap)이 다이얼로그에 'Ctrl+1 → ★'로 참조 표시된다", async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    expect(screen.getByTestId('glyph-input-key-0')).toHaveTextContent('Ctrl+1 → ★');
+  });
+
+  it('약물 선택 후에도 다이얼로그가 열려 있다(연속 삽입 — Step 3 닫기 정책)', async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId('glyph-input-fav-0'));
+    expect(glyphDialog()).toBeInTheDocument(); // 닫기 버튼/Esc 전까지 열린 채
+
+    await userEvent.click(screen.getByTestId('glyph-input-close'));
+    await waitFor(() => expect(glyphDialog()).toBeNull());
+  });
+
+  it('매핑 모드: Alt+O가 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ favorites: ['※'] });
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    expect(glyphDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it("매핑 모드: 우클릭 '약물입력'이 비활성이다", async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    rightClickCanvas(container);
+    const ctx = await screen.findByTestId('editor-context-menu');
+    expect(within(ctx).getByText('약물입력').closest('button')).toBeDisabled();
+  });
+
+  it("환경설정 약물 미등록(빈 배열)이어도 다이얼로그가 graceful 안내로 열린다", async () => {
+    seedPrefs({ favorites: [], keymap: [] });
+    const { container } = await openWith([textBlock('헤드')]);
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-fav-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('glyph-input-key-empty')).toBeInTheDocument();
+  });
+
+  // 보강(harness-tester): 매핑 모드 도구 메뉴 '약물 입력'은 (찾기/바꾸기 메뉴와 동일하게) 클릭 가능하나
+  // onMenuSelect의 매핑 가드(early return)에 막혀 다이얼로그를 열지 않는다(본문-only 불변식). 메뉴 경로 공백 보강.
+  it("매핑 모드: 도구 메뉴 '약물 입력' 클릭도 다이얼로그를 열지 않는다(매핑 가드)", async () => {
+    seedPrefs({ favorites: ['※'] });
+    await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('약물 입력').closest('button'));
+    expect(glyphDialog()).toBeNull(); // 매핑 가드로 미개봉(찾기/바꾸기 메뉴와 동일 정책)
+  });
+
+  // 보강(harness-tester): glyphFavorites와 동일한 onPrefsClose(applied) 게이트로 keymap(참조 표시)도 즉시 갱신돼야 한다.
+  // 환경설정에서 키보드 약물을 등록·'적용'한 뒤 다이얼로그를 열면 새 keymap이 'keys → glyph'로 참조 표시된다(마운트 후 동적 등록 반영 회귀 방어).
+  it("환경설정에서 키보드 약물 등록 후 '적용'하면 다이얼로그 참조 표시가 즉시 갱신된다", async () => {
+    seedPrefs({ favorites: [], keymap: [] }); // 초기 keymap 없음
+    const { container } = await openWith([textBlock('헤드')]);
+
+    // 먼저 다이얼로그를 열어 '등록된 약물 없음'(key-empty)을 확인한다.
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-key-empty')).toBeInTheDocument();
+    // 다이얼로그를 닫고 환경설정으로 등록한다(닫지 않으면 prefs 모달과 겹쳐도 무방하나, 게이트 갱신만 검증).
+    await userEvent.click(screen.getByTestId('glyph-input-close'));
+
+    // 도움말>환경설정 → 사용자 키보드 약물 탭에서 'Ctrl+2 → ◎' 추가 → 적용.
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'Ctrl+2' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '◎' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    // 다시 다이얼로그를 열면 새 keymap이 참조 표시된다(별도 재마운트 없이 onPrefsClose 게이트로 즉시 반영).
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByTestId('glyph-input-key-0')).toHaveTextContent('Ctrl+2 → ◎');
+    expect(screen.queryByTestId('glyph-input-key-empty')).toBeNull();
+  });
+
+  // 보강(harness-tester): 회귀 — Ctrl+F(찾기)와 Alt+O(약물입력)는 서로 간섭하지 않는다.
+  // 두 분기 모두 라인삭제 조기 return 위에 있고 key가 달라(f vs o) 서로의 다이얼로그를 열지 않아야 한다.
+  it('회귀: Ctrl+F는 찾기만, Alt+O는 약물입력만 열고 서로 간섭하지 않는다', async () => {
+    seedPrefs({ favorites: ['※'] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+
+    // Ctrl+F → 찾기/바꾸기만 열고 약물입력은 열지 않는다.
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument());
+    expect(glyphDialog()).toBeNull(); // Alt+O 다이얼로그는 안 열림
+
+    // Alt+O → 약물입력만 열고(찾기는 그대로) 두 다이얼로그가 공존해도 충돌하지 않는다.
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+    await waitFor(() => expect(glyphDialog()).toBeInTheDocument());
+    expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument(); // 찾기 불변
+  });
+});
+
+// Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
+// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
+// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). new Date는 WriterPage에만.
+// 시각은 vi.useFakeTimers + setSystemTime으로 고정하고, dateFormat은 saveEditorPrefs로 주입한다(localStorage.clear 격리).
+describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true }); // userEvent의 타이머 의존을 위해 실시간 진행 허용.
+    vi.setSystemTime(new Date('2026-06-24T01:23:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // 날짜형식 prefs를 시드한다(마운트 lazy 초기화/loadEditorPrefs가 읽는다).
+  const seedDateFormat = (dateFormat) => saveEditorPrefs({ ...loadEditorPrefs(), dateFormat });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 '날짜 삽입' 항목을 클릭한다.
+  async function clickInsertDate() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('날짜 삽입').closest('button'));
+  }
+
+  it("도구 메뉴 '날짜 삽입'(tools.insertDate)이 활성이다(MENU_ENABLED)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('날짜 삽입').closest('button')).toBeEnabled();
+  });
+
+  it("'날짜 삽입' 클릭 시 캐럿 줄에 날짜형식 prefs대로 포맷된 날짜가 삽입된다(안전 경로, 임베드 불변)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n2026.06.24본문'); // 고정 시각 포맷, 캐럿 줄 시작에 삽입
+  });
+
+  it('날짜형식 prefs를 바꾸면 삽입 문자열도 그 형식을 따른다(YYYY-MM-DD)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24본문');
+  });
+
+  it('시각 포맷(HH:mm 포함)도 prefs 형식대로 삽입된다(applyDateFormat 정합)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY-MM-DD HH:mm');
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 고정 시각 2026-06-24T01:23:00Z → 'YYYY-MM-DD HH:mm' = '2026-06-24 01:23'(UTC, applyDateFormat).
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
+  it('dateFormat prefs가 없으면 기본 형식(YYYY-MM-DD HH:mm)으로 삽입된다(loadEditorPrefs 기본값 폴백)', async () => {
+    // seedDateFormat을 부르지 않음 — localStorage가 비어 loadEditorPrefs().dateFormat이 기본값으로 폴백한다.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickInsertDate();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각이 그 형식으로 삽입.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+  });
+
+  it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const embed = embedBlock({ type: 'image', src: 'https://img/y.png' });
+    const { model } = await openWith([
+      textBlock('첫줄'), embed, textBlock('마지막'), textBlock('(끝)'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickInsertDate(); // 캐럿 세팅 없음(lastCaretRef.current === null)
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks[1]).toEqual(embed); // 임베드 위치·내용 불변
+    // 폴백 = "(끝)"이 아닌 마지막 텍스트 줄('마지막') 끝, "(끝)"은 불변.
+    expect(blocksToText(blocks)).toBe('첫줄\n마지막2026.06.24\n(끝)');
+  });
+
+  it('매핑 모드: 도구 메뉴 \'날짜 삽입\' 클릭도 본문을 바꾸지 않는다(매핑 가드)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedDateFormat('YYYY.MM.DD');
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 0);
+    await clickInsertDate();
+
+    // 저장 시 원본 body가 그대로 PUT된다(updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('다른 비결선 도구 항목(tools.fileInfo)은 여전히 비활성이다(회귀 없음)', async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('파일 정보').closest('button')).toBeDisabled();
+  });
+});
+
+// Step 3(18-editor-tools-menu): URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선 —
+// 도구 메뉴 '그림 삽입'/'유튜브 영상 삽입' 클릭 → UrlEmbedDialog 오픈 → URL 입력 후 '삽입' → 기존 make*Embed + insertEmbed
+// 경로로 캐럿 줄 뒤에 임베드 삽입(검색패널과 동일). 유튜브 아닌 URL은 makeVideoEmbed null → no-op. 매핑 모드에서도 허용.
+describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYoutube) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(날짜/약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다.
+  async function clickTool(label) {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  // URL 다이얼로그에 url을 입력하고 '삽입'을 누른다.
+  async function submitUrl(url) {
+    fireEvent.change(screen.getByTestId('url-embed-input'), { target: { value: url } });
+    await userEvent.click(screen.getByTestId('url-embed-submit'));
+  }
+
+  it("도구 '그림 삽입'/'유튜브 영상 삽입'/'오디오 삽입'/'링크 삽입'/'로컬영상 삽입'은 활성, 비결선은 비활성이다(MENU_ENABLED)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('유튜브 영상 삽입').closest('button')).toBeEnabled();
+    // 19-step2: 세 임베드 항목이 활성으로 결선됨(이전 step에서 '오디오 삽입' 비활성 단언을 활성으로 갱신).
+    expect(within(menu).getByText('오디오 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('로컬영상 삽입').closest('button')).toBeEnabled();
+    // 비결선 도구 항목은 여전히 비활성(회귀 가드).
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+  });
+
+  it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    expect(screen.getByRole('dialog', { name: '그림 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://img.example.com/a.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 다이얼로그는 1회성 삽입 후 닫힌다.
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → 유튜브 URL 제출 시 video 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+    expect(screen.getByRole('dialog', { name: '유튜브 영상 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → youtu.be 단축 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://youtu.be/dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it("'유튜브 영상 삽입' 클릭 → embed/ 형태 URL 제출 시에도 video 임베드가 생긴다(parseYouTubeId 정합)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://www.youtube.com/embed/dQw4w9WgXcQ');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="video"]')).toBeTruthy());
+  });
+
+  it('유튜브가 아닌 URL을 영상 삽입에 넣으면 임베드가 생기지 않고 크래시하지 않는다(makeVideoEmbed null → no-op)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('유튜브 영상 삽입');
+
+    await submitUrl('https://example.com/not-a-youtube');
+    // 임베드가 추가되지 않는다(텍스트 줄만 유지).
+    expect(container.querySelector('[data-embed-type="video"]')).toBeNull();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+
+  it('image 임베드 삽입 시 본문 텍스트는 변하지 않는다(임베드만 추가)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await submitUrl('https://img.example.com/b.png');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트 줄은 그대로, 임베드 1개만 추가됨.
+    const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text);
+    expect(texts).toEqual(['헤드', '본문', '']); // 임베드 뒤 빈 줄(커서 이동용)
+    expect(blocks.filter((b) => b.type === 'embed').length).toBe(1);
+  });
+
+  it("매핑 모드에서도 '그림 삽입'은 활성이고, URL 제출 시 임베드가 본문에 추가된다(검색패널과 동일)", async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('그림 삽입').closest('button'));
+
+    await submitUrl('https://img.example.com/c.png');
+    // 매핑은 "(끝)" 앞 append 폴백으로 임베드가 실제 삽입된다(WriterPage.test.jsx:710-723 패턴).
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+
+  it("'닫기'/Esc로 다이얼로그를 닫으면 임베드가 삽입되지 않는다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('그림 삽입');
+    await userEvent.click(screen.getByTestId('url-embed-close'));
+
+    expect(screen.queryByRole('dialog', { name: '그림 삽입' })).not.toBeInTheDocument();
+    expect(container.querySelector('.yh-embed')).toBeNull();
+  });
+
+  // 19-step2: 오디오/링크/로컬영상 결선 — 그림/유튜브와 동일 패턴(메뉴 클릭→다이얼로그→URL 제출→insertEmbed).
+  it("'오디오 삽입' 클릭 → 다이얼로그(kind=audio) 오픈, 허용 URL 제출 시 audio 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    expect(screen.getByRole('dialog', { name: '오디오 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://cdn.example.com/a.mp3');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="audio"]')).toBeTruthy());
+    // <audio>가 실제 렌더된다(검증 통과).
+    expect(container.querySelector('audio')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: '오디오 삽입' })).not.toBeInTheDocument();
+  });
+
+  it("'링크 삽입' 클릭 → 다이얼로그(kind=link) 오픈, 허용 URL 제출 시 link 임베드가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('링크 삽입');
+    expect(screen.getByRole('dialog', { name: '링크 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://example.com/article');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="link"]')).toBeTruthy());
+    // <a href>가 실제 렌더되고 rel 하드닝이 박힌다.
+    const a = container.querySelector('[data-embed-type="link"] a');
+    expect(a.getAttribute('href')).toBe('https://example.com/article');
+    expect(a.getAttribute('rel')).toContain('noopener');
+  });
+
+  it("'로컬영상 삽입' 클릭 → 다이얼로그(kind=localVideo) 오픈, 허용 URL 제출 시 localVideo 임베드(<video>, iframe 아님)가 생긴다", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('로컬영상 삽입');
+    expect(screen.getByRole('dialog', { name: '로컬영상 삽입' })).toBeInTheDocument();
+
+    await submitUrl('https://cdn.example.com/a.webm');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="localVideo"]')).toBeTruthy());
+    expect(container.querySelector('[data-embed-type="localVideo"] video')).toBeTruthy();
+    expect(container.querySelector('[data-embed-type="localVideo"] iframe')).toBeNull();
+  });
+
+  // 보안 회귀(필수): 악성 URL은 onUrlEmbedSubmit이 예외 없이 임베드를 만들어도 렌더 경로(InlineEmbed)에서 거부된다.
+  // WriterPage는 검증하지 않는다(검증 단일 출처=렌더). 결선 후에도 step0 보안 단언이 유효함을 end-to-end로 확인.
+  it('악성 오디오 URL(javascript:)을 제출해도 <audio>가 렌더되지 않는다(검증은 렌더 단일 출처)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    await submitUrl('javascript:alert(1)');
+    // 임베드 블록은 추가될 수 있으나(WriterPage는 검증 안 함) <audio>는 렌더되지 않는다.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '오디오 삽입' })).not.toBeInTheDocument());
+    expect(container.querySelector('audio')).toBeNull();
+  });
+
+  it('악성 링크 URL(javascript:)을 제출해도 <a href>가 렌더되지 않는다(검증은 렌더 단일 출처)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    await clickTool('링크 삽입');
+    await submitUrl('javascript:alert(1)');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '링크 삽입' })).not.toBeInTheDocument());
+    expect(container.querySelector('[data-embed-type="link"] a')).toBeNull();
+  });
+
+  it('오디오 임베드 삽입 시 본문 텍스트(blocksToText)는 변하지 않는다(임베드만 추가)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickTool('오디오 삽입');
+    await submitUrl('https://cdn.example.com/a.mp3');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="audio"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text);
+    expect(texts).toEqual(['헤드', '본문', '']); // 임베드 뒤 빈 줄(커서 이동용)
+    expect(blocks.filter((b) => b.type === 'embed' && b.embedType === 'audio').length).toBe(1);
+  });
+
+  it("매핑 모드에서도 '링크 삽입'으로 임베드를 추가할 수 있다(\"(끝)\" 앞 append — 그림/유튜브와 동일)", async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('링크 삽입').closest('button'));
+
+    await submitUrl('https://example.com/m');
+    await waitFor(() => expect(container.querySelector('[data-embed-type="link"]')).toBeTruthy());
   });
 });

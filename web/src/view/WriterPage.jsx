@@ -11,8 +11,11 @@ import { Editor, readCaret } from './Editor.jsx';
 import { StatusBar } from './StatusBar.jsx';
 import { EditorMenuBar } from './EditorMenuBar.jsx';
 import { EditorToolBar } from './EditorToolBar.jsx';
+import { EditorGlyphBar } from './EditorGlyphBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
+import { GlyphInputDialog } from './GlyphInputDialog.jsx';
+import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -26,10 +29,16 @@ import { deserialize, serialize, hasEndMarker, blocksToText } from './editorCont
 import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
-  toUpper, toLower, capitalizeFirst, toggleCase,
+  toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput,
 } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
-import { makeImageEmbed, makeVideoEmbed, makeArticleEmbed } from './clipboardEmbed.js';
+import { insertGlyphAtCaret } from './editorGlyph.js';
+import { insertDateAtCaret } from './editorDate.js';
+import { applyDateFormat } from './listFormat.js';
+import {
+  makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
+  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed,
+} from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
@@ -56,7 +65,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -83,9 +92,18 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(true);
   const [showToolBar, setShowToolBar] = useState(true);
-  // 약물바 보이기(우클릭 컨텍스트 메뉴) — placeholder 토글 상태만 보존한다.
-  // 약물바(glyph bar) 컴포넌트는 이번 범위 밖(news.md 경계)이라 실제 바는 렌더하지 않는다(토글만 동작).
+  // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
+  // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
   const [showGlyphBar, setShowGlyphBar] = useState(false);
+  // 자주쓰는 약물(editorPrefs.glyphFavorites.items) — 약물바 버튼 + 약물입력 다이얼로그 favorites 소스. editorBg/autosaveCfg와 동일 게이트:
+  // 마운트 lazy 초기화 + onPrefsClose(applied) 갱신만(별도 effect/구독 없음 — 환경설정 등록 후 즉시 반영용).
+  const [glyphFavorites, setGlyphFavorites] = useState(() => loadEditorPrefs().glyphFavorites.items);
+  // 사용자 키보드 약물(editorPrefs.glyphKeymap.items: {keys,glyph}[]) — 약물입력 다이얼로그 참조 표시용. glyphFavorites와 동일 게이트.
+  const [glyphKeymap, setGlyphKeymap] = useState(() => loadEditorPrefs().glyphKeymap.items);
+  // 약물입력 다이얼로그 보이기(Alt+O·도구 메뉴·우클릭) — FindReplaceDialog의 showFind와 동일한 표시 토글.
+  const [showGlyphInput, setShowGlyphInput] = useState(false);
+  // URL 직접 임베드 다이얼로그 — null(닫힘) | 'image' | 'video'. 도구>그림/유튜브 삽입으로 열린다(showGlyphInput 패턴 확장).
+  const [urlEmbedKind, setUrlEmbedKind] = useState(null);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -116,6 +134,8 @@ export function WriterPage() {
       setEditorBg(loadEditorPrefs().colors.background);
       setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
       setColumnLimit(loadEditorPrefs().edit.columnLimit); // 컬럼제한(좌우 여백) 변경 반영 — 취소 시 불변(editorBg와 동일 게이트).
+      setGlyphFavorites(loadEditorPrefs().glyphFavorites.items); // 환경설정에서 등록한 자주쓰는 약물을 약물바/약물입력 다이얼로그에 즉시 반영.
+      setGlyphKeymap(loadEditorPrefs().glyphKeymap.items); // 사용자 키보드 약물(참조 표시)도 동일 게이트로 즉시 반영.
     }
     setShowPrefs(false);
   };
@@ -201,6 +221,28 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
+  // 약물바 약물 클릭 → 마지막 캐럿 위치에 약물 삽입(검색 임베드 insertEmbed와 동일 캐럿 소스·안전 경로).
+  const onGlyphPick = (glyph) => {
+    if (isMapping) return;                       // 매핑 모드(텍스트 잠금)에서는 본문 변경 금지 — no-op(약물바 숨김과 이중 방어).
+    const caret = lastCaretRef.current;          // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
+    const r = insertGlyphAtCaret(blocks, caret, glyph);
+    updateField('body', serialize(r.blocks));    // contentEditable 직접 조작 금지 — 직렬화 안전 경로만.
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
+  // 도구>날짜 삽입 — 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
+  // 비결정성(new Date)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
+  // 약물입력(onGlyphPick)과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
+  const insertDate = () => {
+    if (isMapping) return;                                   // 매핑(텍스트 잠금) no-op — 본문-only 불변식.
+    const fmt = loadEditorPrefs().dateFormat;                // 읽기 전용(저장/변경 안 함).
+    const dateString = applyDateFormat(new Date().toISOString(), fmt);
+    const caret = lastCaretRef.current;                      // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
+    const r = insertDateAtCaret(blocks, caret, dateString);
+    updateField('body', serialize(r.blocks));
+    if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
+  };
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -250,6 +292,14 @@ export function WriterPage() {
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
     if (id === 'help.preferences') { setShowPrefs(true); return; }
+    // 그림/유튜브 URL 직접 삽입 — 매핑 가드 앞(임베드 변경은 매핑에서도 허용, 검색패널 onPick과 동일 정책).
+    // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
+    if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
+    if (id === 'tools.insertYoutube') { setUrlEmbedKind('video'); return; }
+    // 오디오/링크/로컬영상 — 그림/유튜브와 동일 정책(임베드는 매핑에서도 허용 → 매핑 가드 앞).
+    if (id === 'tools.insertAudio') { setUrlEmbedKind('audio'); return; }
+    if (id === 'tools.insertLink') { setUrlEmbedKind('link'); return; }
+    if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -264,6 +314,10 @@ export function WriterPage() {
     }
     // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
     if (id === 'edit.findReplace') { openFind(); return; }
+    // 약물 입력 — 매핑 가드 뒤(약물 삽입은 본문 변경 → 매핑에서는 열지 않는다, 찾기와 동일 정책).
+    if (id === 'tools.symbolInput') { setShowGlyphInput(true); return; }
+    // 날짜 삽입 — 매핑 가드 뒤(본문 텍스트 변경 → 매핑 비활성, 약물입력과 동일 정책).
+    if (id === 'tools.insertDate') { insertDate(); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -283,10 +337,11 @@ export function WriterPage() {
   //  - 항상 활성: 찾기/바꾸기·전체 선택·보이기 토글(메뉴바/툴바/약물바). 선택 연산·레이아웃 토글이라 본문-only 불변식과 무관.
   //  - 표준 편집(잘라내기/복사/붙여넣기): 비매핑(텍스트 편집 가능)일 때만 활성. 매핑(텍스트 잠금)에서는 복사도 일관되게 비활성으로
   //    단순화한다(본문 변경 항목과 같은 가드 — 잘라내기/붙여넣기는 텍스트를 바꾸므로 반드시 비활성).
-  //  - aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력): 항상 비활성 placeholder(미구현).
+  //  - 약물입력(ctx.symbolInput): 비매핑(본문 편집 가능)일 때만 활성(약물 삽입=본문 변경 → 매핑 비활성, 찾기와 동일 가드).
+  //  - aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기): 항상 비활성 placeholder(미구현).
   const ctxEnabledIds = [
     'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
-    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste']),
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.symbolInput']),
   ];
   // 보이기 토글의 현재 on 상태(체크 표식용).
   const ctxCheckedIds = [
@@ -304,8 +359,10 @@ export function WriterPage() {
       case 'ctx.selectAll': selectAllInEditor(document.querySelector('.yh-editor')); break;
       case 'ctx.showMenuBar': setShowMenuBar((v) => !v); break;
       case 'ctx.showToolBar': setShowToolBar((v) => !v); break;
-      // 약물바 — placeholder 토글 상태만 바꾼다(실제 바 미렌더 — 범위 밖).
+      // 약물바 — showMenuBar/showToolBar와 동일한 레이아웃 토글(EditorGlyphBar 렌더/숨김).
       case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
+      // 약물입력 — 비매핑에서만 다이얼로그를 연다(매핑은 enabledIds에서 비활성이라 호출되지 않지만 이중 방어).
+      case 'ctx.symbolInput': if (!isMapping) setShowGlyphInput(true); break;
       // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
       // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
       // 에디터로 되돌린 뒤 document.execCommand를 시도하되, 미지원 환경(jsdom)에서는 no-op으로 두고 메뉴만 닫는다(브라우저 단축키 정상).
@@ -318,7 +375,7 @@ export function WriterPage() {
         try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
         break;
       }
-      // aux 항목(ctx.companyCode/pasteOriginal/pasteText/symbolInput)은 비활성이라 호출되지 않는다.
+      // aux 항목(ctx.companyCode/pasteOriginal/pasteText)은 비활성이라 호출되지 않는다.
       default: break;
     }
   };
@@ -331,6 +388,13 @@ export function WriterPage() {
     if (isFindReplace(e)) {
       e.preventDefault();
       if (!isMapping) openFind();
+      return;
+    }
+    // Alt+O → 약물입력 다이얼로그(찾기와 동일 위치·가드). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
+    // isGlyphInput은 !ctrlKey라 다른 조합을 오인하지 않고, key가 'o'라 Alt+Y/Ctrl+D 등과 충돌하지 않는다(라인삭제 조기 return보다 위).
+    if (isGlyphInput(e)) {
+      e.preventDefault();
+      if (!isMapping) setShowGlyphInput(true);
       return;
     }
     if (isInsertEndMarker(e)) {
@@ -386,6 +450,21 @@ export function WriterPage() {
 
   // Ctrl+V 이미지 붙여넣기 — 동기로 확보한 캐럿 줄에 삽입(텍스트 직렬화 없이 — news.md 156행).
   const pasteEmbedAtCaret = (embed, caret) => insertEmbedAtLine(embed, caret ? caret.lineIndex : null);
+
+  // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed
+  //   (검색패널 onPick과 동일 경로·팩토리). 매핑 가드를 두지 않는다 — insertEmbed→insertEmbedAtLine이 매핑 시
+  //   "(끝)" 앞 append 폴백으로 삽입한다(검색패널과 동일). 빈/비유튜브 등 부적격 URL은 팩토리가 null →
+  //   insertEmbed가 no-op(insertEmbedAtLine의 !embed 가드). URL 검증(악성 scheme)은 렌더(InlineEmbed/articleDetail) 단일 출처에 위임.
+  const onUrlEmbedSubmit = (url) => {
+    let embed = null;
+    if (urlEmbedKind === 'image') embed = makeImageEmbed(url, { alt: '' });
+    else if (urlEmbedKind === 'video') embed = makeVideoEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'audio') embed = makeAudioEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'link') embed = makeLinkEmbed(url, { title: '' });
+    else if (urlEmbedKind === 'localVideo') embed = makeLocalVideoEmbed(url, { title: '' });
+    insertEmbed(embed); // embed falsy면 no-op. 매핑 시엔 "(끝)" 앞 append 폴백.
+    setUrlEmbedKind(null); // 1회성 삽입 후 닫는다(URL 1개).
+  };
 
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
   const onAction = async (action) => {
@@ -464,6 +543,9 @@ export function WriterPage() {
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
+          {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
+              본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
+          {showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}
           {/* 바탕색 전용 캔버스 래퍼 — Editor만 감싸 배경을 입힌다(메뉴바/툴바/상태바는 칠하지 않음).
               에디터 본문 우클릭 → 브라우저 기본 메뉴 대신 커스텀 컨텍스트 메뉴(EditorContextMenu)를 좌표에 띄운다(ListPage 패턴). */}
           <div
@@ -579,6 +661,26 @@ export function WriterPage() {
         onReplaceOne={onReplaceOne}
         onReplaceAll={onReplaceAll}
         onClose={() => setShowFind(false)}
+      />
+
+      {/* 약물입력 다이얼로그 — Alt+O·도구 메뉴·우클릭으로 열림(매핑에서는 안 열림). 약물 선택은 약물바와 동일한
+          onGlyphPick 안전 경로(updateField+serialize)로 캐럿 위치에 삽입한다. keymap은 참조 표시만(키조합 인터셉트 없음).
+          약물 선택 후 닫지 않는다(연속 삽입 — Step 3 컴포넌트 닫기 정책과 일치, 닫기는 닫기 버튼/Esc). */}
+      <GlyphInputDialog
+        open={showGlyphInput}
+        favorites={glyphFavorites}
+        keymap={glyphKeymap}
+        onPick={onGlyphPick}
+        onClose={() => setShowGlyphInput(false)}
+      />
+
+      {/* URL 직접 임베드 다이얼로그 — 도구>그림/유튜브 삽입으로 열림(매핑에서도 허용). URL 제출 시 make*Embed+insertEmbed
+          (검색패널과 동일 경로)로 캐럿 줄 뒤에 임베드를 삽입한다. 유튜브 아닌 URL은 makeVideoEmbed가 null → no-op. */}
+      <UrlEmbedDialog
+        open={urlEmbedKind !== null}
+        kind={urlEmbedKind || 'image'}
+        onSubmit={onUrlEmbedSubmit}
+        onClose={() => setUrlEmbedKind(null)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.

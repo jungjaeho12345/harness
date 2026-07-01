@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InlineEmbed, isAllowedImageSrc } from './InlineEmbed.jsx';
+import { makeAudioEmbed, makeLocalVideoEmbed, makeLinkEmbed } from './clipboardEmbed.js';
 
 describe('InlineEmbed', () => {
   it('renders an image embed capped to a 200x200 box (not 612px) with a remove (×) button', () => {
@@ -153,6 +154,134 @@ describe('InlineEmbed', () => {
     it('sets referrerPolicy=no-referrer on rendered images', () => {
       render(<InlineEmbed embed={{ embedType: 'image', src: 'https://cdn.example.com/a.png', alt: '참조' }} onRemove={() => {}} />);
       expect(screen.getByRole('img', { name: '참조' }).getAttribute('referrerpolicy')).toBe('no-referrer');
+    });
+  });
+
+  // 19-step0: 오디오 임베드 — isAllowedMediaSrc 가드 후 <audio controls>. 악성 src는 미렌더.
+  describe('audio embed security', () => {
+    it('renders an <audio controls> for an allowed https src', () => {
+      render(<InlineEmbed embed={{ embedType: 'audio', src: 'https://cdn.example.com/a.mp3' }} onRemove={() => {}} />);
+      const audio = document.querySelector('audio');
+      expect(audio).not.toBeNull();
+      expect(audio.hasAttribute('controls')).toBe(true);
+      expect(audio.getAttribute('src')).toBe('https://cdn.example.com/a.mp3');
+      expect(audio.getAttribute('referrerpolicy')).toBe('no-referrer');
+    });
+
+    it('does not render <audio> for a javascript: src', () => {
+      render(<InlineEmbed embed={{ embedType: 'audio', src: 'javascript:alert(1)' }} onRemove={() => {}} />);
+      expect(document.querySelector('audio')).toBeNull();
+    });
+
+    it('does not render <audio> for a data:audio src (media disallows data:)', () => {
+      render(<InlineEmbed embed={{ embedType: 'audio', src: 'data:audio/mp3;base64,AAAA' }} onRemove={() => {}} />);
+      expect(document.querySelector('audio')).toBeNull();
+    });
+
+    it('does not render <audio> for an http: src', () => {
+      render(<InlineEmbed embed={{ embedType: 'audio', src: 'http://insecure/a.mp3' }} onRemove={() => {}} />);
+      expect(document.querySelector('audio')).toBeNull();
+    });
+
+    it('shows the × remove button (editable) and hides it in readOnly', () => {
+      const { rerender } = render(<InlineEmbed embed={{ embedType: 'audio', src: 'https://cdn.example.com/a.mp3' }} onRemove={() => {}} />);
+      expect(screen.getByRole('button', { name: '임베드 삭제' })).toBeInTheDocument();
+      rerender(<InlineEmbed embed={{ embedType: 'audio', src: 'https://cdn.example.com/a.mp3' }} readOnly />);
+      expect(screen.queryByRole('button', { name: '임베드 삭제' })).toBeNull();
+    });
+  });
+
+  // 19-step0: 로컬영상 임베드 — <video controls>(유튜브 iframe 아님). 악성 src 미렌더.
+  describe('localVideo embed security', () => {
+    it('renders a <video controls> (not an <iframe>) for an allowed https src', () => {
+      render(<InlineEmbed embed={{ embedType: 'localVideo', src: 'https://cdn.example.com/a.webm', figureWidthPx: 612 }} onRemove={() => {}} />);
+      const video = document.querySelector('video');
+      expect(video).not.toBeNull();
+      expect(video.hasAttribute('controls')).toBe(true);
+      expect(video.getAttribute('src')).toBe('https://cdn.example.com/a.webm');
+      expect(document.querySelector('iframe')).toBeNull();
+    });
+
+    it('uses the 612px figure width for localVideo', () => {
+      render(<InlineEmbed embed={{ embedType: 'localVideo', src: 'https://cdn.example.com/a.webm', figureWidthPx: 612 }} onRemove={() => {}} />);
+      expect(document.querySelector('video').closest('figure')).toHaveStyle({ width: '612px' });
+    });
+
+    it('does not render <video> for a javascript: src', () => {
+      render(<InlineEmbed embed={{ embedType: 'localVideo', src: 'javascript:alert(1)' }} onRemove={() => {}} />);
+      expect(document.querySelector('video')).toBeNull();
+    });
+
+    it('does not render <video> for an http: src', () => {
+      render(<InlineEmbed embed={{ embedType: 'localVideo', src: 'http://insecure/a.webm' }} onRemove={() => {}} />);
+      expect(document.querySelector('video')).toBeNull();
+    });
+  });
+
+  // 19-step0: 링크 임베드 — <a rel="noopener noreferrer" target="_blank">. 악성 href 미렌더.
+  describe('link embed security', () => {
+    it('renders an <a> with href, rel=noopener noreferrer, target=_blank for an allowed https href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: 'https://example.com/article', title: '원문' }} onRemove={() => {}} />);
+      const a = screen.getByRole('link', { name: '원문' });
+      expect(a.getAttribute('href')).toBe('https://example.com/article');
+      expect(a.getAttribute('rel')).toContain('noopener');
+      expect(a.getAttribute('rel')).toContain('noreferrer');
+      expect(a.getAttribute('target')).toBe('_blank');
+    });
+
+    it('falls back to href as link text when title is missing', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: 'https://example.com/x' }} onRemove={() => {}} />);
+      expect(screen.getByRole('link', { name: 'https://example.com/x' })).toBeInTheDocument();
+    });
+
+    it('does not render an <a href> for a javascript: href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: 'javascript:alert(1)', title: '나쁜링크' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    it('does not render an <a> for an empty/missing href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', title: '없음' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    it('does not render an <a href> for a mixed-case JavaScript: href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: 'JavaScript:alert(1)', title: '대문자' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    // 19-보안: 선행 공백/탭/개행으로 위험 스킴을 숨긴 href는 앵커로 렌더되면 안 된다.
+    // 브라우저는 href의 선행 ASCII 공백·제어문자를 제거하므로 "  javascript:" 도 클릭 시 실행된다.
+    it('does not render an <a href> for a whitespace-prefixed javascript: href', () => {
+      render(<InlineEmbed embed={{ embedType: 'link', href: '  javascript:alert(1)', title: '클릭' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+
+    // 19-보안(보강): 스킴 내부 제어문자·프로토콜상대·단일슬래시 https:/ 우회도 앵커로 렌더되면 안 된다.
+    it('does not render an <a href> for internal-control / protocol-relative / single-slash bypass hrefs', () => {
+      const { rerender } = render(<InlineEmbed embed={{ embedType: 'link', href: 'java\tscript:alert(1)', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+      rerender(<InlineEmbed embed={{ embedType: 'link', href: '//evil.com/x', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+      rerender(<InlineEmbed embed={{ embedType: 'link', href: 'https:/evil.com', title: 'x' }} onRemove={() => {}} />);
+      expect(document.querySelector('a')).toBeNull();
+    });
+  });
+
+  // 19-step1: 팩토리 필드명이 렌더가 읽는 키와 일치하는지(빈 figure 회귀 가드) 통합 단언.
+  describe('factory ↔ render field-name parity', () => {
+    it('makeAudioEmbed(allowed) renders an <audio>', () => {
+      render(<InlineEmbed embed={makeAudioEmbed('https://cdn.example.com/a.mp3')} onRemove={() => {}} />);
+      expect(document.querySelector('audio')).not.toBeNull();
+    });
+
+    it('makeLocalVideoEmbed(allowed) renders a <video>', () => {
+      render(<InlineEmbed embed={makeLocalVideoEmbed('https://cdn.example.com/a.webm')} onRemove={() => {}} />);
+      expect(document.querySelector('video')).not.toBeNull();
+    });
+
+    it('makeLinkEmbed(allowed) renders an <a href>', () => {
+      render(<InlineEmbed embed={makeLinkEmbed('https://example.com/x', { title: '원문' })} onRemove={() => {}} />);
+      expect(screen.getByRole('link', { name: '원문' }).getAttribute('href')).toBe('https://example.com/x');
     });
   });
 });

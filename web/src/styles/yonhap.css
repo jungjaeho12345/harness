@@ -693,6 +693,32 @@ a { color: var(--yh-blue); }
 .yh-editor-toolbar__btn:hover { background: var(--yh-blue-light); }
 .yh-editor-toolbar__btn:disabled { color: var(--yh-gray-mid); background: var(--yh-gray-bg); cursor: default; }
 
+/* 약물바(glyph bar) — 자주쓰는 약물 버튼 가로 나열. 툴바와 별개 막대. */
+.yh-editor-glyphbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-xs);
+  flex-shrink: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: var(--yh-gray-bg);
+}
+
+.yh-editor-glyphbar__btn {
+  min-width: 1.75rem;
+  padding: 2px var(--yh-sp-sm);
+  font-family: var(--yh-sans);
+  font-size: 0.9rem;
+  color: var(--yh-ink);
+  background: var(--yh-white);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+}
+
+.yh-editor-glyphbar__btn:hover { background: var(--yh-blue-light); }
+
 /* 임베드 */
 .yh-embed { display: block; }
 
@@ -919,6 +945,121 @@ a { color: var(--yh-blue); }
 .yh-find-replace__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
+/* 약물입력(Alt+O) 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(우상단 고정, 찾기/바꾸기와 동일 계열). */
+.yh-glyph-input {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-glyph-input__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-glyph-input__section {
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-glyph-input__label {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+  margin-bottom: var(--yh-sp-sm);
+}
+.yh-glyph-input__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-sm);
+}
+.yh-glyph-input__glyph {
+  min-width: 2.2rem;
+  padding: var(--yh-sp-sm);
+  font-size: 1.1rem;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+  cursor: pointer;
+}
+.yh-glyph-input__glyph:hover {
+  border-color: var(--yh-blue);
+}
+.yh-glyph-input__keylist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yh-sp-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.yh-glyph-input__keybtn {
+  width: 100%;
+  text-align: left;
+  padding: var(--yh-sp-sm);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+  cursor: pointer;
+}
+.yh-glyph-input__keybtn:hover {
+  border-color: var(--yh-blue);
+}
+.yh-glyph-input__empty {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+}
+.yh-glyph-input__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
+/* URL 직접 임베드(그림/유튜브 삽입) 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(찾기/약물입력과 동일 계열). */
+.yh-url-embed {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-url-embed__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-url-embed__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-url-embed__field label {
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+}
+.yh-url-embed__field input[type='text'] {
+  width: 100%;
+  min-width: 0;
+}
+.yh-url-embed__actions {
+  display: flex;
   justify-content: flex-end;
   gap: var(--yh-sp-sm);
 }
