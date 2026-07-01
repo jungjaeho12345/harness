@@ -31,7 +31,7 @@
       ],
       "started_at": "2026-07-01T23:24:01+0900",
       "summary": "신규 /uploads 상대경로 + 레거시 data:image base64 이미지 src가 InlineEmbed(에디터)·articleDetail(상세/발행) 양쪽에서 계속 <img>로 렌더되는지 회귀 테스트로 잠금. 프로덕션 코드(isAllowedImageSrc/classifyUrl·렌더 분기·referrerPolicy·escapeHtml) 무변경 — 테스트만 +6개 추가. clipboardEmbed.test.js: isAllowedImageSrc('/uploads/…')·data:image base64 허용 + javascript:/data:text/html 거부 회귀 describe. InlineEmbed.test.jsx: /uploads·레거시 base64 <img> 렌더 describe. articleDetail.test.js: data:text/html 이미지 폴백(원본 미노출) 케이스(/uploads·base64·javascript:는 기존 커버, 중복 회피). web 871 통과, build·lint 클린. server 코드 미변경(DB 비파괴 유지).",
-      "completed_at": "2026-07-01T23:27:00+0900"
+      "completed_at": "2026-07-01T23:27:58+0900"
     }
   ],
   "created_at": "2026-07-01T23:09:46+0900"
