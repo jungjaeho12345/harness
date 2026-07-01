@@ -14,10 +14,13 @@
     {
       "step": 1,
       "name": "paste-upload-embed",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         0
-      ]
+      ],
+      "started_at": "2026-07-01T23:14:16+0900",
+      "summary": "붙여넣기 신규 base64 생성 벡터 제거 + 업로드→경로 임베드. Editor.jsx handlePaste 이미지 분기에서 FileReader/readAsDataURL/embedFromPaste(base64 생성)를 전부 제거하고 props onPasteEmbed→onPasteImageFile(file, caret)로 교체 — 동기 readCaret 스냅샷과 raw File만 상위로 위임(핸들러 없으면 이미지 붙여넣기 비활성). WriterPage.jsx는 pasteEmbedAtCaret→async pasteImageAtCaret로 교체해 model.uploadFile(file) 왕복 후 성공(r&&r.ok&&r.path) 시 makeImageEmbed(path)를 insertEmbedAtLine으로 캐럿 줄에 삽입, 실패/too-large면 window.alert만 띄우고 삽입 취소(base64 폴백 없음). caretBlocked('(끝)' 차단)·여러 줄 텍스트 emitInsert·composition·insertEmbedAtLine/lastCaretRef 캐럿 계약·매핑 '(끝)' 앞 append parity 불변. server/·DB·clipboardEmbed.js(isAllowedImageSrc) 미변경. Editor.test.jsx(FileReader 미사용 위임 검증)·WriterPage.test.jsx(성공 src/실패 alert/매핑 parity·base64 부재) 새 계약으로 동반 갱신. web 865 통과, build·lint 클린.",
+      "completed_at": "2026-07-01T23:22:30+0900"
     },
     {
       "step": 2,

@@ -467,22 +467,13 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
   });
 });
 
-// Ctrl+V 이미지 붙여넣기 — 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드를 삽입한다(news.md 156행).
-describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', () => {
-  const realFileReader = globalThis.FileReader;
-
+// Ctrl+V 이미지 붙여넣기 — Editor가 raw File을 위임하면 WriterPage가 model.uploadFile로 서버 업로드하고
+// 반환 path(/uploads/...)로 image 임베드를 캐럿 줄에 삽입한다(base64 미생성 — news.md 156행, ADR-003).
+describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임베드', () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
-    class FakeFileReader {
-      readAsDataURL() {
-        this.result = 'data:image/png;base64,AAA';
-        setTimeout(() => { if (this.onload) this.onload({ target: this }); }, 0);
-      }
-    }
-    globalThis.FileReader = FakeFileReader;
   });
-  afterEach(() => { globalThis.FileReader = realFileReader; });
 
   function pasteImageEvent(el) {
     const ev = createEvent.paste(el, {});
@@ -508,29 +499,53 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
   ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
 
-  async function openWith(blocks) {
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
     const body = serialize(blocks);
     const utils = setup({
-      identity: { role: 'R' },
-      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
-      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
     });
     await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
     return utils;
   }
 
-  it('첫 줄에 캐럿을 두고 붙여넣으면 그 줄 바로 뒤에 임베드가 삽입된다(맨 뒤가 아님)', async () => {
-    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+  it('업로드 성공 → 반환 path로 이미지 임베드가 캐럿 줄 뒤에 삽입된다(본문 텍스트 불변·base64 없음)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/abc.png' });
     caretAtLine(container, 0); // 제목 줄
     const box = container.querySelector('.yh-editor');
     fireEvent(box, pasteImageEvent(box));
 
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
     expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']); // 제목 → [이미지] → 빈 줄 → 본문
+    // 반환 path가 임베드 src로 들어가고(=업로드 경유), base64(data:)가 아니다.
+    const img = container.querySelector('[data-embed-type="image"] img');
+    expect(img.getAttribute('src')).toBe('/uploads/abc.png');
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy();
+    // 본문 텍스트(제목/본문)는 불변.
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts).toContain('제목');
+    expect(texts).toContain('본문');
+  });
+
+  it('업로드 실패(too-large) → 임베드 미삽입 + window.alert + base64 없음', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: false, reason: 'too-large' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 0);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy(); // 미삽입
+    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 불변
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 폴백 없음
   });
 
   it('붙여넣은 이미지는 이후 타이핑(input)에도 커서 위치에 보존된다(끝으로 밀리지 않음)', async () => {
-    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/abc.png' });
     caretAtLine(container, 0);
     const box = container.querySelector('.yh-editor');
     fireEvent(box, pasteImageEvent(box));
@@ -539,6 +554,21 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 커서 위치 삽입', (
     // 본문을 수정(input)해도 임베드는 제목과 본문 사이에 그대로 남는다.
     fireEvent.input(box);
     await waitFor(() => expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']));
+  });
+
+  it('매핑 모드 → 업로드 성공 임베드는 "(끝)" 앞 append로 삽입된다(parity)', async () => {
+    const { container, model } = await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/map.png' });
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 캐럿 없음 + 매핑 → "(끝)" 앞 append: 제목·본문 → [이미지] → (끝)
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed', 'text']);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/map.png');
   });
 });
 

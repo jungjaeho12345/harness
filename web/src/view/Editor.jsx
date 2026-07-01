@@ -12,7 +12,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked, insertTextIntoBlocks } from './editorNewline.js';
-import { embedFromPaste } from './clipboardEmbed.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
 
 // contentEditable에서 입력된 본문 텍스트를 라인 div 기준으로 재구성한다(임베드 figure는 제외).
@@ -234,7 +233,7 @@ export function Editor({
   onRemoveEmbed,
   onKeyDown,
   onTextChange,
-  onPasteEmbed,
+  onPasteImageFile,
   onCaretChange,
   pendingCaretLine = null,
   spellcheck = false,
@@ -349,29 +348,25 @@ export function Editor({
     if (isInsertionKey(e) && caretBlocked(e.currentTarget)) e.preventDefault();
   };
 
-  // 붙여넣기 — ① "(끝)" 뒤면 차단(텍스트·이미지 공통). ② 클립보드에 이미지 item이 있으면 임베드로 변환
-  //   (preventDefault + FileReader로 data:image URL을 읽어 onPasteEmbed에 전달). ③ 그 외(일반 텍스트)는
-  //   기본 붙여넣기 동작을 유지한다(preventDefault 안 함·onPasteEmbed 미호출).
-  // 이미지는 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드로 들어간다(news.md 156행) — 캐럿은 비동기 FileReader
-  // 전에 동기로 확보한다(이후 selection이 소실될 수 있으므로).
+  // 붙여넣기 — ① "(끝)" 뒤면 차단(텍스트·이미지 공통). ② 클립보드에 이미지 item이 있으면 raw File을 상위로
+  //   위임한다(preventDefault + 동기 캐럿 스냅샷 + onPasteImageFile(file, caret)). 여기서 base64(data URL)를
+  //   절대 만들지 않는다 — 업로드→경로 임베드 오케스트레이션은 WriterPage가 model.uploadFile로 수행한다(ADR-003).
+  //   ③ 그 외(일반 텍스트)는 기본 붙여넣기 동작을 유지한다(preventDefault 안 함·핸들러 미호출).
+  // 이미지는 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드로 들어간다(news.md 156행) — 캐럿은 위임(이후 비동기
+  // 업로드) 전에 동기로 확보한다(이후 selection이 소실될 수 있으므로).
   const handlePaste = (e) => {
     if (caretBlocked(e.currentTarget)) { e.preventDefault(); return; }
     const data = e.clipboardData;
     const items = data && data.items;
-    // ① 클립보드 이미지 → 임베드(캐럿 위치). 텍스트는 직렬화하지 않는다(news.md 156행).
-    const imageItem = items && onPasteEmbed
+    // ① 클립보드 이미지 → raw File 위임(캐럿 위치). 핸들러가 없으면 이미지 붙여넣기 비활성(base64 미생성).
+    const imageItem = items && onPasteImageFile
       && Array.from(items).find((it) => it && typeof it.type === 'string' && it.type.startsWith('image/'));
     if (imageItem) {
       const file = imageItem.getAsFile && imageItem.getAsFile();
       if (file) {
         e.preventDefault();
         const caret = readCaret(e.currentTarget); // 동기로 캐럿 확보(붙여넣을 위치).
-        const reader = new FileReader();
-        reader.onload = () => {
-          // InlineEmbed가 200×200으로 캡하므로 여기서 크기는 지정하지 않는다(embedFromPaste 기본).
-          onPasteEmbed(embedFromPaste({ imageDataUrl: reader.result }), caret);
-        };
-        reader.readAsDataURL(file);
+        onPasteImageFile(file, caret);
         return;
       }
     }

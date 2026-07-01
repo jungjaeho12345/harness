@@ -448,8 +448,22 @@ export function WriterPage() {
   // 검색패널(이미지/영상/글기사) 픽 — 마지막 에디터 캐럿 줄에 삽입(클릭으로 포커스가 빠지므로 lastCaretRef 사용, 라이브 readCaret 금지).
   const insertEmbed = (embed) => insertEmbedAtLine(embed, lastCaretRef.current ? lastCaretRef.current.lineIndex : null);
 
-  // Ctrl+V 이미지 붙여넣기 — 동기로 확보한 캐럿 줄에 삽입(텍스트 직렬화 없이 — news.md 156행).
-  const pasteEmbedAtCaret = (embed, caret) => insertEmbedAtLine(embed, caret ? caret.lineIndex : null);
+  // Ctrl+V 이미지 붙여넣기 — Editor가 동기로 확보한 raw File을 model.uploadFile로 서버 업로드하고(ADR-003 —
+  //   업로드 오케스트레이션은 view가 아니라 model 경유), 성공 시 반환 path를 image 임베드 src로 만들어 동기 캐럿
+  //   줄에 삽입한다(텍스트 직렬화 없이 — news.md 156행). base64 폴백은 만들지 않는다(신규 base64 벡터 제거가 목적).
+  //   성공 판정은 r && r.ok && r.path만 본다(request는 HTTP status를 안 보고 res.json()만 반환 — onFileChange와 동일 계약).
+  //   실패/too-large면 삽입하지 않고 window.alert로만 안내한다(확정 정책 — 서버가 5MB를 판정, 클라 사전 검사 없음).
+  const pasteImageAtCaret = async (file, caret) => {
+    const r = await model.uploadFile(file);
+    if (r && r.ok && r.path) {
+      insertEmbedAtLine(makeImageEmbed(r.path, { alt: '' }), caret ? caret.lineIndex : null);
+    } else {
+      const msg = r && r.reason === 'too-large'
+        ? '이미지가 너무 커 첨부할 수 없습니다(5MB 초과).'
+        : '이미지 업로드에 실패했습니다.';
+      window.alert(msg);
+    }
+  };
 
   // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed
   //   (검색패널 onPick과 동일 경로·팩토리). 매핑 가드를 두지 않는다 — insertEmbed→insertEmbedAtLine이 매핑 시
@@ -566,7 +580,7 @@ export function WriterPage() {
               onKeyDown={isMapping ? undefined : onKeyDown}
               onTextChange={isMapping ? undefined : onTextChange}
               onRemoveEmbed={onRemoveEmbed}
-              onPasteEmbed={pasteEmbedAtCaret}
+              onPasteImageFile={pasteImageAtCaret}
               // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
               onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
               pendingCaretLine={pendingCaretLine}
