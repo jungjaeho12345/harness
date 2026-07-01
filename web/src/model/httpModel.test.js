@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHttpModel } from './httpModel.js';
+import { createHttpModel, resolveUploadFilename } from './httpModel.js';
 
 const BASE = 'http://api.test';
 
@@ -307,6 +307,30 @@ describe('createHttpModel', () => {
     expect(r).toEqual({ ok: true, path: '/uploads/abc.png', filename: 'pic.png' });
   });
 
+  it('uploadFile synthesizes a pasted-<ts>.<ext> filename for an extensionless clipboard image', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, path: '/uploads/xyz.png', filename: 'pasted-1.png' }));
+    const model = createHttpModel({ base: BASE });
+
+    // 클립보드 이미지: file.name이 비어 있고 확장자가 없다 → MIME(image/png)에서 png를 도출해 합성.
+    const file = new File(['hello'], '', { type: 'image/png' });
+    await model.uploadFile(file);
+
+    const body = JSON.parse(callAt(0)[1].body);
+    expect(body.filename).toMatch(/^pasted-\d+\.png$/);
+    // 요청 body shape·raw base64 전송은 불변(서버 계약).
+    expect(body.contentBase64).toBe('aGVsbG8=');
+  });
+
+  it('uploadFile keeps an extensioned filename untouched (attachment back-compat)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, path: '/uploads/r.pdf', filename: 'report.pdf' }));
+    const model = createHttpModel({ base: BASE });
+
+    const file = new File(['hello'], 'report.pdf', { type: 'application/pdf' });
+    await model.uploadFile(file);
+
+    expect(JSON.parse(callAt(0)[1].body).filename).toBe('report.pdf');
+  });
+
   function installFakeEventSource(instances) {
     class FakeEventSource {
       constructor(url, opts) {
@@ -374,5 +398,33 @@ describe('createHttpModel', () => {
 
     model.subscribe({}, vi.fn());
     expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-q`);
+  });
+});
+
+describe('resolveUploadFilename', () => {
+  it('keeps a filename that already has an extension (attachment/reference back-compat)', () => {
+    expect(resolveUploadFilename('report.pdf', 'application/pdf')).toBe('report.pdf');
+    expect(resolveUploadFilename('sheet.xlsx', 'application/vnd.ms-excel')).toBe('sheet.xlsx');
+    // MIME이 이미지여도 확장자가 있으면 재작성하지 않는다.
+    expect(resolveUploadFilename('photo.jpeg', 'image/png')).toBe('photo.jpeg');
+  });
+
+  it('synthesizes pasted-<ts>.<ext> from the MIME type when the name has no extension', () => {
+    expect(resolveUploadFilename('', 'image/png')).toMatch(/^pasted-\d+\.png$/);
+    expect(resolveUploadFilename('', 'image/jpeg')).toMatch(/^pasted-\d+\.jpg$/);
+    expect(resolveUploadFilename('', 'image/gif')).toMatch(/^pasted-\d+\.gif$/);
+    expect(resolveUploadFilename('', 'image/webp')).toMatch(/^pasted-\d+\.webp$/);
+  });
+
+  it('treats a trailing-dot name as extensionless and synthesizes from MIME', () => {
+    expect(resolveUploadFilename('image.', 'image/png')).toMatch(/^pasted-\d+\.png$/);
+  });
+
+  it('does NOT fabricate an extension for a MIME miss — passes the original name through (server rejects)', () => {
+    // image/bmp, image/svg+xml은 맵에 없다 → 임의 확장자를 지어내지 않고 원본 그대로 → 서버가 invalid-file로 거부.
+    expect(resolveUploadFilename('', 'image/bmp')).toBe('');
+    expect(resolveUploadFilename('', 'image/svg+xml')).toBe('');
+    expect(resolveUploadFilename('', '')).toBe('');
+    expect(resolveUploadFilename('', undefined)).toBe('');
   });
 });
