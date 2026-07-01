@@ -284,4 +284,18 @@ describe('InlineEmbed', () => {
       expect(screen.getByRole('link', { name: '원문' }).getAttribute('href')).toBe('https://example.com/x');
     });
   });
+
+  // 20-step2: 붙여넣기 신규 이미지(/uploads 상대경로)와 이미 저장된 레거시(data:image base64)가
+  // 둘 다 계속 <img>로 렌더되는지 회귀 잠금(마이그레이션 없이 레거시 렌더 보존 + 하위호환).
+  describe('image src backcompat regression (신규 /uploads + 레거시 base64)', () => {
+    it('renders an <img> with the new /uploads relative src', () => {
+      render(<InlineEmbed embed={{ embedType: 'image', src: '/uploads/deadbeef.png', alt: '업로드' }} onRemove={() => {}} />);
+      expect(screen.getByRole('img', { name: '업로드' }).getAttribute('src')).toBe('/uploads/deadbeef.png');
+    });
+
+    it('still renders an <img> for a legacy data:image base64 src', () => {
+      render(<InlineEmbed embed={{ embedType: 'image', src: 'data:image/png;base64,AAAA', alt: '레거시' }} onRemove={() => {}} />);
+      expect(screen.getByRole('img', { name: '레거시' }).getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    });
+  });
 });
