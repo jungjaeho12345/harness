@@ -1,0 +1,9 @@
+{
+  "project": "기사 작성기",
+  "phase": "20-editor-image-upload-embed",
+  "steps": [
+    { "step": 0, "name": "model-upload-filename", "status": "pending", "deps": [] },
+    { "step": 1, "name": "paste-upload-embed", "status": "pending", "deps": [0] },
+    { "step": 2, "name": "render-backcompat-regression", "status": "pending", "deps": [1] }
+  ]
+}
