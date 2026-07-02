@@ -1,0 +1,16 @@
+{
+  "project": "기사 작성기",
+  "phase": "24-editor-simptrad",
+  "steps": [
+    {
+      "step": 0,
+      "name": "simptrad-table-convert-dialog",
+      "status": "pending"
+    },
+    {
+      "step": 1,
+      "name": "writer-page-wiring",
+      "status": "pending"
+    }
+  ]
+}
