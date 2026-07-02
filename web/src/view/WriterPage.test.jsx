@@ -9,6 +9,7 @@ import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 import { loadMemo } from './memoStore.js';
+import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
 import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
@@ -2596,13 +2597,13 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
 
-  it('다른 비결선 도구 항목(tools.abbrConvert)은 여전히 비활성이다(회귀 없음)', async () => {
+  it('다른 비결선 도구 항목(tools.publishPhoto)은 여전히 비활성이다(회귀 없음)', async () => {
     // 회귀 가드 — 날짜 삽입 결선이 무관한 도구 항목을 켜지 않았는지 확인한다.
-    // (tools.fileInfo는 20-editor-file-info step1에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 약어변환으로 가드한다.)
+    // (약어변환/약어관리는 23-editor-abbrev step1에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 사진발행/DB등록으로 가드한다.)
     await openWith([textBlock('헤드')]);
     await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('약어변환').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
 });
 
@@ -3121,5 +3122,163 @@ describe('WriterPage — 메모장(tools.memo) 결선', () => {
     // 텍스트/임베드 무변경 — 본문이 그대로다(메모는 기사와 독립).
     expect(blocks.map((b) => b.type)).toEqual(['text', 'text']);
     expect(blocksToText(blocks)).toBe('헤드\n본문');
+  });
+});
+
+// Step 1(23-editor-abbrev): 도구>약어관리(tools.abbrManage)·약어변환(tools.abbrConvert) 결선 —
+//  - 약어관리: controlled AbbrevManageDialog를 연다(매핑 가드 앞). 커밋 목록은 부모 abbrevs(마운트 lazy-init),
+//    onAdd/onRemove가 즉시 saveAbbrevs로 localStorage(yh.editorAbbrevs) 영속. 본문/캐럿/임베드 무변경.
+//  - 약어변환: expandAbbrevInBlocks로 본문 텍스트 블록을 확장(임베드·"(끝)" 불변) → updateField('body', serialize) 안전 경로.
+//    본문 변경이라 매핑 가드 뒤(매핑 no-op). localStorage는 케이스별로 격리.
+describe('WriterPage — 약어관리/약어변환(tools.abbrManage·tools.abbrConvert) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다(날짜/메모 결선과 동일 패턴).
+  async function clickTool(label) {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  it("도구 메뉴 '약어관리'·'약어변환'이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('약어관리').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('약어변환').closest('button')).toBeEnabled();
+  });
+
+  it("'약어관리' 클릭 시 AbbrevManageDialog(abbrev-manage, role=dialog '약어 관리')가 열린다", async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickTool('약어관리');
+    expect(screen.getByRole('dialog', { name: '약어 관리' })).toBeInTheDocument();
+    expect(screen.getByTestId('abbrev-manage')).toBeInTheDocument();
+  });
+
+  it("짧은형/확장형 추가 시 localStorage(yh.editorAbbrevs)에 영속되고 목록에 'short → long'이 표시된다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickTool('약어관리');
+    await userEvent.type(screen.getByTestId('abbrev-manage-short'), '정부');
+    await userEvent.type(screen.getByTestId('abbrev-manage-long'), '대한민국 정부');
+    await userEvent.click(screen.getByTestId('abbrev-manage-add'));
+
+    expect(within(screen.getByTestId('abbrev-manage-list')).getByText('정부 → 대한민국 정부')).toBeInTheDocument();
+    expect(loadAbbrevs()).toEqual([{ short: '정부', long: '대한민국 정부' }]); // localStorage 영속(즉시 확정).
+  });
+
+  it("행 '삭제' 시 목록과 localStorage에서 제거된다", async () => {
+    saveAbbrevs([{ short: '정부', long: '대한민국 정부' }]); // 마운트 전 시드(lazy-init 복원).
+    await openWith([textBlock('헤드')]);
+    await clickTool('약어관리');
+    expect(screen.getByTestId('abbrev-manage-item-0')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('abbrev-manage-remove-0'));
+    expect(screen.queryByTestId('abbrev-manage-item-0')).not.toBeInTheDocument();
+    expect(loadAbbrevs()).toEqual([]); // 저장소에도 반영(즉시 영속).
+  });
+
+  it("'닫기'/Esc로 약어관리 다이얼로그가 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickTool('약어관리');
+    await userEvent.click(screen.getByTestId('abbrev-manage-close'));
+    expect(screen.queryByRole('dialog', { name: '약어 관리' })).not.toBeInTheDocument();
+
+    await clickTool('약어관리');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '약어 관리' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '약어 관리' })).not.toBeInTheDocument();
+  });
+
+  it("'약어변환' 클릭 시 등록 약어가 본문에서 확장되고 저장 markupVersion에 반영된다(안전 경로)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveAbbrevs([{ short: '정부', long: '대한민국 정부' }]); // 마운트 전 시드(lazy-init 복원).
+    const { model } = await openWith([textBlock('헤드'), textBlock('정부'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('약어변환');
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // '정부'(단독)만 확장, 임베드/"(끝)" 불변.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n대한민국 정부\n(끝)');
+  });
+
+  it('오확장 안 함 — 부분문자열(행정부)은 치환되지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveAbbrevs([{ short: '정부', long: '대한민국 정부' }]);
+    const { model } = await openWith([textBlock('헤드'), textBlock('행정부'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('약어변환');
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n행정부\n(끝)');
+  });
+
+  it('미등록 no-op — 등록 약어가 없으면 약어변환이 본문을 바꾸지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('정부'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('약어변환');
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n정부\n(끝)');
+  });
+
+  it("매핑 모드 — '약어관리'는 활성·열림(가드 앞), '약어변환'은 본문을 바꾸지 않는다(가드 뒤 no-op)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveAbbrevs([{ short: '정부', long: '대한민국 정부' }]);
+    const { model } = await openWith(
+      [textBlock('제목'), textBlock('정부'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    // 약어관리 — 매핑에서도 활성·다이얼로그 열림(본문 무관).
+    await clickTool('약어관리');
+    expect(screen.getByRole('dialog', { name: '약어 관리' })).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('abbrev-manage-close'));
+
+    // 약어변환 — 매핑 no-op(본문 변경 차단).
+    await clickTool('약어변환');
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('제목\n정부\n(끝)');
+  });
+
+  it('약어관리는 본문 무변경 — 열고 추가/삭제/닫기 해도 본문(saveArticle markupVersion)이 변하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('약어관리');
+    await userEvent.type(screen.getByTestId('abbrev-manage-short'), '정부');
+    await userEvent.type(screen.getByTestId('abbrev-manage-long'), '대한민국 정부');
+    await userEvent.click(screen.getByTestId('abbrev-manage-add'));
+    await userEvent.click(screen.getByTestId('abbrev-manage-remove-0'));
+    await userEvent.click(screen.getByTestId('abbrev-manage-close'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'text', 'text']);
+    expect(blocksToText(blocks)).toBe('헤드\n본문\n(끝)');
   });
 });

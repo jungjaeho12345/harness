@@ -19,6 +19,9 @@ import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { FileInfoDialog } from './FileInfoDialog.jsx';
 import { MemoDialog } from './MemoDialog.jsx';
 import { loadMemo, saveMemo } from './memoStore.js';
+import { AbbrevManageDialog } from './AbbrevManageDialog.jsx';
+import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
+import { expandAbbrevInBlocks } from './abbrevConvert.js';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -71,7 +74,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -117,6 +120,11 @@ export function WriterPage() {
   // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
   // 세션 내 진실 소스: 입력은 setMemoText만(in-memory), 영속은 '저장'에서 saveMemo만. 탭/articleId 비종속(전역 1개).
   const [memoText, setMemoText] = useState(() => loadMemo());
+  // 약어 관리 다이얼로그(도구>약어관리) 보이기 — showFileInfo/showMemo와 동일한 표시 토글. 본문 무관(매핑에서도 안전).
+  const [showAbbrevManage, setShowAbbrevManage] = useState(false);
+  // 사용자 등록 약어 목록(짧은형→확장형, 전역 1개·세션 진실 소스) — glyphFavorites처럼 마운트 lazy-init.
+  // 이후 CRUD(setAbbrevs(saveAbbrevs(...)))로만 갱신한다(렌더/오픈마다 재-load 금지, articleId/탭 비종속).
+  const [abbrevs, setAbbrevs] = useState(() => loadAbbrevs());
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -256,6 +264,27 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
+  // 도구>약어관리 CRUD — 약어사전은 각 추가/삭제가 확정 동작이라 즉시 saveAbbrevs로 localStorage 영속한다(별도 '저장' 버튼 없음).
+  // saveAbbrevs가 정규화 목록을 돌려주므로 그 반환값으로 state를 세팅해 화면·저장소를 일치시킨다. 본문/캐럿/임베드 무변경.
+  const addAbbrev = (short, long) => {
+    const s = String(short ?? '').trim();
+    const l = String(long ?? '').trim();
+    if (!s || !l) return;                                     // 빈 입력 no-op(다이얼로그도 가드하지만 이중 방어).
+    setAbbrevs((list) => saveAbbrevs([...list, { short: s, long: l }]));
+  };
+  const removeAbbrev = (index) => {
+    setAbbrevs((list) => saveAbbrevs(list.filter((_, i) => i !== index)));
+  };
+
+  // 도구>약어변환 — 등록 약어(abbrevs 세션 state)를 본문 텍스트 블록에서 확장(임베드·"(끝)" 불변). 매핑 가드 뒤에서만 호출.
+  // 안전 경로(updateField('body', serialize(...)))만 쓴다 — DOM/Editor 직접 조작 금지(날짜삽입/대소문자변환과 동일).
+  // 전체 본문 transform이라 setPendingCaretLine은 호출하지 않는다(오프셋 대량 변동 — 부정확 캐럿 이동보다 포커스 유지가 안전).
+  const convertAbbrev = () => {
+    const r = expandAbbrevInBlocks(blocks, abbrevs);
+    if (!r.changed) return;                                   // 등록 약어 없음/매치 없음 → no-op(불필요한 dirty 방지).
+    updateField('body', serialize(r.blocks));
+  };
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -317,6 +346,8 @@ export function WriterPage() {
     if (id === 'tools.fileInfo') { setShowFileInfo(true); return; }
     // 메모장 — 기사와 무관한 전역 스크래치패드(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보와 동일 정책).
     if (id === 'tools.memo') { setShowMemo(true); return; }
+    // 약어관리 — 약어사전 CRUD 다이얼로그(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보/메모와 동일 정책).
+    if (id === 'tools.abbrManage') { setShowAbbrevManage(true); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -335,6 +366,8 @@ export function WriterPage() {
     if (id === 'tools.symbolInput') { setShowGlyphInput(true); return; }
     // 날짜 삽입 — 매핑 가드 뒤(본문 텍스트 변경 → 매핑 비활성, 약물입력과 동일 정책).
     if (id === 'tools.insertDate') { insertDate(); return; }
+    // 약어변환 — 등록 약어를 본문에서 확장(본문 변경). 매핑 가드 뒤(매핑=텍스트 잠금이라 no-op, 날짜삽입과 동일 정책).
+    if (id === 'tools.abbrConvert') { convertAbbrev(); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -765,6 +798,16 @@ export function WriterPage() {
         onChange={setMemoText}
         onSave={() => saveMemo(memoText)}
         onClose={() => setShowMemo(false)}
+      />
+
+      {/* 약어 관리(도구>약어관리) — controlled: 커밋 목록은 abbrevs(부모 소유·마운트 lazy-init), onAdd/onRemove가 즉시
+          saveAbbrevs로 localStorage 영속. 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선). */}
+      <AbbrevManageDialog
+        open={showAbbrevManage}
+        items={abbrevs}
+        onAdd={addAbbrev}
+        onRemove={removeAbbrev}
+        onClose={() => setShowAbbrevManage(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
