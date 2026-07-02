@@ -624,8 +624,13 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
     fireEvent(box, pasteImageEvent(box));
 
     await waitFor(() => expect(alert).toHaveBeenCalledWith('이미지 업로드에 실패했습니다.'));
+    // 실패 안내는 정확히 한 번, 정확한 문구로만 뜬다(pasteImageAtCaret 단일 실패 출처 — step3 rule 1).
+    expect(alert).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy(); // 미삽입
-    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 불변
+    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 블록 구조 불변
+    // 블록 구조뿐 아니라 본문 텍스트 내용도 그대로 보존된다(reject 경로가 body를 건드리지 않음).
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts).toEqual(['제목', '본문']);
     expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 폴백 없음
   });
 });
