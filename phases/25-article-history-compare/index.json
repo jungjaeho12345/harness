@@ -1,0 +1,9 @@
+{
+  "project": "기사 작성기",
+  "phase": "25-article-history-compare",
+  "steps": [
+    { "step": 0, "name": "history-snapshot-backend", "status": "pending" },
+    { "step": 1, "name": "diff-and-compare-dialog", "status": "pending" },
+    { "step": 2, "name": "writer-page-wiring", "status": "pending" }
+  ]
+}
