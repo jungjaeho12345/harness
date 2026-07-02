@@ -1,0 +1,23 @@
+{
+  "project": "기사 작성기",
+  "phase": "23-editor-abbrev",
+  "steps": [
+    {
+      "step": 0,
+      "name": "abbrev-store-convert-dialog",
+      "status": "completed",
+      "started_at": "2026-07-02T19:08:09+0900",
+      "summary": "약어 영속 모듈(abbrevStore: yh.editorAbbrevs 전용키·graceful normalize/load/save)·치환 순수함수(abbrevConvert: 단어경계 가드+최장일치+단일 좌→우 스캔+case-sensitive, expandAbbrev/expandAbbrevInBlocks 임베드·(끝) 불변)·controlled 약어관리 다이얼로그(AbbrevManageDialog, 입력2개만 내부state·Enter 미인터셉트)+CSS 추가. 신규 테스트 42개 통과, web 974개 회귀 통과, build·lint 통과. 결선(WriterPage만 — Editor/EditorMenuBar 미접촉)은 Step 1."
+    },
+    {
+      "step": 1,
+      "name": "writer-page-wiring",
+      "status": "completed",
+      "started_at": "2026-07-02T19:16:00+0900",
+      "summary": "WriterPage 도구>약어관리/약어변환 결선 — abbrevs state(마운트 lazy-init loadAbbrevs)+showAbbrevManage, addAbbrev/removeAbbrev(즉시 saveAbbrevs 영속·정규화 반환 세팅), convertAbbrev(expandAbbrevInBlocks+updateField('body',serialize) 안전경로·캐럿재배치 없음). 약어관리=매핑 가드 앞(본문 무관·매핑에서도 열림), 약어변환=매핑 가드 뒤(매핑 no-op). MENU_ENABLED에 두 id 추가, AbbrevManageDialog 렌더, 회귀 가드는 tools.publishPhoto로 교체. Editor/EditorMenuBar/server/editorPrefs/DB 미접촉. 신규 결선 테스트 10개, WriterPage 187개·web 984개 통과, build·lint 통과.",
+      "completed_at": "2026-07-02T19:23:26+0900"
+    }
+  ],
+  "created_at": "2026-07-02T19:08:09+0900",
+  "completed_at": "2026-07-02T19:23:27+0900"
+}

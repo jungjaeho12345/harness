@@ -130,6 +130,11 @@
       "dir": "22-editor-memo",
       "status": "completed",
       "completed_at": "2026-07-02T18:31:47+0900"
+    },
+    {
+      "dir": "23-editor-abbrev",
+      "status": "completed",
+      "completed_at": "2026-07-02T19:23:27+0900"
     }
   ]
 }
