@@ -21,9 +21,10 @@
     {
       "step": 2,
       "name": "toolbar-enable",
-      "status": "pending",
+      "status": "completed",
       "deps": [],
-      "ac": "npm run test:web && npm run build && npm run lint"
+      "ac": "npm run test:web && npm run build && npm run lint",
+      "summary": "EditorToolBar.jsx에 enabledIds 도입(EditorMenuBar 규약: enabledSet, disabled=!has(id), 활성 클릭만 onSelect(id)). 미전달 시 전 버튼 disabled 하위호환 유지. 기존 쉘 테스트 보존 + 활성화 케이스 3개 추가."
     },
     {
       "step": 3,

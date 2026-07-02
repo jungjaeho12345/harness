@@ -77,3 +77,31 @@ describe('EditorToolBar — 에디터 툴바(쉘, 비활성 placeholder)', () =>
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+// Step 2(21-editor-tools-memo): enabledIds 패턴(EditorMenuBar와 동일 규약) — 지정한 버튼만 활성.
+// 하위호환: enabledIds 미전달 시 전 버튼 disabled(위 쉘 테스트가 잠금).
+describe('EditorToolBar — enabledIds 활성화(메모 버튼 결선)', () => {
+  it("enabledIds=['tool.memo']면 '메모장' 버튼이 활성이고 클릭 시 onSelect('tool.memo')를 1회 호출한다", async () => {
+    const onSelect = vi.fn();
+    render(<EditorToolBar onSelect={onSelect} enabledIds={['tool.memo']} />);
+    const memo = screen.getByTestId('tool-메모장');
+    expect(memo).toBeEnabled();
+    await userEvent.click(memo);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('tool.memo');
+  });
+
+  it("enabledIds=['tool.memo']여도 그 외 버튼(새문서 등)은 여전히 disabled다", () => {
+    render(<EditorToolBar onSelect={vi.fn()} enabledIds={['tool.memo']} />);
+    expect(screen.getByTestId('tool-새문서')).toBeDisabled();
+    expect(screen.getByTestId('tool-저장하기')).toBeDisabled();
+    expect(screen.getByTestId('tool-찾기/바꾸기')).toBeDisabled();
+  });
+
+  it('enabledIds에 Set을 넘겨도 동일하게 동작한다(메뉴바 규약)', async () => {
+    const onSelect = vi.fn();
+    render(<EditorToolBar onSelect={onSelect} enabledIds={new Set(['tool.memo'])} />);
+    await userEvent.click(screen.getByTestId('tool-메모장'));
+    expect(onSelect).toHaveBeenCalledWith('tool.memo');
+  });
+});
