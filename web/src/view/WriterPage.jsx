@@ -16,6 +16,7 @@ import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
 import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
+import { FileInfoDialog } from './FileInfoDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -25,7 +26,10 @@ import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
-import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
+import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
+import {
+  charCount, lineCount, wordCount, byteLength, caretPosition,
+} from './editorStats.js';
 import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
@@ -65,7 +69,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -104,6 +108,8 @@ export function WriterPage() {
   const [showGlyphInput, setShowGlyphInput] = useState(false);
   // URL 직접 임베드 다이얼로그 — null(닫힘) | 'image' | 'video'. 도구>그림/유튜브 삽입으로 열린다(showGlyphInput 패턴 확장).
   const [urlEmbedKind, setUrlEmbedKind] = useState(null);
+  // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
+  const [showFileInfo, setShowFileInfo] = useState(false);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -300,6 +306,8 @@ export function WriterPage() {
     if (id === 'tools.insertAudio') { setUrlEmbedKind('audio'); return; }
     if (id === 'tools.insertLink') { setUrlEmbedKind('link'); return; }
     if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
+    // 파일 정보 — 읽기전용(본문 통계 표시만). 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — 임베드 삽입 항목과 동일 정책).
+    if (id === 'tools.fileInfo') { setShowFileInfo(true); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -349,6 +357,24 @@ export function WriterPage() {
     ...(showToolBar ? ['ctx.showToolBar'] : []),
     ...(showGlyphBar ? ['ctx.showGlyphBar'] : []),
   ];
+
+  // 파일 정보 통계(읽기전용 스냅샷) — showFileInfo가 true일 때만 파생 계산한다(effect/타이머 없이, 찾기 매치 파생계산과 동일).
+  // 캐럿은 statusCaret(StatusBar와 동일 소스 — 메뉴 클릭으로 포커스가 빠져 라이브 readCaret은 null)을 쓴다.
+  // 임베드 개수는 blocks(텍스트+임베드 전체)에서 센다(bodyText는 텍스트만이라 임베드가 빠짐).
+  let fileInfoStats = null;
+  if (showFileInfo) {
+    const cp = caretPosition(bodyText, statusCaret);
+    fileInfoStats = {
+      chars: charCount(bodyText),
+      words: wordCount(bodyText),
+      bytes: byteLength(bodyText),
+      lines: lineCount(bodyText),
+      embeds: blocks.filter(isEmbedBlock).length,
+      paragraph: cp.paragraph,
+      row: cp.row,
+      column: cp.column,
+    };
+  }
 
   // 우클릭 컨텍스트 메뉴 선택(ctx.*) 라우팅. 찾기/전체선택은 메뉴바와 동일 동작을 공유한다(중복 금지).
   const onCtxSelect = (id) => {
@@ -712,6 +738,14 @@ export function WriterPage() {
         kind={urlEmbedKind || 'image'}
         onSubmit={onUrlEmbedSubmit}
         onClose={() => setUrlEmbedKind(null)}
+      />
+
+      {/* 파일 정보 다이얼로그(도구>파일 정보) — 읽기전용. 열린 시점 본문 통계(fileInfoStats)를 props로만 주입해 표시한다.
+          본문/캐럿/임베드를 바꾸지 않으므로 매핑 모드에서도 안전하다(매핑 가드 앞 결선). 닫기/Esc는 컴포넌트 onClose. */}
+      <FileInfoDialog
+        open={showFileInfo}
+        stats={fileInfoStats}
+        onClose={() => setShowFileInfo(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
