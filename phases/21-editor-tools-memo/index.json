@@ -29,9 +29,10 @@
     {
       "step": 3,
       "name": "writer-wiring",
-      "status": "pending",
+      "status": "completed",
       "deps": [0, 1, 2],
-      "ac": "npm run test:web && npm run build && npm run lint"
+      "ac": "npm run test:web && npm run build && npm run lint",
+      "summary": "WriterPage 메모장 결선 — import loadMemo/saveMemo/MemoDialog, MENU_ENABLED에 tools.memo 추가, showMemo/memoText(lazy loadMemo) 상태+onMemoChange(setMemoText+saveMemo), tools.memo를 isMapping 가드 앞 라우팅(매핑 허용), EditorToolBar enabledIds=['tool.memo']+onSelect 결선(두 진입점 setShowMemo 수렴), MemoDialog 렌더. Editor.jsx/server/DB 무접촉. WriterPage.test.jsx 5케이스(메뉴/툴바 진입·리마운트 영속+본문불변·매핑 허용+본문불변·닫기/Escape)."
     }
   ]
 }

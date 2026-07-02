@@ -15,6 +15,7 @@ import { EditorGlyphBar } from './EditorGlyphBar.jsx';
 import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
+import { MemoDialog } from './MemoDialog.jsx';
 import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
@@ -23,6 +24,7 @@ import {
 import { selectAllInEditor } from './editorSelect.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
+import { loadMemo, saveMemo } from './editorMemo.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText } from './editorContent.js';
@@ -65,7 +67,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.memo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -102,6 +104,12 @@ export function WriterPage() {
   const [glyphKeymap, setGlyphKeymap] = useState(() => loadEditorPrefs().glyphKeymap.items);
   // 약물입력 다이얼로그 보이기(Alt+O·도구 메뉴·우클릭) — FindReplaceDialog의 showFind와 동일한 표시 토글.
   const [showGlyphInput, setShowGlyphInput] = useState(false);
+  // 메모장 다이얼로그(도구 메뉴 tools.memo·툴바 tool.memo) — 본문 무관 스크래치패드. showGlyphInput과 동일한 표시 토글.
+  const [showMemo, setShowMemo] = useState(false);
+  // 메모 텍스트 — 마운트 lazy 초기화(editorBg/glyphFavorites와 동일 게이트). onMemoChange에서 상태+영속화(saveMemo).
+  // editorPrefs가 아닌 전용 store(editorMemo)라 환경설정 적용/취소(onPrefsClose) 게이트와 분리된다(step0 설계 결정).
+  const [memoText, setMemoText] = useState(() => loadMemo());
+  const onMemoChange = (text) => { setMemoText(text); saveMemo(text); };
   // URL 직접 임베드 다이얼로그 — null(닫힘) | 'image' | 'video'. 도구>그림/유튜브 삽입으로 열린다(showGlyphInput 패턴 확장).
   const [urlEmbedKind, setUrlEmbedKind] = useState(null);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
@@ -300,6 +308,9 @@ export function WriterPage() {
     if (id === 'tools.insertAudio') { setUrlEmbedKind('audio'); return; }
     if (id === 'tools.insertLink') { setUrlEmbedKind('link'); return; }
     if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
+    // 메모장 — 매핑 가드 앞(help.preferences·URL 임베드와 동일 위치). 본문(blocks/updateField)을 전혀 건드리지 않는
+    // 스크래치패드라 매핑 모드에서도 연다(죽은 버튼 방지 — 본문-only 불변식과 무관).
+    if (id === 'tools.memo') { setShowMemo(true); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -573,7 +584,13 @@ export function WriterPage() {
             </button>
           </div>
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
-          {showToolBar && <EditorToolBar />}
+          {/* 툴바 — 메모장 버튼(tool.memo)만 결선(enabledIds). 두 진입점(메뉴 tools.memo·툴바 tool.memo)은 setShowMemo(true)로 수렴. */}
+          {showToolBar && (
+            <EditorToolBar
+              enabledIds={['tool.memo']}
+              onSelect={(id) => { if (id === 'tool.memo') setShowMemo(true); }}
+            />
+          )}
           {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
               본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
           {showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}
@@ -703,6 +720,16 @@ export function WriterPage() {
         keymap={glyphKeymap}
         onPick={onGlyphPick}
         onClose={() => setShowGlyphInput(false)}
+      />
+
+      {/* 메모장 다이얼로그 — 도구 메뉴(tools.memo)·툴바(tool.memo)로 열림(매핑에서도 허용 — 본문 무변경 스크래치패드).
+          텍스트는 memoText(부모 소유)로 주입하는 제어 컴포넌트고, 입력은 onMemoChange에서 상태+localStorage(editorMemo) 영속.
+          본문(blocks/updateField/serialize)을 전혀 건드리지 않는다. */}
+      <MemoDialog
+        open={showMemo}
+        text={memoText}
+        onChange={onMemoChange}
+        onClose={() => setShowMemo(false)}
       />
 
       {/* URL 직접 임베드 다이얼로그 — 도구>그림/유튜브 삽입으로 열림(매핑에서도 허용). URL 제출 시 make*Embed+insertEmbed

@@ -122,8 +122,9 @@
     },
     {
       "dir": "21-editor-tools-memo",
-      "status": "planned",
-      "note": "에디터 도구 메뉴/툴바 미결선 항목 '메모장'(tools.memo / tool.memo) 결선 — 본문 비변경 client 전용 스크래치패드. step0 memo-store(editorMemo.js: loadMemo/saveMemo localStorage 전용 모듈, editorPrefs와 분리 — 적용/취소 게이트 결합·매 키 재직렬화 회피)→step1 memo-dialog(MemoDialog.jsx 순수 제어 컴포넌트, textarea 1개·Escape/닫기, GlyphInputDialog 패턴)→step2 toolbar-enable(EditorToolBar enabledIds/onSelect 도입 — 메뉴바 규약 재사용, 미전달 시 전 버튼 disabled 하위호환)→step3 writer-wiring(WriterPage: MENU_ENABLED에 tools.memo 추가·메뉴/툴바 두 진입점 setShowMemo 단일 수렴·memoText lazy 초기화+onChange 영속화·MemoDialog 렌더). 매핑 정책: 메모장은 본문 무변경 → isMapping 가드 앞 라우팅(매핑에서도 열림). Editor.jsx 무접촉·client 전용·DB 비파괴. 계획 검토(harness-plan-reviewer) 대기."
+      "status": "completed",
+      "completed_at": "2026-07-02T01:24:00+0900",
+      "note": "에디터 도구 메뉴/툴바 미결선 항목 '메모장'(tools.memo / tool.memo) 결선 — 본문 비변경 client 전용 스크래치패드. step0 memo-store(editorMemo.js: loadMemo/saveMemo localStorage(yh.editorMemo) 전용 모듈, { text } JSON 왕복·graceful, editorPrefs와 분리 — 적용/취소 게이트 결합·매 키 재직렬화 회피, 6케이스)→step1 memo-dialog(MemoDialog.jsx 순수 제어 컴포넌트: {open,text,onChange,onClose}, textarea 1개·Escape/닫기, yh-memo 전용 클래스/testid, 자체 useState/영속화/본문접근 없음, GlyphInputDialog 패턴, 7케이스)→step2 toolbar-enable(EditorToolBar enabledIds/onSelect 도입 — 메뉴바 enabledSet 규약 재사용, 미전달 시 전 버튼 disabled 하위호환 유지·기존 쉘 테스트 보존, 활성화 3케이스)→step3 writer-wiring(WriterPage: MENU_ENABLED에 tools.memo 추가·메뉴(tools.memo)/툴바(tool.memo) 두 진입점 setShowMemo 단일 수렴·memoText lazy loadMemo 초기화+onMemoChange 영속화·MemoDialog 렌더, 5케이스). 매핑 정책: 메모장은 본문 무변경 → isMapping 가드 앞 라우팅(매핑에서도 열림, 리마운트 영속·본문/임베드 불변 검증). Editor.jsx 무접촉·client 전용·server/·DB 비파괴. test:web 894·server 359·build·lint green."
     }
   ]
 }
