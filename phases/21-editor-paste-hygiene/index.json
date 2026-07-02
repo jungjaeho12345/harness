@@ -30,10 +30,11 @@
     {
       "step": 4,
       "name": "phase-index-newline-hygiene",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         3
-      ]
+      ],
+      "summary": "phases/**/index.json 끝 개행 위생 정규화: 셸 스캔으로 개행 누락 13개(0-mvp·5·6·7·8·9·10·11·12·13·14·15·20) 검출, 각 파일 끝에 정확히 \\n 1개만 append(파싱/재직렬화 없이 순수 개행 보정 — 키·값·들여쓰기·순서 불변). 이미 개행으로 끝나는 파일(phases/index.json·21 등)은 미변경, 이중 개행 없음. 게이트: 개행 누락 0건 OK, 전 index.json JSON 유효. AC green."
     }
   ]
 }
