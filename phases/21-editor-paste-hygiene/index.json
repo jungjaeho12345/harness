@@ -1,0 +1,36 @@
+{
+  "project": "기사 작성기",
+  "phase": "21-editor-paste-hygiene",
+  "steps": [
+    {
+      "step": 1,
+      "name": "model-filename-collision",
+      "status": "pending",
+      "deps": []
+    },
+    {
+      "step": 2,
+      "name": "remove-dead-embedfrompaste",
+      "status": "pending",
+      "deps": [
+        1
+      ]
+    },
+    {
+      "step": 3,
+      "name": "paste-upload-error-feedback",
+      "status": "pending",
+      "deps": [
+        2
+      ]
+    },
+    {
+      "step": 4,
+      "name": "phase-index-newline-hygiene",
+      "status": "pending",
+      "deps": [
+        3
+      ]
+    }
+  ]
+}
