@@ -1203,6 +1203,47 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 간체↔번체 변환(도구>간체<->번체 변환) 방향 선택 다이얼로그 — 방향만 부모에 위임(약어관리/메모와 동일 계열). */
+.yh-simptrad-convert {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-simptrad-convert__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-simptrad-convert__note {
+  margin: 0 0 var(--yh-sp-md);
+  font-size: 0.8rem;
+  color: var(--yh-gray-dark);
+  line-height: 1.5;
+}
+.yh-simptrad-convert__form {
+  display: flex;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-simptrad-convert__form .yh-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.yh-simptrad-convert__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 로그인 레이아웃 */
 .yh-login {
   display: flex;

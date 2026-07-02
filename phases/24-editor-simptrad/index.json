@@ -5,12 +5,15 @@
     {
       "step": 0,
       "name": "simptrad-table-convert-dialog",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-02T20:22:15+0900",
+      "summary": "간↔번 데이터/순수/표시 레이어 신규 — simpTradTable.js(번들 매핑 185쌍, 상용 한자+1:多 first-wins), simpTradConvert.js(convertSimpTrad 코드포인트 순회·미매핑 pass-through·방향 방어·Map 1회 구성 + convertSimpTradInBlocks 임베드/(끝) 불변·changed·mutate 없음), SimpTradConvertDialog.jsx(stateless 방향 선택 다이얼로그·Escape만 닫기·전용 yh-simptrad-convert) + 테스트 22개 + CSS. Editor/WriterPage/서버/DB/package.json 미접촉(결선은 Step 1). test:web 1008 pass·build·lint 통과."
     },
     {
       "step": 1,
       "name": "writer-page-wiring",
       "status": "pending"
     }
-  ]
+  ],
+  "created_at": "2026-07-02T20:22:15+0900"
 }
