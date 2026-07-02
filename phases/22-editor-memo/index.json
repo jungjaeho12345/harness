@@ -1,0 +1,24 @@
+{
+  "project": "기사 작성기",
+  "phase": "22-editor-memo",
+  "steps": [
+    {
+      "step": 0,
+      "name": "memo-store-dialog",
+      "status": "completed",
+      "started_at": "2026-07-02T18:22:10+0900",
+      "summary": "memoStore.js(전역 메모 순수 load/save, 전용 키 yh.editorMemo·graceful 폴백) + MemoDialog.jsx(controlled 표시/입력 다이얼로그, Enter 미인터셉트·Esc만 닫기, 전용 yh-editor-memo/editor-memo) + 테스트(9+8) + yonhap.css yh-editor-memo 스타일 추가. 결선은 Step 1.",
+      "completed_at": "2026-07-02T18:26:24+0900"
+    },
+    {
+      "step": 1,
+      "name": "writer-page-wiring",
+      "status": "completed",
+      "started_at": "2026-07-02T18:26:24+0900",
+      "summary": "WriterPage 도구>메모장(tools.memo) 결선 — MemoDialog/memoStore import + showMemo·memoText(마운트 lazy-init loadMemo) state + onMenuSelect 분기(매핑 가드 앞) + MENU_ENABLED에 tools.memo 추가 + <MemoDialog> 렌더(value=memoText, onChange=setMemoText, onSave=saveMemo(영속), onClose=닫기만). controlled·명시저장·전역 메모 1개·본문 무변경(매핑 안전). WriterPage 테스트 11개 추가(활성/오픈/입력/저장영속/재오픈보존/저장없이닫기 미변경/매핑오픈/본문불변). test:web(930) build lint 통과.",
+      "completed_at": "2026-07-02T18:31:46+0900"
+    }
+  ],
+  "created_at": "2026-07-02T18:22:10+0900",
+  "completed_at": "2026-07-02T18:31:47+0900"
+}

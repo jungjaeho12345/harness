@@ -1110,6 +1110,42 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 메모장(도구>메모장) 다이얼로그 — 기사와 무관한 전역 스크래치패드 입력 패널(찾기/약물입력/URL임베드/파일정보와 동일 계열). */
+.yh-editor-memo {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 22rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-editor-memo__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-editor-memo__text {
+  width: 100%;
+  min-width: 0;
+  min-height: 12rem;
+  resize: vertical;
+  margin-bottom: var(--yh-sp-md);
+  font-family: var(--yh-sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.yh-editor-memo__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 로그인 레이아웃 */
 .yh-login {
   display: flex;

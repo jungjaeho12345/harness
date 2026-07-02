@@ -8,6 +8,7 @@ import { WriterPage } from './WriterPage.jsx';
 import { PENDING_EDIT_KEY } from '../controller/useViewController.js';
 import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
+import { loadMemo } from './memoStore.js';
 import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
 import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
@@ -2983,5 +2984,142 @@ describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
     expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
     expect(screen.getByRole('dialog', { name: '파일 정보' })).toBeInTheDocument();
+  });
+});
+
+// Step 1(22-editor-memo): 도구>메모장(tools.memo) 결선 —
+// 메뉴 클릭 시 controlled MemoDialog를 연다. 값은 부모 memoText(마운트 lazy-init), '저장'만 localStorage(yh.editorMemo) 영속.
+// 메모는 기사와 무관한 전역 스크래치패드 — 본문/캐럿/임베드 무변경(매핑에서도 안전). localStorage는 케이스별로 격리.
+describe('WriterPage — 메모장(tools.memo) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function clickMemo() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('메모장').closest('button'));
+  }
+
+  it("도구 메뉴 '메모장'(tools.memo)이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('메모장').closest('button')).toBeEnabled();
+  });
+
+  it("'메모장' 클릭 시 MemoDialog(editor-memo, role=dialog '메모장')가 열리고 textarea가 보인다", async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickMemo();
+    expect(screen.getByRole('dialog', { name: '메모장' })).toBeInTheDocument();
+    expect(screen.getByTestId('editor-memo-text')).toBeInTheDocument();
+  });
+
+  it('textarea에 입력하면 값이 반영된다(controlled)', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    const ta = screen.getByTestId('editor-memo-text');
+    await userEvent.type(ta, '취재 메모');
+    expect(ta).toHaveValue('취재 메모');
+  });
+
+  it("입력 후 '저장' 클릭 시 localStorage(yh.editorMemo)에 영속된다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    await userEvent.type(screen.getByTestId('editor-memo-text'), '저장할 메모');
+    await userEvent.click(screen.getByTestId('editor-memo-save'));
+    expect(loadMemo()).toBe('저장할 메모');
+    expect(JSON.parse(localStorage.getItem('yh.editorMemo'))).toBe('저장할 메모');
+  });
+
+  it("'저장' 후에도 다이얼로그는 열린 채 유지된다(저장/닫기 별개 동작)", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    await userEvent.type(screen.getByTestId('editor-memo-text'), '메모');
+    await userEvent.click(screen.getByTestId('editor-memo-save'));
+    expect(screen.getByRole('dialog', { name: '메모장' })).toBeInTheDocument();
+  });
+
+  it("'닫기'로 다이얼로그가 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    await userEvent.click(screen.getByTestId('editor-memo-close'));
+    expect(screen.queryByRole('dialog', { name: '메모장' })).not.toBeInTheDocument();
+  });
+
+  it('Esc로 다이얼로그가 닫힌다', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '메모장' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '메모장' })).not.toBeInTheDocument();
+  });
+
+  it('재오픈 시 세션 내 편집 유지(저장 안 해도 부모 state 보존)', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    await userEvent.type(screen.getByTestId('editor-memo-text'), '미저장 편집');
+    await userEvent.click(screen.getByTestId('editor-memo-close'));
+    await clickMemo();
+    expect(screen.getByTestId('editor-memo-text')).toHaveValue('미저장 편집');
+  });
+
+  it('저장 없이 닫으면 localStorage가 갱신되지 않는다(명시 저장 모델)', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    await userEvent.type(screen.getByTestId('editor-memo-text'), '닫기만');
+    await userEvent.click(screen.getByTestId('editor-memo-close'));
+    expect(localStorage.getItem('yh.editorMemo')).toBeNull();
+    expect(loadMemo()).toBe('');
+  });
+
+  it('새 마운트 시 이전에 저장된 메모가 복원돼 다이얼로그에 표시된다(lazy-init loadMemo)', async () => {
+    // 마운트 전에 저장본을 심어두면 memoText 초기화(useState(() => loadMemo()))가 이를 복원해야 한다(새로고침 후 지속).
+    localStorage.setItem('yh.editorMemo', JSON.stringify('이전 세션 저장 메모'));
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    expect(screen.getByTestId('editor-memo-text')).toHaveValue('이전 세션 저장 메모');
+  });
+
+  it("매핑 모드에서도 '메모장'이 활성이고 다이얼로그가 열린다(본문 무관 — 매핑 안전)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('메모장').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('메모장').closest('button'));
+    expect(screen.getByRole('dialog', { name: '메모장' })).toBeInTheDocument();
+  });
+
+  it('본문 무변경 — 메모를 열고 입력/저장/닫기 해도 본문(saveArticle markupVersion)이 변하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickMemo();
+    await userEvent.type(screen.getByTestId('editor-memo-text'), '메모 내용');
+    await userEvent.click(screen.getByTestId('editor-memo-save'));
+    await userEvent.click(screen.getByTestId('editor-memo-close'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트/임베드 무변경 — 본문이 그대로다(메모는 기사와 독립).
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'text']);
+    expect(blocksToText(blocks)).toBe('헤드\n본문');
   });
 });

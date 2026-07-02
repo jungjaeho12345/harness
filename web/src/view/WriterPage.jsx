@@ -17,6 +17,8 @@ import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
 import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { FileInfoDialog } from './FileInfoDialog.jsx';
+import { MemoDialog } from './MemoDialog.jsx';
+import { loadMemo, saveMemo } from './memoStore.js';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -69,7 +71,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -110,6 +112,11 @@ export function WriterPage() {
   const [urlEmbedKind, setUrlEmbedKind] = useState(null);
   // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
   const [showFileInfo, setShowFileInfo] = useState(false);
+  // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
+  const [showMemo, setShowMemo] = useState(false);
+  // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
+  // 세션 내 진실 소스: 입력은 setMemoText만(in-memory), 영속은 '저장'에서 saveMemo만. 탭/articleId 비종속(전역 1개).
+  const [memoText, setMemoText] = useState(() => loadMemo());
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -308,6 +315,8 @@ export function WriterPage() {
     if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
     // 파일 정보 — 읽기전용(본문 통계 표시만). 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — 임베드 삽입 항목과 동일 정책).
     if (id === 'tools.fileInfo') { setShowFileInfo(true); return; }
+    // 메모장 — 기사와 무관한 전역 스크래치패드(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보와 동일 정책).
+    if (id === 'tools.memo') { setShowMemo(true); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -746,6 +755,16 @@ export function WriterPage() {
         open={showFileInfo}
         stats={fileInfoStats}
         onClose={() => setShowFileInfo(false)}
+      />
+
+      {/* 메모장(도구>메모장) — 기사와 무관한 전역 스크래치패드. controlled: 값은 memoText(부모 소유·마운트 lazy-init),
+          '저장'만 localStorage 영속(saveMemo), 닫기/Esc는 닫기만(자동 저장 없음). 본문/캐럿/임베드 무변경 → 매핑에서도 안전. */}
+      <MemoDialog
+        open={showMemo}
+        value={memoText}
+        onChange={setMemoText}
+        onSave={() => saveMemo(memoText)}
+        onClose={() => setShowMemo(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
