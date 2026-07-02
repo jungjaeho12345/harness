@@ -31,6 +31,21 @@ describe('editorMemo — 메모장 텍스트 저장소', () => {
     expect(loadMemo()).toBe(text);
   });
 
+  it('저장값이 손상된(파싱 불가) 문자열이면 loadMemo()가 빈 문자열을 반환한다(JSON.parse throw → catch)', () => {
+    localStorage.setItem('yh.editorMemo', '{not valid json');
+    expect(() => loadMemo()).not.toThrow();
+    expect(loadMemo()).toBe('');
+  });
+
+  it('저장 객체에 text(string)가 없으면 loadMemo()가 빈 문자열을 반환한다(형식 가드)', () => {
+    localStorage.setItem('yh.editorMemo', JSON.stringify({ note: 123 }));
+    expect(loadMemo()).toBe('');
+    localStorage.setItem('yh.editorMemo', JSON.stringify({ text: 42 }));
+    expect(loadMemo()).toBe('');
+    localStorage.setItem('yh.editorMemo', JSON.stringify('just a string'));
+    expect(loadMemo()).toBe('');
+  });
+
   it('localStorage가 없거나 throw하는 환경에서 graceful(loadMemo→"", saveMemo no-op·throw 없음)', () => {
     const original = globalThis.localStorage;
     try {
