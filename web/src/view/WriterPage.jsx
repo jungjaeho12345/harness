@@ -457,35 +457,39 @@ export function WriterPage() {
   //   실패/too-large면 삽입하지 않고 window.alert로만 안내한다(확정 정책 — 서버가 5MB를 판정, 클라 사전 검사 없음).
   const pasteImageAtCaret = async (file, caret) => {
     const tabId = activeTab.id; // 붙여넣기 시점 편집 탭 고정(업로드 대기 중 탭 전환 대비).
+    // try 범위는 model.uploadFile의 reject/throw(네트워크 오류·FileReader 오류 등)만 포착한다.
+    // 이후 동기 삽입(insertEmbedAtLine)까지 감싸면 삽입 단계의 동기 예외가 "업로드 실패" alert로 오보되고
+    // 원인을 삼킨다 — 그래서 성공 후 판정/탭 가드/삽입은 try 밖에서 실행한다.
+    let r;
     try {
-      const r = await model.uploadFile(file);
-      if (!(r && r.ok && r.path)) {
-        const msg = r && r.reason === 'too-large'
-          ? '이미지가 너무 커 첨부할 수 없습니다(5MB 초과).'
-          : '이미지 업로드에 실패했습니다.';
-        window.alert(msg);
-        return;
-      }
-      // 업로드(네트워크 왕복) 대기 동안 사용자가 본문을 편집했거나 다른 탭으로 이동했을 수 있다. 붙여넣기 시점
-      // 렌더의 stale body/탭 클로저로 덮어쓰면 같은 탭에서는 사용자 입력이 유실되고, 탭을 옮겼으면 다른 기사의
-      // 미저장 본문이 파손된다. 그래서 최신 활성 탭(activeTabRef)을 읽어 (1) 붙여넣은 탭과 동일할 때만
-      // (2) 그 탭의 최신 body 위에 임베드를 얹는다(insertEmbedAtLine에 최신 body/mapping을 명시 전달).
-      const current = activeTabRef.current;
-      if (!current || current.id !== tabId) {
-        window.alert('편집 탭이 바뀌어 이미지 삽입이 취소되었습니다.');
-        return;
-      }
-      insertEmbedAtLine(
-        makeImageEmbed(r.path, { alt: '' }),
-        caret ? caret.lineIndex : null,
-        current.fields.body,
-        current.mode === 'mapping',
-      );
+      r = await model.uploadFile(file);
     } catch {
-      // uploadFile이 reject(네트워크 오류·FileReader 오류 등)하면 응답 실패와 동일 정책으로 안내만 한다.
-      // 임베드를 삽입하지 않고 base64 폴백도 만들지 않는다(신규 base64 벡터 제거가 목적).
+      // reject 시 응답 실패와 동일 정책으로 안내만 한다. 임베드 미삽입, base64 폴백 없음(신규 base64 벡터 제거).
       window.alert('이미지 업로드에 실패했습니다.');
+      return;
     }
+    if (!(r && r.ok && r.path)) {
+      const msg = r && r.reason === 'too-large'
+        ? '이미지가 너무 커 첨부할 수 없습니다(5MB 초과).'
+        : '이미지 업로드에 실패했습니다.';
+      window.alert(msg);
+      return;
+    }
+    // 업로드(네트워크 왕복) 대기 동안 사용자가 본문을 편집했거나 다른 탭으로 이동했을 수 있다. 붙여넣기 시점
+    // 렌더의 stale body/탭 클로저로 덮어쓰면 같은 탭에서는 사용자 입력이 유실되고, 탭을 옮겼으면 다른 기사의
+    // 미저장 본문이 파손된다. 그래서 최신 활성 탭(activeTabRef)을 읽어 (1) 붙여넣은 탭과 동일할 때만
+    // (2) 그 탭의 최신 body 위에 임베드를 얹는다(insertEmbedAtLine에 최신 body/mapping을 명시 전달).
+    const current = activeTabRef.current;
+    if (!current || current.id !== tabId) {
+      window.alert('편집 탭이 바뀌어 이미지 삽입이 취소되었습니다.');
+      return;
+    }
+    insertEmbedAtLine(
+      makeImageEmbed(r.path, { alt: '' }),
+      caret ? caret.lineIndex : null,
+      current.fields.body,
+      current.mode === 'mapping',
+    );
   };
 
   // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed
