@@ -22,6 +22,8 @@ import { loadMemo, saveMemo } from './memoStore.js';
 import { AbbrevManageDialog } from './AbbrevManageDialog.jsx';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import { expandAbbrevInBlocks } from './abbrevConvert.js';
+import { SimpTradConvertDialog } from './SimpTradConvertDialog.jsx';
+import { convertSimpTradInBlocks } from './simpTradConvert.js';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -74,7 +76,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -125,6 +127,9 @@ export function WriterPage() {
   // 사용자 등록 약어 목록(짧은형→확장형, 전역 1개·세션 진실 소스) — glyphFavorites처럼 마운트 lazy-init.
   // 이후 CRUD(setAbbrevs(saveAbbrevs(...)))로만 갱신한다(렌더/오픈마다 재-load 금지, articleId/탭 비종속).
   const [abbrevs, setAbbrevs] = useState(() => loadAbbrevs());
+  // 간체↔번체 변환 방향 선택 다이얼로그(도구>간체↔번체 변환) 보이기 — showAbbrevManage/showMemo 패턴.
+  // 변환표(SIMP_TRAD_PAIRS)는 번들 정적 상수라 별도 state가 없다(약어의 abbrevs 같은 lazy-init 없음).
+  const [showSimpTrad, setShowSimpTrad] = useState(false);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -285,6 +290,17 @@ export function WriterPage() {
     updateField('body', serialize(r.blocks));
   };
 
+  // 도구>간체↔번체 변환 — 방향 다이얼로그 버튼(간체→번체/번체→간체)이 호출. 등록 표(SIMP_TRAD_PAIRS)로 본문
+  // 텍스트 블록을 방향대로 변환(임베드·"(끝)" 불변) → updateField('body', serialize(...)) 안전 경로만(약어변환과 동일).
+  // 매핑 가드 뒤에서만 도달하지만 다이얼로그가 열린 채 탭 전환에 대비해 isMapping 이중 방어. changed일 때만 반영(no-op 시
+  // dirty 방지) 후 1회성으로 닫는다. 전체 본문 transform이라 setPendingCaretLine은 호출하지 않는다(약어변환과 동일 정책).
+  const applySimpTrad = (direction) => {
+    if (isMapping) return;
+    const r = convertSimpTradInBlocks(blocks, direction);
+    if (r.changed) updateField('body', serialize(r.blocks));
+    setShowSimpTrad(false);
+  };
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -368,6 +384,9 @@ export function WriterPage() {
     if (id === 'tools.insertDate') { insertDate(); return; }
     // 약어변환 — 등록 약어를 본문에서 확장(본문 변경). 매핑 가드 뒤(매핑=텍스트 잠금이라 no-op, 날짜삽입과 동일 정책).
     if (id === 'tools.abbrConvert') { convertAbbrev(); return; }
+    // 간체↔번체 변환 — 방향 선택 다이얼로그를 연다(버튼이 applySimpTrad로 본문 변환). 결과적으로 본문 변경이라
+    // 매핑 가드 뒤(매핑에선 아예 열지 않음 — 죽은 다이얼로그 방지, 약어변환과 동일 정책).
+    if (id === 'tools.simpTradConvert') { setShowSimpTrad(true); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -808,6 +827,15 @@ export function WriterPage() {
         onAdd={addAbbrev}
         onRemove={removeAbbrev}
         onClose={() => setShowAbbrevManage(false)}
+      />
+
+      {/* 간체↔번체 변환(도구>간체↔번체 변환) — 방향 선택 다이얼로그. 버튼 클릭 시 applySimpTrad(direction)이
+          convertSimpTradInBlocks + updateField('body', serialize(...)) 안전 경로로 본문을 변환하고 닫는다.
+          본문 변경이므로 매핑 가드 뒤 결선(매핑에선 메뉴가 다이얼로그를 열지 않음 — 약어변환과 동일 정책). */}
+      <SimpTradConvertDialog
+        open={showSimpTrad}
+        onConvert={applySimpTrad}
+        onClose={() => setShowSimpTrad(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.

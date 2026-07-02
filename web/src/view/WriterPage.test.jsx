@@ -3282,3 +3282,156 @@ describe('WriterPage — 약어관리/약어변환(tools.abbrManage·tools.abbrC
     expect(blocksToText(blocks)).toBe('헤드\n본문\n(끝)');
   });
 });
+
+// Step 1(24-editor-simptrad): 도구>간체↔번체 변환(tools.simpTradConvert) 결선 —
+//  - 도구 메뉴 '간체↔번체 변환' 클릭 → 방향 선택 다이얼로그(SimpTradConvertDialog) 오픈(매핑 가드 뒤).
+//  - 방향 버튼(간체→번체/번체→간체) 클릭 → convertSimpTradInBlocks + updateField('body', serialize) 안전 경로로
+//    본문 텍스트 블록만 변환(임베드·"(끝)" 불변) 후 1회성 닫기. 미매핑/오방향은 changed=false → no-op.
+//  - 본문 변경이라 매핑 가드 뒤(매핑에선 메뉴가 다이얼로그를 열지 않음 — 약어변환과 동일 정책). 표는 번들 상수(state 없음).
+describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다(약어변환/날짜 결선과 동일 패턴).
+  async function clickTool(label) {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  it("도구 메뉴 '간체↔번체 변환'이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('간체↔번체 변환').closest('button')).toBeEnabled();
+  });
+
+  it('다른 비결선 도구 항목(사진발행/이력비교/UI언어)은 여전히 비활성이다(회귀 없음)', async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('기사이력비교').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+  });
+
+  it("'간체↔번체 변환' 클릭 시 SimpTradConvertDialog(simptrad-convert, role=dialog '간체/번체 변환')가 열린다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await clickTool('간체↔번체 변환');
+    expect(screen.getByRole('dialog', { name: '간체/번체 변환' })).toBeInTheDocument();
+    expect(screen.getByTestId('simptrad-convert')).toBeInTheDocument();
+  });
+
+  it("'간체→번체' 클릭 시 본문 간체가 번체로 변환되고 저장 markupVersion에 반영된다(안전 경로), 다이얼로그 닫힘", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('国'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    await userEvent.click(screen.getByTestId('simptrad-to-trad'));
+    // 1회성 — 변환 후 다이얼로그가 닫힌다.
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n國\n(끝)');
+  });
+
+  it("'번체→간체' 클릭 시 본문 번체가 간체로 변환된다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('國'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    await userEvent.click(screen.getByTestId('simptrad-to-simp'));
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n国\n(끝)');
+  });
+
+  it('미매핑 no-op — 한글/라틴 본문은 어느 방향이든 변하지 않고 다이얼로그가 닫힌다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드라인'), textBlock('abc 본문'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    await userEvent.click(screen.getByTestId('simptrad-to-trad'));
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드라인\nabc 본문\n(끝)');
+  });
+
+  it('임베드/"(끝)" 불변 — 텍스트 중국어만 변환되고 임베드·"(끝)"는 그대로다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([
+      textBlock('国'),
+      embedBlock({ embedType: 'image', src: 'x.png' }),
+      textBlock('(끝)'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    await userEvent.click(screen.getByTestId('simptrad-to-trad'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']);
+    expect(blocks[0].text).toBe('國');                                // 텍스트 중국어만 변환
+    expect(blocks[1]).toMatchObject({ type: 'embed', src: 'x.png' }); // 임베드 불변
+    expect(blocks[2].text).toBe('(끝)');                              // "(끝)" 불변
+  });
+
+  it("'닫기'/Esc로 다이얼로그가 닫히고 본문은 변하지 않는다", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('国'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    await userEvent.click(screen.getByTestId('simptrad-close'));
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    await clickTool('간체↔번체 변환');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '간체/번체 변환' }), { key: 'Escape' });
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    // 변환 없이 닫기만 — 본문 무변경.
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n国\n(끝)');
+  });
+
+  it("매핑 모드 — '간체↔번체 변환' 클릭도 다이얼로그를 열지 않고 본문을 바꾸지 않는다(매핑 가드 뒤)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith(
+      [textBlock('제목'), textBlock('国'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickTool('간체↔번체 변환');
+    expect(screen.queryByTestId('simptrad-convert')).not.toBeInTheDocument();
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('제목\n国\n(끝)');
+  });
+});
