@@ -125,6 +125,10 @@
       "status": "completed",
       "completed_at": "2026-07-02T17:37:43+0900",
       "note": "도구>파일 정보(tools.fileInfo, 현재 disabled placeholder) 결선 — 현재 기사 본문 통계를 보여주는 읽기전용 다이얼로그. 표시 6항목: 글자수·단어수·UTF-8바이트·줄수·캐럿위치(단락/행/열)·임베드개수. editorStats.js 재사용(wordCount/byteLength/caretPosition) + 순수 함수 2개 추가(charCount/lineCount). step0 editorStats 보강+FileInfoDialog 읽기전용 순수 컴포넌트(phase17/18 다이얼로그 패턴, 입력/onSubmit 없음, 전용 yh-file-info/file-info)→step1 WriterPage 결선(MENU_ENABLED+onMenuSelect, 열 때 스냅샷 통계 주입, 캐럿=statusCaret, 임베드수=blocks.filter(isEmbedBlock)). 읽기전용이라 매핑에서도 열림(가드 앞)·본문/캐럿 무변경. Editor.jsx 미접촉·기존 메뉴 id 재사용·client 전용·server/editorPrefs/DB 미변경. 원래 phase 20으로 계획했으나 병렬 세션 PR#48(20-editor-image-upload-embed) 선점으로 21로 재지정. 배부 out-of-scope."
+    },
+    {
+      "dir": "22-editor-memo",
+      "status": "pending"
     }
   ]
 }

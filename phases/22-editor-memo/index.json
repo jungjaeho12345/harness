@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "22-editor-memo",
+  "steps": [
+    { "step": 0, "name": "memo-store-dialog", "status": "pending" },
+    { "step": 1, "name": "writer-page-wiring", "status": "pending" }
+  ]
+}
