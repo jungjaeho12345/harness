@@ -49,6 +49,20 @@ describe('convertSimpTrad — 문자열 간↔번 치환', () => {
     expect(convertSimpTrad(convertSimpTrad(simp, 'toTrad'), 'toSimp')).toBe(simp);
   });
 
+  it('1:多 왕복은 비가역(최빈 수렴): 髮/複/覆는 번→간→번에서 發/復으로 붕괴한다(first-wins 표순서 가드)', () => {
+    // 번체 '髮'→간체 '发'→다시 번체는 최빈 '發'으로 수렴해 원래 髮로 복귀하지 못한다(문맥 없는 1:多의 본질적 한계).
+    // 표(simpTradTable) 나열 순서가 바뀌면 이 수렴값이 달라지므로, 예상되는 무손실 붕괴를 못박아 회귀를 잡는다.
+    expect(convertSimpTrad(convertSimpTrad('髮', 'toSimp'), 'toTrad')).toBe('發');
+    expect(convertSimpTrad(convertSimpTrad('複', 'toSimp'), 'toTrad')).toBe('復');
+    expect(convertSimpTrad(convertSimpTrad('覆', 'toSimp'), 'toTrad')).toBe('復');
+  });
+
+  it('CJK 문장부호·개행 pass-through: 중국어만 변환하고 。，·개행은 원문 유지', () => {
+    // 문장부호(。U+3002 / ，U+FF0C)와 개행은 매핑표에 없어 그대로 통과 — 실기사 혼합문에서 서식이 깨지지 않는다.
+    expect(convertSimpTrad('国。学，电', 'toTrad')).toBe('國。學，電');
+    expect(convertSimpTrad('国\n电车', 'toTrad')).toBe('國\n電車');
+  });
+
   it('길이 보존: 문자단위 1:1이라 코드포인트 수가 불변한다', () => {
     const s = '国学电车门时语汉华马 abc 한글';
     expect(Array.from(convertSimpTrad(s, 'toTrad')).length).toBe(Array.from(s).length);
