@@ -5,8 +5,9 @@
     {
       "step": 1,
       "name": "model-filename-collision",
-      "status": "pending",
-      "deps": []
+      "status": "completed",
+      "deps": [],
+      "summary": "web/src/model/httpModel.js: resolveUploadFilename에 주입형 stamp(3번째 인자, 기본값 nextUploadStamp())와 모듈 레벨 단조 스탬프 도입 — 결정적 테스트 가능성((A))+같은 ms 연속 호출 유일성((B)) 확보. 합성 경로(3)만 적용, 통과 경로(1)(2)·uploadFile 시그니처·요청/응답 shape·/^pasted-\\d+\\.png$/ 계약 불변. 테스트 2건 추가(주입 결정성/단조 유일성)."
     },
     {
       "step": 2,

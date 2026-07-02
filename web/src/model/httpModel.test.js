@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHttpModel, resolveUploadFilename } from './httpModel.js';
 
+const realDateNow = Date.now;
+
 const BASE = 'http://api.test';
 
 function jsonResponse(body) {
@@ -426,5 +428,35 @@ describe('resolveUploadFilename', () => {
     expect(resolveUploadFilename('', 'image/svg+xml')).toBe('');
     expect(resolveUploadFilename('', '')).toBe('');
     expect(resolveUploadFilename('', undefined)).toBe('');
+  });
+
+  afterEach(() => {
+    Date.now = realDateNow;
+  });
+
+  it('uses an injected stamp verbatim so the synthesized filename is deterministic ((A))', () => {
+    // 주입된 stamp가 그대로 파일명에 반영된다(순수/결정적 테스트 가능성).
+    expect(resolveUploadFilename('', 'image/png', 12345)).toBe('pasted-12345.png');
+    expect(resolveUploadFilename('', 'image/jpeg', 7)).toBe('pasted-7.jpg');
+  });
+
+  it('returns a different filename on consecutive default-stamp calls, even within the same ms ((B))', () => {
+    // Date.now를 고정 mock 해 같은 ms를 강제해도 단조 스탬프로 서로 다른 파일명을 보장한다.
+    Date.now = () => 1000;
+    const a = resolveUploadFilename('', 'image/png');
+    const b = resolveUploadFilename('', 'image/png');
+    const c = resolveUploadFilename('', 'image/png');
+    expect(a).not.toBe(b);
+    expect(b).not.toBe(c);
+    expect(a).not.toBe(c);
+    // 여전히 순수 숫자 스탬프 포맷을 유지한다(기존 정규식 계약).
+    expect(a).toMatch(/^pasted-\d+\.png$/);
+    expect(b).toMatch(/^pasted-\d+\.png$/);
+  });
+
+  it('does not apply the uniqueness stamp to the pass-through branches (1)&(2)', () => {
+    // 확장자 있는 name과 MIME 맵 미스는 stamp 인자와 무관하게 원본을 그대로 반환한다.
+    expect(resolveUploadFilename('report.pdf', 'application/pdf', 999)).toBe('report.pdf');
+    expect(resolveUploadFilename('', 'image/bmp', 999)).toBe('');
   });
 });

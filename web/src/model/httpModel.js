@@ -26,18 +26,31 @@ function hasExtension(name) {
   return dot >= 0 && dot < s.length - 1;
 }
 
-// 서버 /api/upload로 보낼 파일명을 결정하는 순수 함수(신뢰경계=서버 — 이 합성은 편의일 뿐 서버의
+// 모듈 레벨 단조(monotonic) 스탬프 — 같은 ms에 여러 번 호출돼도 엄격히 증가하는 정수를 반환해
+// 합성 파일명의 런타임 유일성을 보장한다((B)). Date.now()가 후퇴/정지해도 항상 이전 값보다 크다.
+let lastUploadStamp = 0;
+function nextUploadStamp() {
+  let t = Date.now();
+  if (t <= lastUploadStamp) t = lastUploadStamp + 1;
+  lastUploadStamp = t;
+  return t;
+}
+
+// 서버 /api/upload로 보낼 파일명을 결정하는 (거의) 순수 함수(신뢰경계=서버 — 이 합성은 편의일 뿐 서버의
 // 확장자 화이트리스트·5MB 검증을 대체하지 않는다).
 //  1) 원본 name에 확장자가 있으면 그대로 사용(첨부/자료 파일 하위호환 — 재작성하지 않는다).
-//  2) 확장자가 없고(빈 name 포함) MIME이 이미지 맵에 있으면 pasted-<ts>.<ext>로 합성.
+//  2) 확장자가 없고(빈 name 포함) MIME이 이미지 맵에 있으면 pasted-<stamp>.<ext>로 합성.
 //  3) 맵에 없는 MIME + 확장자 없음이면 임의 확장자를 지어내지 않고 원본 name을 그대로 전송한다
 //     → 서버가 invalid-file로 안전 거부(화이트리스트 우회 시도 방지).
-export function resolveUploadFilename(name, type) {
+// stamp(3번째 인자): 주입하면 그 값을 그대로 써 고정 입력→고정 출력의 결정적 테스트가 가능하다((A)).
+// 생략하면 nextUploadStamp()가 호출마다 평가돼(JS 기본 인자는 호출 시 평가) 런타임 유일성을 준다((B)).
+// 유일성 성분은 (3) 합성 경로에만 영향을 준다 — (1)·(2) 통과 경로는 stamp와 무관하게 원본을 반환한다.
+export function resolveUploadFilename(name, type, stamp = nextUploadStamp()) {
   const original = typeof name === 'string' ? name : '';
   if (hasExtension(original)) return original;
   const ext = IMAGE_EXT_BY_MIME[type];
   if (!ext) return original;
-  return `pasted-${Date.now()}.${ext}`;
+  return `pasted-${stamp}.${ext}`;
 }
 
 function readSessionId() {
