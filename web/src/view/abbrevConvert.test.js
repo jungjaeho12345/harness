@@ -27,6 +27,11 @@ describe('expandAbbrev — 문자열 약어 치환', () => {
     expect(expandAbbrev('정부가', [{ short: '정부', long: 'X' }])).toBe('정부가');
   });
 
+  it('부분문자열 오확장 차단(오른쪽 단어문자): 정부처 안의 정부는 확장 안 함(AC-named 접두 케이스)', () => {
+    // '정부'가 더 긴 실제 단어 '정부처'의 접두일 때, 뒤가 단어문자라 미확장(행정부의 좌측 대칭).
+    expect(expandAbbrev('정부처 신설', [{ short: '정부', long: 'X' }])).toBe('정부처 신설');
+  });
+
   it('구두점 경계에서는 확장한다: (정부) → (X)', () => {
     expect(expandAbbrev('(정부)', [{ short: '정부', long: 'X' }])).toBe('(X)');
   });
@@ -43,6 +48,21 @@ describe('expandAbbrev — 문자열 약어 치환', () => {
       { short: 'US', long: 'United States' },
       { short: 'USA', long: '미국' },
     ])).toBe('United States and 미국');
+  });
+
+  it('최장일치 우선(정렬 회귀 가드): 겹치는 접두를 긴 후보가 선점한다', () => {
+    // CRITICAL: 'US'/'USA'는 단어경계 가드만으로도 통과하므로(짧은 후보가 어차피 우측 단어문자로 막힘)
+    // 최장일치 "정렬"을 실제로 검증하지 못한다. 여기서는 짧은 후보가 유효 경계에서 매치될 수 있는
+    // 구두점 종단 케이스로 정렬 자체를 가드한다 — 정렬 제거 시 'Carbon#'이 되어 실패한다.
+    expect(expandAbbrev('C#', [
+      { short: 'C', long: 'Carbon' },   // 원순서상 먼저지만 짧다 — 최장일치면 밀려야 한다.
+      { short: 'C#', long: 'CSharp' },
+    ])).toBe('CSharp');
+    // AC-named 한국어 겹침(정 vs 정부): 긴 것이 우선 — 정렬+경계 조합의 의도 문서화.
+    expect(expandAbbrev('정부', [
+      { short: '정', long: 'A' },
+      { short: '정부', long: 'B' },
+    ])).toBe('B');
   });
 
   it('case-sensitive: us는 US로 확장되지 않는다', () => {
