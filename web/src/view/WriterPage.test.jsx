@@ -2595,11 +2595,13 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
 
-  it('다른 비결선 도구 항목(tools.fileInfo)은 여전히 비활성이다(회귀 없음)', async () => {
+  it('다른 비결선 도구 항목(tools.abbrConvert)은 여전히 비활성이다(회귀 없음)', async () => {
+    // 회귀 가드 — 날짜 삽입 결선이 무관한 도구 항목을 켜지 않았는지 확인한다.
+    // (tools.fileInfo는 20-editor-file-info step1에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 약어변환으로 가드한다.)
     await openWith([textBlock('헤드')]);
     await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('파일 정보').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('약어변환').closest('button')).toBeDisabled();
   });
 });
 
@@ -2845,5 +2847,141 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
 
     await submitUrl('https://example.com/m');
     await waitFor(() => expect(container.querySelector('[data-embed-type="link"]')).toBeTruthy());
+  });
+});
+
+// Step 1(20-editor-file-info): 도구>파일 정보(tools.fileInfo) 결선 —
+// 메뉴 클릭 시 열린 시점 본문 통계를 계산해 읽기전용 FileInfoDialog에 주입한다.
+// 읽기전용이라 본문/캐럿/임베드를 바꾸지 않는다(매핑에서도 안전).
+describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function clickFileInfo() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
+  }
+
+  it("도구 메뉴 '파일 정보'(tools.fileInfo)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
+  });
+
+  it("'파일 정보' 클릭 시 FileInfoDialog(file-info, role=dialog '파일 정보')가 열린다", async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickFileInfo();
+    expect(screen.getByRole('dialog', { name: '파일 정보' })).toBeInTheDocument();
+    expect(screen.getByTestId('file-info')).toBeInTheDocument();
+  });
+
+  it('본문 통계가 다이얼로그에 표시된다(글자수/줄수/단어수/UTF-8바이트 — 본문 계산값과 일치)', async () => {
+    // blocksToText = "헤드라인\n본문" → 글자수 6(개행 제외), 줄수 2, 단어수 2,
+    // UTF-8 바이트 19(한글 6자×3B + 개행 1B) — byteLength(bodyText) 결선을 검증한다(charCount 등 오배선 방지).
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickFileInfo();
+    expect(screen.getByTestId('file-info-chars')).toHaveTextContent('6');
+    expect(screen.getByTestId('file-info-lines')).toHaveTextContent('2');
+    expect(screen.getByTestId('file-info-words')).toHaveTextContent('2');
+    expect(screen.getByTestId('file-info-bytes')).toHaveTextContent('19');
+  });
+
+  it('임베드가 있으면 file-info-embeds가 임베드 개수(blocks 기준)를 표시한다', async () => {
+    // 텍스트 2줄 + 임베드 1개 → embeds=1. bodyText에는 임베드가 빠지므로 blocks.filter로 세야 1.
+    await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    await clickFileInfo();
+    expect(screen.getByTestId('file-info-embeds')).toHaveTextContent('1');
+  });
+
+  it('포커스 전(캐럿 없음)에도 캐럿 위치가 기본값 1단락 1행 1열로 표시된다(statusCaret null 폴백)', async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickFileInfo();
+    expect(screen.getByTestId('file-info-caret')).toHaveTextContent('1단락 1행 1열');
+  });
+
+  it('캐럿을 둘째 줄에 두면 file-info-caret이 그 위치를 표시한다(statusCaret 소스)', async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 시작 = 2행 1열
+    await clickFileInfo();
+    expect(screen.getByTestId('file-info-caret')).toHaveTextContent('2행');
+  });
+
+  it("'닫기' 클릭/Esc로 다이얼로그가 닫힌다", async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickFileInfo();
+    await userEvent.click(screen.getByTestId('file-info-close'));
+    expect(screen.queryByRole('dialog', { name: '파일 정보' })).not.toBeInTheDocument();
+
+    await clickFileInfo();
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '파일 정보' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '파일 정보' })).not.toBeInTheDocument();
+  });
+
+  it('읽기전용 — 파일 정보를 열고 닫아도 본문(saveArticle markupVersion)이 변하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1);
+    await clickFileInfo();
+    await userEvent.click(screen.getByTestId('file-info-close'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트/임베드 무변경 — 본문이 그대로다(읽기전용).
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'text']);
+    expect(blocksToText(blocks)).toBe('헤드\n본문');
+  });
+
+  it('읽기전용 — 다이얼로그에 입력 필드(input/textarea)가 없다', async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickFileInfo();
+    const dialog = screen.getByTestId('file-info');
+    expect(dialog.querySelector('input')).toBeNull();
+    expect(dialog.querySelector('textarea')).toBeNull();
+  });
+
+  it("매핑 모드에서도 '파일 정보'가 활성이고 다이얼로그가 열린다(읽기전용 — 임베드 삽입 항목과 동일)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
+    expect(screen.getByRole('dialog', { name: '파일 정보' })).toBeInTheDocument();
   });
 });
