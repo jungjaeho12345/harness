@@ -119,6 +119,11 @@
       "status": "completed",
       "completed_at": "2026-07-01T23:27:59+0900",
       "note": "붙여넣기(Ctrl+V) 이미지가 본문(markupVersion)에 base64를 인라인 저장하던 것을 /api/upload 경로 참조로 전환 — 본문 크기 폭증 근본해결. step0 model-upload-filename(httpModel.resolveUploadFilename: 확장자 없는 클립보드 File을 MIME→pasted-<ts>.<ext> 합성, 맵 미스(bmp/svg)+빈 name은 서버가 invalid-file 거부, 계약·서버 미변경)→step1 paste-upload-embed(Editor.jsx FileReader/base64 제거·onPasteEmbed→onPasteImageFile(file,caret) 위임, WriterPage async pasteImageAtCaret가 model.uploadFile 후 makeImageEmbed(path) 삽입·실패/too-large는 alert+삽입취소·base64 폴백 없음, Editor·WriterPage 테스트 동반 갱신)→step2 render-backcompat-regression(신규 /uploads + 레거시 data:image base64 둘 다 InlineEmbed·articleDetail 렌더 회귀 잠금, isAllowedImageSrc 불변). 정책: 실패=alert+취소·5MB 서버판정·placeholder 없음·레거시 렌더 보존(마이그레이션 별도 phase). 🔎 코드리뷰(⑤ 3차원+적대적검증)가 MAJOR 데이터 무결성 버그 적발 — pasteImageAtCaret가 async 업로드 대기 후 stale body/탭 클로저로 삽입해 (1)대기중 타이핑 유실 (2)연속 붙여넣기 앞 임베드 유실 (3)탭 전환 시 다른 기사 본문 파손 가능(네트워크 왕복이 await 창 확대) → fix(c98871c): insertEmbedAtLine에 srcBody/mapping 명시 인자(기본값=클로저, 동기 호출부 무변경) + pasteImageAtCaret가 tabId 고정·activeTabRef로 동일 탭일 때만 최신 body 위에 삽입, TDD 회귀 2건. nit 4건(선행점 파일명·embedFromPaste 死코드·네트워크 reject 무피드백·await 레이스) 비차단 수용. Editor.jsx 붙여넣기만 변경·server/·DB·스키마 미변경(비파괴). test:web 873·server 359·build·lint green."
+    },
+    {
+      "dir": "21-editor-tools-memo",
+      "status": "planned",
+      "note": "에디터 도구 메뉴/툴바 미결선 항목 '메모장'(tools.memo / tool.memo) 결선 — 본문 비변경 client 전용 스크래치패드. step0 memo-store(editorMemo.js: loadMemo/saveMemo localStorage 전용 모듈, editorPrefs와 분리 — 적용/취소 게이트 결합·매 키 재직렬화 회피)→step1 memo-dialog(MemoDialog.jsx 순수 제어 컴포넌트, textarea 1개·Escape/닫기, GlyphInputDialog 패턴)→step2 toolbar-enable(EditorToolBar enabledIds/onSelect 도입 — 메뉴바 규약 재사용, 미전달 시 전 버튼 disabled 하위호환)→step3 writer-wiring(WriterPage: MENU_ENABLED에 tools.memo 추가·메뉴/툴바 두 진입점 setShowMemo 단일 수렴·memoText lazy 초기화+onChange 영속화·MemoDialog 렌더). 매핑 정책: 메모장은 본문 무변경 → isMapping 가드 앞 라우팅(매핑에서도 열림). Editor.jsx 무접촉·client 전용·DB 비파괴. 계획 검토(harness-plan-reviewer) 대기."
     }
   ]
 }

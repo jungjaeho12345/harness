@@ -1,0 +1,35 @@
+{
+  "project": "기사 작성기",
+  "phase": "21-editor-tools-memo",
+  "steps": [
+    {
+      "step": 0,
+      "name": "memo-store",
+      "status": "completed",
+      "deps": [],
+      "ac": "npm run test:web && npm run build && npm run lint",
+      "summary": "editorMemo.js 추가 — loadMemo()/saveMemo(text) client localStorage(yh.editorMemo) 전용 저장소. { text } JSON 왕복·graceful(no-throw). editorPrefs 미수정. editorMemo.test.js 6케이스."
+    },
+    {
+      "step": 1,
+      "name": "memo-dialog",
+      "status": "pending",
+      "deps": [],
+      "ac": "npm run test:web && npm run build && npm run lint"
+    },
+    {
+      "step": 2,
+      "name": "toolbar-enable",
+      "status": "pending",
+      "deps": [],
+      "ac": "npm run test:web && npm run build && npm run lint"
+    },
+    {
+      "step": 3,
+      "name": "writer-wiring",
+      "status": "pending",
+      "deps": [0, 1, 2],
+      "ac": "npm run test:web && npm run build && npm run lint"
+    }
+  ]
+}
