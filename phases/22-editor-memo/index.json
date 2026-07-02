@@ -7,7 +7,8 @@
       "name": "memo-store-dialog",
       "status": "completed",
       "started_at": "2026-07-02T18:22:10+0900",
-      "summary": "memoStore.js(전역 메모 순수 load/save, 전용 키 yh.editorMemo·graceful 폴백) + MemoDialog.jsx(controlled 표시/입력 다이얼로그, Enter 미인터셉트·Esc만 닫기, 전용 yh-editor-memo/editor-memo) + 테스트(9+8) + yonhap.css yh-editor-memo 스타일 추가. 결선은 Step 1."
+      "summary": "memoStore.js(전역 메모 순수 load/save, 전용 키 yh.editorMemo·graceful 폴백) + MemoDialog.jsx(controlled 표시/입력 다이얼로그, Enter 미인터셉트·Esc만 닫기, 전용 yh-editor-memo/editor-memo) + 테스트(9+8) + yonhap.css yh-editor-memo 스타일 추가. 결선은 Step 1.",
+      "completed_at": "2026-07-02T18:26:24+0900"
     },
     {
       "step": 1,
