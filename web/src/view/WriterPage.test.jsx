@@ -614,6 +614,20 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
     const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
     expect(texts).not.toContain('제목'); // 이전 탭(T0) 본문이 새 탭으로 새지 않음
   });
+
+  it('업로드가 reject(네트워크 오류) → 실패 alert + 임베드 미삽입(본문 불변)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockRejectedValue(new Error('network'));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 0);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('이미지 업로드에 실패했습니다.'));
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy(); // 미삽입
+    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 불변
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 폴백 없음
+  });
 });
 
 // 검색패널(이미지/영상/글기사) 임베드 — 마지막 커서 텍스트 줄 "뒤"에 삽입 + 빈 줄 + 커서를 빈 줄로 이동(edit 모드, news.md 156행).

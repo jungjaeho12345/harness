@@ -17,13 +17,15 @@
         1
       ],
       "summary": "死코드 embedFromPaste 제거: 삭제 전 grep(web/src·server)으로 소비자 0건 재확인(정의+전용 테스트만 매치). web/src/view/clipboardEmbed.js에서 함수·주석 제거, clipboardEmbed.test.js에서 import 항목·전용 it 블록 제거. 다른 export(parseYouTubeId/make*Embed/EMBED_SIZE/isAllowed*/classifyUrl) 불변. AC 전부 green: test:web 875/875, server 359/359, build OK, lint clean, 삭제 후 grep 0건."
+    },
     {
       "step": 3,
       "name": "paste-upload-error-feedback",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         2
-      ]
+      ],
+      "summary": "WriterPage.jsx pasteImageAtCaret의 업로드+삽입을 try/catch로 감싸 reject/throw(네트워크·FileReader 오류) 시 window.alert('이미지 업로드에 실패했습니다.') 안내 + 임베드 미삽입 + base64 폴백 금지. 기존 too-large/비-ok 분기·탭 전환 취소·activeTabRef/tabId 방어 로직 불변. WriterPage.test.jsx에 reject 케이스 추가(alert 호출·미삽입·본문 불변·data: 없음). AC 전부 green: test:web 876/876, server 359/359, build OK, lint clean. Editor.jsx·model·server·DB 미변경."
     },
     {
       "step": 4,
