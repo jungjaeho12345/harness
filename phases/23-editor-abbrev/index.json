@@ -1,0 +1,16 @@
+{
+  "project": "기사 작성기",
+  "phase": "23-editor-abbrev",
+  "steps": [
+    {
+      "step": 0,
+      "name": "abbrev-store-convert-dialog",
+      "status": "pending"
+    },
+    {
+      "step": 1,
+      "name": "writer-page-wiring",
+      "status": "pending"
+    }
+  ]
+}
