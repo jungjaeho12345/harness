@@ -13,9 +13,10 @@
     {
       "step": 1,
       "name": "memo-dialog",
-      "status": "pending",
+      "status": "completed",
       "deps": [],
-      "ac": "npm run test:web && npm run build && npm run lint"
+      "ac": "npm run test:web && npm run build && npm run lint",
+      "summary": "MemoDialog.jsx 추가 — 순수 제어 컴포넌트({open,text,onChange,onClose}). role=dialog '메모장'·data-testid memo/memo-textarea/memo-close·Escape→onClose. 자체 useState/영속화/본문접근 없음. yh-memo 전용 클래스(+yonhap.css 스타일). MemoDialog.test.jsx 7케이스."
     },
     {
       "step": 2,
