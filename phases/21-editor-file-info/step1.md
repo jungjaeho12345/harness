@@ -111,7 +111,7 @@ npm run lint
 
 1. 위 AC 커맨드를 실행한다(필요 시 `PYTHONUTF8=1`).
 2. 아키텍처 체크리스트: 읽기전용(본문/캐럿/임베드 무변경)·매핑 가드 앞 배치·캐럿 소스 statusCaret·임베드는 blocks 기준·기존 id 재사용·server/editorPrefs 불변·MENU_ENABLED에 fileInfo만 추가.
-3. 결과에 따라 `phases/20-editor-file-info/index.json`의 step 1을 갱신(completed+summary / error / blocked).
+3. 결과에 따라 `phases/21-editor-file-info/index.json`의 step 1을 갱신(completed+summary / error / blocked).
 
 ## 금지사항
 

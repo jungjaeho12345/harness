@@ -1,6 +1,6 @@
 {
   "project": "기사 작성기",
-  "phase": "20-editor-file-info",
+  "phase": "21-editor-file-info",
   "steps": [
     { "step": 0, "name": "file-info-stats-dialog", "status": "completed", "summary": "editorStats.js에 순수 charCount(개행 제외, 코드포인트 단위)·lineCount(lines(text).length, 빈문자열→1) 추가(기존 wordCount/byteLength/caretPosition export 불변). FileInfoDialog.jsx 읽기전용 표시 다이얼로그 신규 — props(stats/onClose)만, role=dialog '파일 정보', 전용 yh-file-info/file-info className·testid, 6항목(chars/words/bytes/lines/embeds/caret) 각 testid, Esc/닫기 onClose, stats 미주입 안전폴백, 입력폼 없음. yonhap.css에 yh-file-info 패널 스타일 추가. editorStats 10건+FileInfoDialog 9건 신규 테스트, 전체 873건 통과·build·lint OK." },
     { "step": 1, "name": "writer-page-wiring", "status": "completed", "summary": "WriterPage 결선 — MENU_ENABLED에 tools.fileInfo 추가·showFileInfo 토글(showGlyphInput 패턴)·열 때만 fileInfoStats 스냅샷 파생계산(render 중, effect/타이머 없이; 캐럿=statusCaret[StatusBar 동일 소스, 메뉴 클릭으로 라이브 readCaret null 대비]·임베드수=blocks.filter(isEmbedBlock)[bodyText는 텍스트만이라 임베드 누락]·chars/words/bytes/lines=editorStats 순수함수)·FileInfoDialog 렌더. tools.fileInfo는 isMapping 가드 앞 결선(읽기전용이라 본문/캐럿/임베드 무변경 — 죽은 버튼 방지). phase18이 남긴 스테일 회귀가드(tools.fileInfo 비활성 단언) → 여전히 미결선 tools.abbrConvert로 교정 + bytes 결선 커버리지 보강(테스트만). Editor.jsx/server/DB 미접촉·client 전용. test:web 883·lint·build·server 357 green." }

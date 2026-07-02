@@ -116,7 +116,7 @@ npm run lint
 
 1. 위 AC 커맨드를 실행한다(필요 시 환경변수 `PYTHONUTF8=1` 또는 UTF-8 콘솔).
 2. 아키텍처 체크리스트: editorStats 신규 함수 순수성(text-in, DOM/Date 없음)·기존 export 불변, FileInfoDialog 읽기전용(입력/onSubmit 없음)·editorStats/blocks 미import·전용 className/testid.
-3. 결과에 따라 `phases/20-editor-file-info/index.json`의 step 0을 갱신(completed+summary / error / blocked).
+3. 결과에 따라 `phases/21-editor-file-info/index.json`의 step 0을 갱신(completed+summary / error / blocked).
 
 ## 금지사항
 
