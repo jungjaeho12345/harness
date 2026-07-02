@@ -3085,6 +3085,14 @@ describe('WriterPage — 메모장(tools.memo) 결선', () => {
     expect(loadMemo()).toBe('');
   });
 
+  it('새 마운트 시 이전에 저장된 메모가 복원돼 다이얼로그에 표시된다(lazy-init loadMemo)', async () => {
+    // 마운트 전에 저장본을 심어두면 memoText 초기화(useState(() => loadMemo()))가 이를 복원해야 한다(새로고침 후 지속).
+    localStorage.setItem('yh.editorMemo', JSON.stringify('이전 세션 저장 메모'));
+    await openWith([textBlock('헤드')]);
+    await clickMemo();
+    expect(screen.getByTestId('editor-memo-text')).toHaveValue('이전 세션 저장 메모');
+  });
+
   it("매핑 모드에서도 '메모장'이 활성이고 다이얼로그가 열린다(본문 무관 — 매핑 안전)", async () => {
     await openWith(
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],

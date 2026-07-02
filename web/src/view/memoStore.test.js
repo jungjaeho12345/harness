@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { loadMemo, saveMemo } from './memoStore.js';
 
 // 전역 메모(스크래치패드) 영속 모듈 — client localStorage 전용(서버 무관, 기사와 무관한 단일 전역 메모 1개).
@@ -59,5 +59,18 @@ describe('memoStore — 전역 메모 load/save (순수, localStorage 전용)', 
     expect(loadMemo()).toBe('내용');
     saveMemo('');
     expect(loadMemo()).toBe('');
+  });
+
+  it('localStorage.setItem이 throw해도(quota/접근불가) saveMemo가 예외 없이 값을 반환한다(graceful no-op)', () => {
+    const spy = vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded');
+    });
+    try {
+      expect(() => saveMemo('저장 실패해도 안전')).not.toThrow();
+      // 저장 실패는 삼키되(no-op) 호출자에겐 정규화된 값을 그대로 돌려준다.
+      expect(saveMemo('반환값 유지')).toBe('반환값 유지');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
