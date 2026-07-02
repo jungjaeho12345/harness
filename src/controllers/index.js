@@ -73,6 +73,7 @@ export function createControllers(db, {
     applyAction: (articleId, role, action, opts) => articleService.applyAction(articleId, role, action, opts),
     derive: (sourceId, mode, overrides) => articleService.deriveArticle(sourceId, mode, overrides),
     queryHistory: (articleId, opts) => articleService.queryHistory(articleId, opts),
+    getHistorySnapshot: (articleId, historyId) => articleService.getHistorySnapshot(articleId, historyId),
     acquireEditLock: (articleId, opts) => articleService.acquireEditLock(articleId, opts),
     releaseEditLock: (articleId, opts) => articleService.releaseEditLock(articleId, opts),
     forceReleaseEditLock: (articleId) => articleService.forceReleaseEditLock(articleId),

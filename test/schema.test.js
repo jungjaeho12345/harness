@@ -124,13 +124,31 @@ test('createSchema: ArticleHistory.id 는 INTEGER PRIMARY KEY (자동 증가 ROW
   assert.deepEqual(ids, [1, 2], 'id가 자동 증가해야 함');
 });
 
-test('createSchema: ArticleHistory — markupVersion 본문 스냅샷 컬럼이 없다 (범위 밖)', () => {
+test('createSchema: ArticleHistory — markupVersion 본문 스냅샷 컬럼이 있다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   assert.ok(
-    !columns(db, 'ArticleHistory').includes('markupVersion'),
-    'ArticleHistory에 markupVersion 컬럼이 없어야 함',
+    columns(db, 'ArticleHistory').includes('markupVersion'),
+    'ArticleHistory에 markupVersion 컬럼이 있어야 함',
   );
+});
+
+test('createSchema: 구버전 ArticleHistory(markupVersion 없음)에 additive 마이그레이션 시 기존 행 보존', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 버전: 스냅샷 컬럼이 없는 ArticleHistory + 기존 행
+  db.exec(
+    'CREATE TABLE ArticleHistory (id INTEGER PRIMARY KEY, articleId VARCHAR, eventType VARCHAR, action VARCHAR, fromStatus VARCHAR, toStatus VARCHAR, actorUserId VARCHAR, createdAt VARCHAR)',
+  );
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, action, createdAt) VALUES ('a1', 'status', 'send', '2026-06-16T00:00:00Z')",
+  ).run();
+
+  createSchema(db);
+
+  assert.ok(columns(db, 'ArticleHistory').includes('markupVersion'), '누락된 markupVersion 컬럼이 추가되어야 함');
+  const row = db.prepare("SELECT * FROM ArticleHistory WHERE articleId='a1'").get();
+  assert.equal(row.action, 'send', '기존 행은 보존되어야 함');
+  assert.equal(row.markupVersion, null, '기존 행의 스냅샷은 NULL(비교 불가 — 정상)');
 });
 
 test('createSchema: 멱등 — 2회 호출해도 오류 없이 데이터를 보존한다', () => {

@@ -104,6 +104,67 @@ test('history: queryHistory({sendOnly})는 송고 status 이벤트만 반환한�
   assert.equal(sendOnly[0].action, 'send');
 });
 
+test('history: 편집(edit) 이력 행에 그 시점 본문(markupVersion) 스냅샷이 저장된다', () => {
+  const { db, service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' });
+  const snap = markup('수정된 본문');
+  service.update(articleId, { title: '수정', markupVersion: snap, modifier: 'kim' });
+
+  const row = db.prepare('SELECT * FROM ArticleHistory WHERE articleId = ?').get(articleId);
+  assert.equal(row.eventType, 'edit');
+  assert.equal(row.markupVersion, snap, '편집 시점 본문이 스냅샷으로 저장된다');
+
+  // 목록(queryHistory)은 본문 blob 없이 hasSnapshot만 노출한다(경량 목록).
+  const [item] = service.queryHistory(articleId);
+  assert.equal(item.markupVersion, undefined);
+  assert.ok(item.hasSnapshot);
+});
+
+test('history: 본문 없는 메타 전용 편집의 스냅샷은 NULL이다(hasSnapshot falsy)', () => {
+  const { db, service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' });
+  service.update(articleId, { title: '메타만 수정', modifier: 'kim' });
+
+  const row = db.prepare('SELECT * FROM ArticleHistory WHERE articleId = ?').get(articleId);
+  assert.equal(row.markupVersion, null);
+  assert.ok(!service.queryHistory(articleId)[0].hasSnapshot);
+});
+
+test('history: status 전이 이력 행의 스냅샷은 NULL이다(본문 불변)', () => {
+  const { db, service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const row = db.prepare("SELECT * FROM ArticleHistory WHERE articleId = ? AND eventType = 'status'").get(articleId);
+  assert.equal(row.markupVersion, null, '상태 전이는 스냅샷을 기록하지 않는다');
+  assert.ok(!service.queryHistory(articleId)[0].hasSnapshot);
+});
+
+test('history: getHistorySnapshot이 단건 본문을 반환하고 없는/타기사 id는 not-found다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' });
+  const snap = markup('수정된 본문');
+  service.update(articleId, { markupVersion: snap, modifier: 'kim' });
+  const { id } = service.queryHistory(articleId)[0];
+
+  const r = service.getHistorySnapshot(articleId, id);
+  assert.equal(r.ok, true);
+  assert.equal(r.item.markupVersion, snap);
+
+  // 없는 id / 다른 기사의 articleId로는 not-found(스코프 — 스냅샷 유출 방지).
+  assert.deepEqual(service.getHistorySnapshot(articleId, 99999), { ok: false, reason: 'not-found' });
+  assert.deepEqual(service.getHistorySnapshot('AKR-OTHER', id), { ok: false, reason: 'not-found' });
+});
+
+test('history: getHistorySnapshot은 historyModel 미주입이면 not-found다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const service = createArticleService({ articleModel, db }); // historyModel 없음
+
+  assert.deepEqual(service.getHistorySnapshot('AKR1', 1), { ok: false, reason: 'not-found' });
+});
+
 test('history: 이력 기록이 실패해도(historyModel.insert throw) 편집/전이는 정상 반환된다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
