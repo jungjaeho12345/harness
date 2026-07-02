@@ -12,11 +12,11 @@
     {
       "step": 2,
       "name": "remove-dead-embedfrompaste",
-      "status": "pending",
+      "status": "completed",
       "deps": [
         1
-      ]
-    },
+      ],
+      "summary": "死코드 embedFromPaste 제거: 삭제 전 grep(web/src·server)으로 소비자 0건 재확인(정의+전용 테스트만 매치). web/src/view/clipboardEmbed.js에서 함수·주석 제거, clipboardEmbed.test.js에서 import 항목·전용 it 블록 제거. 다른 export(parseYouTubeId/make*Embed/EMBED_SIZE/isAllowed*/classifyUrl) 불변. AC 전부 green: test:web 875/875, server 359/359, build OK, lint clean, 삭제 후 grep 0건."
     {
       "step": 3,
       "name": "paste-upload-error-feedback",

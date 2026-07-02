@@ -144,11 +144,3 @@ export function makeLinkEmbed(href, { title = '' } = {}) {
     title,
   });
 }
-
-// 클립보드 페이로드({imageDataUrl?, text?}) → 임베드 블록(없으면 null).
-// 이미지가 있으면 이미지 우선, 없으면 텍스트가 유튜브 URL일 때 영상.
-export function embedFromPaste({ imageDataUrl, text } = {}) {
-  if (imageDataUrl) return makeImageEmbed(imageDataUrl);
-  if (text) return makeVideoEmbed(text);
-  return null;
-}

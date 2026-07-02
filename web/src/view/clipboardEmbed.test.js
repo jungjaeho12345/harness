@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  EMBED_SIZE, parseYouTubeId, makeImageEmbed, makeVideoEmbed, makeArticleEmbed, embedFromPaste,
+  EMBED_SIZE, parseYouTubeId, makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
   isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
   makeAudioEmbed, makeLocalVideoEmbed, makeLinkEmbed,
 } from './clipboardEmbed.js';
@@ -172,12 +172,6 @@ describe('clipboardEmbed — embed builders', () => {
     });
   });
 
-  it('embedFromPaste prefers image, falls back to youtube text, else null', () => {
-    expect(embedFromPaste({ imageDataUrl: 'data:image/png;base64,AAA' }).embedType).toBe('image');
-    expect(embedFromPaste({ text: 'https://youtu.be/dQw4w9WgXcQ' }).embedType).toBe('video');
-    expect(embedFromPaste({ text: 'just text' })).toBeNull();
-    expect(embedFromPaste({})).toBeNull();
-  });
 });
 
 // 19-step1: 오디오/로컬영상/링크 팩토리. 필드명(src/href/title)은 step0 렌더가 읽는 키와 일치.
