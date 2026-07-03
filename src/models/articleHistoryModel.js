@@ -5,6 +5,7 @@
 // id는 자동 증가이므로 INSERT에서 제외한다.
 const HISTORY_COLS = [
   'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
+  'markupVersion',
 ];
 
 function insertInto(db, table, cols, obj) {
@@ -22,10 +23,24 @@ export function createArticleHistoryModel(db) {
   }
 
   // 해당 기사의 이력을 최신순(id DESC)으로 반환한다 — 목록은 최근 이벤트가 위에 오도록.
+  // 본문 스냅샷(markupVersion)은 SELECT하지 않고 존재 여부(hasSnapshot)만 파생한다 —
+  // /history는 이력보기/송고이력보기 모달도 쓰는 경량 목록. 본문은 querySnapshotById로만.
   function queryByArticle(articleId) {
-    return db.prepare('SELECT * FROM ArticleHistory WHERE articleId = ? ORDER BY id DESC')
-      .all(articleId);
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, fromStatus, toStatus, actorUserId, createdAt,
+              CASE WHEN markupVersion IS NOT NULL AND markupVersion != '' THEN 1 ELSE 0 END AS hasSnapshot
+         FROM ArticleHistory WHERE articleId = ? ORDER BY id DESC`,
+    ).all(articleId);
   }
 
-  return { insert, queryByArticle };
+  // 단건 스냅샷 조회 — 본문(markupVersion) 포함. 반드시 articleId로 스코프한다
+  // (다른 기사의 스냅샷이 id만으로 새지 않게). 없으면 undefined.
+  function querySnapshotById(articleId, id) {
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, actorUserId, createdAt, markupVersion
+         FROM ArticleHistory WHERE id = ? AND articleId = ?`,
+    ).get(id, articleId);
+  }
+
+  return { insert, queryByArticle, querySnapshotById };
 }

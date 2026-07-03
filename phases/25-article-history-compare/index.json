@@ -1,0 +1,32 @@
+{
+  "project": "기사 작성기",
+  "phase": "25-article-history-compare",
+  "steps": [
+    {
+      "step": 0,
+      "name": "history-snapshot-backend",
+      "status": "completed",
+      "started_at": "2026-07-02T21:43:55+0900",
+      "summary": "ArticleHistory에 markupVersion 스냅샷 컬럼 additive 추가, 편집(edit) 이력에 본문 스냅샷 기록(status는 NULL), queryByArticle 경량화(hasSnapshot 파생), articleId 스코프 단건 조회 GET /api/articles/:id/history/:historyId(세션 게이트) — 테스트 368개 통과·lint 클린",
+      "completed_at": "2026-07-02T21:50:03+0900"
+    },
+    {
+      "step": 1,
+      "name": "diff-and-compare-dialog",
+      "status": "completed",
+      "started_at": "2026-07-03T22:15:55+0900",
+      "summary": "라인 diff 순수 함수 diffLines(LCS 직접 구현·의존성 0·결정적, historyDiff.js) + 읽기전용 비교 다이얼로그 HistoryCompareDialog.jsx(entries/leftKey/rightKey/leftText/rightText props 주입, transport 미호출, add/del/equal 세그먼트 data-type 렌더, 빈 상태/로딩 안내, Esc/닫기 onClose) + yh-history-compare 스타일 — 신규 테스트 21개 포함 web 1040개 통과·lint 클린",
+      "completed_at": "2026-07-03T22:25:20+0900"
+    },
+    {
+      "step": 2,
+      "name": "writer-page-wiring",
+      "status": "completed",
+      "started_at": "2026-07-03T22:25:21+0900",
+      "summary": "도구>기사이력비교(tools.historyCompare) 결선 — MODEL_KEYS·httpModel·fakeModel 3곳에 getHistorySnapshot 추가(GET /api/articles/:id/history/:historyId), WriterPage에서 매핑 가드 앞 읽기전용 결선(열 때 queryHistory→hasSnapshot 필터, 좌/우 선택 시 스냅샷 지연 조회→deserialize+blocksToText, 현재 본문은 in-memory, 결과는 표시 state만·본문/캐럿/임베드 무변경, 새 기사/스냅샷 없음은 빈 상태) — 신규 테스트 13개 포함 web 1053개 통과·build·lint 클린",
+      "completed_at": "2026-07-03T22:36:24+0900"
+    }
+  ],
+  "created_at": "2026-07-02T21:43:55+0900",
+  "completed_at": "2026-07-03T22:36:24+0900"
+}

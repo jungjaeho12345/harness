@@ -151,6 +151,19 @@ describe('createHttpModel', () => {
     expect(callAt(1)[0]).toBe(`${BASE}/api/articles/AKR1/history?sendOnly=1`);
   });
 
+  // 기사이력비교 — 목록(hasSnapshot 경량)과 달리 본문(markupVersion)은 이 단건 GET으로만 지연 조회한다.
+  it('getHistorySnapshot GETs /api/articles/:id/history/:historyId with no body and returns { ok, item }', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, item: { id: 7, markupVersion: '{}' } }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.getHistorySnapshot('AKR1', 7);
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/articles/AKR1/history/7`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(r).toEqual({ ok: true, item: { id: 7, markupVersion: '{}' } });
+  });
+
   it('createUser POSTs /api/users and updateUser PUTs /api/users/:id', async () => {
     const model = createHttpModel({ base: BASE });
 

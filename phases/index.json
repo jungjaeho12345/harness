@@ -140,6 +140,11 @@
       "dir": "24-editor-simptrad",
       "status": "completed",
       "completed_at": "2026-07-02T20:40:24+0900"
+    },
+    {
+      "dir": "25-article-history-compare",
+      "status": "completed",
+      "completed_at": "2026-07-03T22:36:24+0900"
     }
   ]
 }

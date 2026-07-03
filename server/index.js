@@ -428,6 +428,21 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // 단건 이력 스냅샷 조회 — 기사이력비교용 본문(markupVersion) 반환. 세션 게이트, 읽기 전용(DB 비파괴).
+  // 목록(/history)은 blob 없이 hasSnapshot만 싣고, 본문은 이 라우트로 필요할 때만 조회한다.
+  // controllers.article.getHistorySnapshot에 위임만 한다(ADR-006). articleId 스코프는 모델이 강제.
+  app.get('/api/articles/:id/history/:historyId', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const historyId = Number(req.params.historyId);
+      if (!Number.isInteger(historyId)) return res.status(404).json({ ok: false, reason: 'not-found' });
+      const r = controllers.article.getHistorySnapshot(req.params.id, historyId);
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) { next(e); }
+  });
+
   // 신규 저장 — R/D/Z. 부서가 비면 세션 부서를 stamp한다.
   // 초기 status는 세션 role + 의도 action으로 서버가 결정한다(기본 RDS, Z+hold만 DDH — initialStatus).
   app.post('/api/articles', articleJson, (req, res, next) => {

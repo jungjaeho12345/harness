@@ -64,6 +64,7 @@ const SCHEMA = {
     ['toStatus', 'VARCHAR'],
     ['actorUserId', 'VARCHAR'],
     ['createdAt', 'VARCHAR'],
+    ['markupVersion', 'VARCHAR'], // 편집(edit) 시점 본문 스냅샷 — status 전이는 NULL(본문 불변)
   ],
   ReceiverConfig: [
     ['id', 'INTEGER PRIMARY KEY'],

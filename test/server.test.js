@@ -244,6 +244,45 @@ test('GET /api/articles/:id/history?sendOnly=1: send 이벤트만 반환, 미인
   } finally { await ctx.close(); }
 });
 
+test('GET /api/articles/:id/history/:historyId: 미인증 401, 인증 200 item(본문 포함), 없는 id 404', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: END_MARKUP } })).body;
+
+    // 편집 저장(잠금 획득 → PUT)으로 스냅샷 있는 edit 이력을 만든다.
+    const lock = await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab1' });
+    assert.equal(lock.status, 200);
+    const put = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid, clientId: 'tab1', body: { markupVersion: END_MARKUP },
+    });
+    assert.equal(put.status, 200);
+
+    // 목록은 본문 blob 없이 hasSnapshot만 싣는다(경량).
+    const list = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    const edit = list.body.items.find((h) => h.eventType === 'edit');
+    assert.ok(edit, 'edit 이력 행이 있어야 함');
+    assert.ok(edit.hasSnapshot, '스냅샷 존재 플래그');
+    assert.equal(edit.markupVersion, undefined, '목록에는 본문 blob이 실리지 않는다');
+
+    // 미인증 → 401.
+    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/history/${edit.id}`);
+    assert.equal(unauth.status, 401);
+
+    // 인증 → 200 { ok:true, item }(본문 포함).
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history/${edit.id}`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.item.markupVersion, END_MARKUP);
+
+    // 없는 id → 404 not-found.
+    const missing = await api(ctx.base, 'GET', `/api/articles/${articleId}/history/999999`, { sid });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.reason, 'not-found');
+  } finally { await ctx.close(); }
+});
+
 test('GET /api/articles/:id/history: 이벤트 없는 기사는 빈 items, 단건/search 라우트는 무회귀', async () => {
   const ctx = await start();
   try {

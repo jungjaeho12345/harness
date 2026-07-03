@@ -88,7 +88,8 @@ export function createArticleService({ articleModel, db, historyModel }) {
       contents: { ...pick(fields, CONTENTS_FIELDS), editedAt },
     });
     // 편집 성공 후 이력 기록. actor는 호출자가 stamp한 modifier(세션 userId — step2).
-    record({ articleId, eventType: 'edit', actorUserId: fields.modifier });
+    // 이 편집에서 저장되는 본문을 스냅샷으로 함께 기록한다(기사이력비교 — 메타 전용 편집이면 undefined → NULL).
+    record({ articleId, eventType: 'edit', actorUserId: fields.modifier, markupVersion: fields.markupVersion });
     return { ok: true, changes };
   }
 
@@ -193,6 +194,15 @@ export function createArticleService({ articleModel, db, historyModel }) {
     return rows.filter((r) => r.eventType === 'status' && r.action === 'send');
   }
 
+  // 단건 이력 스냅샷 조회 — 본문(markupVersion) 포함. 기사이력비교가 사용자가 고른 스냅샷만 지연 조회한다.
+  // articleId 스코프는 모델이 강제한다(타 기사 스냅샷 유출 방지). 읽기 전용.
+  function getHistorySnapshot(articleId, historyId) {
+    if (!historyModel) return { ok: false, reason: 'not-found' };
+    const item = historyModel.querySnapshotById(articleId, historyId);
+    if (!item) return { ok: false, reason: 'not-found' };
+    return { ok: true, item };
+  }
+
   // 편집 잠금 — 보유자는 편집 탭(clientId)이다. 잠겨 있어도 stale(30분 무갱신)이면 가져갈 수 있다.
   // 획득 실패 시 누가 잠갔는지는 노출하지 않는다.
   // 일관된 a/b/c 모델:
@@ -258,6 +268,7 @@ export function createArticleService({ articleModel, db, historyModel }) {
 
   return {
     create, update, getById, query, search, applyAction, deriveArticle, queryHistory,
+    getHistorySnapshot,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };
 }

@@ -71,6 +71,43 @@ test('articleHistoryModel: queryByArticle는 다른 기사의 이력을 섞지 �
   assert.equal(rows[0].articleId, 'AKR1');
 });
 
+test('articleHistoryModel: queryByArticle는 markupVersion 대신 hasSnapshot 플래그만 반환한다 (목록 경량)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:01.000Z', markupVersion: '{"format":"yh-editor","blocks":[]}',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-06-16T00:00:02.000Z',
+  });
+
+  const rows = history.queryByArticle('AKR1');
+  assert.equal(rows.length, 2);
+  for (const r of rows) assert.equal(r.markupVersion, undefined, '본문 blob은 목록에 싣지 않는다');
+  // id DESC — status(스냅샷 없음)가 먼저, edit(스냅샷 있음)이 뒤.
+  assert.ok(!rows[0].hasSnapshot, 'status 행은 hasSnapshot falsy');
+  assert.ok(rows[1].hasSnapshot, '스냅샷 있는 edit 행은 hasSnapshot truthy');
+});
+
+test('articleHistoryModel: querySnapshotById는 본문 포함 단건을 articleId 스코프로 반환한다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:01.000Z', markupVersion: 'SNAP-1',
+  });
+  const { id } = history.queryByArticle('AKR1')[0];
+
+  const found = history.querySnapshotById('AKR1', id);
+  assert.equal(found.markupVersion, 'SNAP-1', '단건 조회는 본문을 포함한다');
+  assert.equal(found.articleId, 'AKR1');
+
+  // 다른 기사의 articleId로는 같은 id라도 조회되지 않는다(스냅샷 유출 방지).
+  assert.equal(history.querySnapshotById('AKR2', id), undefined);
+  // 없는 id는 undefined.
+  assert.equal(history.querySnapshotById('AKR1', 99999), undefined);
+});
+
 test('articleHistoryModel: 행 삭제 함수를 노출하지 않는다 (DB 비파괴)', () => {
   const { history } = setup();
   assert.equal(history.delete, undefined);

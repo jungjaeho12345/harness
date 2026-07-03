@@ -126,6 +126,13 @@ export function createFakeModel(seed = {}) {
       const filtered = sendOnly ? items.filter((h) => h.action === 'send') : items;
       return { ok: true, items: filtered };
     },
+    // 기사이력비교 — 스냅샷 단건 지연 조회 모사. seed 이력에서 id 일치 항목을 복사해 { ok, item }으로 반환한다
+    // (원본 불변·읽기 전용). articleId 스코프 밖/없는 id는 서버와 동일하게 not-found.
+    getHistorySnapshot(articleId, historyId) {
+      const h = (histories[articleId] ?? []).find((x) => x.id === historyId);
+      if (!h) return { ok: false, reason: 'not-found' };
+      return { ok: true, item: { ...h } };
+    },
     // 후속/계속기사작성 — saveArticle처럼 새 articleId를 만들어 push. 원본은 변경하지 않는다(비파괴 모사).
     deriveArticle(articleId, mode) {
       const src = findArticle(articleId);

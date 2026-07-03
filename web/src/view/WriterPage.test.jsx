@@ -3320,12 +3320,12 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
     expect(within(menu).getByText('간체↔번체 변환').closest('button')).toBeEnabled();
   });
 
-  it('다른 비결선 도구 항목(사진발행/이력비교/UI언어)은 여전히 비활성이다(회귀 없음)', async () => {
+  it('다른 비결선 도구 항목(사진발행/UI언어)은 여전히 비활성이다(회귀 없음)', async () => {
+    // (기사이력비교는 25-article-history-compare step2에서 의도적으로 결선되어 이제 활성 — 가드 대상에서 제외.)
     await openWith([textBlock('헤드')]);
     await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
-    expect(within(menu).getByText('기사이력비교').closest('button')).toBeDisabled();
     expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
@@ -3433,5 +3433,180 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
     await userEvent.click(actionBtn('저장'));
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('제목\n国\n(끝)');
+  });
+});
+
+// Step 2(25-article-history-compare): 도구>기사이력비교(tools.historyCompare) 결선 —
+// 메뉴 클릭 시 model.queryHistory로 스냅샷 이력 목록을 조회해 HistoryCompareDialog(step1)에 주입하고,
+// 좌/우 선택 시 model.getHistorySnapshot으로 선택 스냅샷만 지연 조회해 텍스트(deserialize+blocksToText)로 표시한다.
+// 읽기전용 — 본문/캐럿/임베드 무변경(매핑에서도 열림, 파일 정보와 동일 정책 — 매핑 가드 앞).
+describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  // 스냅샷 이력 seed — id 11(edit, 스냅샷 보유)만 비교 목록 대상, id 10(status, 스냅샷 없음)은 제외돼야 한다.
+  const OLD_BODY = serialize([textBlock('헤드'), textBlock('옛본문')]);
+  const HISTORIES = {
+    AKR1: [
+      { id: 11, articleId: 'AKR1', eventType: 'edit', action: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z', hasSnapshot: 1, markupVersion: OLD_BODY },
+      { id: 10, articleId: 'AKR1', eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T01:00:00Z', hasSnapshot: 0 },
+    ],
+  };
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', histories } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }], histories },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 '기사이력비교'를 클릭한다(파일 정보 결선과 동일 패턴).
+  async function clickHistoryCompare() {
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('기사이력비교').closest('button'));
+  }
+
+  it("도구 메뉴 '기사이력비교'(tools.historyCompare)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')], { histories: HISTORIES });
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
+  });
+
+  it('비결선 도구 항목(tools.publishPhoto)은 여전히 비활성이다(회귀 가드)', async () => {
+    await openWith([textBlock('헤드')], { histories: HISTORIES });
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+  });
+
+  it("클릭 시 HistoryCompareDialog(history-compare, role=dialog '기사 이력 비교')가 열린다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    await clickHistoryCompare();
+    expect(screen.getByRole('dialog', { name: '기사 이력 비교' })).toBeInTheDocument();
+    expect(screen.getByTestId('history-compare')).toBeInTheDocument();
+  });
+
+  it('스냅샷 시드가 있는 기사에서 열면 현재 본문 + 스냅샷 이력 항목이 선택 목록에 표시된다(hasSnapshot만)', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    await clickHistoryCompare();
+    const left = screen.getByTestId('history-compare-left');
+    expect(within(left).getByRole('option', { name: '현재 본문' })).toBeInTheDocument();
+    // 스냅샷 보유 항목(id 11 — lee)은 표시, 스냅샷 없는 항목(id 10 — kim)은 제외.
+    expect(within(left).getByRole('option', { name: /lee/ })).toBeInTheDocument();
+    expect(within(left).queryByRole('option', { name: /kim/ })).toBeNull();
+  });
+
+  it('좌=스냅샷/우=현재 본문 선택 시 getHistorySnapshot 지연 조회 후 add/del 세그먼트 diff가 렌더된다', async () => {
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    const snap = vi.spyOn(model, 'getHistorySnapshot');
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+
+    // 선택된 스냅샷(id 11)만 지연 조회한다(목록 조회로 본문을 미리 받지 않음).
+    expect(snap).toHaveBeenCalledWith('AKR1', 11);
+
+    // '헤드\n옛본문' vs '헤드\n본문' → equal '헤드' + del '옛본문' + add '본문'.
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+    const segs = screen.getAllByTestId('history-compare-segment');
+    expect(segs.some((s) => s.dataset.type === 'del' && s.textContent === '옛본문')).toBe(true);
+    expect(segs.some((s) => s.dataset.type === 'add' && s.textContent === '본문')).toBe(true);
+    expect(segs.some((s) => s.dataset.type === 'equal' && s.textContent === '헤드')).toBe(true);
+  });
+
+  it('같은 쪽 빠른 재선택 — 늦게 도착한 스냅샷 응답이 최신 선택(현재 본문)을 덮어쓰지 않는다(stale 폐기)', async () => {
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    // getHistorySnapshot을 수동 resolve 가능한 지연 Promise로 스텁 — resolver를 테스트가 쥔다(deferred).
+    const real = model.getHistorySnapshot.bind(model);
+    let resolveSnap;
+    vi.spyOn(model, 'getHistorySnapshot').mockImplementation((articleId, id) => {
+      const result = real(articleId, id);
+      return new Promise((resolve) => { resolveSnap = () => resolve(result); });
+    });
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    // ① 왼쪽 스냅샷(id 11 — '헤드\n옛본문') 선택: fetch 시작, 응답은 아직 보류.
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    // ② 응답 전에 같은 쪽을 '현재 본문'으로 재선택 → 좌=우=현재 본문이라 diff는 전부 equal.
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), 'current');
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+    // ③ ①의 지연 응답이 이제 도착 — stale이므로 폐기돼야 한다.
+    await act(async () => { resolveSnap(); });
+    // ④ 표시 텍스트는 여전히 현재 본문 — 스냅샷('옛본문')으로 덮어쓰이면 del/add 세그먼트가 생겨 실패한다.
+    const segs = screen.getAllByTestId('history-compare-segment');
+    expect(segs.some((s) => s.textContent === '옛본문')).toBe(false);
+    expect(segs.every((s) => s.dataset.type === 'equal')).toBe(true);
+  });
+
+  it('저장 안 된 새 기사(articleId 없음)에서 열면 "이력 없음" 빈 상태로 열린다(조회 없음·죽지 않음)', async () => {
+    const { model } = setup({ identity: { role: 'R' } }); // pendingEdit 없음 — 신규 빈 탭(articleId 없음)
+    const query = vi.spyOn(model, 'queryHistory');
+
+    await clickHistoryCompare();
+    expect(screen.getByTestId('history-compare')).toBeInTheDocument();
+    expect(screen.getByTestId('history-compare-empty')).toBeInTheDocument();
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('스냅샷 이력이 없는 기사에서 열면 빈 상태로 열린다(현재 본문 1개뿐 — 비교 불가)', async () => {
+    // 이력은 있으나 전부 스냅샷 없음(hasSnapshot falsy) → 비교 대상은 현재 본문뿐이라 빈 상태.
+    await openWith([textBlock('헤드')], {
+      histories: { AKR1: [{ id: 10, articleId: 'AKR1', eventType: 'status', action: 'send', actorUserId: 'kim', createdAt: '2026-06-14T01:00:00Z', hasSnapshot: 0 }] },
+    });
+    await clickHistoryCompare();
+    expect(screen.getByTestId('history-compare-empty')).toBeInTheDocument();
+  });
+
+  it('읽기전용 — 열고 좌/우 선택·닫기 후에도 본문(saveArticle markupVersion)이 변하지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('history-compare-close'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    // 텍스트/임베드 무변경 — 본문이 그대로다(읽기전용, 파일 정보 결선과 동일 단언).
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'text']);
+    expect(blocksToText(blocks)).toBe('헤드\n본문');
+  });
+
+  it("매핑 모드에서도 '기사이력비교'가 활성이고 다이얼로그가 열린다(읽기전용 — 파일 정보와 동일 정책)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D', histories: HISTORIES },
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('기사이력비교').closest('button'));
+    expect(screen.getByRole('dialog', { name: '기사 이력 비교' })).toBeInTheDocument();
+  });
+
+  it("'닫기'/Esc로 다이얼로그가 닫힌다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    await clickHistoryCompare();
+    await userEvent.click(screen.getByTestId('history-compare-close'));
+    expect(screen.queryByRole('dialog', { name: '기사 이력 비교' })).not.toBeInTheDocument();
+
+    await clickHistoryCompare();
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '기사 이력 비교' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '기사 이력 비교' })).not.toBeInTheDocument();
   });
 });

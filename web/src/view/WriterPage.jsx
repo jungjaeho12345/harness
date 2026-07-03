@@ -24,6 +24,7 @@ import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import { expandAbbrevInBlocks } from './abbrevConvert.js';
 import { SimpTradConvertDialog } from './SimpTradConvertDialog.jsx';
 import { convertSimpTradInBlocks } from './simpTradConvert.js';
+import { HistoryCompareDialog } from './HistoryCompareDialog.jsx';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -76,7 +77,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -130,6 +131,16 @@ export function WriterPage() {
   // 간체↔번체 변환 방향 선택 다이얼로그(도구>간체↔번체 변환) 보이기 — showAbbrevManage/showMemo 패턴.
   // 변환표(SIMP_TRAD_PAIRS)는 번들 정적 상수라 별도 state가 없다(약어의 abbrevs 같은 lazy-init 없음).
   const [showSimpTrad, setShowSimpTrad] = useState(false);
+  // 기사 이력 비교(도구>기사이력비교) — 읽기전용 표시 state만 둔다(step2, 25-article-history-compare).
+  // historyEntries: 열 때 queryHistory 결과 중 스냅샷 보유(hasSnapshot) 항목. 좌/우 key는 'current' 또는 이력 id,
+  // 좌/우 text는 지연 조회(getHistorySnapshot) 결과를 deserialize+blocksToText로 변환한 비교용 텍스트(미준비면 null).
+  // 이 경로의 조회 결과는 여기에만 흐른다 — updateField/serialize/insertEmbed 미호출(본문/캐럿/임베드 불변).
+  const [showHistoryCompare, setShowHistoryCompare] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [histLeftKey, setHistLeftKey] = useState(null);
+  const [histRightKey, setHistRightKey] = useState(null);
+  const [histLeftText, setHistLeftText] = useState(null);
+  const [histRightText, setHistRightText] = useState(null);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -301,6 +312,59 @@ export function WriterPage() {
     setShowSimpTrad(false);
   };
 
+  // 도구>기사이력비교 — 열 때 현재 편집 기사의 이력을 조회해 스냅샷 보유 항목만 담고 다이얼로그를 연다(선택은 초기화).
+  // 저장 안 된 새 기사(articleId 없음)는 조회 없이 빈 이력으로 열고, 조회 실패/빈 배열도 죽지 않고 빈 상태로 연다.
+  const openHistoryCompare = async () => {
+    histReqRef.current = { left: null, right: null }; // 선택 초기화와 함께 — 재열기 전 지연 조회의 늦은 응답도 폐기(레이스 가드).
+    setHistLeftKey(null);
+    setHistRightKey(null);
+    setHistLeftText(null);
+    setHistRightText(null);
+    let entries = [];
+    if (activeTab.articleId) {
+      try {
+        const r = await model.queryHistory(activeTab.articleId);
+        if (r && r.ok && Array.isArray(r.items)) entries = r.items.filter((h) => h.hasSnapshot);
+      } catch { /* 조회 실패 — 빈 이력으로 연다(읽기전용 경로, 본문 불변) */ }
+    }
+    setHistoryEntries(entries);
+    setShowHistoryCompare(true);
+  };
+
+  // 좌/우 비교 대상 선택 — 'current'는 조회 없이 in-memory 본문 텍스트(bodyText)를 즉시 세팅하고,
+  // 스냅샷 id면 model.getHistorySnapshot으로 그 항목만 지연 조회해 텍스트로 변환(deserialize+blocksToText)한다.
+  // 조회 결과는 표시 state에만 넣는다 — updateField/serialize 미호출(읽기전용 불변식).
+  // 쪽(side)별 최신 요청 key 미러 ref — 지연 조회 대기 중 같은 쪽에서 재선택하면(스냅샷→다른 스냅샷/'current')
+  // 늦게 도착한 이전 응답이 최신 선택의 텍스트를 덮어써 key와 표시 본문이 어긋난 diff가 보인다. 그래서 진입 시
+  // ref에 key를 기록하고('current' 즉시경로 포함), await 뒤 ref가 여전히 이 호출의 key일 때만 setText를 적용한다
+  // (pasteImageAtCaret의 시작 시점 tabId 캡처→쓰기 전 재확인과 동일 패턴).
+  const histReqRef = useRef({ left: null, right: null });
+  const selectCompareTarget = async (side, key) => {
+    const setKey = side === 'left' ? setHistLeftKey : setHistRightKey;
+    const setText = side === 'left' ? setHistLeftText : setHistRightText;
+    histReqRef.current[side] = key;
+    setKey(key);
+    if (key === 'current') {
+      setText(bodyText);
+      return;
+    }
+    setText(null); // 조회 중 — 다이얼로그가 대기 안내를 보여준다.
+    try {
+      const s = await model.getHistorySnapshot(activeTab.articleId, key);
+      if (histReqRef.current[side] !== key) return; // stale — 대기 중 같은 쪽이 재선택됨(응답 폐기).
+      if (s && s.ok && s.item) setText(blocksToText(deserialize(s.item.markupVersion)));
+    } catch { /* 조회 실패 — 대기 안내 유지(죽지 않음) */ }
+  };
+
+  // 다이얼로그 비교 대상 목록 — '현재 본문' + 스냅샷 이력(시각/작성자 라벨, key=이력 id).
+  const historyCompareEntries = [
+    { key: 'current', label: '현재 본문' },
+    ...historyEntries.map((h) => ({
+      key: h.id,
+      label: [h.createdAt, h.actorUserId].filter(Boolean).join(' / ') || String(h.id),
+    })),
+  ];
+
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
   const focusMatchLine = (offset) => {
@@ -364,6 +428,8 @@ export function WriterPage() {
     if (id === 'tools.memo') { setShowMemo(true); return; }
     // 약어관리 — 약어사전 CRUD 다이얼로그(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보/메모와 동일 정책).
     if (id === 'tools.abbrManage') { setShowAbbrevManage(true); return; }
+    // 기사이력비교 — 읽기전용(이력/스냅샷 조회 결과는 표시 state로만). 매핑 가드 앞(매핑에서도 열림, 파일 정보와 동일 정책).
+    if (id === 'tools.historyCompare') { openHistoryCompare(); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -836,6 +902,21 @@ export function WriterPage() {
         open={showSimpTrad}
         onConvert={applySimpTrad}
         onClose={() => setShowSimpTrad(false)}
+      />
+
+      {/* 기사 이력 비교(도구>기사이력비교) — 읽기전용. 열 때 스냅샷 이력 목록을 entries로 주입하고, 좌/우 선택 시
+          getHistorySnapshot 지연 조회 결과를 텍스트로만 주입한다(View는 transport 미호출 — ADR-003).
+          본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선 — 파일 정보와 동일 정책). */}
+      <HistoryCompareDialog
+        open={showHistoryCompare}
+        entries={historyCompareEntries}
+        leftKey={histLeftKey}
+        rightKey={histRightKey}
+        leftText={histLeftText}
+        rightText={histRightText}
+        onSelectLeft={(key) => selectCompareTarget('left', key)}
+        onSelectRight={(key) => selectCompareTarget('right', key)}
+        onClose={() => setShowHistoryCompare(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.
