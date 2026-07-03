@@ -3524,6 +3524,31 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
     expect(segs.some((s) => s.dataset.type === 'equal' && s.textContent === '헤드')).toBe(true);
   });
 
+  it('같은 쪽 빠른 재선택 — 늦게 도착한 스냅샷 응답이 최신 선택(현재 본문)을 덮어쓰지 않는다(stale 폐기)', async () => {
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    // getHistorySnapshot을 수동 resolve 가능한 지연 Promise로 스텁 — resolver를 테스트가 쥔다(deferred).
+    const real = model.getHistorySnapshot.bind(model);
+    let resolveSnap;
+    vi.spyOn(model, 'getHistorySnapshot').mockImplementation((articleId, id) => {
+      const result = real(articleId, id);
+      return new Promise((resolve) => { resolveSnap = () => resolve(result); });
+    });
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    // ① 왼쪽 스냅샷(id 11 — '헤드\n옛본문') 선택: fetch 시작, 응답은 아직 보류.
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    // ② 응답 전에 같은 쪽을 '현재 본문'으로 재선택 → 좌=우=현재 본문이라 diff는 전부 equal.
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), 'current');
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+    // ③ ①의 지연 응답이 이제 도착 — stale이므로 폐기돼야 한다.
+    await act(async () => { resolveSnap(); });
+    // ④ 표시 텍스트는 여전히 현재 본문 — 스냅샷('옛본문')으로 덮어쓰이면 del/add 세그먼트가 생겨 실패한다.
+    const segs = screen.getAllByTestId('history-compare-segment');
+    expect(segs.some((s) => s.textContent === '옛본문')).toBe(false);
+    expect(segs.every((s) => s.dataset.type === 'equal')).toBe(true);
+  });
+
   it('저장 안 된 새 기사(articleId 없음)에서 열면 "이력 없음" 빈 상태로 열린다(조회 없음·죽지 않음)', async () => {
     const { model } = setup({ identity: { role: 'R' } }); // pendingEdit 없음 — 신규 빈 탭(articleId 없음)
     const query = vi.spyOn(model, 'queryHistory');

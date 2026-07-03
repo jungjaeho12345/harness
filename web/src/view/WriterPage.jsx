@@ -315,6 +315,7 @@ export function WriterPage() {
   // 도구>기사이력비교 — 열 때 현재 편집 기사의 이력을 조회해 스냅샷 보유 항목만 담고 다이얼로그를 연다(선택은 초기화).
   // 저장 안 된 새 기사(articleId 없음)는 조회 없이 빈 이력으로 열고, 조회 실패/빈 배열도 죽지 않고 빈 상태로 연다.
   const openHistoryCompare = async () => {
+    histReqRef.current = { left: null, right: null }; // 선택 초기화와 함께 — 재열기 전 지연 조회의 늦은 응답도 폐기(레이스 가드).
     setHistLeftKey(null);
     setHistRightKey(null);
     setHistLeftText(null);
@@ -333,9 +334,15 @@ export function WriterPage() {
   // 좌/우 비교 대상 선택 — 'current'는 조회 없이 in-memory 본문 텍스트(bodyText)를 즉시 세팅하고,
   // 스냅샷 id면 model.getHistorySnapshot으로 그 항목만 지연 조회해 텍스트로 변환(deserialize+blocksToText)한다.
   // 조회 결과는 표시 state에만 넣는다 — updateField/serialize 미호출(읽기전용 불변식).
+  // 쪽(side)별 최신 요청 key 미러 ref — 지연 조회 대기 중 같은 쪽에서 재선택하면(스냅샷→다른 스냅샷/'current')
+  // 늦게 도착한 이전 응답이 최신 선택의 텍스트를 덮어써 key와 표시 본문이 어긋난 diff가 보인다. 그래서 진입 시
+  // ref에 key를 기록하고('current' 즉시경로 포함), await 뒤 ref가 여전히 이 호출의 key일 때만 setText를 적용한다
+  // (pasteImageAtCaret의 시작 시점 tabId 캡처→쓰기 전 재확인과 동일 패턴).
+  const histReqRef = useRef({ left: null, right: null });
   const selectCompareTarget = async (side, key) => {
     const setKey = side === 'left' ? setHistLeftKey : setHistRightKey;
     const setText = side === 'left' ? setHistLeftText : setHistRightText;
+    histReqRef.current[side] = key;
     setKey(key);
     if (key === 'current') {
       setText(bodyText);
@@ -344,6 +351,7 @@ export function WriterPage() {
     setText(null); // 조회 중 — 다이얼로그가 대기 안내를 보여준다.
     try {
       const s = await model.getHistorySnapshot(activeTab.articleId, key);
+      if (histReqRef.current[side] !== key) return; // stale — 대기 중 같은 쪽이 재선택됨(응답 폐기).
       if (s && s.ok && s.item) setText(blocksToText(deserialize(s.item.markupVersion)));
     } catch { /* 조회 실패 — 대기 안내 유지(죽지 않음) */ }
   };
