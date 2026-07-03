@@ -1110,6 +1110,73 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 기사 이력 비교(도구>기사이력비교) 다이얼로그 — 스냅샷 라인 diff 읽기전용 표시 패널(파일정보와 동일 계열). */
+.yh-history-compare {
+  position: fixed;
+  top: 56px;
+  right: var(--yh-sp-lg);
+  z-index: 60;
+  width: 40rem;
+  max-width: 90vw;
+  background: var(--yh-white);
+  border: 1px solid var(--yh-blue);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-shadow-lg);
+  padding: var(--yh-sp-lg);
+}
+.yh-history-compare__title {
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-history-compare__controls {
+  display: flex;
+  gap: var(--yh-sp-sm);
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-history-compare__select {
+  flex: 1;
+  min-width: 0;
+  padding: var(--yh-sp-xs) var(--yh-sp-sm);
+  font-size: 0.85rem;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-white);
+}
+.yh-history-compare__diff {
+  margin: 0 0 var(--yh-sp-md);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  max-height: 50vh;
+  overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.yh-history-compare__line {
+  padding: 0 var(--yh-sp-sm);
+  white-space: pre-wrap;
+}
+.yh-history-compare__line--del {
+  background: rgba(200, 16, 46, 0.08);
+  color: var(--yh-red);
+}
+.yh-history-compare__line--add {
+  background: var(--yh-blue-light);
+  color: var(--yh-blue-dark);
+}
+.yh-history-compare__empty,
+.yh-history-compare__pending {
+  margin: 0 0 var(--yh-sp-md);
+  font-size: 0.85rem;
+  color: var(--yh-gray-mid);
+}
+.yh-history-compare__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 메모장(도구>메모장) 다이얼로그 — 기사와 무관한 전역 스크래치패드 입력 패널(찾기/약물입력/URL임베드/파일정보와 동일 계열). */
 .yh-editor-memo {
   position: fixed;
