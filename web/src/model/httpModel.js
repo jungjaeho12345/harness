@@ -169,6 +169,11 @@ export function createHttpModel({ base = '' } = {}) {
         query: sendOnly ? { sendOnly: 1 } : {},
       });
     },
+    // 기사이력비교 — 스냅샷 단건(본문 markupVersion 포함) 지연 조회. 목록(queryHistory)은 hasSnapshot 경량이라
+    // 본문은 사용자가 고른 항목만 이 GET으로 받는다. 응답 { ok, item } 그대로 반환. 읽기 전용.
+    getHistorySnapshot(articleId, historyId) {
+      return request(`/api/articles/${encodeURIComponent(articleId)}/history/${encodeURIComponent(historyId)}`);
+    },
     // 후속(followUp)/계속(continue)기사작성 — author는 서버가 세션에서 stamp한다.
     deriveArticle(articleId, mode) {
       return request(`/api/articles/${encodeURIComponent(articleId)}/derive`, {

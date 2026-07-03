@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "writer-page-wiring",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-03T22:25:21+0900",
+      "summary": "도구>기사이력비교(tools.historyCompare) 결선 — MODEL_KEYS·httpModel·fakeModel 3곳에 getHistorySnapshot 추가(GET /api/articles/:id/history/:historyId), WriterPage에서 매핑 가드 앞 읽기전용 결선(열 때 queryHistory→hasSnapshot 필터, 좌/우 선택 시 스냅샷 지연 조회→deserialize+blocksToText, 현재 본문은 in-memory, 결과는 표시 state만·본문/캐럿/임베드 무변경, 새 기사/스냅샷 없음은 빈 상태) — 신규 테스트 13개 포함 web 1053개 통과·build·lint 클린",
+      "completed_at": "2026-07-03T22:34:31+0900"
     }
   ],
   "created_at": "2026-07-02T21:43:55+0900"

@@ -3,9 +3,9 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 23 contract methods', () => {
+  it('is frozen and lists the 24 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(23);
+    expect(MODEL_KEYS).toHaveLength(24);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
@@ -20,6 +20,10 @@ describe('MODEL_KEYS', () => {
 
   it('includes the file-upload key (uploadFile)', () => {
     expect(MODEL_KEYS).toContain('uploadFile');
+  });
+
+  it('includes the history-snapshot key (getHistorySnapshot)', () => {
+    expect(MODEL_KEYS).toContain('getHistorySnapshot');
   });
 });
 
@@ -108,6 +112,30 @@ describe('createFakeModel', () => {
     const none = await fake.queryHistory('NOPE');
     expect(none.ok).toBe(true);
     expect(none.items).toEqual([]);
+  });
+
+  it('getHistorySnapshot returns the seeded snapshot item without mutating the seed', async () => {
+    const seed = {
+      histories: {
+        AKR1: [
+          { id: 2, articleId: 'AKR1', eventType: 'edit', actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z', hasSnapshot: 1, markupVersion: '{"format":"yh-editor","version":1,"blocks":[]}' },
+        ],
+      },
+    };
+    const fake = createFakeModel(seed);
+
+    const r = await fake.getHistorySnapshot('AKR1', 2);
+    expect(r.ok).toBe(true);
+    expect(r.item.markupVersion).toBe('{"format":"yh-editor","version":1,"blocks":[]}');
+
+    // 원본 seed는 변경되지 않는다(읽기 전용 모사) — 반환 item을 고쳐도 다음 조회는 그대로다.
+    r.item.markupVersion = 'tampered';
+    expect((await fake.getHistorySnapshot('AKR1', 2)).item.markupVersion)
+      .toBe('{"format":"yh-editor","version":1,"blocks":[]}');
+
+    // 없는 historyId/타 기사 스코프는 not-found.
+    expect(await fake.getHistorySnapshot('AKR1', 999)).toEqual({ ok: false, reason: 'not-found' });
+    expect(await fake.getHistorySnapshot('NOPE', 2)).toEqual({ ok: false, reason: 'not-found' });
   });
 
   it('deriveArticle creates a new article without mutating the source', async () => {
