@@ -18,11 +18,15 @@ import { pathToFileURL } from 'node:url';
 import { createSchema, backfillEmptyDepartments } from '../src/db/schema.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
+import { createLogService } from '../src/services/logService.js';
 import { createFtpWatcher } from './ftpWatcher.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ROLES = new Set(['R', 'D', 'Z']);
+
+// 로그 SSE 접속 시 재생하는 백로그 상한(최근 N개만) — 초기 렌더 부담·전송량 제한(24h 전체 재생 방지).
+const LOG_BACKLOG_LIMIT = 200;
 
 // 세션 쿠키 transport (security-hardening step0).
 // 외부 의존성 최소화(ADR 철학) — cookie-parser 추가 대신 Cookie 헤더를 직접 파싱한다.
@@ -173,6 +177,7 @@ export function createApp({
   cookieSecure,
   forceHttps,
   uploadDir = 'uploads',
+  logService = createLogService(),
 }) {
   const app = express();
 
@@ -279,7 +284,15 @@ export function createApp({
   const bus = new EventEmitter();
   bus.setMaxListeners(0); // 동시 SSE 구독자 수 제한 경고 방지.
   // 부트스트랩(watcher 등 HTTP 밖 경로)에서도 무효화를 알릴 수 있도록 노출한다.
-  app.notifyChange = (kind) => bus.emit('change', { kind });
+  // 무효화 방출과 함께 실시간 로그 뷰어용 INFO 계측을 남긴다(기사 생성/수정/상태전이/잠금·수집 인제스트가
+  // 자연히 로그로 나타난다). CRITICAL: SSE 라우트 핸들러가 아니라 여기(수명주기 지점)에서만 log한다
+  // — write→log→emit→write 되먹임 루프를 피하기 위함.
+  app.notifyChange = (kind) => {
+    logService.log('INFO', `change: ${kind}`);
+    bus.emit('change', { kind });
+  };
+  // 다음 step(digest/scheduler)이 동일 인스턴스에 접근하도록 노출한다.
+  app.logService = logService;
 
   // 쿠키(우선) 또는 x-session-id 헤더(폴백) → 검증된 신원. req.body.role은 절대 쓰지 않는다.
   function sessionOf(req) {
@@ -687,6 +700,36 @@ export function createApp({
     req.on('close', () => bus.off('change', onChange));
   });
 
+  // --- SSE: 실시간 로그 스트림 (26-realtime-log-viewer step1) ---
+  // 무효화 채널(/api/stream)과 물리적으로 분리된 전용 채널이다 — 로그는 실제 컨텐츠(메시지)를 담으므로
+  // "행 데이터 없는 무효화 신호"(ADR-005) 계약과 충돌한다. 로직은 step0 logService에 위임(ADR-006).
+  // 인증은 /api/stream과 동일하게 쿠키 우선(→x-session-id 헤더)만 허용한다 — 평문 ?session= 폴백 없음.
+  // 접속 시 최근 백로그를 재생한 뒤 신규 라인을 구독으로 흘려보낸다(연결 종료 시 unsubscribe로 누수 방지).
+  app.get('/api/logs/stream', (req, res) => {
+    const sid = readSessionToken(req);
+    const me = sid ? sessionService.touchSession(sid) : undefined;
+    if (!me) return res.status(401).json(UNAUTH);
+
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    if (res.flushHeaders) res.flushHeaders();
+    res.write('event: ready\ndata: {"ok":true}\n\n');
+
+    // 백로그 재생 — 시각순 복사본(step0 entries)에서 최근 N개만 흘려보낸다(상한 LOG_BACKLOG_LIMIT).
+    const backlog = logService.entries();
+    const recent = backlog.length > LOG_BACKLOG_LIMIT ? backlog.slice(-LOG_BACKLOG_LIMIT) : backlog;
+    for (const entry of recent) {
+      res.write(`event: log\ndata: ${JSON.stringify(entry)}\n\n`);
+    }
+
+    // 신규 라인 구독 — { ts, level, message, line } 엔트리를 그대로 싣는다(프론트는 line을 표시).
+    const off = logService.subscribe((entry) => res.write(`event: log\ndata: ${JSON.stringify(entry)}\n\n`));
+    req.on('close', off);
+  });
+
   // 전역 에러 핸들러 — 내부 스택을 노출하지 않는다 (4-arg, 마지막 등록).
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
@@ -705,15 +748,18 @@ function bootstrap() {
 
   const sessionService = createSessionService();
   const controllers = createControllers(db, { sessionService });
+  // 로그 서비스는 부트스트랩에서 1회 생성해 주입한다 — 라우트/계측/후속 step(digest)이 단일 인스턴스를 공유한다.
+  const logService = createLogService();
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
-  const app = createApp({ controllers, sessionService, forceHttps });
+  const app = createApp({ controllers, sessionService, forceHttps, logService });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {
     console.log(`API server on http://127.0.0.1:${port}`);
+    logService.log('INFO', `API server on http://127.0.0.1:${port}`);
   });
 
   // 수집 FTP watcher — RCV_SPOOL_DIR 미설정 시 비활성.
@@ -728,6 +774,7 @@ function bootstrap() {
     });
     watcher.start();
     console.log(`FTP watcher watching ${spoolDir}`);
+    logService.log('INFO', `FTP watcher watching ${spoolDir}`);
   }
 }
 
