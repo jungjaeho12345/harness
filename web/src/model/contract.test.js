@@ -3,9 +3,9 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 24 contract methods', () => {
+  it('is frozen and lists the 26 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(24);
+    expect(MODEL_KEYS).toHaveLength(26);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
@@ -24,6 +24,12 @@ describe('MODEL_KEYS', () => {
 
   it('includes the history-snapshot key (getHistorySnapshot)', () => {
     expect(MODEL_KEYS).toContain('getHistorySnapshot');
+  });
+
+  it('includes the phase26 log-viewer keys (subscribeLogs/queryLogDigest)', () => {
+    for (const key of ['subscribeLogs', 'queryLogDigest']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
   });
 });
 
@@ -164,5 +170,46 @@ describe('createFakeModel', () => {
     const fallback = createFakeModel({ articles: [{ articleId: 'AKR2', title: '원문' }] });
     const g = await fallback.translate('AKR2');
     expect(g.translatedText).toBeTruthy();
+  });
+
+  it('subscribeLogs replays seeded backlog, receives pushed lines and stops on unsubscribe', () => {
+    const seedLine = { ts: '2026-07-05T06:00:00.000Z', level: 'INFO', message: 'booted', line: '[2026-07-05 06:00:00] [INFO] booted' };
+    const fake = createFakeModel({ logs: [seedLine] });
+
+    const onLine = vi.fn();
+    const onStatus = vi.fn();
+    const sub = fake.subscribeLogs(onLine, onStatus);
+
+    // 접속 즉시 연결됨 + 시드 백로그 재생.
+    expect(onStatus).toHaveBeenCalledWith(true);
+    expect(sub.connected()).toBe(true);
+    expect(onLine).toHaveBeenCalledWith(seedLine);
+
+    // 신규 라인 push(logLine 헬퍼).
+    const next = { ts: '2026-07-05T06:00:01.000Z', level: 'WARN', message: 'hi', line: '[2026-07-05 06:00:01] [WARN] hi' };
+    fake.logLine(next);
+    expect(onLine).toHaveBeenCalledWith(next);
+
+    // 해제 후에는 더 이상 수신하지 않는다.
+    sub.unsubscribe();
+    onLine.mockClear();
+    fake.logLine({ ts: 'x', level: 'INFO', message: 'after', line: 'after' });
+    expect(onLine).not.toHaveBeenCalled();
+  });
+
+  it('queryLogDigest returns a { ok, digest } shape from seeded logs', async () => {
+    const fake = createFakeModel({
+      logs: [
+        { ts: '2026-07-05T06:00:00.000Z', level: 'INFO', message: 'a', line: '[2026-07-05 06:00:00] [INFO] a' },
+        { ts: '2026-07-05T06:00:01.000Z', level: 'ERROR', message: 'b', line: '[2026-07-05 06:00:01] [ERROR] b' },
+      ],
+    });
+    const r = await fake.queryLogDigest('2026-07-05');
+    expect(r.ok).toBe(true);
+    expect(r.digest).toBeTruthy();
+    expect(r.digest.total).toBe(2);
+    expect(r.digest.byLevel.INFO).toBe(1);
+    expect(r.digest.byLevel.ERROR).toBe(1);
+    expect(Array.isArray(r.digest.lines)).toBe(true);
   });
 });

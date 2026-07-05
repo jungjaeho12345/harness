@@ -30,6 +30,9 @@ export const MODEL_KEYS = Object.freeze([
   'uploadFile',
   // 기사이력비교(phase 25) — 스냅샷 단건(본문 markupVersion 포함) 지연 조회. GET /api/articles/:id/history/:historyId와 1:1.
   'getHistorySnapshot',
+  // 실시간 로그 뷰어(phase 26) — 전용 SSE 채널 구독(GET /api/logs/stream, event:log)과 다이제스트 조회(GET /api/logs/digest?date=).
+  'subscribeLogs',
+  'queryLogDigest',
 ]);
 
 // 모든 계약 키가 함수로 구현되어 있는지 검증한다. 누락 시 어떤 키가 빠졌는지 알려주며 throw.

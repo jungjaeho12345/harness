@@ -263,5 +263,38 @@ export function createHttpModel({ base = '' } = {}) {
         unsubscribe: () => source.close(),
       };
     },
+
+    // --- 실시간 로그 스트림 (SSE, phase26) — 무효화 채널과 물리 분리된 전용 채널 ---
+    // 로그 뷰어 전용 채널(step1 GET /api/logs/stream, event:log). subscribe(무효화 채널)와 달리
+    // 컨텐츠(로그 엔트리)를 실어 나른다. 인증은 쿠키/헤더만 — server가 평문 ?session= 폴백을 받지
+    // 않으므로(step1 결정) URL에 세션 토큰을 붙이지 않는다. withCredentials로 cross-origin 쿠키만 싣는다.
+    // event:ready→onStatus(true), event:error→onStatus(false)로 연결 상태를 토글한다.
+    // event:log의 data(JSON)를 파싱해 엔트리 { ts, level, message, line }를 onLine으로 흘린다(파싱 실패 시 스킵).
+    subscribeLogs(onLine, onStatus) {
+      const url = `${base}/api/logs/stream`;
+      const source = new EventSource(url, { withCredentials: true });
+      let connected = false;
+      const setStatus = (next) => { connected = next; onStatus?.(next); };
+      source.addEventListener('ready', () => setStatus(true));
+      source.addEventListener('log', (event) => {
+        let entry = null;
+        try {
+          entry = event.data ? JSON.parse(event.data) : null;
+        } catch {
+          entry = null; // 손상 payload는 조용히 스킵(UI를 깨지 않는다).
+        }
+        if (entry) onLine(entry);
+      });
+      source.addEventListener('error', () => setStatus(false));
+      return {
+        connected: () => connected,
+        unsubscribe: () => source.close(),
+      };
+    },
+    // 로그 다이제스트 조회(읽기 전용 pull, step2 GET /api/logs/digest?date=). 서버가 준 { ok, digest }를
+    // 그대로 반환한다 — 실패({ ok:false, reason })도 throw 없이 그대로 넘겨 UI가 graceful하게 처리하게 한다.
+    queryLogDigest(date) {
+      return request('/api/logs/digest', { query: date ? { date } : {} });
+    },
   };
 }

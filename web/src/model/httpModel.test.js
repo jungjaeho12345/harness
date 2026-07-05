@@ -412,6 +412,86 @@ describe('createHttpModel', () => {
     model.subscribe({}, vi.fn());
     expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-q`);
   });
+
+  // --- phase26 로그 뷰어 seam ---
+  it('queryLogDigest GETs /api/logs/digest?date=... and returns { ok, digest }', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, digest: { total: 3, byLevel: { INFO: 3 }, lines: [] } }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.queryLogDigest('2026-07-05');
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/logs/digest?date=2026-07-05`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    expect(r).toEqual({ ok: true, digest: { total: 3, byLevel: { INFO: 3 }, lines: [] } });
+  });
+
+  it('queryLogDigest omits the date query when no date is given', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, digest: { total: 0 } }));
+    const model = createHttpModel({ base: BASE });
+
+    await model.queryLogDigest();
+    expect(callAt(0)[0]).toBe(`${BASE}/api/logs/digest`);
+  });
+
+  it('subscribeLogs opens /api/logs/stream with withCredentials, parses log entries and toggles status', () => {
+    const instances = [];
+    installFakeEventSource(instances);
+
+    const model = createHttpModel({ base: BASE });
+
+    const onLine = vi.fn();
+    const onStatus = vi.fn();
+    const sub = model.subscribeLogs(onLine, onStatus);
+
+    expect(instances).toHaveLength(1);
+    // 로그 스트림은 별도 채널 — 쿠키/헤더 인증만, 평문 세션 토큰을 URL에 붙이지 않는다.
+    expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
+    expect(instances[0].url).not.toContain('session=');
+    expect(instances[0].opts).toEqual({ withCredentials: true });
+    expect(sub.connected()).toBe(false);
+
+    instances[0].emit('ready', '{"ok":true}');
+    expect(sub.connected()).toBe(true);
+    expect(onStatus).toHaveBeenCalledWith(true);
+
+    const entry = { ts: '2026-07-05T06:00:00.000Z', level: 'INFO', message: 'hi', line: '[2026-07-05 06:00:00] [INFO] hi' };
+    instances[0].emit('log', JSON.stringify(entry));
+    expect(onLine).toHaveBeenCalledWith(entry);
+
+    instances[0].emit('error', null);
+    expect(sub.connected()).toBe(false);
+    expect(onStatus).toHaveBeenCalledWith(false);
+
+    sub.unsubscribe();
+    expect(instances[0].closed).toBe(true);
+  });
+
+  it('subscribeLogs never puts a plaintext session token in the URL even when a token is stored', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-log', user: {} }));
+    const instances = [];
+    installFakeEventSource(instances);
+
+    const model = createHttpModel({ base: BASE });
+    await model.login('a', 'b'); // stores sid-log
+
+    model.subscribeLogs(vi.fn());
+    expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
+    expect(instances[0].url).not.toContain('session=');
+  });
+
+  it('subscribeLogs skips malformed (non-JSON) log payloads without throwing', () => {
+    const instances = [];
+    installFakeEventSource(instances);
+
+    const model = createHttpModel({ base: BASE });
+    const onLine = vi.fn();
+    model.subscribeLogs(onLine);
+
+    expect(() => instances[0].emit('log', 'not-json{')).not.toThrow();
+    expect(onLine).not.toHaveBeenCalled();
+  });
 });
 
 describe('resolveUploadFilename', () => {

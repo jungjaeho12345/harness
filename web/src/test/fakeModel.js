@@ -19,6 +19,9 @@ export function createFakeModel(seed = {}) {
   // articleId -> 번역문(seed). 없으면 원문 모사로 graceful 폴백.
   const translations = { ...(seed.translations ?? {}) };
   const listeners = new Set();
+  // phase26 로그 뷰어 — in-memory 로그 백로그 + 구독 리스너. logLine 헬퍼로 테스트가 신규 라인을 밀어넣는다.
+  const logs = [...(seed.logs ?? [])];
+  const logListeners = new Set();
   let session = null; // { sessionId, user }
   let seq = 1;
 
@@ -218,6 +221,33 @@ export function createFakeModel(seed = {}) {
         connected: () => true,
         unsubscribe: () => listeners.delete(handler),
       };
+    },
+
+    // --- 실시간 로그 스트림 / 다이제스트 (phase26) — in-memory 모사 ---
+    // 접속 즉시 연결됨(onStatus true)으로 보고 시드 백로그를 재생한 뒤, logLine으로 밀어넣는 신규 라인을 onLine으로 흘린다.
+    subscribeLogs(onLine, onStatus) {
+      logListeners.add(onLine);
+      onStatus?.(true);
+      for (const entry of logs) onLine({ ...entry }); // 시드 백로그 재생(복사본).
+      return {
+        connected: () => true,
+        unsubscribe: () => logListeners.delete(onLine),
+      };
+    },
+    // (테스트 헬퍼) 신규 로그 라인을 백로그에 적재하고 현재 구독자에게 방출한다. httpModel엔 없는 fake 전용 seam.
+    logLine(entry) {
+      logs.push({ ...entry });
+      for (const fn of logListeners) fn({ ...entry });
+    },
+    // 로그 다이제스트 조회 모사 — httpModel과 같은 { ok, digest } shape. date 파싱 실패는 { ok:false, reason:'invalid-date' }.
+    queryLogDigest(date) {
+      if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+        return { ok: false, reason: 'invalid-date' };
+      }
+      const byLevel = {};
+      for (const e of logs) byLevel[e.level] = (byLevel[e.level] ?? 0) + 1;
+      const lines = logs.map((e) => e.line);
+      return { ok: true, digest: { total: logs.length, byLevel, lines } };
     },
   };
 }
