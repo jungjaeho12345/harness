@@ -148,6 +148,43 @@ test('로그 스트림: ?session=<유효토큰> 단독은 401(평문 폴백 없�
   } finally { await ctx.close(); }
 });
 
+test('로그 스트림: 연결 종료 시 log 리스너가 해제된다(누수 없음)', async () => {
+  const logService = createLogService();
+  const ctx = await start({ logService });
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', password: 'pw' });
+    const sid = await login(ctx.base, 'kim', 'pw');
+
+    // 접속 전 baseline: 'log' 리스너 없음.
+    assert.equal(logService.emitter.listenerCount('log'), 0, '접속 전 리스너 0');
+
+    // 인증 스트림을 열고 ready 청크를 받은 뒤, 서버가 subscribe를 걸었는지 확인한다.
+    const u = new URL(`${ctx.base}/api/logs/stream`);
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET',
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${sid}` },
+    });
+    const opened = new Promise((resolve, reject) => {
+      req.on('response', (res) => {
+        res.setEncoding('utf8');
+        res.on('data', () => resolve()); // 첫 청크(ready) 수신 = 구독 완료.
+      });
+      req.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); });
+    });
+    req.end();
+    await opened;
+    assert.equal(logService.emitter.listenerCount('log'), 1, '접속 중 리스너 1');
+
+    // 클라이언트가 소켓을 끊으면 server의 req.on('close', off)로 구독이 해제돼야 한다.
+    req.destroy();
+    // 'close' 전파를 기다린다(누수면 리스너가 1로 남는다).
+    for (let i = 0; i < 50 && logService.emitter.listenerCount('log') !== 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(logService.emitter.listenerCount('log'), 0, '연결 종료 후 리스너 해제(누수 없음)');
+  } finally { await ctx.close(); }
+});
+
 test('로그 스트림: 위조 sid면 401', async () => {
   const ctx = await start();
   try {
