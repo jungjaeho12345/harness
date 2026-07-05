@@ -19,6 +19,8 @@ import { createSchema, backfillEmptyDepartments } from '../src/db/schema.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
 import { createLogService } from '../src/services/logService.js';
+import { createDigestScheduler } from '../src/services/digestScheduler.js';
+import { createSlackDigestSender } from '../src/services/slackDigestSender.js';
 import { createFtpWatcher } from './ftpWatcher.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
@@ -789,6 +791,23 @@ function bootstrap() {
     watcher.start();
     console.log(`FTP watcher watching ${spoolDir}`);
     logService.log('INFO', `FTP watcher watching ${spoolDir}`);
+  }
+
+  // 로그 다이제스트 스케줄러 (26-realtime-log-viewer step3) — createFtpWatcher와 동일한 조건부 start 패턴.
+  // 매일 06:00에 전날 하루치 다이제스트를 집계해 Slack #harness로 push한다(push는 in-process 필연 — 버퍼가 in-memory).
+  // Slack 어댑터는 SLACK_WEBHOOK_URL(런타임 env 시크릿)로 주입 — 미설정 시 no-op으로 안전 완결(코드는 정상).
+  // 자동 시작은 명시 opt-in만: DIGEST_SCHEDULER==='on' 또는 SLACK_WEBHOOK_URL 존재 시에만 켠다.
+  // 기본 off로 두는 이유: 테스트/로컬에서 실제 타이머가 돌아 수명주기를 오염시키면 안 된다(step3 ③).
+  const digestSender = createSlackDigestSender({
+    webhookUrl: process.env.SLACK_WEBHOOK_URL,
+    log: (level, message) => logService.log(level, message),
+  });
+  const digestEnabled = process.env.DIGEST_SCHEDULER === 'on' || Boolean(process.env.SLACK_WEBHOOK_URL);
+  if (digestEnabled) {
+    const scheduler = createDigestScheduler({ logService, sendDigest: digestSender });
+    scheduler.start();
+    console.log('Digest scheduler started (daily 06:00 → Slack #harness)');
+    logService.log('INFO', 'Digest scheduler started (daily 06:00 → Slack #harness)');
   }
 }
 
