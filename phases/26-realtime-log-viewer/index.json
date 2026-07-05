@@ -9,7 +9,7 @@
     "blocked_candidate": "라이브 Slack 배달은 Incoming Webhook URL(SLACK_WEBHOOK_URL 시크릿, 사용자/오케스트레이터 제공) 필요 = 런타임 env 사안. 어댑터는 URL 미설정 시 no-op으로 코드/테스트 완결(주입 전송으로 경로 검증). '라이브 Slack 배달 검증'만 webhook 미제공 시 blocked 후보. step3."
   },
   "steps": [
-    { "step": 0, "name": "logging-core", "status": "pending" },
+    { "step": 0, "name": "logging-core", "status": "completed", "summary": "src/services/logService.js 신규 — 무의존 in-memory 링버퍼(FIFO capacity 기본 50000, 파일 미저장) + 순수 formatLogLine('[YYYY-MM-DD HH:MM:SS] [LEVEL] 메시지', 로컬 Date 컴포넌트·tz 무관) + 주입형 createLogService({capacity,clock,emitter})의 log/info/warn/error/debug·entries({since}) 복사본·subscribe/unsubscribe(node:events EventEmitter). test/logService.test.js 신규 14개. test/lint/build 전체 그린(382 pass)." },
     { "step": 1, "name": "log-stream-route", "status": "pending" },
     { "step": 2, "name": "digest-core-and-api", "status": "pending" },
     { "step": 3, "name": "digest-scheduler", "status": "pending" },
