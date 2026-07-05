@@ -37,11 +37,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 7개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 8개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'media', 'receiverConfig', 'translation', 'user'],
+    ['article', 'auth', 'collection', 'logs', 'media', 'receiverConfig', 'translation', 'user'],
   );
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
@@ -60,6 +60,7 @@ test('createControllers: 7개 도메인과 메서드를 결선한다', () => {
     assert.equal(typeof controllers.receiverConfig[m], 'function', `receiverConfig.${m}`);
   }
   assert.equal(typeof controllers.collection.receive, 'function');
+  assert.equal(typeof controllers.logs.digest, 'function');
 });
 
 test('auth.login: 자격 검증 후 세션을 발급하고 비밀번호를 노출하지 않는다', async () => {

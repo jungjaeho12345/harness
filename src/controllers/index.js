@@ -19,12 +19,14 @@ import { createReceiverConfigService } from '../services/receiverConfigService.j
 import { createCollectionService } from '../services/collectionService.js';
 import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
+import { createLogService } from '../services/logService.js';
 
 export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
   lockoutPolicy = {},
+  logService = createLogService(),
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -99,5 +101,11 @@ export function createControllers(db, {
     pull: (sourceId) => collectionService.pull(sourceId),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection };
+  // 로그 다이제스트 조회 — logService에 위임만 한다(ADR-006, 윈도우/집계 재구현 금지).
+  // logService는 주입받아 SSE 스트림·계측·다이제스트가 단일 버퍼 인스턴스를 공유한다.
+  const logs = {
+    digest: (dateStr) => logService.digest(dateStr),
+  };
+
+  return { auth, user, article, media, translation, receiverConfig, collection, logs };
 }

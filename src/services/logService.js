@@ -6,6 +6,7 @@
 // 로깅은 애플리케이션 흐름을 멈추면 안 되므로 이상 입력은 coerce/무시로 흡수한다(throw 금지).
 
 import { EventEmitter } from 'node:events';
+import { computeLogDigest, parseDateParam } from './logDigest.js';
 
 // 24시간치를 넉넉히 담기 위한 링 버퍼 상한(파일 미저장 — 메모리 보유).
 // 예: 초당 ~0.5건이면 하루 ~43,200건 → 50,000으로 24h 윈도우를 여유 있게 커버한다.
@@ -78,10 +79,25 @@ export function createLogService({ capacity = DEFAULT_CAPACITY, clock = () => Da
     };
   }
 
+  // 다이제스트 조회(읽기 전용) — 현재 버퍼 스냅샷을 순수 코어(computeLogDigest)로 집계한다(step2).
+  //   dateStr 미지정이면 runDate = 현재 시각(clock, = 오늘 06:00 실행 가정). 'YYYY-MM-DD'면 그날 기준.
+  //   잘못된 date는 throw하지 않고 { ok:false, reason:'invalid-date' }로 흡수한다(graceful).
+  // 버퍼를 변형하지 않는다 — entries()는 복사본이고 computeLogDigest도 입력 불변(append-only 정신).
+  function digest(dateStr) {
+    let runDate;
+    if (dateStr === undefined || dateStr === null || dateStr === '') {
+      runDate = new Date(clockMs());
+    } else {
+      runDate = parseDateParam(dateStr);
+      if (!runDate) return { ok: false, reason: 'invalid-date' };
+    }
+    return { ok: true, digest: computeLogDigest(entries(), runDate) };
+  }
+
   const info = (message) => log('INFO', message);
   const warn = (message) => log('WARN', message);
   const error = (message) => log('ERROR', message);
   const debug = (message) => log('DEBUG', message);
 
-  return { log, info, warn, error, debug, entries, subscribe, emitter };
+  return { log, info, warn, error, debug, entries, subscribe, digest, emitter };
 }

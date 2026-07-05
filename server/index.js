@@ -100,6 +100,7 @@ const STATUS_BY_REASON = {
   'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
+  'invalid-date': 400,
 };
 
 function fail(res, result, fallback = 400) {
@@ -700,6 +701,18 @@ export function createApp({
     req.on('close', () => bus.off('change', onChange));
   });
 
+  // --- 로그 다이제스트 조회 (26-realtime-log-viewer step2) ---
+  // 전날 06:00~당일 05:59 윈도우 집계를 pull로 조회한다. 세션 게이트만(읽기 전용, ADR-004 — role 없음).
+  // 윈도우/집계 로직은 순수 코어(logDigest)에 위임 — 라우트는 얇게(ADR-006). DB 미접촉(in-memory 스냅샷).
+  app.get('/api/logs/digest', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const r = controllers.logs.digest(req.query.date);
+      return r.ok ? res.json({ ok: true, digest: r.digest }) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
   // --- SSE: 실시간 로그 스트림 (26-realtime-log-viewer step1) ---
   // 무효화 채널(/api/stream)과 물리적으로 분리된 전용 채널이다 — 로그는 실제 컨텐츠(메시지)를 담으므로
   // "행 데이터 없는 무효화 신호"(ADR-005) 계약과 충돌한다. 로직은 step0 logService에 위임(ADR-006).
@@ -747,9 +760,10 @@ function bootstrap() {
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
 
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService });
-  // 로그 서비스는 부트스트랩에서 1회 생성해 주입한다 — 라우트/계측/후속 step(digest)이 단일 인스턴스를 공유한다.
+  // 로그 서비스는 부트스트랩에서 1회 생성해 controllers·createApp 양쪽에 주입한다 —
+  // SSE 스트림/계측(createApp)과 다이제스트 조회(controllers.logs)가 단일 버퍼 인스턴스를 공유한다.
   const logService = createLogService();
+  const controllers = createControllers(db, { sessionService, logService });
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
