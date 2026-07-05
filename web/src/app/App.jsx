@@ -12,6 +12,7 @@ import { WriterPage } from '../view/WriterPage.jsx';
 import { ListPage } from '../view/ListPage.jsx';
 import { RcvMgmtPage } from '../view/RcvMgmtPage.jsx';
 import { UserMgmtPage } from '../view/UserMgmtPage.jsx';
+import { LogViewerPage } from '../view/LogViewerPage.jsx';
 
 // 해석된 라우트 → 페이지 컴포넌트. login.do 외에는 공통 상단 헤더(TopBar)를 함께 그린다.
 function RouteView({ route }) {
@@ -21,6 +22,7 @@ function RouteView({ route }) {
   else if (route === 'list.do') page = <ListPage />;
   else if (route === 'rcvMgmt.do') page = <RcvMgmtPage />;
   else if (route === 'userMgmt.do') page = <UserMgmtPage />;
+  else if (route === 'logs.do') page = <LogViewerPage />;
   return (
     <div data-testid="route" data-route={route}>
       {route !== 'login.do' && <TopBar />}

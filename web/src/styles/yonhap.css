@@ -1392,3 +1392,96 @@ a { color: var(--yh-blue); }
   font-size: 0.8rem;
   flex: 0 0 auto;
 }
+
+/* ── 실시간 로그 뷰어(logs.do, phase26) — 절제된 신문형 토큰. 글로우/그라데이션/보라색 금지 ── */
+.yh-log-header {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-md);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-log-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--yh-radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.yh-log-status--on {
+  background: var(--yh-blue-light);
+  color: var(--yh-blue-dark);
+}
+.yh-log-status--off {
+  background: var(--yh-gray-bg);
+  color: var(--yh-gray-mid);
+}
+.yh-log-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-md);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-log-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  cursor: pointer;
+}
+.yh-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-md);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--yh-white);
+}
+.yh-log-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--yh-sp-sm);
+  padding: 3px var(--yh-sp-md);
+  border-bottom: 1px solid var(--yh-gray-line);
+}
+.yh-log-line:last-child {
+  border-bottom: none;
+}
+.yh-log-text {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.82rem;
+  color: var(--yh-ink);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.yh-log-badge {
+  flex: 0 0 auto;
+  display: inline-block;
+  min-width: 3.4em;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: var(--yh-radius-sm);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.yh-log-badge--error {
+  background: var(--yh-badge-dps-bg);
+  color: var(--yh-badge-dps-fg);
+}
+.yh-log-badge--warn {
+  background: var(--yh-badge-hold-bg);
+  color: var(--yh-badge-hold-fg);
+}
+.yh-log-badge--info {
+  background: var(--yh-badge-rds-bg);
+  color: var(--yh-badge-rds-fg);
+}
+.yh-log-badge--debug {
+  background: var(--yh-gray-bg);
+  color: var(--yh-gray-mid);
+}
+.yh-log-empty {
+  color: var(--yh-gray-mid);
+  padding: var(--yh-sp-lg);
+}

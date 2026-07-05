@@ -24,6 +24,7 @@ export function TopBar() {
         <nav className="yh-topbar__nav">
           <button type="button" className="yh-btn" onClick={() => navigate('writer.do')}>기사작성</button>
           <button type="button" className="yh-btn" onClick={() => navigate('list.do')}>기사조회</button>
+          <button type="button" className="yh-btn" onClick={() => navigate('logs.do')}>실시간 로그</button>
           {isZ && (
             <>
               <button type="button" className="yh-btn" onClick={() => navigate('rcvMgmt.do')}>수신설정 관리</button>

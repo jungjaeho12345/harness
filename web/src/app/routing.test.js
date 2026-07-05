@@ -51,6 +51,15 @@ describe('resolveRoute (guards)', () => {
     expect(resolveRoute('list.do', R)).toBe('list.do');
   });
 
+  it('logs.do is any-authenticated (not Z-only): logged-out → login.do, R/D/Z → logs.do', () => {
+    expect(ROUTES).toContain('logs.do');
+    expect(Z_ONLY_ROUTES).not.toContain('logs.do');
+    expect(resolveRoute('logs.do', null)).toBe('login.do');
+    expect(resolveRoute('logs.do', R)).toBe('logs.do');
+    expect(resolveRoute('logs.do', { role: 'D' })).toBe('logs.do');
+    expect(resolveRoute('logs.do', Z)).toBe('logs.do');
+  });
+
   it('treats unknown targets as login.do then applies guards', () => {
     expect(resolveRoute('bogus.do', null)).toBe(DEFAULT_ROUTE);
     expect(resolveRoute('bogus.do', R)).toBe('list.do'); // login.do → list.do for logged-in

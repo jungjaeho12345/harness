@@ -60,6 +60,14 @@ describe('App — session restore gate + routing', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/list.do'));
   });
 
+  it('renders the log viewer at logs.do for an authenticated (non-Z) user', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'kim', role: 'R', department: '정치' } });
+    go('/logs.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'logs.do'));
+    expect(screen.getByRole('heading', { name: '실시간 로그' })).toBeInTheDocument();
+  });
+
   it('lets a Z user into a Z-only route', async () => {
     const model = modelReturning({ ok: true, user: { userId: 'boss', role: 'Z' } });
     go('/userMgmt.do');
