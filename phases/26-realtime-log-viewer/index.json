@@ -1,0 +1,19 @@
+{
+  "project": "기사 작성기",
+  "phase": "26-realtime-log-viewer",
+  "decisions": {
+    "logging": "무의존 in-memory ring buffer(파일 미저장) + 내장 EventEmitter 재사용. 라인 포맷 정확히 '[YYYY-MM-DD HH:MM:SS] [LEVEL] 메시지'(로컬 Date 컴포넌트 기반·tz 무관 결정적). winston/pino/log4j 등 외부 로깅 라이브러리 금지(ADR 최소 의존성). step0.",
+    "sse_channel": "신규 전용 채널 GET /api/logs/stream 채택(기존 /api/stream에 log 이벤트 추가하지 않음). 근거: (1) /api/stream은 ADR-005 '행 데이터 없는 무효화 신호' 계약이라 컨텐츠 담는 로그와 의미 충돌 (2) 기존 목록/작성 구독자 오염 방지 (3) 로그 뷰어는 접속 시 백로그 재생 필요(무효화 채널엔 없는 개념) (4) logService가 자체 EventEmitter 소유로 버스 물리 분리. 인증은 /api/stream과 동일하게 쿠키/헤더만(평문 ?session= 폴백 없음). step1.",
+    "digest": "순수 코어 computeLogDigest(entries, runDate) → 전날06:00~당일05:59 윈도우 필터·집계(결정적·외부 의존 0·DB 미접촉, step2). 그 위에 (B) 조회 API GET /api/logs/digest?date=(세션 게이트·읽기 전용, step2)와 (A) 06:00 push → Slack #harness 전송 어댑터(주입형·no-op 기본, step3). 24h 윈도우는 ring buffer가 메모리 보유(여전히 파일 미저장).",
+    "scheduler_location": "in-process 타이머(주입형·기본 off·부트스트랩에서만 명시 opt-in start). 근거: 로그 버퍼가 in-memory(파일 미저장)라 다이제스트도 같은 프로세스 메모리에서만 계산 가능 → push는 in-process가 필연(외부 cron은 프로세스 밖이라 버퍼 접근 불가, 대신 pull=GET /api/logs/digest로 커버). 기존 createFtpWatcher 조건부 start 패턴과 정합. 타이머/전송/clock 전부 주입 → 실제 타이머 없이 결정적 테스트, 테스트/로컬은 스케줄러 미기동. step3.",
+    "blocked_candidate": "라이브 Slack 배달은 Incoming Webhook URL(SLACK_WEBHOOK_URL 시크릿, 사용자/오케스트레이터 제공) 필요 = 런타임 env 사안. 어댑터는 URL 미설정 시 no-op으로 코드/테스트 완결(주입 전송으로 경로 검증). '라이브 Slack 배달 검증'만 webhook 미제공 시 blocked 후보. step3."
+  },
+  "steps": [
+    { "step": 0, "name": "logging-core", "status": "pending" },
+    { "step": 1, "name": "log-stream-route", "status": "pending" },
+    { "step": 2, "name": "digest-core-and-api", "status": "pending" },
+    { "step": 3, "name": "digest-scheduler", "status": "pending" },
+    { "step": 4, "name": "web-model-log", "status": "pending" },
+    { "step": 5, "name": "web-log-viewer", "status": "pending" }
+  ]
+}
