@@ -60,3 +60,43 @@ test('stop()은 watcher를 닫는다', () => {
   w.stop();
   assert.equal(closed.value, true);
 });
+
+test('처리 실패 시 onError(err, filename)가 호출된다(무음 삼킴 제거) — watcher는 계속 산다', async () => {
+  const { watch, emit } = fakeWatch();
+  const errors = [];
+  const w = createFtpWatcher({
+    dir: '/spool',
+    onFile: () => {},
+    watch,
+    readFile: async () => { throw new Error('read-fail'); },
+    onError: (err, filename) => errors.push({ err, filename }),
+  });
+  w.start();
+
+  emit('src-1/broken.txt');
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].err.message, 'read-fail');
+  assert.equal(errors[0].filename, 'src-1/broken.txt');
+
+  // 실패 후에도 watcher는 살아 있어 다음 이벤트를 계속 처리한다.
+  emit('src-1/broken.txt');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(errors.length, 2);
+});
+
+test('onError 미주입이면 실패해도 throw 없이 조용히 무시한다(하위호환)', async () => {
+  const { watch, emit } = fakeWatch();
+  const w = createFtpWatcher({
+    dir: '/spool',
+    onFile: () => {},
+    watch,
+    readFile: async () => { throw new Error('read-fail'); },
+  });
+  w.start();
+
+  emit('src-1/broken.txt');
+  await new Promise((r) => setImmediate(r)); // unhandled rejection이 나면 테스트 러너가 실패시킨다.
+  assert.ok(true);
+});
