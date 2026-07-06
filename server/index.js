@@ -720,6 +720,45 @@ export function createApp({
     req.on('close', () => bus.off('change', onChange));
   });
 
+  // --- 로그 노출 (ADR-007 — ADR-005 "무효화 신호만" 원칙의 예외: 로그 라인 실데이터를 push) ---
+  // CRITICAL: 둘 다 Z 전용이다. /api/stream(로그인만)과 달리 role 게이트가 있다 — 게이트를 빼면
+  // R/D가 서버 로그(전 사용자 요청 흔적)를 본다. role은 검증 세션에서만 도출한다(ADR-004).
+  // 읽기 전용: logService(in-memory 링 버퍼)에 위임만 한다 — DB/파일을 만들거나 건드리지 않는다.
+
+  // 로그 다이제스트 — [전날 06:00, 당일 06:00) KST 창(LOGS.md). 매일 6시 전달은 앱 타이머가 아니라
+  // 하네스 운영 루틴이 이 API를 pull해 수행한다.
+  app.get('/api/logs/digest', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      if (me.role !== 'Z') return res.status(403).json(FORBIDDEN);
+      return res.json({ ok: true, items: logService.digest() });
+    } catch (e) { next(e); }
+  });
+
+  // 실시간 로그 SSE — 접속마다 버퍼 최근 2000건을 replay한 뒤 실시간 push를 잇는다.
+  // Last-Event-ID 프로토콜 없이 재연결 유실을 replay로 해소한다 — 중복 라인은 클라(step4)가 record.seq로 거른다.
+  const LOG_REPLAY_MAX = 2000; // step4 클라 MAX_LINES와 정렬 — 전체 cap(10000) replay는 첫 렌더/대역폭 낭비.
+  app.get('/api/logs/stream', (req, res) => {
+    const { me } = sessionOf(req);
+    if (!me) return res.status(401).json(UNAUTH);
+    if (me.role !== 'Z') return res.status(403).json(FORBIDDEN); // 비-Z 차단 — SSE 헤더를 열기 전에 끝낸다.
+
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    if (res.flushHeaders) res.flushHeaders();
+    res.write('event: ready\ndata: {"ok":true}\n\n');
+
+    for (const rec of logService.snapshot().slice(-LOG_REPLAY_MAX)) {
+      res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`);
+    }
+    const off = logService.subscribe((rec) => res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`));
+    req.on('close', () => off()); // 구독 해제 필수 — 누수 시 닫힌 응답에 write가 누적된다.
+  });
+
   // 전역 에러 핸들러 — 내부 스택을 노출하지 않는다 (4-arg, 마지막 등록).
   // err는 in-memory 로그에만 남긴다 — HTTP 응답 바디는 internal-error 고정(ADR 보안 경계 불변).
   // eslint-disable-next-line no-unused-vars
