@@ -40,7 +40,7 @@
       "status": "completed",
       "started_at": "2026-07-06T09:35:55+0900",
       "summary": "Z 전용 실시간 로그 뷰어 페이지 logs.do 수직 슬라이스: routing.js ROUTES·Z_ONLY_ROUTES에 'logs.do' 추가(비-Z는 resolveRoute가 list.do로 가드, 실제 강제는 서버 Z 게이트 — 이중 강제), App.jsx RouteView에 LogsPage 분기, TopBar isZ 블록에 '실시간 로그' nav 버튼(비-Z 미노출). 신규 useLogsController.js(model.subscribeLogs만 호출 — EventSource 미접촉, MAX_LINES=2000 링 캡 export, maxSeqRef(useRef)로 재연결 replay seq 중복 제거 — setState 업데이터 순수 유지, cleanup unsubscribe) + LogsPage.jsx(순수 뷰 — yh-live 연결 상태바·record.line 그대로 표시·레벨별 yh-log__line--{debug,info,warn,error} 클래스·자동 스크롤·빈 상태 안내) + yonhap.css 끝 append(등폭·신문형 밀도·--yh-* 토큰, ERROR=--yh-red/WARN=앰버/DEBUG=--yh-gray-mid). 테스트: routing 2건 보강 + App.test.jsx 3건(logs.do 가드/Z 진입+TopBar 버튼/비-Z 버튼 미노출) + 신규 LogsPage.test.jsx 5건(replay 라인·레벨 클래스, live-status, 빈 상태, MAX_LINES 링 캡, seq dedup) — vitest 1071 통과·build·lint 무결·신규 의존성 0.",
-      "completed_at": "2026-07-06T09:41:16+0900"
+      "completed_at": "2026-07-06T09:42:50+0900"
     }
   ],
   "created_at": "2026-07-06T09:12:33+0900"
