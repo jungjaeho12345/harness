@@ -3,7 +3,8 @@
 // 폼 상태(query/replacement/caseSensitive)만 내부 state로 둔다. WriterPage 결선은 Step 2.
 // window/document/transport(model/fetch) 호출 없음. 조회페이지 ContextMenu와 무관한 yh-find-replace 전용 클래스/testid를 쓴다.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
 
 export function FindReplaceDialog({
   open,
@@ -28,6 +29,11 @@ export function FindReplaceDialog({
       setCaseSensitive(false);
     }
   }, [open]);
+
+  // 열림 시 포커스를 find-query로 이전 — 포커스가 에디터 본문(contentEditable)에 남아
+  // 검색어 타이핑이 기사 본문에 삽입되고 Esc 닫기가 발화하지 않는 결함 방지(Step 0 27-editor-critical-fixes).
+  const queryRef = useRef(null);
+  useFocusOnOpen(queryRef, open);
 
   if (!open) return null;
 
@@ -66,6 +72,7 @@ export function FindReplaceDialog({
           <input
             id="find-query"
             data-testid="find-query"
+            ref={queryRef}
             type="text"
             aria-label="찾을 내용"
             value={query}

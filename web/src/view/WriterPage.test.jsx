@@ -1571,6 +1571,19 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     await waitFor(() => expect(findDialog()).toBeInTheDocument());
   });
 
+  // Step 0(27-editor-critical-fixes): 본문 오염 방지 — 에디터(contentEditable)에 캐럿을 둔 채 Ctrl+F로 열면
+  // 포커스가 본문에 남아 이어지는 검색어 타이핑이 기사 본문에 삽입(→자동저장으로 영속)되던 결함의 회귀 테스트.
+  it('에디터에 포커스가 있는 상태에서 Ctrl+F로 열면 포커스가 본문이 아니라 find-query로 이동한다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+    box.focus(); // jsdom best-effort — contentEditable 루트에 포커스를 둔 채 진입
+    fireEvent.keyDown(box, { key: 'f', ctrlKey: true });
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+    expect(document.activeElement).toBe(screen.getByTestId('find-query')); // 다이얼로그 내부(양성 단언)
+    expect(box.contains(document.activeElement)).toBe(false); // 에디터 본문이 아님
+  });
+
   it("편집 메뉴 '찾기/바꾸기'(edit.findReplace) 클릭 시 다이얼로그가 열린다", async () => {
     await openWith([textBlock('헤드'), textBlock('본문')]);
     expect(findDialog()).toBeNull();

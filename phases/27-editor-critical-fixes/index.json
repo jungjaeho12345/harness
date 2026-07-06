@@ -1,0 +1,29 @@
+{
+  "project": "기사 작성기",
+  "phase": "27-editor-critical-fixes",
+  "steps": [
+    {
+      "step": 0,
+      "name": "dialog-focus-management",
+      "status": "completed",
+      "started_at": "2026-07-06T13:11:01+0900",
+      "summary": "useFocusOnOpen 훅 신설 + 에디터 다이얼로그 8개(FindReplace·Glyph·FileInfo·Memo·Abbrev·SimpTrad·HistoryCompare·UrlEmbed) 열림 시 포커스를 내부(첫 텍스트 입력, 없으면 닫기 버튼)로 이전 — 본문 오염·Esc 불능 해소, document.activeElement 회귀 테스트 11건 추가 (test:web 1082 통과·build·lint 클린)"
+    },
+    {
+      "step": 1,
+      "name": "find-endmarker-guard",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "upload-tab-race-guard",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "file-link-href-guard",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-06T13:11:01+0900"
+}

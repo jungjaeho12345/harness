@@ -67,4 +67,11 @@ describe('SimpTradConvertDialog — 간↔번 방향 선택 다이얼로그', ()
     expect(() => fireEvent.click(screen.getByTestId('simptrad-close'))).not.toThrow();
     expect(() => fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })).not.toThrow();
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 반드시 '닫기' 버튼으로 포커스한다.
+  // 변환 버튼(simptrad-to-trad 등)에 초기 포커스를 두면 열림 직후 Space/Enter로 본문 전체가 우발 변환된다(액션 버튼 금지 규칙).
+  it('open=true로 렌더된 직후 document.activeElement가 닫기 버튼이다(변환 버튼 아님 — 열림 시 포커스 이전)', () => {
+    render(<SimpTradConvertDialog {...noopProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('simptrad-close'));
+  });
 });

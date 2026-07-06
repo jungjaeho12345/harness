@@ -5,11 +5,19 @@
 // model/fetch/localStorage/window/document/Date 호출 없음. 약물입력(yh-glyph-input)·URL임베드(yh-url-embed)·
 //   찾기(yh-find-replace)·약물바(yh-editor-glyphbar)와 충돌하지 않게 전용 클래스(yh-file-info)·testid(file-info)를 쓴다.
 
+import { useRef } from 'react';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
+
 export function FileInfoDialog({
   open,
   stats, // { chars, words, bytes, lines, embeds, paragraph, row, column } — 부모가 계산해 주입
   onClose, // () => void
 }) {
+  // 열림 시 포커스를 '닫기' 버튼으로 이전(읽기전용 — 입력 없음) — 포커스가 에디터 본문에 남으면
+  // Esc 닫기가 발화하지 않고 타이핑이 본문에 들어간다(Step 0 27-editor-critical-fixes).
+  const closeRef = useRef(null);
+  useFocusOnOpen(closeRef, open);
+
   if (!open) return null;
 
   // stats 미주입/일부 누락이어도 죽지 않게 안전 폴백한다(누락 수치 → 0, 줄/캐럿 좌표 → 1).
@@ -72,6 +80,7 @@ export function FileInfoDialog({
           type="button"
           className="yh-btn yh-btn--primary"
           data-testid="file-info-close"
+          ref={closeRef}
           onClick={() => onClose && onClose()}
         >
           닫기

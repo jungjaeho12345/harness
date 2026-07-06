@@ -108,4 +108,11 @@ describe('AbbrevManageDialog — 약어 관리 다이얼로그', () => {
     expect(screen.getByTestId('abbrev-manage-item-0')).toHaveTextContent('US → 미국');
     expect(screen.getByTestId('abbrev-manage-item-1')).toHaveTextContent('US → 미국');
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 논리적 첫 텍스트 입력(짧은형 input)으로 포커스한다.
+  // 포커스가 에디터 본문에 남으면 약어 타이핑이 기사 본문에 삽입되고 Esc 닫기도 발화하지 않는다.
+  it('open=true로 렌더된 직후 document.activeElement가 짧은형 입력이다(열림 시 포커스 이전)', () => {
+    render(<AbbrevManageDialog {...noopProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('abbrev-manage-short'));
+  });
 });

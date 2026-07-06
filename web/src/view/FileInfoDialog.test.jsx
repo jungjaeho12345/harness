@@ -96,4 +96,11 @@ describe('FileInfoDialog — 파일 정보 다이얼로그(읽기전용)', () =>
     rerender(<FileInfoDialog {...noopProps({ open: true })} />);
     expect(screen.getByRole('dialog', { name: '파일 정보' })).toBeInTheDocument();
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 읽기전용(입력 없음)이라 '닫기' 버튼으로 포커스한다.
+  // 포커스가 에디터 본문에 남으면 Esc 닫기가 발화하지 않고 타이핑이 본문에 들어간다.
+  it('open=true로 렌더된 직후 document.activeElement가 닫기 버튼이다(열림 시 포커스 이전)', () => {
+    render(<FileInfoDialog {...noopProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('file-info-close'));
+  });
 });

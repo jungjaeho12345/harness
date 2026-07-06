@@ -7,6 +7,9 @@
 // model/fetch/localStorage/window/document 호출 없음. 찾기/바꾸기(yh-find-replace)·약물바(yh-editor-glyphbar)와
 //   충돌하지 않게 전용 클래스(yh-glyph-input)·testid(glyph-input)를 쓴다.
 
+import { useRef } from 'react';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
+
 export function GlyphInputDialog({
   open,
   favorites = [], // string[] — 자주쓰는 약물
@@ -14,6 +17,11 @@ export function GlyphInputDialog({
   onPick, // (glyph) => void — 약물 선택 시
   onClose, // () => void
 }) {
+  // 열림 시 포커스를 '닫기' 버튼으로 이전(텍스트 입력 없음) — 약물 버튼에 두면 Space/Enter로 우발 삽입되고,
+  // 포커스가 에디터 본문에 남으면 Esc 닫기가 발화하지 않는다(Step 0 27-editor-critical-fixes).
+  const closeRef = useRef(null);
+  useFocusOnOpen(closeRef, open);
+
   if (!open) return null;
 
   // 약물 선택 시 부모에 삽입을 위임한다. 닫을지(onClose)는 부모 재량에 맡기고 여기서는 닫지 않는다 —
@@ -92,6 +100,7 @@ export function GlyphInputDialog({
           type="button"
           className="yh-btn yh-btn--primary"
           data-testid="glyph-input-close"
+          ref={closeRef}
           onClick={() => onClose && onClose()}
         >
           닫기

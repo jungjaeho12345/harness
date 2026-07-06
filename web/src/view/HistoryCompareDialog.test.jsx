@@ -115,4 +115,11 @@ describe('HistoryCompareDialog — 기사 이력 비교 다이얼로그(읽기�
     expect(() => fireEvent.click(screen.getByTestId('history-compare-close'))).not.toThrow();
     expect(() => fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })).not.toThrow();
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — select는 entries<2면 렌더되지 않으므로
+  // 항상 실재하는 '닫기' 버튼으로 포커스한다. 포커스가 에디터 본문에 남으면 Esc 닫기가 발화하지 않는다.
+  it('open=true로 렌더된 직후 document.activeElement가 닫기 버튼이다(열림 시 포커스 이전)', () => {
+    render(<HistoryCompareDialog {...baseProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('history-compare-close'));
+  });
 });

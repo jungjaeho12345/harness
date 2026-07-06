@@ -5,7 +5,8 @@
 // model/fetch/localStorage/window/document·clipboardEmbed 호출 없음. 찾기(yh-find-replace)·약물입력(yh-glyph-input)·
 //   약물바(yh-editor-glyphbar)와 충돌하지 않게 전용 클래스(yh-url-embed)·testid(url-embed)를 쓴다.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
 
 // kind별 라벨/placeholder만 다르다. 동작 분기(팩토리 선택)는 부모가 한다.
 const KIND_META = {
@@ -28,6 +29,11 @@ export function UrlEmbedDialog({
   useEffect(() => {
     if (open) setUrl('');
   }, [open]);
+
+  // 열림 시 포커스를 URL input(논리적 첫 입력)으로 이전 — 포커스가 에디터 본문에 남으면
+  // URL 타이핑이 기사 본문에 삽입되고 Esc 닫기가 발화하지 않는다(Step 0 27-editor-critical-fixes).
+  const urlRef = useRef(null);
+  useFocusOnOpen(urlRef, open);
 
   if (!open) return null;
 
@@ -60,6 +66,7 @@ export function UrlEmbedDialog({
         <input
           id="url-embed-input"
           data-testid="url-embed-input"
+          ref={urlRef}
           type="text"
           aria-label={meta.title}
           placeholder={meta.placeholder}

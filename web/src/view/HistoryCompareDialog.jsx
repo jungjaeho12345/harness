@@ -4,7 +4,9 @@
 // diff 계산은 순수 함수 diffLines만 쓰고, 본문/캐럿/임베드는 절대 바꾸지 않는다(입력폼·onSubmit·onPick 없음 — 표시 전용).
 // 다른 패널(yh-file-info/yh-find-replace 등)과 충돌하지 않게 전용 클래스(yh-history-compare)·testid(history-compare)를 쓴다.
 
+import { useRef } from 'react';
 import { diffLines } from './historyDiff.js';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
 
 export function HistoryCompareDialog({
   open,
@@ -17,6 +19,11 @@ export function HistoryCompareDialog({
   onSelectRight, // (key) => void
   onClose, // () => void
 }) {
+  // 열림 시 포커스를 '닫기' 버튼으로 이전 — select는 entries<2면 렌더되지 않아 항상 실재하는 닫기 버튼을 쓴다.
+  // 포커스가 에디터 본문에 남으면 Esc 닫기가 발화하지 않는다(Step 0 27-editor-critical-fixes).
+  const closeRef = useRef(null);
+  useFocusOnOpen(closeRef, open);
+
   if (!open) return null;
 
   // entries 미주입/비배열이어도 죽지 않게 안전 폴백한다. 비교는 대상이 2개 이상일 때만 가능하다.
@@ -105,6 +112,7 @@ export function HistoryCompareDialog({
           type="button"
           className="yh-btn yh-btn--primary"
           data-testid="history-compare-close"
+          ref={closeRef}
           onClick={() => onClose && onClose()}
         >
           닫기

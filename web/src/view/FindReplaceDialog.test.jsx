@@ -104,4 +104,17 @@ describe('FindReplaceDialog — 찾기/바꾸기 다이얼로그', () => {
     rerender(<FindReplaceDialog {...noopProps({ open: true })} />);
     expect(screen.getByTestId('find-query')).toHaveValue('');
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 포커스가 에디터 본문(contentEditable)에 남으면
+  // 검색어 타이핑이 기사 본문에 삽입되고(오염) 루트 onKeyDown의 Esc 닫기도 발화하지 않는다.
+  it('open=true로 렌더된 직후 document.activeElement가 find-query다(열림 시 포커스 이전)', () => {
+    render(<FindReplaceDialog {...noopProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('find-query'));
+  });
+
+  it('닫힘→열림(open false→true) 전이에서도 포커스가 find-query로 이동한다', () => {
+    const { rerender } = render(<FindReplaceDialog {...noopProps({ open: false })} />);
+    rerender(<FindReplaceDialog {...noopProps({ open: true })} />);
+    expect(document.activeElement).toBe(screen.getByTestId('find-query'));
+  });
 });
