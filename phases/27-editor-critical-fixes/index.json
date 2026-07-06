@@ -7,7 +7,8 @@
       "name": "dialog-focus-management",
       "status": "completed",
       "started_at": "2026-07-06T13:11:01+0900",
-      "summary": "useFocusOnOpen 훅 신설 + 에디터 다이얼로그 8개(FindReplace·Glyph·FileInfo·Memo·Abbrev·SimpTrad·HistoryCompare·UrlEmbed) 열림 시 포커스를 내부(첫 텍스트 입력, 없으면 닫기 버튼)로 이전 — 본문 오염·Esc 불능 해소, document.activeElement 회귀 테스트 11건 추가 (test:web 1082 통과·build·lint 클린)"
+      "summary": "useFocusOnOpen 훅 신설 + 에디터 다이얼로그 8개(FindReplace·Glyph·FileInfo·Memo·Abbrev·SimpTrad·HistoryCompare·UrlEmbed) 열림 시 포커스를 내부(첫 텍스트 입력, 없으면 닫기 버튼)로 이전 — 본문 오염·Esc 불능 해소, document.activeElement 회귀 테스트 11건 추가 (test:web 1082 통과·build·lint 클린)",
+      "completed_at": "2026-07-06T13:20:28+0900"
     },
     {
       "step": 1,
