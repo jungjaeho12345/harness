@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-07-06T09:23:10+0900",
       "summary": "server/index.js에 Z 전용 로그 노출 라우트 2개(에러 핸들러 앞, sessionOf 세션 role로만 게이트 — 미인증 401/비-Z 403): GET /api/logs/stream = SSE(text/event-stream, event: ready 후 snapshot 최근 2000건 replay → subscribe 실시간 push, 'event: log' + record {seq,ts,level,message,line} JSON, req close 시 unsubscribe 누수 방지), GET /api/logs/digest = {ok, items:[record]}(전날 06:00~당일 05:59:59.999 KST 창, pull 전용·타이머 없음). docs/ADR.md에 ADR-007 추가(ADR-005 무효화 신호 원칙의 예외 — Z 전용 게이트·in-memory 링 버퍼·비영속·쿠키 인증). 테스트 test/logs-api.test.js 7건(digest 401/403/200+가짜시계 창 검증, stream 401/403/200+ready+replay shape, 종료 시 subscriberCount 0 복귀), 전체 399 통과·lint 무결·신규 의존성 0.",
-      "completed_at": "2026-07-06T09:27:29+0900"
+      "completed_at": "2026-07-06T09:29:04+0900"
     },
     {
       "step": 3,
