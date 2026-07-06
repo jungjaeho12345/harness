@@ -29,13 +29,14 @@ export const TOOLBAR_BUTTONS = Object.freeze([
 export function EditorToolBar({ onSelect }) {
   return (
     <div className="yh-editor-toolbar" role="toolbar" aria-label="에디터 도구막대" data-testid="toolbar">
-      {/* 표시 전용 셀렉트 — 선택값은 보존되지만 에디터 폰트를 실제로 바꾸지 않는다(placeholder). */}
-      <select className="yh-editor-toolbar__select" aria-label="글꼴" data-testid="tool-font" defaultValue="바탕">
+      {/* 표시 전용 셀렉트 — 선택값은 보존되지만 에디터 폰트를 실제로 바꾸지 않는다(placeholder).
+          마우스 전용: tabIndex=-1로 Tab 포커스 제외(native 드롭다운 조작을 위해 mousedown은 막지 않는다). */}
+      <select className="yh-editor-toolbar__select" aria-label="글꼴" data-testid="tool-font" defaultValue="바탕" tabIndex={-1}>
         {TOOLBAR_FONTS.map((font) => (
           <option key={font} value={font}>{font}</option>
         ))}
       </select>
-      <select className="yh-editor-toolbar__select" aria-label="글씨크기" data-testid="tool-size" defaultValue="14">
+      <select className="yh-editor-toolbar__select" aria-label="글씨크기" data-testid="tool-size" defaultValue="14" tabIndex={-1}>
         {TOOLBAR_SIZES.map((size) => (
           <option key={size} value={size}>{size}</option>
         ))}
@@ -48,6 +49,9 @@ export function EditorToolBar({ onSelect }) {
           className="yh-editor-toolbar__btn"
           aria-label={btn.label}
           data-testid={`tool-${btn.label}`}
+          // 마우스 전용 — Tab 포커스 제외 + 포커스 이동 차단(후속 결선 phase에서도 유지할 것).
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           // 쉘 — 모든 버튼은 비활성 placeholder다. 액션 결선은 후속 phase.
           disabled
           // 계약상 onSelect를 받아두지만 버튼이 disabled라 이번 phase에선 호출되지 않는다.

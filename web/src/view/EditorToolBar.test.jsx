@@ -77,3 +77,19 @@ describe('EditorToolBar — 에디터 툴바(쉘, 비활성 placeholder)', () =>
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+// 마우스 전용 chrome — Tab으로 툴바에 도달할 수 없다(키보드는 본문 편집 전용).
+describe('EditorToolBar — 마우스 전용(키보드 제어 제거)', () => {
+  it('글꼴·글씨크기 셀렉트는 Tab 포커스 대상이 아니다(tabIndex=-1)', () => {
+    render(<EditorToolBar />);
+    expect(screen.getByTestId('tool-font')).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByTestId('tool-size')).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('13개 버튼 모두 tabIndex=-1이다', () => {
+    render(<EditorToolBar />);
+    for (const btn of TOOLBAR_BUTTONS) {
+      expect(screen.getByTestId(`tool-${btn.label}`)).toHaveAttribute('tabindex', '-1');
+    }
+  });
+});
