@@ -7,7 +7,8 @@
       "name": "log-service",
       "status": "completed",
       "started_at": "2026-07-06T09:12:33+0900",
-      "summary": "src/services/logService.js — zero-dep 로거: createLogService({now,cap=10000,tzOffsetMinutes=540}) → {log,debug,info,warn,error,snapshot,subscribe,digest,size,subscriberCount}; record={seq(단조),ts,level,message,line('[YYYY-MM-DD HH:MM:SS] [LEVEL] msg')}; 링버퍼 FIFO evict; digest(atMs)=[직전 06:00-24h, 직전 06:00) KST 반열림 창; formatTimestamp(ts,tzOffsetMinutes) pure 헬퍼 export"
+      "summary": "src/services/logService.js — zero-dep 로거: createLogService({now,cap=10000,tzOffsetMinutes=540}) → {log,debug,info,warn,error,snapshot,subscribe,digest,size,subscriberCount}; record={seq(단조),ts,level,message,line('[YYYY-MM-DD HH:MM:SS] [LEVEL] msg')}; 링버퍼 FIFO evict; digest(atMs)=[직전 06:00-24h, 직전 06:00) KST 반열림 창; formatTimestamp(ts,tzOffsetMinutes) pure 헬퍼 export",
+      "completed_at": "2026-07-06T09:16:33+0900"
     },
     {
       "step": 1,
