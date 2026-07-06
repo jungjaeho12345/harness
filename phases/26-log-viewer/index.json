@@ -32,7 +32,7 @@
       "status": "completed",
       "started_at": "2026-07-06T09:29:05+0900",
       "summary": "Model 계약 3면(contract·httpModel·fakeModel)에 로그 seam 추가: MODEL_KEYS에 'subscribeLogs'·'getLogsDigest'(24→26, assertModel 통과). httpModel.getLogsDigest() = request('/api/logs/digest') → { ok, items } 그대로 반환(쿼리·role 미탑재); httpModel.subscribeLogs(onLog, onStatus) = EventSource('/api/logs/stream', withCredentials:true — ?session= 폴백 없음, 쿠키 인증만) → ready/error→onStatus(bool), 'log' event JSON parse→onLog(record), 반환 { connected(), unsubscribe() }(기존 subscribe와 동일 shape). fakeModel은 seed.logs replay + logListeners Set + seed.logsDigest ?? logs 다이제스트(원본 불변 복사본). 테스트: contract 키/개수 단언 갱신 + httpModel 결선 3건 + 신규 web/src/test/fakeModel.logs.test.js 4건 — vitest 1062 통과·build·lint 무결·신규 의존성 0.",
-      "completed_at": "2026-07-06T09:35:30+0900"
+      "completed_at": "2026-07-06T09:35:54+0900"
     },
     {
       "step": 4,
