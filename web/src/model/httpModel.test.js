@@ -412,6 +412,69 @@ describe('createHttpModel', () => {
     model.subscribe({}, vi.fn());
     expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-q`);
   });
+
+  it('getLogsDigest GETs /api/logs/digest with no body and returns { ok, items } (never role)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ seq: 1, level: 'INFO' }] }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.getLogsDigest();
+    const [url, init] = callAt(0);
+    // 쿼리 자체가 없다 — role/권한 값은 어떤 형태로도 싣지 않는다(ADR-004, 서버 세션 도출).
+    expect(url).toBe(`${BASE}/api/logs/digest`);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    expect(r).toEqual({ ok: true, items: [{ seq: 1, level: 'INFO' }] });
+  });
+
+  it('subscribeLogs opens EventSource on /api/logs/stream with withCredentials and routes ready/log/error', async () => {
+    const instances = [];
+    installFakeEventSource(instances);
+
+    const model = createHttpModel({ base: BASE });
+    const onLog = vi.fn();
+    const onStatus = vi.fn();
+    const sub = model.subscribeLogs(onLog, onStatus);
+
+    expect(instances).toHaveLength(1);
+    expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
+    // 인증은 HttpOnly 쿠키(withCredentials)로만 — role 게이트는 서버가 강제(ADR-004/007).
+    expect(instances[0].opts).toEqual({ withCredentials: true });
+    expect(sub.connected()).toBe(false);
+
+    instances[0].emit('ready', '{"ok":true}');
+    expect(sub.connected()).toBe(true);
+    expect(onStatus).toHaveBeenCalledWith(true);
+
+    const record = { seq: 1, ts: 1000, level: 'INFO', message: 'boot', line: '[2026-07-06 09:00:00] [INFO] boot' };
+    instances[0].emit('log', JSON.stringify(record));
+    expect(onLog).toHaveBeenCalledWith(record);
+
+    // 파싱 불가/빈 데이터는 무시한다(onLog 미호출).
+    instances[0].emit('log', 'not-json');
+    instances[0].emit('log', '');
+    expect(onLog).toHaveBeenCalledTimes(1);
+
+    instances[0].emit('error', null);
+    expect(sub.connected()).toBe(false);
+    expect(onStatus).toHaveBeenLastCalledWith(false);
+
+    sub.unsubscribe();
+    expect(instances[0].closed).toBe(true);
+  });
+
+  it('subscribeLogs never appends a ?session= query even when a token is stored (cookie-only auth)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-log', user: {} }));
+    const instances = [];
+    installFakeEventSource(instances);
+
+    const model = createHttpModel({ base: BASE });
+    await model.login('a', 'b'); // 토큰이 보관돼 있어도 로그 스트림 URL에는 싣지 않는다(서버가 쿼리 토큰을 읽지 않음).
+
+    model.subscribeLogs(vi.fn());
+    expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
+    expect(instances[0].url).not.toContain('session=');
+  });
 });
 
 describe('resolveUploadFilename', () => {
