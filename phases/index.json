@@ -145,6 +145,11 @@
       "dir": "25-article-history-compare",
       "status": "completed",
       "completed_at": "2026-07-03T22:36:24+0900"
+    },
+    {
+      "dir": "26-log-viewer",
+      "status": "completed",
+      "completed_at": "2026-07-06T09:42:50+0900"
     }
   ]
 }

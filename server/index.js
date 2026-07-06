@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import nodePath from 'node:path';
 import crypto from 'node:crypto';
+import { createLogService } from '../src/services/logService.js';
 
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
@@ -166,6 +167,9 @@ function articleToText(found = {}) {
 // cookieSecure: Secure 속성 토글. 미주입 시 isProd(프로덕션 HTTPS에서만 true). dev/test(HTTP)는 false여야 쿠키가 실린다.
 // forceHttps: HTTPS 강제 토글. 미주입 시 isProd. true면 HSTS 적용 + 평문 HTTP를 https로 308 리다이렉트.
 //   Secure 쿠키와 같은 환경(prod)을 전제로 한다 — HSTS/리다이렉트는 https 보장과 함께만 의미가 있다.
+// logService: cross-cutting 인프라 — sessionService처럼 createApp에 직접 주입한다(컨트롤러 경유 금지).
+//   기본값 제공으로 미주입 기존 테스트도 무회귀. 로그 message에는 식별용 최소 필드만 담는다
+//   (비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지 — 마스킹 규율).
 export function createApp({
   controllers,
   sessionService,
@@ -173,6 +177,7 @@ export function createApp({
   cookieSecure,
   forceHttps,
   uploadDir = 'uploads',
+  logService = createLogService(),
 }) {
   const app = express();
 
@@ -244,6 +249,16 @@ export function createApp({
     return globalJson(req, res, next);
   });
 
+  // 요청 로깅(INFO) — 완료 시점(finish)에 최종 status·소요시간을 기록한다.
+  // CRITICAL(마스킹): req.path(쿼리 제외)만 담는다 — 전체 URL/쿼리스트링·헤더·쿠키·바디는 토큰 누출 표면.
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      logService.info(`${req.method} ${req.path} ${res.statusCode} ${Date.now() - startedAt}ms`);
+    });
+    next();
+  });
+
   // 업로드 파일 정적 서빙 — uploadDir(기본 'uploads')를 /uploads 경로로 노출한다.
   // 저장 파일명은 서버가 발급한 <random-hex>.<ext>뿐이라 사용자 입력 경로가 끼어들지 않는다(경로 탐색 방지).
   app.use('/uploads', express.static(uploadDir));
@@ -302,13 +317,19 @@ export function createApp({
     try {
       const { userId, password } = req.body ?? {};
       const r = await controllers.auth.login(userId, password);
+      // 로그인 로깅 — userId(비밀 아님)와 reason만. password는 절대 담지 않는다(마스킹).
       if (r.ok) {
+        logService.info(`login ok userId=${userId}`);
         // 세션 토큰을 쿠키로도 운반(헤더 응답 sessionId는 전환 기간 폴백으로 유지).
         setSessionCookie(res, r.sessionId);
         return res.json(r);
       }
-      // 로그인 전용 매핑: 계정 잠금은 423 Locked. STATUS_BY_REASON.locked(409, 기사 편집 잠금)는 건드리지 않는다.
-      if (r.reason === 'locked') return res.status(423).json(r);
+      if (r.reason === 'locked') {
+        logService.warn(`login locked userId=${userId}`);
+        // 로그인 전용 매핑: 계정 잠금은 423 Locked. STATUS_BY_REASON.locked(409, 기사 편집 잠금)는 건드리지 않는다.
+        return res.status(423).json(r);
+      }
+      logService.warn(`login failed userId=${userId} reason=${r.reason}`);
       return fail(res, r, 401);
     } catch (e) { next(e); }
   });
@@ -646,7 +667,13 @@ export function createApp({
       }
       const { sourceId, payload } = req.body ?? {};
       const r = controllers.collection.receive(sourceId, payload);
-      if (r.ok) { app.notifyChange('create'); return res.json(r); }
+      // 수집 로깅 — sourceId + 결과만. payload(수집 본문)는 담지 않는다(마스킹).
+      if (r.ok) {
+        logService.info(`collection receive sourceId=${sourceId} ok`);
+        app.notifyChange('create');
+        return res.json(r);
+      }
+      logService.warn(`collection receive sourceId=${sourceId} reason=${r.reason}`);
       return fail(res, r);
     } catch (e) { next(e); }
   });
@@ -661,7 +688,13 @@ export function createApp({
       }
       const { sourceId } = req.body ?? {};
       const r = await controllers.collection.pull(sourceId);
-      if (r.ok) { app.notifyChange('create'); return res.json(r); }
+      // 수집 로깅 — sourceId + 결과만(마스킹, receive와 동일).
+      if (r.ok) {
+        logService.info(`collection pull sourceId=${sourceId} ok`);
+        app.notifyChange('create');
+        return res.json(r);
+      }
+      logService.warn(`collection pull sourceId=${sourceId} reason=${r.reason}`);
       return fail(res, r);
     } catch (e) { next(e); }
   });
@@ -687,9 +720,50 @@ export function createApp({
     req.on('close', () => bus.off('change', onChange));
   });
 
+  // --- 로그 노출 (ADR-007 — ADR-005 "무효화 신호만" 원칙의 예외: 로그 라인 실데이터를 push) ---
+  // CRITICAL: 둘 다 Z 전용이다. /api/stream(로그인만)과 달리 role 게이트가 있다 — 게이트를 빼면
+  // R/D가 서버 로그(전 사용자 요청 흔적)를 본다. role은 검증 세션에서만 도출한다(ADR-004).
+  // 읽기 전용: logService(in-memory 링 버퍼)에 위임만 한다 — DB/파일을 만들거나 건드리지 않는다.
+
+  // 로그 다이제스트 — [전날 06:00, 당일 06:00) KST 창(LOGS.md). 매일 6시 전달은 앱 타이머가 아니라
+  // 하네스 운영 루틴이 이 API를 pull해 수행한다.
+  app.get('/api/logs/digest', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      if (me.role !== 'Z') return res.status(403).json(FORBIDDEN);
+      return res.json({ ok: true, items: logService.digest() });
+    } catch (e) { next(e); }
+  });
+
+  // 실시간 로그 SSE — 접속마다 버퍼 최근 2000건을 replay한 뒤 실시간 push를 잇는다.
+  // Last-Event-ID 프로토콜 없이 재연결 유실을 replay로 해소한다 — 중복 라인은 클라(step4)가 record.seq로 거른다.
+  const LOG_REPLAY_MAX = 2000; // step4 클라 MAX_LINES와 정렬 — 전체 cap(10000) replay는 첫 렌더/대역폭 낭비.
+  app.get('/api/logs/stream', (req, res) => {
+    const { me } = sessionOf(req);
+    if (!me) return res.status(401).json(UNAUTH);
+    if (me.role !== 'Z') return res.status(403).json(FORBIDDEN); // 비-Z 차단 — SSE 헤더를 열기 전에 끝낸다.
+
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    if (res.flushHeaders) res.flushHeaders();
+    res.write('event: ready\ndata: {"ok":true}\n\n');
+
+    for (const rec of logService.snapshot().slice(-LOG_REPLAY_MAX)) {
+      res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`);
+    }
+    const off = logService.subscribe((rec) => res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`));
+    req.on('close', () => off()); // 구독 해제 필수 — 누수 시 닫힌 응답에 write가 누적된다.
+  });
+
   // 전역 에러 핸들러 — 내부 스택을 노출하지 않는다 (4-arg, 마지막 등록).
+  // err는 in-memory 로그에만 남긴다 — HTTP 응답 바디는 internal-error 고정(ADR 보안 경계 불변).
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
+    logService.error(`${req.method} ${req.path} ${err?.message ?? err}`);
     res.status(500).json({ ok: false, reason: 'internal-error' });
   });
 
@@ -709,11 +783,12 @@ function bootstrap() {
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
-  const app = createApp({ controllers, sessionService, forceHttps });
+  const logService = createLogService();
+  const app = createApp({ controllers, sessionService, logService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {
-    console.log(`API server on http://127.0.0.1:${port}`);
+    logService.info(`API server on http://127.0.0.1:${port}`);
   });
 
   // 수집 FTP watcher — RCV_SPOOL_DIR 미설정 시 비활성.
@@ -723,11 +798,19 @@ function bootstrap() {
       dir: spoolDir,
       onFile: ({ sourceId, payload }) => {
         const r = controllers.collection.receive(sourceId, payload);
-        if (r && r.ok) app.notifyChange('create');
+        // 수집 로깅 — sourceId + 결과만. payload는 담지 않는다(마스킹).
+        if (r && r.ok) {
+          logService.info(`collection ftp received sourceId=${sourceId}`);
+          app.notifyChange('create');
+        } else {
+          logService.warn(`collection ftp sourceId=${sourceId} reason=${r?.reason}`);
+        }
       },
+      // 파일 처리 실패를 무음 삼킴 대신 로그로 표면화한다 — watcher는 계속 산다.
+      onError: (err) => logService.warn(`ftp watcher error: ${err?.message ?? err}`),
     });
     watcher.start();
-    console.log(`FTP watcher watching ${spoolDir}`);
+    logService.info(`FTP watcher watching ${spoolDir}`);
   }
 }
 

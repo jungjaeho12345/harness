@@ -3,9 +3,9 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 24 contract methods', () => {
+  it('is frozen and lists the 26 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(24);
+    expect(MODEL_KEYS).toHaveLength(26);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
@@ -24,6 +24,12 @@ describe('MODEL_KEYS', () => {
 
   it('includes the history-snapshot key (getHistorySnapshot)', () => {
     expect(MODEL_KEYS).toContain('getHistorySnapshot');
+  });
+
+  it('includes the log-viewer keys (subscribeLogs, getLogsDigest)', () => {
+    for (const key of ['subscribeLogs', 'getLogsDigest']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
   });
 });
 

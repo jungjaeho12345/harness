@@ -1,0 +1,48 @@
+{
+  "project": "기사 작성기",
+  "phase": "26-log-viewer",
+  "steps": [
+    {
+      "step": 0,
+      "name": "log-service",
+      "status": "completed",
+      "started_at": "2026-07-06T09:12:33+0900",
+      "summary": "src/services/logService.js — zero-dep 로거: createLogService({now,cap=10000,tzOffsetMinutes=540}) → {log,debug,info,warn,error,snapshot,subscribe,digest,size,subscriberCount}; record={seq(단조),ts,level,message,line('[YYYY-MM-DD HH:MM:SS] [LEVEL] msg')}; 링버퍼 FIFO evict; digest(atMs)=[직전 06:00-24h, 직전 06:00) KST 반열림 창; formatTimestamp(ts,tzOffsetMinutes) pure 헬퍼 export",
+      "completed_at": "2026-07-06T09:16:33+0900"
+    },
+    {
+      "step": 1,
+      "name": "server-instrumentation",
+      "status": "completed",
+      "started_at": "2026-07-06T09:16:33+0900",
+      "summary": "logService는 createApp 옵션 주입(기본값 createLogService(), sessionService처럼 직접 주입 — 컨트롤러 우회). 계측 지점: 요청 완료 로깅 INFO(method/req.path/status/ms — 쿼리·헤더·바디 제외), 로그인 ok INFO/locked·failed WARN(userId만, password 미기록), 수집 receive/pull INFO·WARN(sourceId+reason만, payload 미기록), 전역 에러 핸들러 ERROR(err.message+method/path, 응답 바디는 internal-error 불변·스택 미노출), 부트 배너 2곳 logService.info 대체, ftpWatcher onError 선택 콜백(무음 삼킴 제거·미주입 하위호환·throw 없음)+bootstrap 결선. 테스트: test/server-logging.test.js 7건 + ftpWatcher onError 2건, 전체 392 통과·lint 무결·신규 의존성 0.",
+      "completed_at": "2026-07-06T09:23:10+0900"
+    },
+    {
+      "step": 2,
+      "name": "log-api",
+      "status": "completed",
+      "started_at": "2026-07-06T09:23:10+0900",
+      "summary": "server/index.js에 Z 전용 로그 노출 라우트 2개(에러 핸들러 앞, sessionOf 세션 role로만 게이트 — 미인증 401/비-Z 403): GET /api/logs/stream = SSE(text/event-stream, event: ready 후 snapshot 최근 2000건 replay → subscribe 실시간 push, 'event: log' + record {seq,ts,level,message,line} JSON, req close 시 unsubscribe 누수 방지), GET /api/logs/digest = {ok, items:[record]}(전날 06:00~당일 05:59:59.999 KST 창, pull 전용·타이머 없음). docs/ADR.md에 ADR-007 추가(ADR-005 무효화 신호 원칙의 예외 — Z 전용 게이트·in-memory 링 버퍼·비영속·쿠키 인증). 테스트 test/logs-api.test.js 7건(digest 401/403/200+가짜시계 창 검증, stream 401/403/200+ready+replay shape, 종료 시 subscriberCount 0 복귀), 전체 399 통과·lint 무결·신규 의존성 0.",
+      "completed_at": "2026-07-06T09:29:04+0900"
+    },
+    {
+      "step": 3,
+      "name": "model-log-seam",
+      "status": "completed",
+      "started_at": "2026-07-06T09:29:05+0900",
+      "summary": "Model 계약 3면(contract·httpModel·fakeModel)에 로그 seam 추가: MODEL_KEYS에 'subscribeLogs'·'getLogsDigest'(24→26, assertModel 통과). httpModel.getLogsDigest() = request('/api/logs/digest') → { ok, items } 그대로 반환(쿼리·role 미탑재); httpModel.subscribeLogs(onLog, onStatus) = EventSource('/api/logs/stream', withCredentials:true — ?session= 폴백 없음, 쿠키 인증만) → ready/error→onStatus(bool), 'log' event JSON parse→onLog(record), 반환 { connected(), unsubscribe() }(기존 subscribe와 동일 shape). fakeModel은 seed.logs replay + logListeners Set + seed.logsDigest ?? logs 다이제스트(원본 불변 복사본). 테스트: contract 키/개수 단언 갱신 + httpModel 결선 3건 + 신규 web/src/test/fakeModel.logs.test.js 4건 — vitest 1062 통과·build·lint 무결·신규 의존성 0.",
+      "completed_at": "2026-07-06T09:35:54+0900"
+    },
+    {
+      "step": 4,
+      "name": "logs-page",
+      "status": "completed",
+      "started_at": "2026-07-06T09:35:55+0900",
+      "summary": "Z 전용 실시간 로그 뷰어 페이지 logs.do 수직 슬라이스: routing.js ROUTES·Z_ONLY_ROUTES에 'logs.do' 추가(비-Z는 resolveRoute가 list.do로 가드, 실제 강제는 서버 Z 게이트 — 이중 강제), App.jsx RouteView에 LogsPage 분기, TopBar isZ 블록에 '실시간 로그' nav 버튼(비-Z 미노출). 신규 useLogsController.js(model.subscribeLogs만 호출 — EventSource 미접촉, MAX_LINES=2000 링 캡 export, maxSeqRef(useRef)로 재연결 replay seq 중복 제거 — setState 업데이터 순수 유지, cleanup unsubscribe) + LogsPage.jsx(순수 뷰 — yh-live 연결 상태바·record.line 그대로 표시·레벨별 yh-log__line--{debug,info,warn,error} 클래스·자동 스크롤·빈 상태 안내) + yonhap.css 끝 append(등폭·신문형 밀도·--yh-* 토큰, ERROR=--yh-red/WARN=앰버/DEBUG=--yh-gray-mid). 테스트: routing 2건 보강 + App.test.jsx 3건(logs.do 가드/Z 진입+TopBar 버튼/비-Z 버튼 미노출) + 신규 LogsPage.test.jsx 5건(replay 라인·레벨 클래스, live-status, 빈 상태, MAX_LINES 링 캡, seq dedup) — vitest 1071 통과·build·lint 무결·신규 의존성 0.",
+      "completed_at": "2026-07-06T09:42:50+0900"
+    }
+  ],
+  "created_at": "2026-07-06T09:12:33+0900",
+  "completed_at": "2026-07-06T09:42:50+0900"
+}

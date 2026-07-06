@@ -263,5 +263,27 @@ export function createHttpModel({ base = '' } = {}) {
         unsubscribe: () => source.close(),
       };
     },
+
+    // --- 로그 뷰어 (Z 전용 — 서버 게이트, ADR-007) ---
+    // 로그 다이제스트 — 응답 { ok, items } 그대로 반환. 읽기 전용. role은 싣지 않는다(세션 도출, ADR-004).
+    getLogsDigest() {
+      return request('/api/logs/digest');
+    },
+    // 실시간 로그 스트림(Z 전용). 인증 1차 수단은 HttpOnly 세션 쿠키 → withCredentials:true로 자동 전송.
+    // 기존 subscribe와 달리 ?session= 쿼리 폴백을 두지 않는다 — 로그 라우트는 쿼리 토큰을 읽지 않는다(평문 토큰 URL 노출 표면 제거).
+    // 서버는 접속 시 버퍼를 replay(event: log) 후 실시간 push한다. 재연결 중복은 Controller가 record.seq로 거른다.
+    subscribeLogs(onLog, onStatus) {
+      const source = new EventSource(`${base}/api/logs/stream`, { withCredentials: true });
+      let connected = false;
+      const setStatus = (next) => { connected = next; onStatus?.(next); };
+      source.addEventListener('ready', () => setStatus(true));
+      source.addEventListener('log', (event) => {
+        let record = null;
+        try { record = event.data ? JSON.parse(event.data) : null; } catch { record = null; }
+        if (record) onLog(record);
+      });
+      source.addEventListener('error', () => setStatus(false));
+      return { connected: () => connected, unsubscribe: () => source.close() };
+    },
   };
 }

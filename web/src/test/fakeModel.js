@@ -18,7 +18,10 @@ export function createFakeModel(seed = {}) {
   const histories = { ...(seed.histories ?? {}) };
   // articleId -> 번역문(seed). 없으면 원문 모사로 graceful 폴백.
   const translations = { ...(seed.translations ?? {}) };
+  // 서버 로그 record 배열 모사(각 { seq, ts, level, message, line }) — subscribeLogs 접속 replay에 쓴다.
+  const logs = [...(seed.logs ?? [])];
   const listeners = new Set();
+  const logListeners = new Set();
   let session = null; // { sessionId, user }
   let seq = 1;
 
@@ -217,6 +220,23 @@ export function createFakeModel(seed = {}) {
       return {
         connected: () => true,
         unsubscribe: () => listeners.delete(handler),
+      };
+    },
+
+    // --- 로그 뷰어(Z 전용 — 서버 게이트) 모사 ---
+    // 다이제스트 — logsDigest seed가 있으면 그걸, 없으면 logs를 { ok, items } 복사본으로 반환(원본 불변).
+    getLogsDigest() {
+      return { ok: true, items: (seed.logsDigest ?? logs).map((r) => ({ ...r })) };
+    },
+    // 로그 스트림 모사 — 접속 시 seed 로그를 즉시 replay(서버 replay 모사)한 뒤 구독 등록.
+    subscribeLogs(onLog, onStatus) {
+      for (const r of logs) onLog({ ...r });
+      const handler = (r) => onLog({ ...r });
+      logListeners.add(handler);
+      onStatus?.(true); // fake 스트림은 즉시 연결됨으로 본다.
+      return {
+        connected: () => true,
+        unsubscribe: () => logListeners.delete(handler),
       };
     },
   };

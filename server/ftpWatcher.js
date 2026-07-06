@@ -9,11 +9,13 @@ import { watch as fsWatch } from 'node:fs';
 import { readFile as fsReadFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+// onError(선택): 파일 처리 실패 시 (err, filename)로 알린다. 미주입이면 기존과 동일하게 조용히 무시(하위호환).
 export function createFtpWatcher({
   dir,
   onFile,
   watch = fsWatch,
   readFile = fsReadFile,
+  onError,
 }) {
   let watcher;
 
@@ -31,7 +33,8 @@ export function createFtpWatcher({
   function start() {
     watcher = watch(dir, { recursive: true }, (_eventType, filename) => {
       // 읽기 실패(디렉토리/경합)는 한 파일만 건너뛴다 — watcher는 계속 살아 있다.
-      handle(filename).catch(() => {});
+      // throw하지 않되 무음 삼킴 대신 onError로 표면화한다(미주입이면 기존과 동일).
+      handle(filename).catch((err) => { onError?.(err, filename); });
     });
     return watcher;
   }

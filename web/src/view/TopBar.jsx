@@ -28,6 +28,7 @@ export function TopBar() {
             <>
               <button type="button" className="yh-btn" onClick={() => navigate('rcvMgmt.do')}>수신설정 관리</button>
               <button type="button" className="yh-btn" onClick={() => navigate('userMgmt.do')}>사용자 관리</button>
+              <button type="button" className="yh-btn" onClick={() => navigate('logs.do')}>실시간 로그</button>
             </>
           )}
         </nav>

@@ -66,4 +66,28 @@ describe('App — session restore gate + routing', () => {
     render(<App model={model} />);
     await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'userMgmt.do'));
   });
+
+  it('guards logs.do: a non-Z user lands on list.do', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'kim', role: 'R' } });
+    go('/logs.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'list.do'));
+  });
+
+  it('renders LogsPage for a Z user at /logs.do with the TopBar log nav button', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'boss', role: 'Z' } });
+    go('/logs.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'logs.do'));
+    // TopBar의 로그 뷰어 진입 버튼은 Z에게 보인다.
+    expect(screen.getByRole('button', { name: '실시간 로그' })).toBeInTheDocument();
+  });
+
+  it('hides the 실시간 로그 nav button from non-Z users', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'kim', role: 'R', department: '정치' } });
+    go('/list.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'list.do'));
+    expect(screen.queryByRole('button', { name: '실시간 로그' })).toBeNull();
+  });
 });

@@ -1392,3 +1392,39 @@ a { color: var(--yh-blue); }
   font-size: 0.8rem;
   flex: 0 0 auto;
 }
+
+/* 실시간 로그 뷰어(logs.do, Z 전용) — 등폭·좁은 행간(신문형 밀도)·얇은 구분선.
+   포맷은 서버 record.line 그대로, 색만 레벨별(--yh-* 토큰). */
+.yh-logs__card { padding: var(--yh-sp-md); }
+.yh-logs__bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--yh-sp-sm);
+}
+.yh-logs__view {
+  height: 65vh;
+  overflow-y: auto;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  padding: var(--yh-sp-sm);
+  background: var(--yh-white);
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.yh-logs__empty {
+  margin: 0;
+  color: var(--yh-gray-mid);
+  font-style: italic;
+}
+.yh-log__line {
+  padding: 1px 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--yh-ink);
+}
+.yh-log__line--debug { color: var(--yh-gray-mid); }
+.yh-log__line--info { color: var(--yh-ink); }
+.yh-log__line--warn { color: #d97706; } /* 보류 배지 앰버 계열(--yh-badge-hold-bg) */
+.yh-log__line--error { color: var(--yh-red); }
