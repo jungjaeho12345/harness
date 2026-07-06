@@ -148,7 +148,8 @@
     },
     {
       "dir": "26-log-viewer",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-06T09:42:50+0900"
     }
   ]
 }
