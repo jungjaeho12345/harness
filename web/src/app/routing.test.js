@@ -46,6 +46,12 @@ describe('resolveRoute (guards)', () => {
     }
   });
 
+  it('guards logs.do as Z-only (루프 단언이 자동 커버하도록 목록에 존재)', () => {
+    expect(Z_ONLY_ROUTES).toContain('logs.do');
+    expect(resolveRoute('logs.do', R)).toBe('list.do');
+    expect(resolveRoute('logs.do', Z)).toBe('logs.do');
+  });
+
   it('passes through normal routes for logged-in users', () => {
     expect(resolveRoute('writer.do', R)).toBe('writer.do');
     expect(resolveRoute('list.do', R)).toBe('list.do');
@@ -70,5 +76,6 @@ describe('buildPath', () => {
   it('exposes the canonical route list', () => {
     expect(ROUTES).toContain('login.do');
     expect(ROUTES).toContain('userMgmt.do');
+    expect(ROUTES).toContain('logs.do');
   });
 });
