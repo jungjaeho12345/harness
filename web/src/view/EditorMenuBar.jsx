@@ -143,6 +143,10 @@ export function EditorMenuBar({ onSelect, enabledIds }) {
               className="yh-editor-menubar__top"
               aria-haspopup="true"
               aria-expanded={open}
+              // 마우스 전용 — Tab 포커스 제외 + mousedown 기본동작(포커스 이동) 차단.
+              // 키보드는 항상 본문 편집에 남고, 클릭해도 에디터 캐럿이 보존된다(캐럿 위치 삽입 기능의 전제).
+              tabIndex={-1}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setOpenId((cur) => (cur === menu.id ? null : menu.id))}
             >
               {menu.label}
@@ -155,6 +159,9 @@ export function EditorMenuBar({ onSelect, enabledIds }) {
                       type="button"
                       role="menuitem"
                       className="yh-editor-menubar__item"
+                      // 마우스 전용 — Tab 포커스 제외 + 포커스 이동 차단(상단 버튼과 동일).
+                      tabIndex={-1}
+                      onMouseDown={(e) => e.preventDefault()}
                       // enabledIds에 든 항목만 활성. 그 외(미결선)는 비활성 placeholder.
                       disabled={!enabledSet.has(item.id)}
                       // 활성 항목만 onSelect 위임(disabled 항목은 호출되지 않음).

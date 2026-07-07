@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorMenuBar, EDITOR_MENUS } from './EditorMenuBar.jsx';
 
@@ -152,5 +152,39 @@ describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
     expect(screen.getByText('환경설정').closest('button')).toBeEnabled();
     await userEvent.click(screen.getByText('환경설정'));
     expect(onSelect).toHaveBeenCalledWith('help.preferences');
+  });
+});
+
+// 마우스 전용 chrome — 키보드는 항상 본문 편집에 남는다. Tab으로 메뉴바에 도달할 수 없고,
+// 클릭(mousedown)이 에디터 포커스/캐럿을 뺏지 않는다(캐럿 위치 삽입 기능의 전제).
+describe('EditorMenuBar — 마우스 전용(키보드 제어 제거)', () => {
+  it('상단 메뉴 버튼 7개 모두 Tab 포커스 대상이 아니다(tabIndex=-1)', () => {
+    render(<EditorMenuBar />);
+    for (const label of ['파일', '편집', '보기', '맞춤법', '표', '도구', '도움말']) {
+      expect(screen.getByRole('menuitem', { name: label })).toHaveAttribute('tabindex', '-1');
+    }
+  });
+
+  it('드롭다운 항목 버튼도 tabIndex=-1이다(활성/비활성 무관)', async () => {
+    render(<EditorMenuBar enabledIds={['file.new']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '파일' }));
+    expect(screen.getByText('새문서').closest('button')).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByText('인쇄').closest('button')).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('상단 메뉴 mousedown은 기본동작(포커스 이동)을 막는다 — 에디터 캐럿 보존', () => {
+    render(<EditorMenuBar />);
+    // fireEvent는 preventDefault되면 false를 반환한다.
+    expect(fireEvent.mouseDown(screen.getByRole('menuitem', { name: '파일' }))).toBe(false);
+  });
+
+  it('드롭다운 항목 mousedown도 포커스를 뺏지 않고, 클릭 동작은 유지된다', async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['file.new']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '파일' }));
+    const item = screen.getByText('새문서').closest('button');
+    expect(fireEvent.mouseDown(item)).toBe(false);
+    await userEvent.click(item);
+    expect(onSelect).toHaveBeenCalledWith('file.new');
   });
 });
