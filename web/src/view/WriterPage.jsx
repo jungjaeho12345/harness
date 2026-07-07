@@ -49,7 +49,7 @@ import { insertDateAtCaret } from './editorDate.js';
 import { applyDateFormat } from './listFormat.js';
 import {
   makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
-  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed,
+  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed, isAllowedHref,
 } from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
@@ -1000,13 +1000,17 @@ function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef })
           <textarea id="meta-external-comment" value={f.externalComment} readOnly={readOnly} onChange={(e) => updateField('externalComment', e.target.value)} />
         </div>
 
-        {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다. */}
+        {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다.
+            href는 DB 원본값이라 isAllowedHref(phase 19 단일 출처)로 검증 — 비허용 값(javascript: 등)은
+            클릭 가능한 링크 대신 텍스트로만 표시한다(저장형 XSS 클릭 유발 차단). */}
         <div className="yh-field yh-field--wide">
           <label htmlFor="meta-attachment">첨부파일</label>
           <input id="meta-attachment" type="file" disabled={readOnly} onChange={(e) => onFileChange('attachmentFile', e)} />
           {f.attachmentFile && (
             <span className="yh-file-saved">
-              <a href={f.attachmentFile}>{f.attachmentFile}</a>
+              {isAllowedHref(f.attachmentFile)
+                ? <a href={f.attachmentFile}>{f.attachmentFile}</a>
+                : <span>{f.attachmentFile}</span>}
               {!readOnly && (
                 <button type="button" aria-label="첨부파일 지우기" onClick={() => updateField('attachmentFile', '')}>×</button>
               )}
@@ -1018,7 +1022,9 @@ function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef })
           <input id="meta-reference" type="file" disabled={readOnly} onChange={(e) => onFileChange('referenceFile', e)} />
           {f.referenceFile && (
             <span className="yh-file-saved">
-              <a href={f.referenceFile}>{f.referenceFile}</a>
+              {isAllowedHref(f.referenceFile)
+                ? <a href={f.referenceFile}>{f.referenceFile}</a>
+                : <span>{f.referenceFile}</span>}
               {!readOnly && (
                 <button type="button" aria-label="자료파일 지우기" onClick={() => updateField('referenceFile', '')}>×</button>
               )}

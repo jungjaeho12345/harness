@@ -1042,6 +1042,75 @@ describe('WriterPage — 첨부파일/자료파일 업로드', () => {
   });
 });
 
+// 첨부/자료파일 링크 href 가드 — DB 원본값을 스킴 검증 없이 <a href>로 렌더하면 조작된 값
+// (javascript: 등)이 편집 화면에서 클릭 시 실행된다(저장형 XSS). isAllowedHref(clipboardEmbed.js,
+// phase 19 URL 검증 단일 출처)로 걸러 비허용 값은 링크 없이 텍스트(textNode)로만 표시한다.
+describe('WriterPage — 첨부/자료파일 링크 href 가드', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 저장된 첨부/자료값을 가진 기사로 편집 진입한 WriterPage를 띄우고 두 값이 표시될 때까지 기다린다.
+  async function openWithFiles({ attachmentFile, referenceFile }) {
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: {
+        articles: [{
+          articleId: 'AKR1', title: '제목', status: 'RDS', lockYN: 'Y', markupVersion: '제목\n본문',
+          attachmentFile, referenceFile,
+        }],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(attachmentFile)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(referenceFile)).toBeInTheDocument());
+    return utils;
+  }
+
+  it('javascript: 스킴 첨부/자료값은 클릭 가능한 링크로 렌더되지 않는다(텍스트로만 표시)', async () => {
+    const { container } = await openWithFiles({
+      attachmentFile: 'javascript:alert(1)', referenceFile: 'javascript:alert(2)',
+    });
+    // 파일명 텍스트는 보이되(이스케이프된 textNode) <a>가 아니어야 한다.
+    expect(screen.getByText('javascript:alert(1)').closest('a')).toBeNull();
+    expect(screen.getByText('javascript:alert(2)').closest('a')).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    // 나머지 UI(지우기 버튼)는 유지된다.
+    expect(screen.getByRole('button', { name: '첨부파일 지우기' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '자료파일 지우기' })).toBeInTheDocument();
+  });
+
+  it('상대경로(/uploads/...) 첨부/자료값은 기존대로 링크로 렌더된다', async () => {
+    await openWithFiles({
+      attachmentFile: '/uploads/stored-a.pdf', referenceFile: '/uploads/stored-r.docx',
+    });
+    const attach = screen.getByText('/uploads/stored-a.pdf').closest('a');
+    expect(attach).not.toBeNull();
+    expect(attach).toHaveAttribute('href', '/uploads/stored-a.pdf');
+    const ref = screen.getByText('/uploads/stored-r.docx').closest('a');
+    expect(ref).not.toBeNull();
+    expect(ref).toHaveAttribute('href', '/uploads/stored-r.docx');
+  });
+
+  it('https://는 링크로 렌더되고 http://는 링크로 렌더되지 않는다(isAllowedHref 규칙 일치)', async () => {
+    await openWithFiles({
+      attachmentFile: 'https://example.com/x.pdf', referenceFile: 'http://evil.example/x.pdf',
+    });
+    const attach = screen.getByText('https://example.com/x.pdf').closest('a');
+    expect(attach).not.toBeNull();
+    expect(attach).toHaveAttribute('href', 'https://example.com/x.pdf');
+    expect(screen.getByText('http://evil.example/x.pdf').closest('a')).toBeNull();
+  });
+
+  it('프로토콜상대(//host) 값은 링크로 렌더되지 않는다', async () => {
+    const { container } = await openWithFiles({
+      attachmentFile: '//evil.example/x.pdf', referenceFile: '/uploads/ok.pdf',
+    });
+    expect(screen.getByText('//evil.example/x.pdf').closest('a')).toBeNull();
+    expect(container.querySelector('a[href="//evil.example/x.pdf"]')).toBeNull();
+    // 같은 화면의 정상 상대경로 링크는 영향 없다.
+    expect(screen.getByText('/uploads/ok.pdf').closest('a')).toHaveAttribute('href', '/uploads/ok.pdf');
+  });
+});
+
 // 본문 개행 직렬화 버그 수정: 빈 새 기사에서 여러 줄 입력 후 Alt+Y를 눌러도 줄이 한 줄로 합쳐지지 않는다.
 describe('WriterPage — 본문 개행 보존(여러 줄 입력 + Alt+Y)', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
