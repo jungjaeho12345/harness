@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-07-07T18:22:00+0900",
       "summary": "CommonInfo.onFileChange에 탭 고정 가드 추가(선택 시점 tab.id 캡처 → 응답 도착 시 activeTabRef.current.id와 동일할 때만 updateField, 다르면 alert 취소 안내 — pasteImageAtCaret 가드와 동형, 추가 prop은 activeTabRef 1개) — 업로드 대기 중 탭 전환 시 다른 기사 오첨부·원본 첨부 소실 차단, 첨부/자료파일 탭 전환 레이스 회귀 테스트 2건 추가 (test:web 1095 통과·build·lint 클린)",
-      "completed_at": "2026-07-07T18:26:52+0900"
+      "completed_at": "2026-07-07T18:28:24+0900"
     },
     {
       "step": 3,
