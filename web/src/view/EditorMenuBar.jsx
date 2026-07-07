@@ -164,8 +164,13 @@ export function EditorMenuBar({ onSelect, enabledIds }) {
                       onMouseDown={(e) => e.preventDefault()}
                       // enabledIds에 든 항목만 활성. 그 외(미결선)는 비활성 placeholder.
                       disabled={!enabledSet.has(item.id)}
-                      // 활성 항목만 onSelect 위임(disabled 항목은 호출되지 않음).
-                      onClick={() => { if (enabledSet.has(item.id) && onSelect) onSelect(item.id); }}
+                      // 활성 항목만 onSelect 위임(disabled 항목은 호출되지 않음). 선택 즉시 드롭다운을 닫는다 —
+                      // 항목 목록이 상단에 계속 떠 있지 않게 한다(표준 메뉴 UX, EditorContextMenu의 onSelect→onClose와 동형).
+                      onClick={() => {
+                        if (!enabledSet.has(item.id)) return;
+                        if (onSelect) onSelect(item.id);
+                        setOpenId(null);
+                      }}
                     >
                       <span className="yh-editor-menubar__label">{item.label}</span>
                       {item.shortcut && (

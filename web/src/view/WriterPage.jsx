@@ -101,9 +101,10 @@ export function WriterPage() {
   // 에디터 크롬(메뉴바·툴바·상태표시줄) — Step 3 배치.
   // statusCaret: 상태표시줄 '행/열' 표시용 마지막 캐럿({lineIndex, offset}). 캐럿 이동마다 갱신(가산적 결선).
   // showMenuBar/showToolBar: 메뉴바/툴바 보이기 토글(레이아웃 토글 — placeholder 아님).
+  // 기본 숨김 — 상단을 비워두고 우클릭 컨텍스트 메뉴 '메뉴바/툴바 보이기'(ctx.showMenuBar/ctx.showToolBar)로만 켠다(news.md L173).
   const [statusCaret, setStatusCaret] = useState(null);
-  const [showMenuBar, setShowMenuBar] = useState(true);
-  const [showToolBar, setShowToolBar] = useState(true);
+  const [showMenuBar, setShowMenuBar] = useState(false);
+  const [showToolBar, setShowToolBar] = useState(false);
   // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
   // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
   const [showGlyphBar, setShowGlyphBar] = useState(false);
@@ -703,28 +704,8 @@ export function WriterPage() {
       <div className="yh-writer">
         {/* 좌측 60% — 에디터 크롬(메뉴바·툴바) → 에디터 → 상태표시줄 순으로 쌓는다. */}
         <section className="yh-writer__editor">
-          {/* 메뉴바/툴바 보이기 토글 — 전용 버튼(항상 보임). 보이기 항목은 EditorMenuBar에 없어(우클릭 컨텍스트 메뉴 규정) 결선 대상이 아니다.
-              (news.md L173은 우클릭 컨텍스트 메뉴 항목으로도 규정하나 ContextMenu 이동은 후속 phase로 연기 — 이번엔 전용 버튼만.) */}
-          <div className="yh-editor-chrome-bar">
-            <button
-              type="button"
-              className="yh-editor-chrome-bar__toggle"
-              data-testid="toggle-menubar"
-              aria-pressed={showMenuBar}
-              onClick={() => setShowMenuBar((v) => !v)}
-            >
-              메뉴바
-            </button>
-            <button
-              type="button"
-              className="yh-editor-chrome-bar__toggle"
-              data-testid="toggle-toolbar"
-              aria-pressed={showToolBar}
-              onClick={() => setShowToolBar((v) => !v)}
-            >
-              툴바
-            </button>
-          </div>
+          {/* 메뉴바/툴바는 기본 숨김 — 우클릭 컨텍스트 메뉴 '메뉴바/툴바 보이기'(ctx.showMenuBar/ctx.showToolBar)로만 토글한다(news.md L173).
+              구 전용 토글 버튼(yh-editor-chrome-bar)은 제거됨. */}
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
           {showToolBar && <EditorToolBar />}
           {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
