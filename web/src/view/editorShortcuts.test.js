@@ -3,7 +3,7 @@ import {
   isInsertEndMarker, isDeleteLine, insertEndMarker, deleteLineAt,
   CONTINUE_MARKER, isInsertContinueMarker, insertContinueMarker,
   transformTextLine, toUpper, toLower, capitalizeFirst, toggleCase,
-  isGlyphInput,
+  isGlyphInput, isPasteOriginal,
 } from './editorShortcuts.js';
 import { textBlock, embedBlock, END_MARKER, blocksToText } from './editorContent.js';
 
@@ -31,6 +31,17 @@ describe('editorShortcuts — key recognition', () => {
     expect(isGlyphInput({ key: 'o' })).toBe(false);
     expect(isGlyphInput({ altKey: true, key: 'y' })).toBe(false);
     expect(isGlyphInput(null)).toBe(false);
+  });
+
+  it('recognizes Alt+V (원본 붙여넣기), and not Ctrl+V / plain v', () => {
+    expect(isPasteOriginal({ altKey: true, key: 'v' })).toBe(true);
+    expect(isPasteOriginal({ altKey: true, key: 'V' })).toBe(true);
+    expect(isPasteOriginal({ altKey: true, code: 'KeyV' })).toBe(true);
+    // Ctrl+V(브라우저 기본 붙여넣기)·Ctrl 동반 조합은 오인하지 않는다.
+    expect(isPasteOriginal({ ctrlKey: true, key: 'v' })).toBe(false);
+    expect(isPasteOriginal({ altKey: true, ctrlKey: true, key: 'v' })).toBe(false);
+    expect(isPasteOriginal({ key: 'v' })).toBe(false);
+    expect(isPasteOriginal(null)).toBe(false);
   });
 });
 

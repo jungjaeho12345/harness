@@ -2038,12 +2038,12 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환/원본 붙여넣기/텍스트 붙여넣기)은 비활성으로 보인다(약물입력은 phase17 step4에서 결선됨)', async () => {
+  it('aux 항목(기업코드변환/텍스트 붙여넣기)은 비활성으로 보인다(약물입력=phase17·원본 붙여넣기=Alt+V 결선됨)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['기업코드변환', '원본 붙여넣기', '텍스트 붙여넣기']) {
+    for (const label of ['기업코드변환', '텍스트 붙여넣기']) {
       expect(ctxItem(label)).toBeDisabled();
     }
   });
@@ -2053,7 +2053,7 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
@@ -3773,5 +3773,123 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
     await clickHistoryCompare();
     fireEvent.keyDown(screen.getByRole('dialog', { name: '기사 이력 비교' }), { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '기사 이력 비교' })).not.toBeInTheDocument();
+  });
+});
+
+// Alt+V/우클릭 '원본 붙여넣기' — keydown에서는 클립보드를 동기로 읽을 수 없어(브라우저 보안) 비동기 클립보드
+// API(navigator.clipboard.read)로 이미지를 찾아 Ctrl+V와 동일한 안전 경로(pasteImageAtCaret: 업로드→경로 임베드)로
+// 삽입한다. 미지원/권한 거부/이미지 없음은 alert로만 안내한다.
+describe("WriterPage — Alt+V/우클릭 '원본 붙여넣기'(클립보드 이미지)", () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { delete navigator.clipboard; });
+
+  const stubClipboard = (readImpl) => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { read: readImpl }, configurable: true, writable: true,
+    });
+  };
+  const imageClipItem = (type = 'image/png') => ({
+    types: [type],
+    getType: async () => new Blob(['x'], { type }),
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const embeds = (container) => container.querySelectorAll('.yh-editor .yh-embed');
+
+  it('Alt+V: 클립보드에 이미지가 있으면 업로드 후 경로(/uploads/) 임베드로 삽입된다', async () => {
+    stubClipboard(async () => [imageClipItem()]);
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'v', altKey: true });
+
+    await waitFor(() => expect(embeds(container).length).toBe(1));
+    expect(upload).toHaveBeenCalledTimes(1);
+    // 업로드 File은 MIME image/png — base64가 아니라 서버 경로 임베드로 삽입된다.
+    expect(upload.mock.calls[0][0].type).toBe('image/png');
+    const img = container.querySelector('.yh-embed img');
+    expect(img.getAttribute('src')).toMatch(/^\/uploads\//);
+  });
+
+  it('Alt+V: 클립보드에 이미지가 없으면(텍스트뿐) 안내만 하고 업로드/본문 변경이 없다', async () => {
+    stubClipboard(async () => [
+      { types: ['text/plain'], getType: async () => new Blob(['t'], { type: 'text/plain' }) },
+    ]);
+    const { container, model } = await openWith([textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'v', altKey: true });
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('클립보드에 이미지가 없습니다. 텍스트는 Ctrl+V로 붙여넣으세요.'));
+    expect(upload).not.toHaveBeenCalled();
+    expect(embeds(container).length).toBe(0);
+  });
+
+  it('Alt+V: 클립보드 API 미지원 브라우저면 안내만 한다', async () => {
+    // navigator.clipboard 미정의(jsdom 기본) — stub하지 않는다.
+    const { container, model } = await openWith([textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'v', altKey: true });
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('이 브라우저에서는 원본 붙여넣기를 지원하지 않습니다. Ctrl+V를 사용하세요.'));
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('Alt+V: 클립보드 읽기 권한 거부(reject)면 안내만 한다', async () => {
+    stubClipboard(async () => { throw new Error('denied'); });
+    const { container, model } = await openWith([textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'v', altKey: true });
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('클립보드 읽기 권한이 거부되어 원본 붙여넣기를 할 수 없습니다.'));
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('매핑 모드: Alt+V가 동작하지 않는다(본문 텍스트 잠금)', async () => {
+    stubClipboard(async () => [imageClipItem()]);
+    const { container, model } = await openWith([textBlock('본문')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    const upload = vi.spyOn(model, 'uploadFile');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'v', altKey: true });
+    await act(async () => {}); // 마이크로태스크 플러시 — 비동기 경로가 있었다면 업로드가 잡힌다.
+
+    expect(upload).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("우클릭 '원본 붙여넣기'가 비매핑에서 활성이고 클릭 시 이미지가 삽입된다", async () => {
+    stubClipboard(async () => [imageClipItem()]);
+    const { container } = await openWith([textBlock('본문')]);
+
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    const item = within(ctx).getByText('원본 붙여넣기').closest('button');
+    expect(item).toBeEnabled();
+    await userEvent.click(item);
+
+    await waitFor(() => expect(embeds(container).length).toBe(1));
+  });
+
+  it("매핑 모드: 우클릭 '원본 붙여넣기'는 비활성이다", async () => {
+    await openWith([textBlock('본문')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    expect(within(ctx).getByText('원본 붙여넣기').closest('button')).toBeDisabled();
   });
 });
