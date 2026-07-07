@@ -621,7 +621,12 @@ export function WriterPage() {
   //   실패/too-large면 삽입하지 않고 window.alert로만 안내한다(확정 정책 — 서버가 5MB를 판정, 클라 사전 검사 없음).
   const pasteImageAtCaret = async (file, caret) => {
     const tabId = activeTab.id; // 붙여넣기 시점 편집 탭 고정(업로드 대기 중 탭 전환 대비).
-    const r = await model.uploadFile(file);
+    let r;
+    try {
+      r = await model.uploadFile(file);
+    } catch {
+      r = null; // 전송 자체가 실패(서버 다운/네트워크/파일 읽기) — 아래 공통 실패 알림으로 합류(무피드백 방지).
+    }
     if (!(r && r.ok && r.path)) {
       const msg = r && r.reason === 'too-large'
         ? '이미지가 너무 커 첨부할 수 없습니다(5MB 초과).'
