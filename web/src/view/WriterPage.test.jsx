@@ -1603,8 +1603,8 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
     return utils;
   }
 
-  // 파일>복구 클릭. 메뉴는 항목 선택 후에도 열린 채 유지되므로(EditorMenuBar 규약), 이미 열려 있으면
-  // '파일'을 다시 누르지 않는다(다시 누르면 토글로 닫힌다). 재복구(연속 호출)에서도 안전하게 동작한다.
+  // 파일>복구 클릭. 메뉴는 항목 선택 시 닫히므로(EditorMenuBar 규약 — 선택 즉시 닫힘) 호출마다
+  // 드롭다운이 닫혀 있으면 다시 연다. 재복구(연속 호출)에서도 안전하게 동작한다.
   async function clickRecover() {
     if (!screen.queryByTestId('menu-파일')) {
       await openTopMenu('파일');

@@ -135,6 +135,25 @@ describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
     expect(onSelect).toHaveBeenCalledWith('edit.insertContinue');
   });
 
+  it('활성 항목 클릭 시 onSelect 호출 후 드롭다운이 닫힌다(선택 즉시 닫힘)', async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['edit.insertContinue']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    expect(screen.getByTestId('menu-편집')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('(계속)삽입'));
+
+    expect(onSelect).toHaveBeenCalledWith('edit.insertContinue');
+    expect(screen.queryByTestId('menu-편집')).toBeNull();
+  });
+
+  it('비활성(placeholder) 항목 클릭은 드롭다운을 닫지 않는다(no-op)', async () => {
+    render(<EditorMenuBar enabledIds={['edit.insertContinue']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await userEvent.click(screen.getByText('(끝)삽입')); // disabled — no-op
+    expect(screen.getByTestId('menu-편집')).toBeInTheDocument();
+  });
+
   it('enabledIds를 Set으로도 받을 수 있다', async () => {
     const onSelect = vi.fn();
     render(<EditorMenuBar onSelect={onSelect} enabledIds={new Set(['view.toUpper'])} />);
