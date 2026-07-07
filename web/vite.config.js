@@ -13,6 +13,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: true },
+      // 업로드 파일 정적 서빙(server/index.js: app.use('/uploads', express.static(uploadDir))).
+      // 본문 이미지 임베드·첨부/자료 링크가 /uploads/<hex>.<ext> 상대경로를 쓰므로, 프록시가 없으면
+      // dev(vite 출처)에서 404가 나 붙여넣은 이미지가 보이지 않는다(빌드 서빙에서는 백엔드 동일 출처라 무관).
+      '/uploads': { target: API_TARGET, changeOrigin: true },
     },
   },
 });
