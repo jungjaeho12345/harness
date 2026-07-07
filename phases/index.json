@@ -153,7 +153,8 @@
     },
     {
       "dir": "27-editor-critical-fixes",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-07T18:34:46+0900"
     }
   ]
 }
