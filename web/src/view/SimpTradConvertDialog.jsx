@@ -24,7 +24,7 @@ export function SimpTradConvertDialog({
 
   return (
     <div
-      className="yh-simptrad-convert"
+      className="yh-editor-dialog yh-simptrad-convert"
       role="dialog"
       aria-label="간체/번체 변환"
       data-testid="simptrad-convert"

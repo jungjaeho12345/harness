@@ -36,7 +36,7 @@ export function GlyphInputDialog({
 
   return (
     <div
-      className="yh-glyph-input"
+      className="yh-editor-dialog yh-glyph-input"
       role="dialog"
       aria-label="약물 입력"
       data-testid="glyph-input"

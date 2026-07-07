@@ -38,7 +38,7 @@ export function FileInfoDialog({
 
   return (
     <div
-      className="yh-file-info"
+      className="yh-editor-dialog yh-file-info"
       role="dialog"
       aria-label="파일 정보"
       data-testid="file-info"

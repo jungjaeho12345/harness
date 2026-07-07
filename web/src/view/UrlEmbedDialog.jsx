@@ -53,7 +53,7 @@ export function UrlEmbedDialog({
 
   return (
     <div
-      className="yh-url-embed"
+      className="yh-editor-dialog yh-url-embed"
       role="dialog"
       aria-label={meta.title}
       data-testid="url-embed"

@@ -849,6 +849,53 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 에디터 도구 다이얼로그 공통 — 화면 중앙 모달형 팝업(도구 메뉴 기능들: 약물입력/URL임베드/파일정보/
+   이력비교/메모장/약어관리/간체번체). 개별 블록은 width·내부 요소만 정의한다.
+   찾기/바꾸기(yh-find-replace)는 본문을 보며 쓰는 도구 패널이라 우상단 고정을 유지한다(제외). */
+.yh-editor-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: auto;
+  background: var(--yh-white);
+  border: 1px solid rgba(10, 77, 166, 0.25);
+  border-top: 3px solid var(--yh-blue);
+  border-radius: var(--yh-radius-lg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: var(--yh-sp-lg) var(--yh-sp-xl) var(--yh-sp-xl);
+  animation: yh-editor-dialog-in var(--yh-transition);
+}
+
+@keyframes yh-editor-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -52%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+/* 제목 공통 꾸밈 — 브랜드 레드 룰 + 명조 헤드라인 + 하단 구분선(.yh-topbar 모티프). */
+.yh-editor-dialog > h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-sm);
+  margin: 0 0 var(--yh-sp-md);
+  padding-bottom: var(--yh-sp-sm);
+  border-bottom: 1px solid var(--yh-gray-line);
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.yh-editor-dialog > h2::before {
+  content: '';
+  width: 4px;
+  height: 1.05em;
+  flex-shrink: 0;
+  background: var(--yh-red);
+}
+
 /* 찾기/바꾸기 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(우상단 고정). */
 .yh-find-replace {
   position: fixed;
@@ -901,25 +948,9 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
-/* 약물입력(Alt+O) 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(우상단 고정, 찾기/바꾸기와 동일 계열). */
+/* 약물입력(Alt+O) 다이얼로그 — 중앙 모달(yh-editor-dialog 공통). 내부 요소만 정의. */
 .yh-glyph-input {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 22rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-glyph-input__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-glyph-input__section {
   margin-bottom: var(--yh-sp-md);
@@ -976,25 +1007,9 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
-/* URL 직접 임베드(그림/유튜브 삽입) 다이얼로그 — 본문 클릭을 막지 않는 떠 있는 도구 패널(찾기/약물입력과 동일 계열). */
+/* URL 직접 임베드(그림/유튜브 삽입) 다이얼로그 — 중앙 모달(yh-editor-dialog 공통). 내부 요소만 정의. */
 .yh-url-embed {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 22rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-url-embed__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-url-embed__field {
   display: flex;
@@ -1018,23 +1033,7 @@ a { color: var(--yh-blue); }
 
 /* 파일 정보(도구>파일 정보) 다이얼로그 — 본문 통계 읽기전용 표시 패널(찾기/약물입력/URL임베드와 동일 계열). */
 .yh-file-info {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 22rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-file-info__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-file-info__list {
   margin: 0 0 var(--yh-sp-md);
@@ -1064,23 +1063,7 @@ a { color: var(--yh-blue); }
 
 /* 기사 이력 비교(도구>기사이력비교) 다이얼로그 — 스냅샷 라인 diff 읽기전용 표시 패널(파일정보와 동일 계열). */
 .yh-history-compare {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 40rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-history-compare__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-history-compare__controls {
   display: flex;
@@ -1131,23 +1114,7 @@ a { color: var(--yh-blue); }
 
 /* 메모장(도구>메모장) 다이얼로그 — 기사와 무관한 전역 스크래치패드 입력 패널(찾기/약물입력/URL임베드/파일정보와 동일 계열). */
 .yh-editor-memo {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 22rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-editor-memo__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-editor-memo__text {
   width: 100%;
@@ -1167,23 +1134,7 @@ a { color: var(--yh-blue); }
 
 /* 약어 관리(도구>약어관리) 다이얼로그 — 사용자 등록 약어(짧은형→확장형) CRUD 패널(메모/파일정보와 동일 계열). */
 .yh-abbrev-manage {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 24rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-abbrev-manage__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-abbrev-manage__form {
   display: flex;
@@ -1224,23 +1175,7 @@ a { color: var(--yh-blue); }
 
 /* 간체↔번체 변환(도구>간체<->번체 변환) 방향 선택 다이얼로그 — 방향만 부모에 위임(약어관리/메모와 동일 계열). */
 .yh-simptrad-convert {
-  position: fixed;
-  top: 56px;
-  right: var(--yh-sp-lg);
-  z-index: 60;
   width: 22rem;
-  max-width: 90vw;
-  background: var(--yh-white);
-  border: 1px solid var(--yh-blue);
-  border-radius: var(--yh-radius-md);
-  box-shadow: var(--yh-shadow-lg);
-  padding: var(--yh-sp-lg);
-}
-.yh-simptrad-convert__title {
-  font-family: var(--yh-serif);
-  font-weight: 700;
-  font-size: 1rem;
-  margin: 0 0 var(--yh-sp-md);
 }
 .yh-simptrad-convert__note {
   margin: 0 0 var(--yh-sp-md);

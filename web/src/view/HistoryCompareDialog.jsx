@@ -45,7 +45,7 @@ export function HistoryCompareDialog({
 
   return (
     <div
-      className="yh-history-compare"
+      className="yh-editor-dialog yh-history-compare"
       role="dialog"
       aria-label="기사 이력 비교"
       data-testid="history-compare"

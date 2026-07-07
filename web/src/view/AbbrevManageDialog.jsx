@@ -38,7 +38,7 @@ export function AbbrevManageDialog({
 
   return (
     <div
-      className="yh-abbrev-manage"
+      className="yh-editor-dialog yh-abbrev-manage"
       role="dialog"
       aria-label="약어 관리"
       data-testid="abbrev-manage"
