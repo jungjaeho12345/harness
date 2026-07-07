@@ -41,7 +41,7 @@ import {
 import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
-  toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput,
+  toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput, isPasteOriginal,
 } from './editorShortcuts.js';
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
@@ -474,10 +474,11 @@ export function WriterPage() {
   //  - 표준 편집(잘라내기/복사/붙여넣기): 비매핑(텍스트 편집 가능)일 때만 활성. 매핑(텍스트 잠금)에서는 복사도 일관되게 비활성으로
   //    단순화한다(본문 변경 항목과 같은 가드 — 잘라내기/붙여넣기는 텍스트를 바꾸므로 반드시 비활성).
   //  - 약물입력(ctx.symbolInput): 비매핑(본문 편집 가능)일 때만 활성(약물 삽입=본문 변경 → 매핑 비활성, 찾기와 동일 가드).
-  //  - aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기): 항상 비활성 placeholder(미구현).
+  //  - 원본 붙여넣기(ctx.pasteOriginal): 클립보드 이미지 붙여넣기(Alt+V와 동일 경로) — 본문 변경이라 비매핑에서만 활성.
+  //  - aux-tools 의존(기업코드변환/텍스트 붙여넣기): 항상 비활성 placeholder(미구현).
   const ctxEnabledIds = [
     'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
-    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.symbolInput']),
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.pasteOriginal', 'ctx.symbolInput']),
   ];
   // 보이기 토글의 현재 on 상태(체크 표식용).
   const ctxCheckedIds = [
@@ -517,6 +518,8 @@ export function WriterPage() {
       case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
       // 약물입력 — 비매핑에서만 다이얼로그를 연다(매핑은 enabledIds에서 비활성이라 호출되지 않지만 이중 방어).
       case 'ctx.symbolInput': if (!isMapping) setShowGlyphInput(true); break;
+      // 원본 붙여넣기 — Alt+V와 동일 경로(클립보드 이미지 → 업로드 → 경로 임베드). 비매핑에서만(이중 방어).
+      case 'ctx.pasteOriginal': if (!isMapping) pasteOriginalAtCaret(); break;
       // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
       // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
       // 에디터로 되돌린 뒤 document.execCommand를 시도하되, 미지원 환경(jsdom)에서는 no-op으로 두고 메뉴만 닫는다(브라우저 단축키 정상).
@@ -529,7 +532,7 @@ export function WriterPage() {
         try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
         break;
       }
-      // aux 항목(ctx.companyCode/pasteOriginal/pasteText)은 비활성이라 호출되지 않는다.
+      // aux 항목(ctx.companyCode/pasteText)은 비활성이라 호출되지 않는다.
       default: break;
     }
   };
@@ -549,6 +552,13 @@ export function WriterPage() {
     if (isGlyphInput(e)) {
       e.preventDefault();
       if (!isMapping) setShowGlyphInput(true);
+      return;
+    }
+    // Alt+V → 원본 붙여넣기(클립보드 이미지). 매핑이어도 preventDefault는 하되 실행은 안 한다(Alt+O와 동일 가드 —
+    // 매핑에선 onKeyDown 자체가 Editor에 전달되지 않지만 이중 방어). isPasteOriginal은 !ctrlKey라 Ctrl+V(기본 붙여넣기)와 충돌하지 않는다.
+    if (isPasteOriginal(e)) {
+      e.preventDefault();
+      if (!isMapping) pasteOriginalAtCaret();
       return;
     }
     if (isInsertEndMarker(e)) {
@@ -634,6 +644,41 @@ export function WriterPage() {
       current.fields.body,
       current.mode === 'mapping',
     );
+  };
+
+  // Alt+V/우클릭 '원본 붙여넣기' — keydown에서는 클립보드를 동기로 읽을 수 없어(브라우저 보안) 비동기 클립보드
+  // API(navigator.clipboard.read)로 이미지를 찾아 Ctrl+V와 동일한 안전 경로(pasteImageAtCaret: 업로드→경로 임베드)로
+  // 삽입한다. 캐럿은 호출 시점 lastCaretRef 스냅샷(검색패널 insertEmbed와 동일 소스 — 우클릭으로 포커스가 빠져도 유지).
+  // 미지원/권한 거부/이미지 없음은 window.alert로만 안내한다(pasteImageAtCaret 실패 정책과 동일). 텍스트 붙여넣기는
+  // 브라우저 기본 Ctrl+V가 담당하므로 여기서 다루지 않는다(ctx.pasteText는 여전히 placeholder).
+  const pasteOriginalAtCaret = async () => {
+    const caret = lastCaretRef.current;
+    const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    if (!clip || typeof clip.read !== 'function') {
+      window.alert('이 브라우저에서는 원본 붙여넣기를 지원하지 않습니다. Ctrl+V를 사용하세요.');
+      return;
+    }
+    let file = null;
+    try {
+      const items = await clip.read();
+      for (const item of items || []) {
+        const type = (item.types || []).find((t) => typeof t === 'string' && t.startsWith('image/'));
+        if (type) {
+          const blob = await item.getType(type);
+          // 클립보드 blob은 이름이 없다 — 빈 이름 File로 감싸면 httpModel.resolveUploadFilename이 MIME으로 파일명을 합성한다.
+          file = new File([blob], '', { type });
+          break;
+        }
+      }
+    } catch {
+      window.alert('클립보드 읽기 권한이 거부되어 원본 붙여넣기를 할 수 없습니다.');
+      return;
+    }
+    if (!file) {
+      window.alert('클립보드에 이미지가 없습니다. 텍스트는 Ctrl+V로 붙여넣으세요.');
+      return;
+    }
+    await pasteImageAtCaret(file, caret);
   };
 
   // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed

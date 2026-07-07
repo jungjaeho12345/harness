@@ -28,6 +28,11 @@ export function isGlyphInput(e) {
   return !!(e && e.altKey && !e.ctrlKey && (e.key === 'o' || e.key === 'O' || e.code === 'KeyO'));
 }
 
+// Alt+V — 원본 붙여넣기(클립보드 이미지). Ctrl+V(브라우저 기본 붙여넣기)와 오인하지 않게 ctrl 동반은 제외한다.
+export function isPasteOriginal(e) {
+  return !!(e && e.altKey && !e.ctrlKey && (e.key === 'v' || e.key === 'V' || e.code === 'KeyV'));
+}
+
 // Alt+Y — "(끝)"을 최종 블록으로 삽입한다(본문 텍스트 → 임베드 → "(끝)" 순). 중복이면 삽입하지 않는다.
 // 맞춤법 검사는 이 시점부터 켠다(spellcheck=true). 반환 spellcheck는 항상 true(Alt+Y 처리됨).
 export function insertEndMarker(blocks) {
