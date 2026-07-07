@@ -623,7 +623,7 @@ a { color: var(--yh-blue); }
 .yh-editor-context-menu__label { flex: 1; }
 .yh-editor-context-menu__shortcut { margin-left: auto; color: var(--yh-gray-mid); font-size: 0.75rem; }
 
-/* 에디터 툴바 — 메뉴바 아래 글꼴/크기 셀렉트 + 버튼군(쉘, 비활성 placeholder). */
+/* 에디터 툴바 — 글꼴/크기 셀렉트만(우클릭 '툴바 보이기'로 토글). 구 기능 버튼군(__btn/__sep)은 제거됨(2026-07-07). */
 .yh-editor-toolbar {
   display: flex;
   align-items: center;
@@ -644,27 +644,6 @@ a { color: var(--yh-blue); }
   border: 1px solid var(--yh-gray-line);
   border-radius: var(--yh-radius-sm);
 }
-
-.yh-editor-toolbar__sep {
-  align-self: stretch;
-  width: 1px;
-  margin: 2px var(--yh-sp-xs);
-  background: var(--yh-gray-line);
-}
-
-.yh-editor-toolbar__btn {
-  padding: 2px var(--yh-sp-sm);
-  font-family: var(--yh-sans);
-  font-size: 0.8rem;
-  color: var(--yh-ink);
-  background: var(--yh-white);
-  border: 1px solid var(--yh-gray-line);
-  border-radius: var(--yh-radius-sm);
-  cursor: pointer;
-}
-
-.yh-editor-toolbar__btn:hover { background: var(--yh-blue-light); }
-.yh-editor-toolbar__btn:disabled { color: var(--yh-gray-mid); background: var(--yh-gray-bg); cursor: default; }
 
 /* 약물바(glyph bar) — 자주쓰는 약물 버튼 가로 나열. 툴바와 별개 막대. */
 .yh-editor-glyphbar {
