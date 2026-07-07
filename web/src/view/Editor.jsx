@@ -348,14 +348,16 @@ export function Editor({
     if (isInsertionKey(e) && caretBlocked(e.currentTarget)) e.preventDefault();
   };
 
-  // 붙여넣기 — ① "(끝)" 뒤면 차단(텍스트·이미지 공통). ② 클립보드에 이미지 item이 있으면 raw File을 상위로
-  //   위임한다(preventDefault + 동기 캐럿 스냅샷 + onPasteImageFile(file, caret)). 여기서 base64(data URL)를
-  //   절대 만들지 않는다 — 업로드→경로 임베드 오케스트레이션은 WriterPage가 model.uploadFile로 수행한다(ADR-003).
-  //   ③ 그 외(일반 텍스트)는 기본 붙여넣기 동작을 유지한다(preventDefault 안 함·핸들러 미호출).
+  // 붙여넣기 — ① 클립보드에 이미지 item이 있으면 "(끝)" 캐럿 차단보다 먼저 raw File을 상위로 위임한다
+  //   (preventDefault + 동기 캐럿 스냅샷 + onPasteImageFile(file, caret)). 마커 차단은 텍스트 삽입 규칙
+  //   (news.md 162행 — "(끝)"이 최종 텍스트여야 함)이고, 임베드는 insertEmbedAfterLine이 "(끝)"을 항상 최종
+  //   블록으로 재정규화하므로 문서 끝(마커 줄)에서 붙여넣어도 무결성이 깨지지 않는다(끝에서 무피드백 차단되던 결함 수정).
+  //   여기서 base64(data URL)를 절대 만들지 않는다 — 업로드→경로 임베드 오케스트레이션은 WriterPage가
+  //   model.uploadFile로 수행한다(ADR-003).
+  //   ② 텍스트는 "(끝)" 뒤면 차단. ③ 그 외(일반 텍스트)는 기본 붙여넣기 동작을 유지한다(preventDefault 안 함·핸들러 미호출).
   // 이미지는 텍스트를 직렬화하지 않고 캐럿 위치에만 임베드로 들어간다(news.md 156행) — 캐럿은 위임(이후 비동기
   // 업로드) 전에 동기로 확보한다(이후 selection이 소실될 수 있으므로).
   const handlePaste = (e) => {
-    if (caretBlocked(e.currentTarget)) { e.preventDefault(); return; }
     const data = e.clipboardData;
     const items = data && data.items;
     // ① 클립보드 이미지 → raw File 위임(캐럿 위치). 핸들러가 없으면 이미지 붙여넣기 비활성(base64 미생성).
@@ -370,7 +372,9 @@ export function Editor({
         return;
       }
     }
-    // ② 여러 줄 텍스트(개행 포함) → 캐럿 위치에 텍스트 블록으로 삽입(개행 보존). 한 줄 텍스트는 기본 동작 유지.
+    // ② 텍스트 삽입은 "(끝)" 뒤면 차단(마커 무결성 — 삭제/이동/선택은 keydown 쪽 규칙대로 허용).
+    if (caretBlocked(e.currentTarget)) { e.preventDefault(); return; }
+    // ③ 여러 줄 텍스트(개행 포함) → 캐럿 위치에 텍스트 블록으로 삽입(개행 보존). 한 줄 텍스트는 기본 동작 유지.
     if (!textLocked && onTextChange && data && typeof data.getData === 'function') {
       const text = data.getData('text/plain');
       if (typeof text === 'string' && text.includes('\n')) {

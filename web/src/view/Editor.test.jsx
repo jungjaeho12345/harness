@@ -434,13 +434,13 @@ describe('Editor — 이미지 붙여넣기 → raw File 위임(onPasteImageFile
     expect(onPasteImageFile).not.toHaveBeenCalled();
   });
 
-  it('"(끝)" 뒤에서는 이미지 붙여넣기도 차단된다(caret 차단 유지)', () => {
+  it('"(끝)" 줄에서도 이미지 붙여넣기는 위임된다(임베드는 마커 앞 정규화 — 마커 차단은 텍스트만)', () => {
     const onPasteImageFile = vi.fn();
     const { container } = render(
       <Editor blocks={[textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]} onTextChange={() => {}} onPasteImageFile={onPasteImageFile} />,
     );
     const box = screen.getByRole('textbox', { name: '본문' });
-    // "(끝)" 줄에 캐럿.
+    // "(끝)" 줄에 캐럿 — 문서 끝 클릭 후 붙여넣기(가장 흔한 시나리오).
     const lineEls = container.querySelectorAll('.yh-editor__line');
     const sel = window.getSelection();
     sel.removeAllRanges();
@@ -453,8 +453,10 @@ describe('Editor — 이미지 붙여넣기 → raw File 위임(onPasteImageFile
     const prevent = vi.spyOn(ev, 'preventDefault');
     fireEvent(box, ev);
 
-    expect(prevent).toHaveBeenCalled(); // 차단됨
-    expect(onPasteImageFile).not.toHaveBeenCalled(); // 위임 안 함
+    // 텍스트와 달리 이미지는 차단하지 않는다 — 삽입 위치 정규화("(끝)" 최종 유지)는 insertEmbedAfterLine이 담당.
+    expect(prevent).toHaveBeenCalled();
+    expect(onPasteImageFile).toHaveBeenCalledTimes(1);
+    expect(onPasteImageFile.mock.calls[0][1]).toMatchObject({ lineIndex: 2 });
   });
 });
 

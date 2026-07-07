@@ -567,6 +567,33 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
     expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 폴백 없음
   });
 
+  it('캐럿이 "(끝)" 줄이어도 이미지가 삽입되고 "(끝)"은 마지막 줄로 유지된다(마커 차단은 텍스트만)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('(끝)')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/end.png' });
+    caretAtLine(container, 2); // "(끝)" 줄 — 문서 끝 클릭 후 붙여넣기(가장 흔한 시나리오)
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 임베드+빈 줄은 "(끝)" 앞으로 정규화된다: 제목 → 본문 → [이미지] → 빈 줄 → (끝)
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed', 'text', 'text']);
+    const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+    expect(texts[texts.length - 1]).toBe('(끝)'); // 마커 최종 유지(송고 자격 보존)
+  });
+
+  it('업로드 요청 자체가 실패(reject — 서버 다운/네트워크)해도 조용히 넘어가지 않고 alert로 안내한다', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockRejectedValue(new Error('network'));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 0);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('이미지 업로드에 실패했습니다.'));
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy(); // 미삽입
+    expect(blockTypes(container)).toEqual(['text', 'text']); // 본문 불변
+  });
+
   it('붙여넣은 이미지는 이후 타이핑(input)에도 커서 위치에 보존된다(끝으로 밀리지 않음)', async () => {
     const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
     vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/abc.png' });
