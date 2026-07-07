@@ -27,6 +27,18 @@ function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', depar
 
 const actionBtn = (name) => screen.queryByRole('button', { name });
 
+// 메뉴바는 기본 숨김 — 상단 메뉴(파일/편집/보기/도구 등)를 클릭하기 전에 우클릭 컨텍스트 메뉴의
+// '메뉴바 보이기'로 메뉴바를 켜는 공용 헬퍼. 이미 켜져 있으면(같은 테스트 내 재호출) 바로 클릭한다.
+async function openTopMenu(name) {
+  if (!screen.queryByTestId('menubar')) {
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(ctx).getByText('메뉴바 보이기').closest('button'));
+    await waitFor(() => expect(screen.getByTestId('menubar')).toBeInTheDocument());
+  }
+  await userEvent.click(screen.getByRole('menuitem', { name }));
+}
+
 describe('WriterPage — 레이아웃', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -57,11 +69,14 @@ describe('WriterPage — 에디터 크롬(메뉴바/툴바/상태표시줄) 배�
     return utils;
   }
 
-  it('메뉴바·툴바·상태표시줄이 좌측 에디터 영역에 보인다', () => {
-    const { container } = setup({ identity: { role: 'R' } });
+  it('메뉴바·툴바·전용 토글 버튼은 기본 미노출이고 상태표시줄만 보인다', () => {
+    const { container, queryByTestId } = setup({ identity: { role: 'R' } });
     const editorCol = container.querySelector('.yh-writer__editor');
-    expect(within(editorCol).getByTestId('menubar')).toBeInTheDocument();
-    expect(within(editorCol).getByTestId('toolbar')).toBeInTheDocument();
+    expect(within(editorCol).queryByTestId('menubar')).toBeNull();
+    expect(within(editorCol).queryByTestId('toolbar')).toBeNull();
+    // 구 메뉴바/툴바 전용 토글 버튼(yh-editor-chrome-bar)은 제거됨 — 우클릭 컨텍스트 메뉴로만 토글한다.
+    expect(queryByTestId('toggle-menubar')).toBeNull();
+    expect(queryByTestId('toggle-toolbar')).toBeNull();
     expect(within(editorCol).getByRole('status', { name: '에디터 상태' })).toBeInTheDocument();
   });
 
@@ -72,20 +87,27 @@ describe('WriterPage — 에디터 크롬(메뉴바/툴바/상태표시줄) 배�
     expect(getByTestId('stat-bytes')).toHaveTextContent('19B');
   });
 
-  it('toggle-menubar/toggle-toolbar로 메뉴바·툴바를 숨기고 다시 보일 수 있다', async () => {
-    const { getByTestId, queryByTestId } = setup({ identity: { role: 'R' } });
-    expect(queryByTestId('menubar')).toBeInTheDocument();
-    expect(queryByTestId('toolbar')).toBeInTheDocument();
-
-    await userEvent.click(getByTestId('toggle-menubar'));
+  it("우클릭 '메뉴바 보이기'/'툴바 보이기'로 메뉴바·툴바를 켜고 다시 끌 수 있다", async () => {
+    const { queryByTestId } = await openWith([textBlock('헤드')]);
     expect(queryByTestId('menubar')).toBeNull();
-    await userEvent.click(getByTestId('toggle-toolbar'));
     expect(queryByTestId('toolbar')).toBeNull();
 
-    await userEvent.click(getByTestId('toggle-menubar'));
+    // 컨텍스트 메뉴는 항목 선택 시 닫히므로(onSelect 후 onClose) 토글마다 다시 연다.
+    async function toggleCtx(label) {
+      fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+      const ctx = await screen.findByTestId('editor-context-menu');
+      await userEvent.click(within(ctx).getByText(label).closest('button'));
+    }
+
+    await toggleCtx('메뉴바 보이기');
     expect(queryByTestId('menubar')).toBeInTheDocument();
-    await userEvent.click(getByTestId('toggle-toolbar'));
+    await toggleCtx('툴바 보이기');
     expect(queryByTestId('toolbar')).toBeInTheDocument();
+
+    await toggleCtx('메뉴바 보이기');
+    expect(queryByTestId('menubar')).toBeNull();
+    await toggleCtx('툴바 보이기');
+    expect(queryByTestId('toolbar')).toBeNull();
   });
 });
 
@@ -1200,7 +1222,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     const { container } = await openWith([textBlock('title abc'), textBlock('body def')]);
     focusCaretAtLine(container, 0);
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '보기' }));
+    await openTopMenu('보기');
     await userEvent.click(screen.getByText('대문자로 바꾸기'));
 
     await waitFor(() => expect(editorLines(container)[0]).toBe('TITLE ABC'));
@@ -1228,7 +1250,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
 
   it("편집>'(끝)삽입'(edit.insertEnd) 메뉴 클릭도 (끝)을 삽입한다(키보드와 공용 핸들러)", async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     await userEvent.click(screen.getByText('(끝)삽입'));
     await waitFor(() => expect(editorLines(container)).toContain('(끝)'));
   });
@@ -1237,7 +1259,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     focusCaretAtLine(container, 0); // 헤드 줄
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     await userEvent.click(screen.getByText('(계속)삽입'));
 
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
@@ -1248,9 +1270,9 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     // 미결선 예시는 여전히 비활성인 '잘라내기'(edit.cut)로 검증한다(표 삽입은 그대로).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
-    await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
+    await openTopMenu('표');
     expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
   });
 
@@ -1268,7 +1290,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     );
     focusCaretAtLine(container, 0);
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '보기' }));
+    await openTopMenu('보기');
     await userEvent.click(screen.getByText('대문자로 바꾸기'));
 
     // 매핑은 본문-only 불변식 — 대문자 변환이 적용되지 않는다.
@@ -1285,7 +1307,7 @@ describe('WriterPage — 색상 환경설정(EditorPrefsDialog) 결선·적용',
 
   // 도움말 메뉴를 열고 '환경설정' 항목을 클릭한다.
   async function openPrefsViaMenu() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await openTopMenu('도움말');
     await userEvent.click(screen.getByText('환경설정'));
   }
 
@@ -1374,7 +1396,7 @@ describe('WriterPage — 편집>컬럼제한(editor-canvas 좌우 여백) 적용
   });
 
   async function openPrefsViaMenu() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await openTopMenu('도움말');
     await userEvent.click(screen.getByText('환경설정'));
   }
 
@@ -1585,7 +1607,7 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
   // '파일'을 다시 누르지 않는다(다시 누르면 토글로 닫힌다). 재복구(연속 호출)에서도 안전하게 동작한다.
   async function clickRecover() {
     if (!screen.queryByTestId('menu-파일')) {
-      await userEvent.click(screen.getByRole('menuitem', { name: '파일' }));
+      await openTopMenu('파일');
     }
     await userEvent.click(within(screen.getByTestId('menu-파일')).getByText('복구'));
   }
@@ -1718,7 +1740,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     await openWith([textBlock('헤드'), textBlock('본문')]);
     expect(findDialog()).toBeNull();
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     // 편집 드롭다운 안의 항목만 본다(다이얼로그 라벨과 분리).
     await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
 
@@ -1727,7 +1749,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
   it("편집 메뉴 '찾기/바꾸기'·'전체 선택'이 활성(enabled)이다", async () => {
     await openWith([textBlock('헤드'), textBlock('본문')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
     expect(within(menu).getByText('찾기/바꾸기').closest('button')).toBeEnabled();
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
@@ -1735,9 +1757,9 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
   it("활성 항목 외(잘라내기·표 삽입)는 여전히 비활성이다(회귀)", async () => {
     await openWith([textBlock('헤드'), textBlock('본문')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
-    await userEvent.click(screen.getByRole('menuitem', { name: '표' }));
+    await openTopMenu('표');
     expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
   });
 
@@ -1846,7 +1868,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     );
     const save = vi.spyOn(model, 'saveArticle');
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+    await openTopMenu('편집');
     await userEvent.click(within(screen.getByTestId('menu-편집')).getByText('찾기/바꾸기'));
 
     expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
@@ -1975,15 +1997,15 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     expect(ctxMenu()).toBeNull(); // 선택 후 메뉴 닫힘
   });
 
-  it("컨텍스트 메뉴 '메뉴바 보이기' 클릭 시 메뉴바가 토글된다", async () => {
+  it("컨텍스트 메뉴 '메뉴바 보이기' 클릭 시 메뉴바가 토글된다(기본 숨김 → 표시)", async () => {
     const { container, queryByTestId } = await openWith([textBlock('헤드')]);
-    expect(queryByTestId('menubar')).toBeInTheDocument();
+    expect(queryByTestId('menubar')).toBeNull();
 
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
     await userEvent.click(ctxItem('메뉴바 보이기'));
 
-    await waitFor(() => expect(queryByTestId('menubar')).toBeNull());
+    await waitFor(() => expect(queryByTestId('menubar')).toBeInTheDocument());
   });
 
   it("컨텍스트 메뉴 '약물바 보이기' 클릭은 토글 상태·실제 약물바 렌더를 토글한다(체크 표식 갱신)", async () => {
@@ -2334,7 +2356,7 @@ describe('WriterPage — 약물바(EditorGlyphBar) 결선', () => {
     expect(within(bar).getAllByRole('button')).toHaveLength(1); // 초기 1개
 
     // 도움말>환경설정 → 자주쓰는 약물 탭에서 '◇' 추가 → 적용.
-    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await openTopMenu('도움말');
     await userEvent.click(screen.getByText('환경설정'));
     await userEvent.click(screen.getByTestId('prefs-tab-glyphFavorites'));
     fireEvent.change(screen.getByTestId('pref-glyphFav-input'), { target: { value: '◇' } });
@@ -2412,7 +2434,7 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
     await openWith([textBlock('헤드')]);
     expect(glyphDialog()).toBeNull();
 
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     const item = within(menu).getByText('약물 입력').closest('button');
     expect(item).toBeEnabled();
@@ -2531,7 +2553,7 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
       [textBlock('foo bar')],
       { mode: 'mapping', status: 'DPS', role: 'D' },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText('약물 입력').closest('button'));
     expect(glyphDialog()).toBeNull(); // 매핑 가드로 미개봉(찾기/바꾸기 메뉴와 동일 정책)
@@ -2552,7 +2574,7 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
     await userEvent.click(screen.getByTestId('glyph-input-close'));
 
     // 도움말>환경설정 → 사용자 키보드 약물 탭에서 'Ctrl+2 → ◎' 추가 → 적용.
-    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    await openTopMenu('도움말');
     await userEvent.click(screen.getByText('환경설정'));
     await userEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
     fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'Ctrl+2' } });
@@ -2628,14 +2650,14 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
 
   // 도구 메뉴를 열고 '날짜 삽입' 항목을 클릭한다.
   async function clickInsertDate() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText('날짜 삽입').closest('button'));
   }
 
   it("도구 메뉴 '날짜 삽입'(tools.insertDate)이 활성이다(MENU_ENABLED)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('날짜 삽입').closest('button')).toBeEnabled();
   });
@@ -2744,7 +2766,7 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     // 회귀 가드 — 날짜 삽입 결선이 무관한 도구 항목을 켜지 않았는지 확인한다.
     // (약어변환/약어관리는 23-editor-abbrev step1에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 사진발행/DB등록으로 가드한다.)
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
@@ -2781,7 +2803,7 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
 
   // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다.
   async function clickTool(label) {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText(label).closest('button'));
   }
@@ -2794,7 +2816,7 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
 
   it("도구 '그림 삽입'/'유튜브 영상 삽입'/'오디오 삽입'/'링크 삽입'/'로컬영상 삽입'은 활성, 비결선은 비활성이다(MENU_ENABLED)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('유튜브 영상 삽입').closest('button')).toBeEnabled();
@@ -2881,7 +2903,7 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
       { mode: 'mapping', status: 'DPS', role: 'D' },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('그림 삽입').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('그림 삽입').closest('button'));
@@ -2985,7 +3007,7 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
       { mode: 'mapping', status: 'DPS', role: 'D' },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('링크 삽입').closest('button'));
@@ -3030,14 +3052,14 @@ describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
   }
 
   async function clickFileInfo() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
   }
 
   it("도구 메뉴 '파일 정보'(tools.fileInfo)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
   });
@@ -3123,7 +3145,7 @@ describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
       { mode: 'mapping', status: 'DPS', role: 'D' },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
@@ -3153,14 +3175,14 @@ describe('WriterPage — 메모장(tools.memo) 결선', () => {
   }
 
   async function clickMemo() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText('메모장').closest('button'));
   }
 
   it("도구 메뉴 '메모장'(tools.memo)이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('메모장').closest('button')).toBeEnabled();
   });
@@ -3242,7 +3264,7 @@ describe('WriterPage — 메모장(tools.memo) 결선', () => {
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
       { mode: 'mapping', status: 'DPS', role: 'D' },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('메모장').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('메모장').closest('button'));
@@ -3293,14 +3315,14 @@ describe('WriterPage — 약어관리/약어변환(tools.abbrManage·tools.abbrC
 
   // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다(날짜/메모 결선과 동일 패턴).
   async function clickTool(label) {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText(label).closest('button'));
   }
 
   it("도구 메뉴 '약어관리'·'약어변환'이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('약어관리').closest('button')).toBeEnabled();
     expect(within(menu).getByText('약어변환').closest('button')).toBeEnabled();
@@ -3451,14 +3473,14 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
 
   // 도구 메뉴를 열고 해당 라벨 항목을 클릭한다(약어변환/날짜 결선과 동일 패턴).
   async function clickTool(label) {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText(label).closest('button'));
   }
 
   it("도구 메뉴 '간체↔번체 변환'이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('간체↔번체 변환').closest('button')).toBeEnabled();
   });
@@ -3466,7 +3488,7 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
   it('다른 비결선 도구 항목(사진발행/UI언어)은 여전히 비활성이다(회귀 없음)', async () => {
     // (기사이력비교는 25-article-history-compare step2에서 의도적으로 결선되어 이제 활성 — 가드 대상에서 제외.)
     await openWith([textBlock('헤드')]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
     expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
@@ -3612,21 +3634,21 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
 
   // 도구 메뉴를 열고 '기사이력비교'를 클릭한다(파일 정보 결선과 동일 패턴).
   async function clickHistoryCompare() {
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     await userEvent.click(within(menu).getByText('기사이력비교').closest('button'));
   }
 
   it("도구 메뉴 '기사이력비교'(tools.historyCompare)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
     await openWith([textBlock('헤드')], { histories: HISTORIES });
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
   });
 
   it('비결선 도구 항목(tools.publishPhoto)은 여전히 비활성이다(회귀 가드)', async () => {
     await openWith([textBlock('헤드')], { histories: HISTORIES });
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
@@ -3735,7 +3757,7 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
       [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
       { mode: 'mapping', status: 'DPS', role: 'D', histories: HISTORIES },
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
     expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('기사이력비교').closest('button'));
