@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "find-endmarker-guard",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-07T18:16:05+0900",
+      "summary": "editorFind.js replaceAll·replaceAtMatch에 END_MARKER 가드 추가(editorContent.js 단일 출처 import, 형제 도구와 동형 trim 비교) — 찾기/바꾸기가 \"(끝)\" 송고 마커 블록을 치환·카운트하지 않음(마커 매치 바꾸기는 no-op), 마커 훼손 회귀 테스트 5건 추가 (test:web 1093 통과·build·lint 클린)",
+      "completed_at": "2026-07-07T18:20:28+0900"
     },
     {
       "step": 2,

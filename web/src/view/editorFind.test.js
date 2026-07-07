@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
 } from './editorFind.js';
-import { textBlock, embedBlock } from './editorContent.js';
+import { textBlock, embedBlock, END_MARKER } from './editorContent.js';
 
 describe('editorFind — key recognition (Ctrl+F)', () => {
   it('recognizes Ctrl+F, and not Alt+F', () => {
@@ -153,6 +153,51 @@ describe('editorFind — replaceAll', () => {
     const r = replaceAll(input, 'foo', 'X');
     expect(r.blocks.length).toBe(3);
     expect(r.blocks[1]).toEqual(embedBlock({ embedType: 'video', videoId: 'a' }));
+    expect(input).toEqual(snapshot); // 입력 불변
+  });
+});
+
+describe('editorFind — "(끝)" 종료 마커 보존 (매치가 마커 블록 안에 있는 경우)', () => {
+  // 배경: 기존 마커 테스트는 매치가 마커 밖에 있어 우연히 통과했다. 여기서는 query가
+  // 마커 텍스트 자체('끝'·'(')와 겹치는 케이스로, 치환이 마커를 훼손하지 않음을 단언한다.
+  // (형제 도구 abbrevConvert/simpTradConvert/editorGlyph/editorDate와 동일 가드 — 송고 마커 무결성.)
+
+  it('replaceAll: 마커 블록 안의 매치는 치환·카운트하지 않는다 (끝→끗)', () => {
+    const input = [textBlock('한국은 끝났다'), textBlock(END_MARKER)];
+    const r = replaceAll(input, '끝', '끗');
+    expect(r.blocks).toEqual([textBlock('한국은 끗났다'), textBlock(END_MARKER)]);
+    expect(r.count).toBe(1); // 마커 안 매치('(끝)'의 '끝')는 세지 않는다.
+  });
+
+  it('replaceAll: query가 괄호여도 "(끝)" 블록은 그대로 유지된다 ((→[)', () => {
+    const input = [textBlock('본문 (참고) 텍스트'), textBlock(END_MARKER)];
+    const r = replaceAll(input, '(', '[');
+    expect(r.blocks).toEqual([textBlock('본문 [참고) 텍스트'), textBlock(END_MARKER)]);
+    expect(r.count).toBe(1); // 마커의 '('는 카운트 제외.
+  });
+
+  it('replaceOne: fromOffset이 마커 블록의 매치를 가리켜도 마커는 치환되지 않는다', () => {
+    // blocksToText = '끝내주는 기사\n(끝)' — '끝' 매치는 offset 0(본문)과 9(마커 안).
+    const input = [textBlock('끝내주는 기사'), textBlock(END_MARKER)];
+    const r = replaceOne(input, '끝', '끗', { fromOffset: 9 });
+    expect(r.replaced).toBe(false); // 마커 매치의 바꾸기는 no-op(의도된 안전 동작).
+    expect(r.blocks).toEqual([textBlock('끝내주는 기사'), textBlock(END_MARKER)]);
+  });
+
+  it('replaceOne: 마커 밖 매치는 기존과 동일하게 치환된다 (마커 블록 불변)', () => {
+    const input = [textBlock('끝내주는 기사'), textBlock(END_MARKER)];
+    const r = replaceOne(input, '끝', '끗', { fromOffset: 0 });
+    expect(r.replaced).toBe(true);
+    expect(r.matchStart).toBe(0);
+    expect(r.blocks).toEqual([textBlock('끗내주는 기사'), textBlock(END_MARKER)]);
+  });
+
+  it('replaceOne: 유일한 매치가 마커 안이면 no-op이고 입력은 훼손되지 않는다', () => {
+    const input = [textBlock('본문'), textBlock(END_MARKER)];
+    const snapshot = JSON.parse(JSON.stringify(input));
+    const r = replaceOne(input, END_MARKER, 'X');
+    expect(r.replaced).toBe(false);
+    expect(r.blocks).toEqual(snapshot);
     expect(input).toEqual(snapshot); // 입력 불변
   });
 });
