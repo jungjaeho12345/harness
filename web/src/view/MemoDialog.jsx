@@ -26,7 +26,7 @@ export function MemoDialog({
 
   return (
     <div
-      className="yh-editor-memo"
+      className="yh-editor-dialog yh-editor-memo"
       role="dialog"
       aria-label="메모장"
       data-testid="editor-memo"

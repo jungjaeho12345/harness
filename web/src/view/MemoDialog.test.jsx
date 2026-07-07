@@ -89,3 +89,11 @@ describe('MemoDialog — 메모장 다이얼로그(controlled 표시/입력)', (
     expect(document.activeElement).toBe(screen.getByTestId('editor-memo-text'));
   });
 });
+
+// 도구 메뉴 팝업 공통 — 화면 중앙 모달 스타일(yh-editor-dialog 공용 클래스, 2026-07-07 사용자 요청).
+describe('MemoDialog — 중앙 모달 공통 스타일', () => {
+  it('루트가 yh-editor-dialog 공용 클래스를 가져 화면 가운데 팝업으로 뜬다', () => {
+    render(<MemoDialog {...noopProps()} />);
+    expect(screen.getByTestId('editor-memo')).toHaveClass('yh-editor-dialog');
+  });
+});

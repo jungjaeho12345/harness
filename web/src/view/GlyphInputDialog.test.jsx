@@ -146,3 +146,11 @@ describe('GlyphInputDialog — 약물입력 다이얼로그', () => {
     expect(document.activeElement).toBe(screen.getByTestId('glyph-input-close'));
   });
 });
+
+// 도구 메뉴 팝업 공통 — 화면 중앙 모달 스타일(yh-editor-dialog 공용 클래스, 2026-07-07 사용자 요청).
+describe('GlyphInputDialog — 중앙 모달 공통 스타일', () => {
+  it('루트가 yh-editor-dialog 공용 클래스를 가져 화면 가운데 팝업으로 뜬다', () => {
+    render(<GlyphInputDialog {...noopProps()} />);
+    expect(screen.getByTestId('glyph-input')).toHaveClass('yh-editor-dialog');
+  });
+});
