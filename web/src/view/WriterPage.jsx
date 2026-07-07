@@ -49,7 +49,7 @@ import { insertDateAtCaret } from './editorDate.js';
 import { applyDateFormat } from './listFormat.js';
 import {
   makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
-  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed,
+  makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed, isAllowedHref,
 } from './clipboardEmbed.js';
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
@@ -797,7 +797,7 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} />
+              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} />
             )}
             {metaTab === 'image' && (
               <SearchPanel
@@ -938,16 +938,26 @@ export function WriterPage() {
 //   + 읽기전용 매핑 필드. 본문(내용)은 좌측 에디터가 담당하므로 별도 내용 입력란은 두지 않는다.
 // 매핑 모드(readOnly)에서는 모든 공통정보 입력란을 readOnly/disabled로 잠근다(임베드만 변경 — step11, 본문-only 불변식).
 // 파일 업로드는 ADR-003에 따라 view에서 직접 fetch하지 않고 model.uploadFile(file)로만 처리한다.
-function CommonInfo({ tab, updateField, model, readOnly = false }) {
+function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};
 
   // 첨부/자료파일 — 선택 즉시 업로드(model.uploadFile) → 성공 시 반환 path를 해당 필드에 보관.
+  // updateField는 항상 '현재 활성 탭'에 쓰므로, 업로드(네트워크 왕복) 대기 중 탭을 바꾸면 응답이 다른 기사에
+  // 오기록되고 원래 기사는 첨부를 잃는다. 그래서 선택 시점 탭 id를 고정하고(렌더 스냅샷 tab.id), 응답 도착 시
+  // 최신 활성 탭(activeTabRef)과 동일할 때만 반영한다(pasteImageAtCaret의 탭 고정 가드와 동형).
   const onFileChange = async (field, e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    const tabId = tab.id; // 선택 시점 편집 탭 고정(업로드 대기 중 탭 전환 대비).
     const r = await model.uploadFile(file);
-    if (r && r.ok && r.path) updateField(field, r.path);
+    if (!(r && r.ok && r.path)) return;
+    const current = activeTabRef.current;
+    if (!current || current.id !== tabId) {
+      window.alert('편집 탭이 바뀌어 파일 첨부가 취소되었습니다.');
+      return;
+    }
+    updateField(field, r.path);
   };
 
   return (
@@ -990,13 +1000,17 @@ function CommonInfo({ tab, updateField, model, readOnly = false }) {
           <textarea id="meta-external-comment" value={f.externalComment} readOnly={readOnly} onChange={(e) => updateField('externalComment', e.target.value)} />
         </div>
 
-        {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다. */}
+        {/* 첨부파일/자료파일 — 실제 업로드. 저장된 path는 링크로 보여주고 지우기 버튼을 제공한다.
+            href는 DB 원본값이라 isAllowedHref(phase 19 단일 출처)로 검증 — 비허용 값(javascript: 등)은
+            클릭 가능한 링크 대신 텍스트로만 표시한다(저장형 XSS 클릭 유발 차단). */}
         <div className="yh-field yh-field--wide">
           <label htmlFor="meta-attachment">첨부파일</label>
           <input id="meta-attachment" type="file" disabled={readOnly} onChange={(e) => onFileChange('attachmentFile', e)} />
           {f.attachmentFile && (
             <span className="yh-file-saved">
-              <a href={f.attachmentFile}>{f.attachmentFile}</a>
+              {isAllowedHref(f.attachmentFile)
+                ? <a href={f.attachmentFile}>{f.attachmentFile}</a>
+                : <span>{f.attachmentFile}</span>}
               {!readOnly && (
                 <button type="button" aria-label="첨부파일 지우기" onClick={() => updateField('attachmentFile', '')}>×</button>
               )}
@@ -1008,7 +1022,9 @@ function CommonInfo({ tab, updateField, model, readOnly = false }) {
           <input id="meta-reference" type="file" disabled={readOnly} onChange={(e) => onFileChange('referenceFile', e)} />
           {f.referenceFile && (
             <span className="yh-file-saved">
-              <a href={f.referenceFile}>{f.referenceFile}</a>
+              {isAllowedHref(f.referenceFile)
+                ? <a href={f.referenceFile}>{f.referenceFile}</a>
+                : <span>{f.referenceFile}</span>}
               {!readOnly && (
                 <button type="button" aria-label="자료파일 지우기" onClick={() => updateField('referenceFile', '')}>×</button>
               )}

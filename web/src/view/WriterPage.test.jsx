@@ -954,6 +954,67 @@ describe('WriterPage — 첨부파일/자료파일 업로드', () => {
     expect(dto.referenceFile).toBe('/uploads/fake-r.docx');
   });
 
+  // 업로드는 네트워크 왕복(비동기)이라 대기 창이 넓다. 응답 도착 시점의 활성 탭에 기록하면 대기 중 탭을
+  // 바꿨을 때 다른 기사에 첨부가 오기록되고 원래 기사는 첨부를 잃는다 — 시작 시점 탭과 동일할 때만 반영한다
+  // (pasteImageAtCaret의 탭 고정 가드와 동형 — 위 'Ctrl+V 이미지 붙여넣기' 탭 전환 테스트 참조).
+  it('업로드 대기 중 다른 탭으로 이동하면 첨부파일이 새 탭에 오기록되지 않는다(반영 취소 + 안내)', async () => {
+    const { model, container } = setup({ identity: { role: 'R' } });
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    // 탭 A를 제목으로 식별 가능하게 만든다(탭 라벨 = 제목 필드 = 본문 첫 줄).
+    const editor = screen.getByRole('textbox', { name: '본문' });
+    editor.focus();
+    await userEvent.type(editor, '탭A제목');
+
+    await userEvent.upload(screen.getByLabelText('첨부파일'), file('a.pdf')); // T0에서 업로드 in-flight
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    // 업로드 대기 중 새 작성 탭으로 전환(addTab → 새 탭 활성). 에디터에서 탭 A 본문이 사라지면 전환 완료.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+      expect(lines).not.toContain('탭A제목');
+    });
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.pdf' }); });
+
+    // 탭이 바뀌었으므로 반영은 취소되고 안내만 뜬다 — 활성 탭(B)에 path가 오기록되지 않는다.
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('편집 탭이 바뀌어 파일 첨부가 취소되었습니다.'));
+    expect(screen.queryByText('/uploads/x.pdf')).toBeNull();
+
+    // 원래 탭(A)로 돌아와도 취소라 미반영(늦은 응답이 어느 탭에도 새지 않음).
+    await userEvent.click(screen.getByRole('button', { name: '탭A제목' }));
+    await waitFor(() => expect(screen.getByLabelText('첨부파일')).toBeInTheDocument());
+    expect(screen.queryByText('/uploads/x.pdf')).toBeNull();
+  });
+
+  it('업로드 대기 중 다른 탭으로 이동하면 자료파일이 새 탭에 오기록되지 않는다(반영 취소 + 안내)', async () => {
+    const { model, container } = setup({ identity: { role: 'R' } });
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    const editor = screen.getByRole('textbox', { name: '본문' });
+    editor.focus();
+    await userEvent.type(editor, '탭A제목');
+
+    await userEvent.upload(screen.getByLabelText('자료파일'), file('r.docx')); // T0에서 업로드 in-flight
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+      expect(lines).not.toContain('탭A제목');
+    });
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/r.docx' }); });
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('편집 탭이 바뀌어 파일 첨부가 취소되었습니다.'));
+    expect(screen.queryByText('/uploads/r.docx')).toBeNull();
+  });
+
   it('편집 진입 시 저장된 첨부/자료파일 path가 표시된다', async () => {
     setup({
       identity: { role: 'R' },
@@ -978,6 +1039,75 @@ describe('WriterPage — 첨부파일/자료파일 업로드', () => {
     await waitFor(() => expect(screen.getByLabelText('첨부파일')).toBeInTheDocument());
     expect(screen.getByLabelText('첨부파일')).toBeDisabled();
     expect(screen.getByLabelText('자료파일')).toBeDisabled();
+  });
+});
+
+// 첨부/자료파일 링크 href 가드 — DB 원본값을 스킴 검증 없이 <a href>로 렌더하면 조작된 값
+// (javascript: 등)이 편집 화면에서 클릭 시 실행된다(저장형 XSS). isAllowedHref(clipboardEmbed.js,
+// phase 19 URL 검증 단일 출처)로 걸러 비허용 값은 링크 없이 텍스트(textNode)로만 표시한다.
+describe('WriterPage — 첨부/자료파일 링크 href 가드', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 저장된 첨부/자료값을 가진 기사로 편집 진입한 WriterPage를 띄우고 두 값이 표시될 때까지 기다린다.
+  async function openWithFiles({ attachmentFile, referenceFile }) {
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: {
+        articles: [{
+          articleId: 'AKR1', title: '제목', status: 'RDS', lockYN: 'Y', markupVersion: '제목\n본문',
+          attachmentFile, referenceFile,
+        }],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(attachmentFile)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(referenceFile)).toBeInTheDocument());
+    return utils;
+  }
+
+  it('javascript: 스킴 첨부/자료값은 클릭 가능한 링크로 렌더되지 않는다(텍스트로만 표시)', async () => {
+    const { container } = await openWithFiles({
+      attachmentFile: 'javascript:alert(1)', referenceFile: 'javascript:alert(2)',
+    });
+    // 파일명 텍스트는 보이되(이스케이프된 textNode) <a>가 아니어야 한다.
+    expect(screen.getByText('javascript:alert(1)').closest('a')).toBeNull();
+    expect(screen.getByText('javascript:alert(2)').closest('a')).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    // 나머지 UI(지우기 버튼)는 유지된다.
+    expect(screen.getByRole('button', { name: '첨부파일 지우기' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '자료파일 지우기' })).toBeInTheDocument();
+  });
+
+  it('상대경로(/uploads/...) 첨부/자료값은 기존대로 링크로 렌더된다', async () => {
+    await openWithFiles({
+      attachmentFile: '/uploads/stored-a.pdf', referenceFile: '/uploads/stored-r.docx',
+    });
+    const attach = screen.getByText('/uploads/stored-a.pdf').closest('a');
+    expect(attach).not.toBeNull();
+    expect(attach).toHaveAttribute('href', '/uploads/stored-a.pdf');
+    const ref = screen.getByText('/uploads/stored-r.docx').closest('a');
+    expect(ref).not.toBeNull();
+    expect(ref).toHaveAttribute('href', '/uploads/stored-r.docx');
+  });
+
+  it('https://는 링크로 렌더되고 http://는 링크로 렌더되지 않는다(isAllowedHref 규칙 일치)', async () => {
+    await openWithFiles({
+      attachmentFile: 'https://example.com/x.pdf', referenceFile: 'http://evil.example/x.pdf',
+    });
+    const attach = screen.getByText('https://example.com/x.pdf').closest('a');
+    expect(attach).not.toBeNull();
+    expect(attach).toHaveAttribute('href', 'https://example.com/x.pdf');
+    expect(screen.getByText('http://evil.example/x.pdf').closest('a')).toBeNull();
+  });
+
+  it('프로토콜상대(//host) 값은 링크로 렌더되지 않는다', async () => {
+    const { container } = await openWithFiles({
+      attachmentFile: '//evil.example/x.pdf', referenceFile: '/uploads/ok.pdf',
+    });
+    expect(screen.getByText('//evil.example/x.pdf').closest('a')).toBeNull();
+    expect(container.querySelector('a[href="//evil.example/x.pdf"]')).toBeNull();
+    // 같은 화면의 정상 상대경로 링크는 영향 없다.
+    expect(screen.getByText('/uploads/ok.pdf').closest('a')).toHaveAttribute('href', '/uploads/ok.pdf');
   });
 });
 
@@ -1569,6 +1699,19 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
     expect(spy).toHaveBeenCalled(); // 브라우저 기본 찾기 가로채기
     await waitFor(() => expect(findDialog()).toBeInTheDocument());
+  });
+
+  // Step 0(27-editor-critical-fixes): 본문 오염 방지 — 에디터(contentEditable)에 캐럿을 둔 채 Ctrl+F로 열면
+  // 포커스가 본문에 남아 이어지는 검색어 타이핑이 기사 본문에 삽입(→자동저장으로 영속)되던 결함의 회귀 테스트.
+  it('에디터에 포커스가 있는 상태에서 Ctrl+F로 열면 포커스가 본문이 아니라 find-query로 이동한다', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+    box.focus(); // jsdom best-effort — contentEditable 루트에 포커스를 둔 채 진입
+    fireEvent.keyDown(box, { key: 'f', ctrlKey: true });
+
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+    expect(document.activeElement).toBe(screen.getByTestId('find-query')); // 다이얼로그 내부(양성 단언)
+    expect(box.contains(document.activeElement)).toBe(false); // 에디터 본문이 아님
   });
 
   it("편집 메뉴 '찾기/바꾸기'(edit.findReplace) 클릭 시 다이얼로그가 열린다", async () => {

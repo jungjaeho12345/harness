@@ -3,7 +3,8 @@
 // 전용 yh-abbrev-manage/abbrev-manage className·testid로 다른 다이얼로그와 충돌 방지.
 // Enter는 가로채지 않는다(추가는 '추가' 버튼으로만, Escape만 닫기 — UX 혼선 방지). abbrevStore/abbrevConvert를 import 하지 않는다.
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useFocusOnOpen } from './useFocusOnOpen.js';
 
 export function AbbrevManageDialog({
   open,
@@ -14,6 +15,11 @@ export function AbbrevManageDialog({
 }) {
   const [shortInput, setShortInput] = useState('');
   const [longInput, setLongInput] = useState('');
+
+  // 열림 시 포커스를 짧은형 input(논리적 첫 입력)으로 이전 — 포커스가 에디터 본문에 남으면
+  // 약어 타이핑이 기사 본문에 삽입되고 Esc 닫기가 발화하지 않는다(Step 0 27-editor-critical-fixes).
+  const shortRef = useRef(null);
+  useFocusOnOpen(shortRef, open);
 
   if (!open) return null;
 
@@ -44,6 +50,7 @@ export function AbbrevManageDialog({
         <input
           className="yh-abbrev-manage__input"
           data-testid="abbrev-manage-short"
+          ref={shortRef}
           type="text"
           aria-label="짧은형"
           placeholder="짧은형"

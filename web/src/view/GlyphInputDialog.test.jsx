@@ -138,4 +138,11 @@ describe('GlyphInputDialog — 약물입력 다이얼로그', () => {
     fireEvent.click(screen.getByTestId('glyph-input-key-2'));
     expect(onPick).toHaveBeenCalledWith('★');
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 텍스트 입력이 없으므로 '닫기' 버튼으로 포커스한다.
+  // 약물 버튼에 초기 포커스를 두면 열림 직후 Space/Enter로 약물이 본문에 우발 삽입된다(액션 버튼 금지 규칙).
+  it('open=true로 렌더된 직후 document.activeElement가 닫기 버튼이다(열림 시 포커스 이전)', () => {
+    render(<GlyphInputDialog {...noopProps({ favorites: ['※', '◇'] })} />);
+    expect(document.activeElement).toBe(screen.getByTestId('glyph-input-close'));
+  });
 });

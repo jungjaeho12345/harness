@@ -150,6 +150,11 @@
       "dir": "26-log-viewer",
       "status": "completed",
       "completed_at": "2026-07-06T09:42:50+0900"
+    },
+    {
+      "dir": "27-editor-critical-fixes",
+      "status": "completed",
+      "completed_at": "2026-07-07T18:34:46+0900"
     }
   ]
 }

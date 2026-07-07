@@ -135,4 +135,17 @@ describe('UrlEmbedDialog — URL 직접 임베드 다이얼로그', () => {
       fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }),
     ).not.toThrow();
   });
+
+  // Step 0(27-editor-critical-fixes): 열림 시 포커스 이전 — 논리적 첫 텍스트 입력(URL input)으로 포커스한다.
+  // 포커스가 에디터 본문에 남으면 URL 타이핑이 기사 본문에 삽입되고 Esc 닫기도 발화하지 않는다.
+  it('open=true로 렌더된 직후 document.activeElement가 URL 입력이다(열림 시 포커스 이전)', () => {
+    render(<UrlEmbedDialog {...noopProps()} />);
+    expect(document.activeElement).toBe(screen.getByTestId('url-embed-input'));
+  });
+
+  it('닫힘→열림(open false→true) 전이에서도 포커스가 URL 입력으로 이동한다', () => {
+    const { rerender } = render(<UrlEmbedDialog {...noopProps({ open: false })} />);
+    rerender(<UrlEmbedDialog {...noopProps({ open: true })} />);
+    expect(document.activeElement).toBe(screen.getByTestId('url-embed-input'));
+  });
 });

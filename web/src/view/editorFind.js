@@ -3,7 +3,9 @@
 // 순수 함수, DOM/transport 비의존. 바꾸기는 텍스트 블록 text만 수정한 새 블록 배열을 돌려준다(임베드·"(끝)"·순서 불변).
 // UI 다이얼로그·결선·캐럿 이동은 이 모듈이 하지 않는다(Step 1/2). editorShortcuts.js 패턴을 따른다.
 
-import { textBlock, blocksToText, normalizeBlocks } from './editorContent.js';
+import {
+  textBlock, blocksToText, normalizeBlocks, END_MARKER,
+} from './editorContent.js';
 import { textLineToBlockIndex } from './writerBody.js';
 import { lineAtOffset } from './editorCaret.js';
 
@@ -56,6 +58,8 @@ function replaceAtMatch(list, text, match, replacement) {
   const { lineIndex, start: lineStart } = lineAtOffset(text, match.start);
   const blockIndex = textLineToBlockIndex(list, lineIndex);
   if (blockIndex < 0) return null; // 방어적: 매핑 실패 시 치환하지 않음.
+  // "(끝)" 종료 마커 블록은 치환하지 않는다(송고 마커 무결성 — 형제 도구와 동일 가드).
+  if (String(list[blockIndex].text).trim() === END_MARKER) return null;
   const col = match.start - lineStart;
   const old = list[blockIndex].text;
   const repl = String(replacement ?? '');
@@ -69,6 +73,7 @@ function replaceAtMatch(list, text, match, replacement) {
 // 반환: { blocks, replaced, matchStart, caretOffset }.
 //   matchStart = 치환 전 매치 시작 오프셋, caretOffset = 치환 후 새 텍스트에서 치환 결과 끝 오프셋.
 //   매치 없음/빈 query → { blocks:<원본 정규화>, replaced:false, matchStart:null, caretOffset:null }.
+//   선택된 매치가 "(끝)" 마커 블록 안이면 치환하지 않고 replaced:false를 돌려준다(마커 무결성 우선 no-op).
 export function replaceOne(blocks, query, replacement, { caseSensitive = false, fromOffset = 0 } = {}) {
   const list = normalizeBlocks(blocks);
   const noop = {
@@ -100,6 +105,8 @@ export function replaceAll(blocks, query, replacement, { caseSensitive = false }
   let count = 0;
   const next = list.map((b) => {
     if (b.type !== 'text') return b; // 임베드는 그대로(순서·내용 보존).
+    // "(끝)" 종료 마커 블록은 치환·카운트하지 않는다(송고 마커 무결성 — 형제 도구와 동일 가드).
+    if (String(b.text).trim() === END_MARKER) return b;
     const matches = findMatches(b.text, query, { caseSensitive });
     if (matches.length === 0) return b;
     count += matches.length;

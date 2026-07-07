@@ -1,0 +1,40 @@
+{
+  "project": "기사 작성기",
+  "phase": "27-editor-critical-fixes",
+  "steps": [
+    {
+      "step": 0,
+      "name": "dialog-focus-management",
+      "status": "completed",
+      "started_at": "2026-07-06T13:11:01+0900",
+      "summary": "useFocusOnOpen 훅 신설 + 에디터 다이얼로그 8개(FindReplace·Glyph·FileInfo·Memo·Abbrev·SimpTrad·HistoryCompare·UrlEmbed) 열림 시 포커스를 내부(첫 텍스트 입력, 없으면 닫기 버튼)로 이전 — 본문 오염·Esc 불능 해소, document.activeElement 회귀 테스트 11건 추가 (test:web 1082 통과·build·lint 클린)",
+      "completed_at": "2026-07-06T13:20:28+0900"
+    },
+    {
+      "step": 1,
+      "name": "find-endmarker-guard",
+      "status": "completed",
+      "started_at": "2026-07-07T18:16:05+0900",
+      "summary": "editorFind.js replaceAll·replaceAtMatch에 END_MARKER 가드 추가(editorContent.js 단일 출처 import, 형제 도구와 동형 trim 비교) — 찾기/바꾸기가 \"(끝)\" 송고 마커 블록을 치환·카운트하지 않음(마커 매치 바꾸기는 no-op), 마커 훼손 회귀 테스트 5건 추가 (test:web 1093 통과·build·lint 클린)",
+      "completed_at": "2026-07-07T18:21:59+0900"
+    },
+    {
+      "step": 2,
+      "name": "upload-tab-race-guard",
+      "status": "completed",
+      "started_at": "2026-07-07T18:22:00+0900",
+      "summary": "CommonInfo.onFileChange에 탭 고정 가드 추가(선택 시점 tab.id 캡처 → 응답 도착 시 activeTabRef.current.id와 동일할 때만 updateField, 다르면 alert 취소 안내 — pasteImageAtCaret 가드와 동형, 추가 prop은 activeTabRef 1개) — 업로드 대기 중 탭 전환 시 다른 기사 오첨부·원본 첨부 소실 차단, 첨부/자료파일 탭 전환 레이스 회귀 테스트 2건 추가 (test:web 1095 통과·build·lint 클린)",
+      "completed_at": "2026-07-07T18:28:24+0900"
+    },
+    {
+      "step": 3,
+      "name": "file-link-href-guard",
+      "status": "completed",
+      "started_at": "2026-07-07T18:28:25+0900",
+      "summary": "CommonInfo 첨부/자료파일 링크에 isAllowedHref 가드 적용(clipboardEmbed.js phase 19 단일 출처 import, 재구현 없음) — 비허용 스킴(javascript:/http:/프로토콜상대 등) 값은 <a href> 대신 textNode로만 표시해 저장형 XSS 클릭 실행 차단, /uploads 상대경로·https:// 정상 링크는 유지(지우기 버튼 등 UI 불변), href 가드 회귀 테스트 4건 추가 (test:web 1099 통과·build·lint 클린)",
+      "completed_at": "2026-07-07T18:34:45+0900"
+    }
+  ],
+  "created_at": "2026-07-06T13:11:01+0900",
+  "completed_at": "2026-07-07T18:34:46+0900"
+}
