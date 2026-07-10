@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "selection-appliers",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-10T15:09:28+0900",
+      "summary": "editorSelect.js에 selectLine/selectWord/selectParagraphInEditor 3함수 추가 — selectAllInEditor 선례 동형(selection API만, DOM 무변경, 방어적 no-op, 단어 col clamp·문단 swap/clamp) + vitest 13케이스(한글 포함)",
+      "completed_at": "2026-07-10T15:16:52+0900"
     },
     {
       "step": 2,

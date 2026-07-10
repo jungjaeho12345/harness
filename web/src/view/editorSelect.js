@@ -15,4 +15,67 @@ export function selectAllInEditor(root) {
   sel.addRange(range);
 }
 
+// 줄/단어/문단 선택 공용 준비 — selection·텍스트-줄(.yh-editor__line) 목록 확보 + 포커스 복원.
+// 선택을 걸 수 없는 상태(null root/selection 없음/줄 없음)면 null(방어적 no-op).
+function prepareLineSelection(root) {
+  if (!root) return null;
+  const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+  if (!sel) return null;
+  if (typeof root.focus === 'function') root.focus(); // 메뉴 클릭으로 빠진 포커스를 되돌린다(선택 가시화).
+  const lineEls = typeof root.querySelectorAll === 'function' ? root.querySelectorAll('.yh-editor__line') : null;
+  if (!lineEls || !lineEls.length) return null;
+  return { sel, lineEls };
+}
+
+function applyRange(sel, range) {
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// 지정 텍스트-줄(.yh-editor__line[lineIndex]) 내용 전체를 선택한다. 범위 밖 lineIndex는 no-op(선택 무변경).
+export function selectLineInEditor(root, lineIndex) {
+  const ctx = prepareLineSelection(root);
+  if (!ctx) return;
+  if (!Number.isInteger(lineIndex) || lineIndex < 0 || lineIndex >= ctx.lineEls.length) return;
+  const range = document.createRange();
+  range.selectNodeContents(ctx.lineEls[lineIndex]);
+  applyRange(ctx.sel, range);
+}
+
+// 지정 텍스트-줄의 [colStart, colEnd) 문자 범위(줄-로컬 char 오프셋)를 선택한다.
+// 좌표 계산은 호출부(editorRange) 몫 — 여기서는 clamp 후 Range만 건다. 빈 범위/빈 줄이면 no-op(단어 없음 신호).
+export function selectWordInEditor(root, lineIndex, colStart, colEnd) {
+  const ctx = prepareLineSelection(root);
+  if (!ctx) return;
+  if (!Number.isInteger(lineIndex) || lineIndex < 0 || lineIndex >= ctx.lineEls.length) return;
+  const tnode = ctx.lineEls[lineIndex].firstChild;
+  if (!tnode || tnode.nodeType !== 3) return; // 빈 줄 — 선택할 텍스트 노드 없음
+  const len = tnode.nodeValue.length;
+  const start = Math.max(0, Math.min(colStart, len));
+  const end = Math.max(0, Math.min(colEnd, len));
+  if (!(start < end)) return; // 빈 범위(colStart===colEnd 포함) — NaN도 여기서 걸러진다
+  const range = document.createRange();
+  range.setStart(tnode, start);
+  range.setEnd(tnode, end);
+  applyRange(ctx.sel, range);
+}
+
+// startLine..endLine(포함)의 텍스트-줄들을 하나의 범위로 선택한다.
+// startLine > endLine이면 swap, 범위 밖 인덱스는 존재하는 줄 개수로 clamp(문단 꼬리가 마지막 줄을 넘어도 동작).
+export function selectParagraphInEditor(root, startLine, endLine) {
+  const ctx = prepareLineSelection(root);
+  if (!ctx) return;
+  let start = startLine;
+  let end = endLine;
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+  if (start > end) [start, end] = [end, start];
+  const last = ctx.lineEls.length - 1;
+  start = Math.max(0, Math.min(start, last));
+  end = Math.max(0, Math.min(end, last));
+  const range = document.createRange();
+  range.setStartBefore(ctx.lineEls[start]);
+  range.setEndAfter(ctx.lineEls[end]);
+  applyRange(ctx.sel, range);
+}
+
 export default selectAllInEditor;
