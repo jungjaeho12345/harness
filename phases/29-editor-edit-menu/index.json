@@ -32,7 +32,7 @@
       "status": "completed",
       "started_at": "2026-07-11T08:29:21+0900",
       "summary": "editorEditOps.js 신설 — sortDocument/sortParagraph(localeCompare 오름차순, 마커 정렬 제외·최종 재정규화, 임베드 제자리)·deleteWordAt(wordBoundsAt 단어 삭제, 마커 줄 no-op, caretColumn=start) 순수 함수 + vitest 18케이스(불변·한글 포함), deleteLine 헬퍼 미신설(deleteLineAt 단일 출처 유지)",
-      "completed_at": "2026-07-11T08:36:05+0900"
+      "completed_at": "2026-07-11T08:37:52+0900"
     },
     {
       "step": 4,
