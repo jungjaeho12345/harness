@@ -489,6 +489,58 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
 
     expect(spy).toHaveBeenCalled(); // 삭제는 못 해도 북마크 기본동작은 막는다
   });
+
+  // IME 조합 가드 — 조합 중(isComposing)에는 커스텀 줄삭제를 실행하지 않는다(조합 파괴 방지 — news.md 173행 무개입 원칙).
+  it('IME 조합 중 Ctrl+D는 개입하지 않는다(줄 삭제·preventDefault 없음)', async () => {
+    const { container } = await openWith([
+      textBlock('헤드'), textBlock('둘째'), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // "둘째" 라인
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'd', ctrlKey: true, isComposing: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled(); // IME/브라우저 기본 동작 보존
+    expect(editorLines(container)).toEqual(['헤드', '둘째', '다음']); // 줄이 삭제되지 않음
+  });
+
+  it('IME 조합 중 빈 줄 Backspace는 개입하지 않는다(줄·임베드 보존)', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock(''), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // 빈 줄
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Backspace', isComposing: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy(); // 임베드 보존
+    expect(editorLines(container)).toEqual(['제목', '', '다음']); // 빈 줄 그대로
+  });
+
+  // 회귀 가드 — 조합이 아닐 때(isComposing:false)의 줄 삭제는 기존과 동일하게 동작한다.
+  it('조합이 아닐 때(isComposing:false) Ctrl+D 줄 삭제는 기존대로 동작한다', async () => {
+    const { container } = await openWith([
+      textBlock('헤드'), textBlock('둘째'), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true, isComposing: false });
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '다음']));
+  });
+
+  it('조합이 아닐 때(isComposing:false) 빈 줄 Backspace 줄 삭제는 기존대로 동작한다', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock(''), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // 빈 줄
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'Backspace', isComposing: false });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeNull());
+    expect(editorLines(container)).toEqual(['제목', '다음']);
+  });
 });
 
 // Ctrl+V 이미지 붙여넣기 — Editor가 raw File을 위임하면 WriterPage가 model.uploadFile로 서버 업로드하고
