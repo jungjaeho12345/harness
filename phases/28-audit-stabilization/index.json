@@ -7,7 +7,8 @@
       "name": "server-fileref-href-guard",
       "status": "completed",
       "started_at": "2026-07-10T10:40:28+0900",
-      "summary": "articleService에 sanitizeFileRef(순수 헬퍼) 추가 — create/update 저장 시점에 attachmentFile/referenceFile을 /uploads 상대경로·https://만 허용(거부 기반: 제어문자·백슬래시·//·타 스킴·.. traversal → ''), present 필드만 검증해 미전달 필드 불변(DB 비파괴). 테스트 8건 추가, 406개 전체 통과·lint 클린"
+      "summary": "articleService에 sanitizeFileRef(순수 헬퍼) 추가 — create/update 저장 시점에 attachmentFile/referenceFile을 /uploads 상대경로·https://만 허용(거부 기반: 제어문자·백슬래시·//·타 스킴·.. traversal → ''), present 필드만 검증해 미전달 필드 불변(DB 비파괴). 테스트 8건 추가, 406개 전체 통과·lint 클린",
+      "completed_at": "2026-07-10T10:46:07+0900"
     },
     {
       "step": 1,
