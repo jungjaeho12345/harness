@@ -3920,3 +3920,138 @@ describe("WriterPage — Alt+V/우클릭 '원본 붙여넣기'(클립보드 이�
     expect(within(ctx).getByText('원본 붙여넣기').closest('button')).toBeDisabled();
   });
 });
+
+// Step 1(28-audit-stabilization): 제목 파생 중앙화(commitBody) — 본문을 바꾸는 모든 경로가 제목(본문 첫 줄)을
+// 재동기화한다. 타이핑(onTextChange) 외 경로(모두 바꾸기/대소문자 변환/줄삭제 등)가 body만 갱신해 저장 시
+// DB로 나가는 dto.title이 옛 값(stale)으로 남던 결함의 회귀 테스트 — 저장(PUT) dto의 title로 직접 관찰한다.
+describe('WriterPage — 제목 파생 중앙화(모든 본문변경 경로의 title 재동기화)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 마지막 캐럿(lastCaretRef)을 lineIndex 줄로 갱신(keyUp→onCaretChange — 대소문자 변환 메뉴 클릭 전 상태 모사).
+  function focusCaretAtLine(container, lineIndex) {
+    caretAtLine(container, lineIndex);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  // fields.title(=옛 제목)과 본문 첫 줄이 일치한 상태로 편집 진입한다 — 경로 실행 후 저장 dto.title이
+  // "바뀐 첫 줄"인지 단언한다(제목 재동기화가 누락되면 옛 제목이 그대로 서버로 나간다).
+  async function openWith(blocks, title) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title, status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', title, status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 보류(hold)로 서버에 실리는 dto를 관찰한다 — 보류는 "(끝)" 불필요·제목 가드만 지나고,
+  // submit이 저장(PUT saveArticle)에 탭 필드(title 포함)를 싣는다(toSaveDto).
+  async function holdAndGetDto(model) {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const save = vi.spyOn(model, 'saveArticle');
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    return save.mock.calls[save.mock.calls.length - 1][0];
+  }
+
+  it('모두 바꾸기로 첫 줄이 바뀌면 저장 dto의 title이 새 첫 줄로 나간다(제목 stale 방지)', async () => {
+    const { container, model } = await openWith(
+      [textBlock('한국 소식'), textBlock('본문 한국')], '한국 소식',
+    );
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument());
+    await userEvent.type(screen.getByTestId('find-query'), '한국');
+    await userEvent.type(screen.getByTestId('find-replacement'), '대한민국');
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+    await waitFor(() => expect(editorLines(container)[0]).toBe('대한민국 소식'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('대한민국 소식');
+  });
+
+  it('보기>대문자로 바꾸기로 첫 줄이 바뀌면 저장 dto의 title이 변환된 첫 줄로 나간다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('title abc'), textBlock('본문')], 'title abc',
+    );
+    focusCaretAtLine(container, 0);
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('대문자로 바꾸기'));
+    await waitFor(() => expect(editorLines(container)[0]).toBe('TITLE ABC'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('TITLE ABC');
+  });
+
+  it('Ctrl+D로 첫 줄을 지우면 저장 dto의 title이 새 첫 줄로 동기화된다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('옛첫줄'), textBlock('새첫줄'), textBlock('본문')], '옛첫줄',
+    );
+    caretAtLine(container, 0);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+    await waitFor(() => expect(editorLines(container)[0]).toBe('새첫줄'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('새첫줄');
+  });
+
+  it('타이핑(onTextChange) 경로의 title 동기화는 회귀 없이 유지된다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('옛첫줄'), textBlock('본문')], '옛첫줄',
+    );
+    const box = container.querySelector('.yh-editor');
+    box.querySelector('.yh-editor__line').textContent = '새제목줄';
+    fireEvent.input(box);
+    await waitFor(() => expect(editorLines(container)[0]).toBe('새제목줄'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('새제목줄');
+  });
+
+  // 매핑 무해성 — 임베드 삽입도 같은 choke point(commitBody)를 지나지만, 매핑에서는 컨트롤러 updateField가
+  // title을 거부(no-op)하므로 오류 없이 동작하고 원제목이 유지된다(본문-only 불변식).
+  it('매핑 모드: 임베드 삽입이 오류 없이 동작하고 title은 갱신되지 않는다(원제목 유지)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const body = serialize([textBlock('본문첫줄'), textBlock('본문')]);
+    const utils = setup({
+      identity: { role: 'D' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '원제목', status: 'DPS' }, mode: 'mapping' },
+      seed: {
+        articles: [{ articleId: 'AKR9', title: '원제목', status: 'DPS', lockYN: 'Y', markupVersion: body }],
+        mediaItems: [{ type: 'image', src: 'pic.png', title: '사진' }],
+      },
+    });
+    await waitFor(() => expect(actionBtn('저장')).toBeInTheDocument());
+    const { container, model } = utils;
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), '사진');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    await userEvent.click((await screen.findByRole('img', { name: '사진' })).closest('button'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.title).toBe('원제목'); // 매핑은 title 갱신이 컨트롤러에서 거부됨 — 원제목 그대로.
+  });
+});
