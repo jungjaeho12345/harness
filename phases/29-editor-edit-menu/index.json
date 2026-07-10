@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-07-10T15:18:27+0900",
       "summary": "WriterPage 편집 메뉴 문단/한줄/단어 선택 결선 — MENU_ENABLED 3종 append + onMenuSelect 매핑 가드 뒤(selectAll parity) lastCaretRef→editorRange 경계→editorSelect 적용(본문 무변경) + vitest 6케이스(활성·선택·no-op·매핑 가드)",
-      "completed_at": "2026-07-10T15:26:19+0900"
+      "completed_at": "2026-07-10T15:27:06+0900"
     },
     {
       "step": 3,
