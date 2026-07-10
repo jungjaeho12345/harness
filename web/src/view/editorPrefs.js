@@ -37,12 +37,26 @@ function readAll() {
   }
 }
 
+// autosave 정규화 — 손상된 localStorage 값(0·음수·NaN·문자열)이 WriterPage의 setInterval(fn, intervalSec*1000)
+// 타이트 루프나 expireDrafts 즉시 만료를 일으키지 않게, 병합 결과를 안전 타입·범위로 강제한다.
+// dateFormat의 typeof 검증과 동형의 부분 검증 — 정상값은 그대로 통과(사용자 설정 불훼손), 저장 데이터는 건드리지 않는다(읽기 시 정규화만).
+function normalizeAutosave(savedAutosave) {
+  const merged = { ...DEFAULT_EDITOR_PREFS.autosave, ...(savedAutosave || {}) };
+  const finitePositive = (n, fallback) => (Number.isFinite(n) && n > 0 ? n : fallback);
+  return {
+    ...merged,
+    enabled: merged.enabled === true,
+    intervalSec: finitePositive(merged.intervalSec, DEFAULT_EDITOR_PREFS.autosave.intervalSec),
+    retentionDays: finitePositive(merged.retentionDays, DEFAULT_EDITOR_PREFS.autosave.retentionDays),
+  };
+}
+
 // 저장값을 기본값 위에 "한 단계 깊이" 병합해 반환(부분 저장도 안전, 새로 추가된 키도 기본값 노출).
 export function loadEditorPrefs() {
   const saved = readAll();
   return {
     colors: { ...DEFAULT_EDITOR_PREFS.colors, ...(saved.colors || {}) },
-    autosave: { ...DEFAULT_EDITOR_PREFS.autosave, ...(saved.autosave || {}) },
+    autosave: normalizeAutosave(saved.autosave),
     byline: { ...DEFAULT_EDITOR_PREFS.byline, ...(saved.byline || {}) },
     edit: { ...DEFAULT_EDITOR_PREFS.edit, ...(saved.edit || {}) },
     spellcheck: { ...DEFAULT_EDITOR_PREFS.spellcheck, ...(saved.spellcheck || {}) },

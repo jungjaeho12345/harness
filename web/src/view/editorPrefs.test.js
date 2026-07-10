@@ -221,4 +221,65 @@ describe('editorPrefs — editor preference store', () => {
     const { glyphFavorites } = loadEditorPrefs();
     expect(glyphFavorites.items).toEqual(['α']); // 기본 [] 와 합쳐지지 않고 대체
   });
+
+  // --- autosave 정규화: 손상된 저장값이 setInterval 타이트 루프/즉시 만료를 일으키지 않게 안전 범위로 폴백 ---
+  // (WriterPage 자동저장 effect가 intervalSec*1000을 그대로 setInterval에 넘기므로 0·음수·NaN이면 성능/저장소 파괴.)
+
+  it('normalizes autosave.intervalSec: 0 to a finite positive number (no setInterval tight loop)', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { intervalSec: 0 } }));
+    const { autosave } = loadEditorPrefs();
+    expect(Number.isFinite(autosave.intervalSec)).toBe(true);
+    expect(autosave.intervalSec).toBeGreaterThan(0);
+    expect(autosave.intervalSec).toBe(DEFAULT_EDITOR_PREFS.autosave.intervalSec); // 기본값 60 폴백
+  });
+
+  it('normalizes autosave.intervalSec: negative to a finite positive number', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { intervalSec: -5 } }));
+    const { autosave } = loadEditorPrefs();
+    expect(Number.isFinite(autosave.intervalSec)).toBe(true);
+    expect(autosave.intervalSec).toBeGreaterThan(0);
+  });
+
+  it('normalizes autosave.intervalSec: non-numeric string to the positive default (never NaN)', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { intervalSec: 'abc' } }));
+    const { autosave } = loadEditorPrefs();
+    expect(Number.isFinite(autosave.intervalSec)).toBe(true);
+    expect(autosave.intervalSec).toBe(DEFAULT_EDITOR_PREFS.autosave.intervalSec);
+    expect(Number.isNaN(autosave.intervalSec * 1000)).toBe(false); // WriterPage가 곱하는 형태 그대로 가드
+  });
+
+  it('normalizes autosave.retentionDays: 0 / negative / non-numeric to a finite positive number', () => {
+    for (const bad of [0, -1, 'x']) {
+      localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { retentionDays: bad } }));
+      const { autosave } = loadEditorPrefs();
+      expect(Number.isFinite(autosave.retentionDays)).toBe(true);
+      expect(autosave.retentionDays).toBeGreaterThan(0);
+      expect(autosave.retentionDays).toBe(DEFAULT_EDITOR_PREFS.autosave.retentionDays); // 기본값 1 폴백
+    }
+  });
+
+  it('normalizes autosave.enabled: non-boolean to a boolean (truthy string does not enable)', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { enabled: 'yes' } }));
+    const { autosave } = loadEditorPrefs();
+    expect(typeof autosave.enabled).toBe('boolean');
+    expect(autosave.enabled).toBe(false); // === true 강제 — 비불리언은 기본값(false)
+  });
+
+  it('preserves valid saved autosave values untouched (no clobbering of user settings)', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ autosave: { enabled: true, intervalSec: 120, retentionDays: 3 } }));
+    const { autosave } = loadEditorPrefs();
+    expect(autosave.enabled).toBe(true);
+    expect(autosave.intervalSec).toBe(120);
+    expect(autosave.retentionDays).toBe(3);
+  });
+
+  it('regression guard: empty save still yields autosave defaults and dateFormat validation is intact', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({}));
+    const prefs = loadEditorPrefs();
+    expect(prefs.autosave).toEqual(DEFAULT_EDITOR_PREFS.autosave);
+    expect(prefs.dateFormat).toBe(DEFAULT_EDITOR_PREFS.dateFormat);
+    // dateFormat 비문자열은 기존 검증대로 기본값 폴백(선례 유지)
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ dateFormat: 42 }));
+    expect(loadEditorPrefs().dateFormat).toBe(DEFAULT_EDITOR_PREFS.dateFormat);
+  });
 });
