@@ -158,7 +158,8 @@
     },
     {
       "dir": "28-audit-stabilization",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-10T14:39:14+0900"
     },
     {
       "dir": "29-editor-edit-menu",
