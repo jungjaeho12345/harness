@@ -40,7 +40,7 @@
       "status": "completed",
       "started_at": "2026-07-11T08:37:53+0900",
       "summary": "WriterPage 편집 메뉴 문서/문단 정렬·한줄/단어 지우기 4종 결선 — MENU_ENABLED append + 매핑 가드 뒤 editorEditOps/deleteLineAt(Ctrl+D 공용 코어 deleteLineByBlockIndex 추출, 단일 소스) 계산을 commitBody(serialize) 단일 choke point로만 반영(제목 자동 재동기화, 결선부 title 호출 없음), 매핑/no-op 차단 + vitest 9케이스",
-      "completed_at": "2026-07-11T08:45:04+0900"
+      "completed_at": "2026-07-11T08:46:56+0900"
     }
   ],
   "created_at": "2026-07-10T15:03:51+0900"
