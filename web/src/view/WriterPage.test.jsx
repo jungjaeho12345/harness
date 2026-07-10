@@ -4107,3 +4107,143 @@ describe('WriterPage — 제목 파생 중앙화(모든 본문변경 경로의 t
     expect(dto.title).toBe('원제목'); // 매핑은 title 갱신이 컨트롤러에서 거부됨 — 원제목 그대로.
   });
 });
+
+// Step 2(29-editor-edit-menu): 편집 메뉴 문단/한줄/단어 선택(selection-wire) 결선.
+// step0(editorRange 경계 계산) + step1(editorSelect 적용기)을 onMenuSelect 매핑 가드 뒤(edit.selectAll parity)에 연결.
+// 선택 연산은 본문을 절대 바꾸지 않는다(선택-only) — 캐럿 소스는 lastCaretRef(메뉴 클릭으로 포커스 이탈).
+describe('WriterPage — 편집 메뉴 문단/한줄/단어 선택 결선(editorRange·editorSelect)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    window.getSelection().removeAllRanges(); // 이전 테스트 selection 오염 차단
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 캐럿을 텍스트-줄 lineIndex의 column 위치에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다
+  // (약물바 focusCaretAtLine의 컬럼 확장 — 단어 선택은 줄 안 위치가 필요하다).
+  function focusCaretAt(container, lineIndex, column = 0) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    const tnode = lineEls[lineIndex].firstChild;
+    if (tnode && tnode.nodeType === 3) {
+      range.setStart(tnode, column);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(lineEls[lineIndex]);
+      range.collapse(true);
+    }
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+  const editMenuItem = (label) => within(screen.getByTestId('menu-편집')).getByText(label).closest('button');
+
+  it("편집 메뉴 '문단 선택'/'한줄 선택'/'단어 선택'이 활성이고 기존 항목 상태는 불변이다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await openTopMenu('편집');
+    expect(editMenuItem('문단 선택')).toBeEnabled();
+    expect(editMenuItem('한줄 선택')).toBeEnabled();
+    expect(editMenuItem('단어 선택')).toBeEnabled();
+    // 기존 활성/비활성 항목 불변(회귀).
+    expect(editMenuItem('전체 선택')).toBeEnabled();
+    expect(editMenuItem('찾기/바꾸기')).toBeEnabled();
+    expect(editMenuItem('문서 정렬')).toBeDisabled();
+    expect(editMenuItem('한줄 지우기')).toBeDisabled();
+  });
+
+  it("'한줄 선택': 캐럿 줄 전체가 선택되고 본문(updateField body)은 바뀌지 않는다(선택-only)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('헤드라인'), textBlock('본문 문장')]);
+    const { container, model } = await openWith([textBlock('헤드라인'), textBlock('본문 문장')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    focusCaretAt(container, 1);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('한줄 선택'));
+
+    expect(window.getSelection().toString()).toBe('본문 문장');
+    expect(editorLines(container)).toEqual(['헤드라인', '본문 문장']); // DOM 본문 불변
+
+    // 보류 저장 시 원본 body가 그대로 PUT된다(본문 무변경 — 선택-only 단언).
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it("'단어 선택': 캐럿 컬럼의 단어(editorRange 경계)가 선택된다(한글)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('안녕 세상 좋다')]);
+    focusCaretAt(container, 1, 4); // '세상' 내부(col 4)
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('단어 선택'));
+
+    expect(window.getSelection().toString()).toBe('세상');
+    expect(editorLines(container)).toEqual(['헤드라인', '안녕 세상 좋다']);
+  });
+
+  it("'문단 선택': 캐럿 줄이 속한 문단(빈 줄 경계)의 줄들만 선택된다", async () => {
+    const { container } = await openWith([
+      textBlock('제목줄'), textBlock(''),
+      textBlock('둘째 문단 첫줄'), textBlock('둘째 문단 둘째줄'),
+      textBlock(''), textBlock('셋째 문단'),
+    ]);
+    focusCaretAt(container, 3); // '둘째 문단 둘째줄'
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('문단 선택'));
+
+    const text = window.getSelection().toString();
+    expect(text).toContain('둘째 문단 첫줄');
+    expect(text).toContain('둘째 문단 둘째줄');
+    expect(text).not.toContain('제목줄');
+    expect(text).not.toContain('셋째 문단');
+  });
+
+  it('캐럿이 없으면(lastCaretRef null) 3종 모두 예외 없이 no-op(선택·본문 무변경)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    // 캐럿 미설정 — 메뉴 열기/클릭은 onCaretChange(keyUp/mouseUp on editor)를 발생시키지 않는다.
+    for (const label of ['문단 선택', '한줄 선택', '단어 선택']) {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem(label));
+    }
+    // userEvent 클릭이 메뉴 버튼 위에 collapsed selection을 남길 수 있어 rangeCount 대신
+    // "선택된 텍스트 없음"으로 단언한다(결선 3종이 걸었다면 비-빈 줄 텍스트가 잡혔을 것).
+    expect(window.getSelection().toString()).toBe(''); // 선택 무변경
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // 본문 무변경
+  });
+
+  it('매핑 모드: 3종 클릭이 no-op이고(매핑 가드 뒤 — selectAll parity) 본문도 바뀌지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('헤드라인'), textBlock('본문 문장')]);
+    const { container, model } = await openWith(
+      [textBlock('헤드라인'), textBlock('본문 문장')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+    focusCaretAt(container, 1); // 매핑에서도 onCaretChange는 결선 — lastCaretRef가 채워진 상태로 가드를 검증
+
+    for (const label of ['문단 선택', '한줄 선택', '단어 선택']) {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem(label));
+      expect(window.getSelection().toString()).toBe(''); // 캐럿(collapsed) 그대로 — 선택 무변경
+    }
+
+    // 저장 시 원본 body가 그대로 PUT된다(본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+});

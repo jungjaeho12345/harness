@@ -29,7 +29,10 @@ import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
 } from './editorFind.js';
-import { selectAllInEditor } from './editorSelect.js';
+import {
+  selectAllInEditor, selectLineInEditor, selectWordInEditor, selectParagraphInEditor,
+} from './editorSelect.js';
+import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
@@ -77,7 +80,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -465,6 +468,26 @@ export function WriterPage() {
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
+    // 문단/한줄/단어 선택 — 선택 연산(본문 무변경, updateField/serialize/setPendingCaretLine 미호출).
+    // 형제 edit.selectAll과 동일하게 매핑 가드 뒤(매핑에서 no-op — 메뉴 내 일관성). 캐럿은 lastCaretRef
+    // (메뉴 클릭으로 포커스가 빠짐 — 기존 결선 규약), 경계 계산은 editorRange만(단일 출처), 적용은 editorSelect.
+    if (id === 'edit.selectLine' || id === 'edit.selectWord' || id === 'edit.selectParagraph') {
+      const caret = lastCaretRef.current;
+      if (!caret) return; // 캐럿 없음 no-op
+      const root = document.querySelector('.yh-editor');
+      if (id === 'edit.selectLine') { selectLineInEditor(root, caret.lineIndex); return; }
+      if (id === 'edit.selectWord') {
+        const { start } = lineAtOffset(bodyText, caret.offset);
+        const column = caret.offset - start;
+        const lineText = bodyText.split('\n')[caret.lineIndex] ?? '';
+        const { start: colStart, end: colEnd } = wordBoundsAt(lineText, column);
+        selectWordInEditor(root, caret.lineIndex, colStart, colEnd); // 빈 범위면 헬퍼가 no-op
+        return;
+      }
+      const { startLine, endLine } = paragraphBoundsAt(bodyText.split('\n'), caret.lineIndex);
+      selectParagraphInEditor(root, startLine, endLine);
+      return;
+    }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
     const fn = VIEW_TRANSFORMS[id];
