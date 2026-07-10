@@ -157,6 +157,28 @@ describe('clipboardEmbed — embed builders', () => {
     });
   });
 
+  // 28-step4: 빈/공백 src 가드 — 형제 팩토리(audio/link/localVideo)와 동형으로 null을 돌려준다.
+  // 렌더(isAllowedImageSrc)가 무력화해도 markupVersion에 깨진 임베드 블록이 영속되는 것을 원천 차단.
+  it('makeImageEmbed returns null for empty/whitespace/missing src (insertEmbed no-op)', () => {
+    expect(makeImageEmbed('')).toBeNull();
+    expect(makeImageEmbed('   ')).toBeNull();
+    expect(makeImageEmbed(null)).toBeNull();
+    expect(makeImageEmbed(undefined)).toBeNull();
+  });
+
+  // 28-step4: 정상 src 회귀 가드 — data:image/·/uploads 상대경로는 기존대로 임베드를 만들고 src를 보존한다.
+  it('makeImageEmbed still builds for valid src and trims surrounding whitespace', () => {
+    expect(makeImageEmbed('data:image/png;base64,AAAA')).toMatchObject({
+      type: 'embed', embedType: 'image', src: 'data:image/png;base64,AAAA',
+      widthPercent: 17, heightPercent: 17, figureWidthPx: 612,
+    });
+    expect(makeImageEmbed('/uploads/x.png')).toMatchObject({
+      type: 'embed', embedType: 'image', src: '/uploads/x.png',
+    });
+    // 앞뒤 공백은 trim — 형제 팩토리와 동일 정책.
+    expect(makeImageEmbed('  /uploads/x.png  ')).toMatchObject({ src: '/uploads/x.png' });
+  });
+
   it('makeVideoEmbed builds a youtube embed, or null for non-youtube', () => {
     const e = makeVideoEmbed('https://youtu.be/dQw4w9WgXcQ');
     expect(e).toMatchObject({
