@@ -163,7 +163,8 @@
     },
     {
       "dir": "29-editor-edit-menu",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-11T08:46:57+0900"
     },
     {
       "dir": "30-editor-spellcheck",
