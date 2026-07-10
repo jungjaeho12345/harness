@@ -32,7 +32,7 @@
       "status": "completed",
       "started_at": "2026-07-10T14:20:33+0900",
       "summary": "listFormat에 kstIsoString(epochMs) 순수·결정적 헬퍼 추가(KST_OFFSET_MS=+9h 고정, 내부 시각 읽기 없음) — WriterPage.insertDate 1줄 배선을 applyDateFormat(kstIsoString(Date.now()), fmt)로 교체해 날짜 삽입을 UTC→KST 벽시계로 교정. applyDateFormat/목록 표시(formatCell·formatDateTime)·editorDate.js 불변, 헬퍼 테스트 5건 추가 + UTC 기대값 WriterPage 테스트 2건 KST로 갱신, web 1127개 전체 통과·빌드·lint 클린",
-      "completed_at": "2026-07-10T14:27:38+0900"
+      "completed_at": "2026-07-10T14:29:21+0900"
     },
     {
       "step": 4,
