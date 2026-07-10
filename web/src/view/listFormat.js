@@ -35,6 +35,15 @@ export function applyDateFormat(iso, format) {
     .replace('mm', m[5]);
 }
 
+export const KST_OFFSET_MS = 9 * 60 * 60 * 1000; // 한국 표준시 UTC+9 (DST 없음 — 고정 오프셋)
+
+// 순수·결정적: epoch ms를 KST 벽시계 ISO 유사 문자열로 변환. +9h한 시각을 toISOString(UTC 표기)으로
+// 읽으면 자릿수(YYYY-MM-DDTHH:mm)가 곧 KST 벽시계다 — applyDateFormat의 정규식과 호환.
+// 내부에서 시각을 읽지 않는다(new Date()/Date.now() 금지) — 비결정성은 호출자(WriterPage) 몫.
+export function kstIsoString(epochMs) {
+  return new Date(epochMs + KST_OFFSET_MS).toISOString();
+}
+
 // module-level 현재 형식 설정(화이트리스트 — DATE_FORMATS에 없으면 무시/기본 유지).
 export function setDateFormat(format) {
   if (DATE_FORMATS.includes(format)) currentFormat = format;

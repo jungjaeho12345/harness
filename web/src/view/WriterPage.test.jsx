@@ -2688,8 +2688,8 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
 });
 
 // Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
-// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
-// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). new Date는 WriterPage에만.
+// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 KST 벽시계(kstIsoString)로 바꿔 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
+// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). Date.now는 WriterPage에만.
 // 시각은 vi.useFakeTimers + setSystemTime으로 고정하고, dateFormat은 saveEditorPrefs로 주입한다(localStorage.clear 격리).
 describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
   beforeEach(() => {
@@ -2784,8 +2784,8 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
 
     await userEvent.click(actionBtn('보류'));
     await waitFor(() => expect(save).toHaveBeenCalled());
-    // 고정 시각 2026-06-24T01:23:00Z → 'YYYY-MM-DD HH:mm' = '2026-06-24 01:23'(UTC, applyDateFormat).
-    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+    // 고정 시각 2026-06-24T01:23:00Z → KST 벽시계(+9h) 'YYYY-MM-DD HH:mm' = '2026-06-24 10:23'(kstIsoString).
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 10:23본문');
   });
 
   it('dateFormat prefs가 없으면 기본 형식(YYYY-MM-DD HH:mm)으로 삽입된다(loadEditorPrefs 기본값 폴백)', async () => {
@@ -2799,8 +2799,8 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
 
     await userEvent.click(actionBtn('보류'));
     await waitFor(() => expect(save).toHaveBeenCalled());
-    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각이 그 형식으로 삽입.
-    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각의 KST 벽시계(01:23Z → 10:23 KST)가 그 형식으로 삽입.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 10:23본문');
   });
 
   it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {

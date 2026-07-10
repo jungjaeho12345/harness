@@ -46,7 +46,7 @@ import {
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
 import { insertDateAtCaret } from './editorDate.js';
-import { applyDateFormat } from './listFormat.js';
+import { applyDateFormat, kstIsoString } from './listFormat.js';
 import {
   makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
   makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed, isAllowedHref,
@@ -276,13 +276,13 @@ export function WriterPage() {
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
-  // 도구>날짜 삽입 — 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
-  // 비결정성(new Date)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
+  // 도구>날짜 삽입 — 현재 시각(비결정)을 KST 벽시계로 바꿔 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
+  // 비결정성(Date.now)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
   // 약물입력(onGlyphPick)과 동일 안전 경로(commitBody(serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
   const insertDate = () => {
     if (isMapping) return;                                   // 매핑(텍스트 잠금) no-op — 본문-only 불변식.
     const fmt = loadEditorPrefs().dateFormat;                // 읽기 전용(저장/변경 안 함).
-    const dateString = applyDateFormat(new Date().toISOString(), fmt);
+    const dateString = applyDateFormat(kstIsoString(Date.now()), fmt);
     const caret = lastCaretRef.current;                      // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
     const r = insertDateAtCaret(blocks, caret, dateString);
     commitBody(serialize(r.blocks));
