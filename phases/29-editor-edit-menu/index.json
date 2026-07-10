@@ -7,7 +7,8 @@
       "name": "edit-range-helpers",
       "status": "completed",
       "started_at": "2026-07-10T15:03:51+0900",
-      "summary": "editorRange.js 신설 — wordBoundsAt(\\S 런 단어 경계)·paragraphBoundsAt(editorStats.paragraphIndex 동일 정의 문단 줄 범위) 순수 헬퍼 + vitest 17케이스(한글 포함)"
+      "summary": "editorRange.js 신설 — wordBoundsAt(\\S 런 단어 경계)·paragraphBoundsAt(editorStats.paragraphIndex 동일 정의 문단 줄 범위) 순수 헬퍼 + vitest 17케이스(한글 포함)",
+      "completed_at": "2026-07-10T15:09:27+0900"
     },
     {
       "step": 1,
