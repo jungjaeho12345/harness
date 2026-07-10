@@ -48,7 +48,7 @@
       "status": "completed",
       "started_at": "2026-07-10T14:33:47+0900",
       "summary": "loadEditorPrefs에 normalizeAutosave(순수 헬퍼) 추가 — autosave 병합 결과를 안전 범위로 정규화(enabled는 ===true 강제 boolean, intervalSec/retentionDays는 유한 양수만 채택·아니면 기본값 60/1 폴백)해 손상 localStorage(0·음수·NaN·문자열)로 인한 WriterPage setInterval 타이트 루프/즉시 만료를 단일 출처에서 차단. 정상값 보존·타 카테고리(colors/edit/spellcheck 등) 병합 불변·저장 데이터 미수정(읽기 시 정규화만)·소비자(WriterPage) 무수정. 테스트 7건 추가(0/음수/비수치/비불리언 폴백 + 정상값 보존 + 기본값·dateFormat 회귀 가드), web 1136개 전체 통과·빌드·lint 클린",
-      "completed_at": "2026-07-10T14:40:30+0900"
+      "completed_at": "2026-07-10T14:39:14+0900"
     }
   ],
   "created_at": "2026-07-10T10:40:28+0900"
