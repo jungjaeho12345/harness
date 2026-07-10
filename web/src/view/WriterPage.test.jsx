@@ -4157,11 +4157,11 @@ describe('WriterPage — 편집 메뉴 문단/한줄/단어 선택 결선(editor
     expect(editMenuItem('문단 선택')).toBeEnabled();
     expect(editMenuItem('한줄 선택')).toBeEnabled();
     expect(editMenuItem('단어 선택')).toBeEnabled();
-    // 기존 활성/비활성 항목 불변(회귀).
+    // 기존 활성/비활성 항목 불변(회귀). 문서 정렬/한줄 지우기는 step 4(edit-ops-wire)에서 결선되어 활성.
     expect(editMenuItem('전체 선택')).toBeEnabled();
     expect(editMenuItem('찾기/바꾸기')).toBeEnabled();
-    expect(editMenuItem('문서 정렬')).toBeDisabled();
-    expect(editMenuItem('한줄 지우기')).toBeDisabled();
+    expect(editMenuItem('문서 정렬')).toBeEnabled();
+    expect(editMenuItem('한줄 지우기')).toBeEnabled();
   });
 
   it("'한줄 선택': 캐럿 줄 전체가 선택되고 본문(updateField body)은 바뀌지 않는다(선택-only)", async () => {
@@ -4242,6 +4242,184 @@ describe('WriterPage — 편집 메뉴 문단/한줄/단어 선택 결선(editor
     }
 
     // 저장 시 원본 body가 그대로 PUT된다(본문 무변경).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+});
+
+// Step 4(29-editor-edit-menu): 편집 메뉴 문서/문단 정렬·한줄/단어 지우기(edit-ops-wire) 결선.
+// step3(editorEditOps 순수 계산)·deleteLineAt(Ctrl+D 단일 출처)을 onMenuSelect 매핑 가드 뒤에 연결.
+// 본문 변경은 commitBody(serialize(...)) 단일 choke point만 — 제목(본문 첫 줄)은 commitBody가 자동 재동기화(phase 28).
+describe('WriterPage — 편집 메뉴 문서/문단 정렬·한줄/단어 지우기 결선(editorEditOps)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    window.getSelection().removeAllRanges();
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', title = '제목' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title, status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', title, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 캐럿을 텍스트-줄 lineIndex의 column 위치에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(step 2 동형).
+  function focusCaretAt(container, lineIndex, column = 0) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    const tnode = lineEls[lineIndex].firstChild;
+    if (tnode && tnode.nodeType === 3) {
+      range.setStart(tnode, column);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(lineEls[lineIndex]);
+      range.collapse(true);
+    }
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+  const editMenuItem = (label) => within(screen.getByTestId('menu-편집')).getByText(label).closest('button');
+
+  // 보류(hold) 저장으로 서버에 실리는 dto를 관찰한다(phase 28 title 재동기화 테스트 동형).
+  async function holdAndGetDto(model) {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const save = vi.spyOn(model, 'saveArticle');
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    return save.mock.calls[save.mock.calls.length - 1][0];
+  }
+
+  it("편집 메뉴 '문서 정렬'/'문단 정렬'/'한줄 지우기'/'단어 지우기'가 활성이고 기존 항목 상태는 불변이다", async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await openTopMenu('편집');
+    expect(editMenuItem('문서 정렬')).toBeEnabled();
+    expect(editMenuItem('문단 정렬')).toBeEnabled();
+    expect(editMenuItem('한줄 지우기')).toBeEnabled();
+    expect(editMenuItem('단어 지우기')).toBeEnabled();
+    // 기존 활성/비활성 항목 불변(회귀) — step 2 선택 3종 활성·미결선(DEFER) 항목 비활성.
+    expect(editMenuItem('문단 선택')).toBeEnabled();
+    expect(editMenuItem('전체 선택')).toBeEnabled();
+    expect(editMenuItem('되돌리기')).toBeDisabled();
+    expect(editMenuItem('잘라내기')).toBeDisabled();
+  });
+
+  it("'문서 정렬': 텍스트 줄이 정렬되고 \"(끝)\" 마커는 최종 유지, 제목이 새 첫 줄로 재동기화된다(commitBody)", async () => {
+    const { container, model } = await openWith(
+      [textBlock('다라 소식'), textBlock('가나 소식'), textBlock('(끝)')],
+      { title: '다라 소식' },
+    );
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('문서 정렬'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['가나 소식', '다라 소식', '(끝)']));
+    // 제목 재동기화 — commitBody 단일 경로(저장 dto.title이 새 첫 줄, stale 방지).
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('가나 소식');
+    expect(deserialize(dto.markupVersion).at(-1).text).toBe('(끝)'); // 마커 최종 블록 유지
+  });
+
+  it("'문단 정렬': 캐럿 문단(빈 줄 경계)만 정렬되고 다른 문단은 불변이다", async () => {
+    const { container } = await openWith([
+      textBlock('제목줄'), textBlock(''),
+      textBlock('나 둘째줄'), textBlock('가 첫째줄'),
+      textBlock(''), textBlock('하'), textBlock('자'),
+    ]);
+    focusCaretAt(container, 3); // '가 첫째줄' — 둘째 문단(줄 2~3)
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('문단 정렬'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual([
+      '제목줄', '', '가 첫째줄', '나 둘째줄', '', '하', '자', // 셋째 문단('하','자')은 미정렬 그대로
+    ]));
+  });
+
+  it("'한줄 지우기': 캐럿 줄이 삭제되고(Ctrl+D 단일 소스) 첫 줄 삭제 시 제목이 새 첫 줄로 재동기화된다", async () => {
+    const { container, model } = await openWith(
+      [textBlock('옛첫줄'), textBlock('새첫줄'), textBlock('본문')],
+      { title: '옛첫줄' },
+    );
+    focusCaretAt(container, 0);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('한줄 지우기'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['새첫줄', '본문']));
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('새첫줄'); // Ctrl+D와 공용 코어 — commitBody가 제목 자동 재동기화
+  });
+
+  it("'한줄 지우기': \"(끝)\" 마커 줄에서 실행하면 마커 줄이 통째로 삭제된다(news.md L167 — 입력 재개)", async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('(끝)')]);
+    focusCaretAt(container, 2); // 마커 줄
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('한줄 지우기'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['제목', '본문']));
+  });
+
+  it("'단어 지우기': 캐럿 컬럼의 단어만 삭제된다(한글, 주변 공백 유지)", async () => {
+    const { container } = await openWith([textBlock('헤드라인'), textBlock('안녕 세상 좋다')]);
+    focusCaretAt(container, 1, 4); // '세상' 내부(col 4)
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('단어 지우기'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드라인', '안녕  좋다']));
+  });
+
+  it("'단어 지우기': \"(끝)\" 마커 줄에서는 no-op(본문 불변 — 저장 시 원본 PUT)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const blocks = [textBlock('제목'), textBlock('본문'), textBlock('(끝)')];
+    const original = serialize(blocks);
+    const { container, model } = await openWith(blocks, { title: '제목' });
+    focusCaretAt(container, 2, 1); // 마커 줄 내부
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('단어 지우기'));
+
+    expect(editorLines(container)).toEqual(['제목', '본문', '(끝)']);
+    // changed:false → commitBody 미호출(no-op 존중) — 저장 dto가 원본 그대로.
+    const dto = await holdAndGetDto(model);
+    expect(dto.markupVersion).toBe(original);
+  });
+
+  it('캐럿이 없으면(lastCaretRef null) 문단 정렬/한줄·단어 지우기는 예외 없이 no-op이다', async () => {
+    const { container } = await openWith([textBlock('나'), textBlock('가')]);
+    for (const label of ['문단 정렬', '한줄 지우기', '단어 지우기']) {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem(label));
+    }
+    expect(editorLines(container)).toEqual(['나', '가']); // 본문 무변경
+  });
+
+  it('매핑 모드: 정렬/삭제 4종 클릭이 본문(updateField body)을 바꾸지 않는다(텍스트 잠금 가드)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const blocks = [textBlock('나 둘째'), textBlock('가 첫째'), textBlock('본문 문장')];
+    const original = serialize(blocks);
+    const { container, model } = await openWith(blocks, { mode: 'mapping', status: 'DPS', role: 'D', title: '나 둘째' });
+    const save = vi.spyOn(model, 'saveArticle');
+    focusCaretAt(container, 1); // lastCaretRef가 채워진 상태로 가드를 검증(step 2 동형)
+
+    for (const label of ['문서 정렬', '문단 정렬', '한줄 지우기', '단어 지우기']) {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem(label));
+    }
+    expect(editorLines(container)).toEqual(['나 둘째', '가 첫째', '본문 문장']); // 본문 무변경
+
+    // 저장 시 원본 body가 그대로 PUT된다(매핑 가드 — commitBody 미호출).
     await userEvent.click(actionBtn('저장'));
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
