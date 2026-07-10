@@ -2,10 +2,33 @@
   "project": "기사 작성기",
   "phase": "29-editor-edit-menu",
   "steps": [
-    { "step": 0, "name": "edit-range-helpers", "status": "pending" },
-    { "step": 1, "name": "selection-appliers", "status": "pending" },
-    { "step": 2, "name": "selection-wire", "status": "pending" },
-    { "step": 3, "name": "edit-ops-pure", "status": "pending" },
-    { "step": 4, "name": "edit-ops-wire", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "edit-range-helpers",
+      "status": "completed",
+      "started_at": "2026-07-10T15:03:51+0900",
+      "summary": "editorRange.js 신설 — wordBoundsAt(\\S 런 단어 경계)·paragraphBoundsAt(editorStats.paragraphIndex 동일 정의 문단 줄 범위) 순수 헬퍼 + vitest 17케이스(한글 포함)"
+    },
+    {
+      "step": 1,
+      "name": "selection-appliers",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "selection-wire",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "edit-ops-pure",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "edit-ops-wire",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-10T15:03:51+0900"
 }
