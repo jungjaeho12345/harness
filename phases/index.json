@@ -155,6 +155,22 @@
       "dir": "27-editor-critical-fixes",
       "status": "completed",
       "completed_at": "2026-07-07T18:34:46+0900"
+    },
+    {
+      "dir": "28-audit-stabilization",
+      "status": "pending"
+    },
+    {
+      "dir": "29-editor-edit-menu",
+      "status": "pending"
+    },
+    {
+      "dir": "30-editor-spellcheck",
+      "status": "pending"
+    },
+    {
+      "dir": "31-editor-table",
+      "status": "pending"
     }
   ]
 }
