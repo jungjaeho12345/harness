@@ -40,7 +40,7 @@
       "status": "completed",
       "started_at": "2026-07-10T14:29:22+0900",
       "summary": "makeImageEmbed에 형제 팩토리(audio/link/localVideo)와 동형의 trim+null 가드 추가 — 빈/공백/null/undefined src면 임베드 미생성(null 반환, insertEmbed no-op 흡수)으로 깨진 이미지 임베드 블록의 markupVersion 영속을 원천 차단. 정상 src는 trim 후 보존·크기 필드(EMBED_SIZE 17%/17%/612px) 불변, 호출부(WriterPage) 무수정. 테스트 2건 추가(빈값 4형 null + 정상 src·trim 회귀), web 1129개 전체 통과·빌드·lint 클린",
-      "completed_at": "2026-07-10T14:33:10+0900"
+      "completed_at": "2026-07-10T14:33:46+0900"
     },
     {
       "step": 5,
