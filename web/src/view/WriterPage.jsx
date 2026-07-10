@@ -548,6 +548,9 @@ export function WriterPage() {
   // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
+    // IME 조합 중에는 어떤 에디터 단축키도 가로채지 않는다(줄삭제/preventDefault 없이 브라우저·IME에 위임 —
+    // news.md 173행 조합 중 무개입 원칙. 조합 상태는 nativeEvent.isComposing(레거시 keyCode 229)로 판정).
+    if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
     // Ctrl+F → 찾기/바꾸기 다이얼로그(브라우저 기본 찾기 가로채기). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
     // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
     if (isFindReplace(e)) {
