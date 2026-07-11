@@ -23,7 +23,7 @@
       "name": "table-dialog",
       "status": "completed",
       "started_at": "2026-07-11T16:31:34+0900",
-      "completed_at": "2026-07-11T16:38:24+0900",
+      "completed_at": "2026-07-11T16:40:13+0900",
       "summary": "web/src/view/TableEditDialog.jsx 신규 — 표 삽입/편집 겸용 순수 표시 그리드 다이얼로그(ADR-003). tableModel 순수 헬퍼(makeEmptyTableRows/insert/delete/setCell/normalizeTableRows)만으로 로컬 그리드 편집, onSubmit(정규화 rows)/onClose 위임, useFocusOnOpen 첫 셀 포커스, open false→true 재초기화(wasOpen 가드), 빈 표 제출 허용, 전용 클래스 yh-table-dialog·testid table-dialog, yonhap.css 그리드 스타일. 임베드 생성/본문 결선은 step3에 위임(Editor/WriterPage/server 무변경). 신규 테스트 19개(web 1321 테스트·build·lint 통과)"
     },
     {
