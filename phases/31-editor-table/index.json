@@ -31,7 +31,7 @@
       "name": "table-wiring",
       "status": "completed",
       "started_at": "2026-07-11T16:40:14+0900",
-      "completed_at": "2026-07-11T16:54:41+0900",
+      "completed_at": "2026-07-11T16:56:37+0900",
       "summary": "표 메뉴 10종 WriterPage 결선(step0~2 조립) — MENU_ENABLED에 table.* 10개 추가, 삽입/편집 겸용 TableEditDialog 결선(삽입=insertEmbed 캐럿 줄 뒤·매핑 append, 편집=본문 표 더블클릭 canvas 위임(data-embed-key+isTableEmbed 방어)→블록 교체), 메뉴 연산 대상은 캐럿 인접(findTargetTableIndex, 없으면 alert no-op), 행/열 연산은 결정적 엣지(above/left=0·below/right=끝·delete=마지막, makeTableEmbed 팩토리 경유), 복사/잘라내기=시스템 클립보드 TSV(미지원/거부 alert graceful, 잘라내기는 복사 실패에도 제거 진행), 전 라우팅 매핑 가드 앞(임베드 parity)·본문 반영 전부 commitBody 단일 경로. WriterPage.jsx(+test)만 변경, 신규 테스트 14개+placeholder 단언 2건 갱신(web 1335 테스트·백엔드 406·build·lint 통과)"
     }
   ],
