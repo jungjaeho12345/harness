@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-07-11T11:43:16+0900",
       "summary": "web/src/view/WriterPage.jsx 맞춤법 메뉴 5종(spell.checkAll/checkParagraph/checkToCaret/checkFromCaret/checkOff) 결선 — 실행 시점 loadEditorPrefs().spellcheck로 activeRuleGroups·errorStyle 반영, spellRange scoped 검사 후 SpellCheckDialog 표시만(본문/캐럿/임베드 불변, 항목 클릭은 focusMatchLine 캐럿 이동, 매핑 가드 앞·Editor.jsx 미접촉), vitest 10케이스 추가(test:web 1254·build·lint 통과)",
-      "completed_at": "2026-07-11T11:52:35+0900"
+      "completed_at": "2026-07-11T11:54:11+0900"
     }
   ],
   "created_at": "2026-07-11T11:27:17+0900"
