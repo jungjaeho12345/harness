@@ -174,7 +174,8 @@
     },
     {
       "dir": "31-editor-table",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-11T16:56:38+0900"
     }
   ]
 }
