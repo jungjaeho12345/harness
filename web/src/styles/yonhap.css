@@ -1044,6 +1044,37 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 표 편집(표 삽입/본문 표 편집) 다이얼로그 — 중앙 모달(yh-editor-dialog 공통). 내부 요소만 정의. */
+.yh-table-dialog__grid {
+  border-collapse: collapse;
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-table-dialog__grid td {
+  border: 1px solid var(--yh-gray-line);
+  padding: 0;
+}
+.yh-table-dialog__grid input[type='text'] {
+  width: 7rem;
+  min-width: 0;
+  border: none;
+  padding: var(--yh-sp-xs) var(--yh-sp-sm);
+  font-size: 0.88rem;
+}
+.yh-table-dialog__grid input[type='text']:focus {
+  outline: 2px solid var(--yh-blue);
+  outline-offset: -2px;
+}
+.yh-table-dialog__structure {
+  display: flex;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-table-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 파일 정보(도구>파일 정보) 다이얼로그 — 본문 통계 읽기전용 표시 패널(찾기/약물입력/URL임베드와 동일 계열). */
 .yh-file-info {
   width: 22rem;
