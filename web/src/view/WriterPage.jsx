@@ -190,6 +190,16 @@ export function WriterPage() {
 
   // 마지막 에디터 캐럿(텍스트-줄) — 검색패널 클릭 시 에디터 포커스가 빠져 라이브 readCaret이 null이므로 여기 보관(Editor onCaretChange).
   const lastCaretRef = useRef(null);
+  // 탭 전환 시 캐럿 소스 초기화 — lastCaretRef는 문서(탭)-로컬 좌표라 다른 탭으로 이월되면 편집 메뉴
+  // (한줄/단어 지우기·문단 정렬 등)가 사용자가 가리킨 적 없는 줄을 변경·삭제한다(되돌리기 미구현 — 복구 불가).
+  // 상태표시줄(statusCaret)도 같은 좌표라 함께 비운다. effect가 아니라 렌더 중 조정 패턴인 이유:
+  // effect는 마운트에서도 돌고 flush가 늦으면 전환/마운트 후 새로 기록된 캐럿을 지운다(레이스).
+  const [caretTabId, setCaretTabId] = useState(activeTabId);
+  if (caretTabId !== activeTabId) {
+    setCaretTabId(activeTabId);
+    lastCaretRef.current = null;
+    setStatusCaret(null);
+  }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
   useEffect(() => {

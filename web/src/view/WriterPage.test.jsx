@@ -4424,4 +4424,23 @@ describe('WriterPage — 편집 메뉴 문서/문단 정렬·한줄/단어 지�
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
+
+  // 리뷰 게이트(MAJOR): lastCaretRef는 문서(탭)-로컬 좌표인데 탭 전환에서 초기화되지 않으면
+  // 이전 탭의 캐럿으로 '한줄/단어 지우기'가 현재 탭의 엉뚱한 줄을 삭제한다(되돌리기 미구현 — 복구 불가).
+  it("탭 전환 후 캐럿 소스가 초기화된다 — 이전 탭 캐럿(stale)으로 '한줄 지우기'가 실행되지 않는다", async () => {
+    const { container } = await openWith([textBlock('가나'), textBlock('다라'), textBlock('마바')], { title: '가나' });
+    focusCaretAt(container, 1); // 탭 A에서 캐럿 기록(lineIndex 1 — '다라')
+
+    // 새 작성 탭으로 전환했다가 원래 탭으로 복귀 — 그동안 본문을 클릭하지 않아 새 캐럿 기록이 없다.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(editorLines(container)).not.toContain('다라'));
+    await userEvent.click(screen.getByRole('button', { name: '가나' }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['가나', '다라', '마바']));
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('한줄 지우기'));
+
+    // 전환 이전 캐럿은 무효 — 삭제가 일어나지 않는다(no-op). 초기화가 없으면 '다라'가 지워진다.
+    expect(editorLines(container)).toEqual(['가나', '다라', '마바']);
+  });
 });
