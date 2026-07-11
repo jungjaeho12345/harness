@@ -4444,3 +4444,162 @@ describe('WriterPage — 편집 메뉴 문서/문단 정렬·한줄/단어 지�
     expect(editorLines(container)).toEqual(['가나', '다라', '마바']);
   });
 });
+
+// Step 2(30-editor-spellcheck): 맞춤법 메뉴(spell.*) 5종 결선 — Step 0 엔진(editorSpell) + Step 1 다이얼로그(SpellCheckDialog).
+// 검사는 읽기전용(본문/캐럿/임베드 불변 — 항목 클릭은 focusMatchLine 캐럿 이동만). prefs는 실행 시점 로드
+// (checkOption+errorTypes → 활성 규칙군, errorStyle → 오류 조각 스타일). 매핑 가드 앞(파일 정보와 동일 정책).
+// 기존 spell state(브라우저 네이티브 spellCheck 속성)와 별개 기능이다.
+describe('WriterPage — 맞춤법 검사(spell.*) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', title = '제목' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title, status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 맞춤법 prefs만 부분 저장(다른 카테고리는 기본값 유지) — columnLimit 저장 헬퍼와 동형. errorTypes는 중첩 병합.
+  const saveSpellPrefs = (patch) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    spellcheck: {
+      ...loadEditorPrefs().spellcheck,
+      ...patch,
+      errorTypes: { ...loadEditorPrefs().spellcheck.errorTypes, ...(patch.errorTypes || {}) },
+    },
+  });
+
+  // 에디터 캐럿을 lineIndex 줄 시작에 두고 keyUp으로 onCaretChange를 발생시킨다(lastCaretRef 갱신 — 검색패널 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  // 맞춤법 메뉴를 열고 항목을 클릭한다(파일 정보 결선과 동일 패턴). getByText는 exact 매치라
+  // '통합 맞춤법 검사'가 '통합 맞춤법 검사 안함'을 오클릭하지 않는다.
+  async function clickSpellMenu(label) {
+    await openTopMenu('맞춤법');
+    const menu = screen.getByTestId('menu-맞춤법');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  it('맞춤법 메뉴 5종이 활성이다(MENU_ENABLED — 비활성→활성)', async () => {
+    await openWith([textBlock('제목'), textBlock('본문')]);
+    await openTopMenu('맞춤법');
+    const menu = screen.getByTestId('menu-맞춤법');
+    for (const label of ['통합 맞춤법 검사', '문단식 검사', '현재위치까지 검사', '현재위치부터 검사', '통합 맞춤법 검사 안함']) {
+      expect(within(menu).getByText(label).closest('button')).toBeEnabled();
+    }
+  });
+
+  it("errorTypes.multiWord 저장 후 '통합 맞춤법 검사' → 다이얼로그에 중복 어절 이슈가 보인다", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument();
+    const item = screen.getByTestId('spellcheck-item-0');
+    expect(item).toHaveTextContent('먹었다');
+    expect(item).toHaveTextContent('중복된 어절');
+  });
+
+  it("errorStyle:'underline' 저장 후 검사 → 오류 조각이 data-style=\"underline\"로 렌더된다", async () => {
+    saveSpellPrefs({ errorStyle: 'underline', errorTypes: { multiWord: true } });
+    await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getAllByTestId('spellcheck-snippet')[0]).toHaveAttribute('data-style', 'underline');
+  });
+
+  it('오류가 없는 본문에서 검사 → spellcheck-empty 빈 상태가 보인다', async () => {
+    await openWith([textBlock('제목'), textBlock('본문')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck-empty')).toBeInTheDocument();
+  });
+
+  it("'통합 맞춤법 검사 안함' 클릭 → 다이얼로그가 닫힌다(결과 비움)", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument();
+    await clickSpellMenu('통합 맞춤법 검사 안함');
+    expect(screen.queryByTestId('spellcheck')).toBeNull();
+  });
+
+  it('결과 항목 클릭 → 캐럿만 이동하고 본문(markupVersion)은 불변, 다이얼로그는 유지된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const blocks = [textBlock('제목'), textBlock('먹었다 먹었다')];
+    const original = serialize(blocks);
+    const { model } = await openWith(blocks);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickSpellMenu('통합 맞춤법 검사');
+    // 캐럿 이동은 에디터 focus() 호출로 확인한다 — jsdom은 contentEditable 캐럿을 신뢰성 있게 반영하지
+    // 않으므로(검색패널 결선과 동일), 실제 줄 배치는 Editor.test.jsx pendingCaretLine 단위테스트가 보증.
+    const realFocus = HTMLElement.prototype.focus;
+    const editorFocuses = [];
+    vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function focusImpl(...args) {
+      if (this.classList && this.classList.contains('yh-editor')) editorFocuses.push(this);
+      return realFocus.apply(this, args);
+    });
+    await userEvent.click(screen.getByTestId('spellcheck-item-0'));
+
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument(); // 다이얼로그 유지(찾기 선례)
+    await waitFor(() => expect(editorFocuses.length).toBeGreaterThanOrEqual(1)); // 캐럿이 이슈 줄로 이동
+
+    // 본문 불변 — 보류 저장 dto의 markupVersion이 원본 그대로다(updateField('body')/serialize 미호출).
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it("매핑 모드에서도 '통합 맞춤법 검사'가 활성이고 다이얼로그가 열린다(읽기전용 — 매핑 가드 앞)", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    await openWith(
+      [textBlock('제목'), textBlock('먹었다 먹었다'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('맞춤법');
+    const menu = screen.getByTestId('menu-맞춤법');
+    expect(within(menu).getByText('통합 맞춤법 검사').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('통합 맞춤법 검사').closest('button'));
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument();
+    expect(screen.getByTestId('spellcheck-item-0')).toHaveTextContent('중복된 어절');
+  });
+
+  it("'현재위치까지 검사'는 캐럿 앞 구간만 검사한다(toCaret — 캐럿 뒤 오류 제외)", async () => {
+    saveSpellPrefs({ errorTypes: { misuse: true } });
+    const { container } = await openWith([textBlock('역활 테스트'), textBlock('왠만하면 좋다')]);
+    focusCaretAtLine(container, 1); // 캐럿 = 둘째 줄 시작(offset 7)
+    await clickSpellMenu('현재위치까지 검사');
+    expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('1건');
+    expect(screen.getByTestId('spellcheck-item-0')).toHaveTextContent('역활');
+  });
+
+  it("'현재위치부터 검사'는 캐럿 뒤 구간만 검사한다(fromCaret — 캐럿 앞 오류 제외)", async () => {
+    saveSpellPrefs({ errorTypes: { misuse: true } });
+    const { container } = await openWith([textBlock('역활 테스트'), textBlock('왠만하면 좋다')]);
+    focusCaretAtLine(container, 1);
+    await clickSpellMenu('현재위치부터 검사');
+    expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('1건');
+    expect(screen.getByTestId('spellcheck-item-0')).toHaveTextContent('왠만');
+  });
+
+  it("'문단식 검사'는 캐럿 문단(빈 줄 구분)만 검사한다", async () => {
+    saveSpellPrefs({ errorTypes: { misuse: true } });
+    const { container } = await openWith([textBlock('첫문단 역활'), textBlock(''), textBlock('둘째 왠만하면')]);
+    focusCaretAtLine(container, 2); // 캐럿 = 셋째 줄(둘째 문단)
+    await clickSpellMenu('문단식 검사');
+    expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('1건');
+    expect(screen.getByTestId('spellcheck-item-0')).toHaveTextContent('왠만');
+  });
+});
