@@ -15,7 +15,7 @@
       "name": "table-render",
       "status": "completed",
       "started_at": "2026-07-11T16:23:58+0900",
-      "completed_at": "2026-07-11T16:30:00+0900",
+      "completed_at": "2026-07-11T16:31:33+0900",
       "summary": "표 임베드 읽기 전용 렌더 양쪽 동형 확장 — InlineEmbed.jsx(table 분기, JSX {cell} 자동 이스케이프, fit-content figure)·articleDetail.js(embedHtml table 분기, 전 셀 escapeHtml, 빈 rows는 [table] 폴백, DETAIL_STYLE 표 스타일)·yonhap.css(.yh-embed__table). 정규화는 tableModel.normalizeTableRows 단일 출처, XSS 단언 포함 신규 테스트 11개(web 1302 테스트·build·lint 통과, Editor.jsx·server 무변경)"
     },
     {
