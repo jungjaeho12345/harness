@@ -7,7 +7,8 @@
       "name": "spell-engine-pure",
       "status": "completed",
       "started_at": "2026-07-11T11:27:17+0900",
-      "summary": "web/src/view/editorSpell.js 순수 맞춤법 엔진 신규 — 규칙군 6종(misuse/dupWord/punctuation/loanword/spacing/misc) 탐지 전용 checkSpelling + activeRuleGroups(errorTypes·checkOption 매핑, freeze) + spellRange(all/paragraph/toCaret/fromCaret), vitest 30케이스 통과(test:web 1230·build·lint 통과)"
+      "summary": "web/src/view/editorSpell.js 순수 맞춤법 엔진 신규 — 규칙군 6종(misuse/dupWord/punctuation/loanword/spacing/misc) 탐지 전용 checkSpelling + activeRuleGroups(errorTypes·checkOption 매핑, freeze) + spellRange(all/paragraph/toCaret/fromCaret), vitest 30케이스 통과(test:web 1230·build·lint 통과)",
+      "completed_at": "2026-07-11T11:36:12+0900"
     },
     {
       "step": 1,
