@@ -207,6 +207,10 @@ export function WriterPage() {
     setCaretTabId(activeTabId);
     lastCaretRef.current = null;
     setStatusCaret(null);
+    // 맞춤법 결과 스냅샷(spellIssues의 start/snippet)도 문서-로컬 좌표 — 이월되면 다른 기사의
+    // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
+    setShowSpell(false);
+    setSpellIssues([]);
   }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
@@ -405,15 +409,17 @@ export function WriterPage() {
 
   // 맞춤법 검사 실행(spell.checkAll/checkParagraph/checkToCaret/checkFromCaret) — Step 0 엔진(editorSpell)으로
   // 본문 텍스트를 읽기전용 스캔한다. prefs는 실행 시점 로드(insertDate의 dateFormat과 동형 — 환경설정 적용이
-  // 다음 검사에 즉시 반영, 별도 state 미러/effect 없음). 캐럿 offset은 lastCaretRef(없으면 statusCaret, 둘 다
-  // 없으면 0) — scoped 검사(paragraph/toCaret/fromCaret)의 기준점. 본문/캐럿/임베드 불변 — 이슈 스냅샷
-  // (+snippet: 다이얼로그가 렌더할 오류 조각 텍스트)을 표시 state에만 담는다(updateField/serialize 미호출).
+  // 다음 검사에 즉시 반영, 별도 state 미러/effect 없음). 캐럿 offset은 lastCaretRef(없으면 statusCaret) —
+  // scoped 검사(paragraph/toCaret/fromCaret)의 기준점이며 둘 다 없으면 no-op(all만 캐럿 무관).
+  // 본문/캐럿/임베드 불변 — 이슈 스냅샷(+snippet)을 표시 state에만 담는다(updateField/serialize 미호출).
   const runSpellCheck = (scope) => {
     const prefs = loadEditorPrefs().spellcheck;
     const groups = activeRuleGroups(prefs);
-    const caretOffset = lastCaretRef.current
-      ? lastCaretRef.current.offset
-      : (statusCaret ? statusCaret.offset : 0);
+    const caret = lastCaretRef.current || statusCaret;
+    // scoped 검사(문단/까지/부터)는 캐럿 기록이 없으면 no-op — 폴백 0으로 빈 범위/첫 문단을 검사해
+    // "맞춤법 오류가 없습니다"로 오보고하는 것을 막는다(phase 29 편집 메뉴 캐럿 no-op 선례, 리뷰 게이트 phase 30).
+    if (scope !== 'all' && !caret) return;
+    const caretOffset = caret ? caret.offset : 0;
     const range = spellRange(bodyText, scope, caretOffset);
     const raw = checkSpelling(bodyText, { groups, range });
     setSpellIssues(raw.map((i) => ({ ...i, snippet: bodyText.slice(i.start, i.end) })));

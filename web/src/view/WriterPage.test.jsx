@@ -4602,4 +4602,49 @@ describe('WriterPage — 맞춤법 검사(spell.*) 결선', () => {
     expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('1건');
     expect(screen.getByTestId('spellcheck-item-0')).toHaveTextContent('왠만');
   });
+
+  // 리뷰 게이트(phase 30 ⑤): 캐럿 폴백 0이 toCaret을 빈 범위 {0,0}으로 만들어 오류가 있어도
+  // "맞춤법 오류가 없습니다"로 오보고했다 — scoped 검사는 캐럿 기록이 없으면 no-op(phase 29 편집 메뉴 선례).
+  it('캐럿 기록이 없으면 문단식/현재위치까지/현재위치부터 검사는 다이얼로그를 열지 않는다(거짓 "오류 없음" 방지)', async () => {
+    saveSpellPrefs({ errorTypes: { misuse: true } });
+    await openWith([textBlock('역활 테스트'), textBlock('왠만하면 좋다')]);
+    for (const label of ['문단식 검사', '현재위치까지 검사', '현재위치부터 검사']) {
+      await clickSpellMenu(label);
+      expect(screen.queryByTestId('spellcheck')).toBeNull();
+    }
+    await clickSpellMenu('통합 맞춤법 검사'); // 전체 검사는 캐럿 무관 — 정상 동작 유지
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument();
+    expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('2건');
+  });
+
+  // 리뷰 게이트(phase 30 ⑤): spellIssues의 start/snippet은 문서(탭)-로컬 스냅샷 — 탭을 넘어 이월되면
+  // 다른 기사의 오류 목록을 표시하고 항목 클릭이 엉뚱한 줄로 캐럿을 옮긴다(phase 29 lastCaretRef 불변식과 동일 계열).
+  it('탭을 전환하면 맞춤법 결과 다이얼로그가 닫히고 스냅샷이 초기화된다(문서-로컬 좌표 이월 금지)', async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    await openWith([textBlock('가나'), textBlock('먹었다 먹었다')], { title: '가나' });
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    expect(screen.queryByTestId('spellcheck')).toBeNull();
+
+    // 원래 탭으로 복귀해도 이전 스냅샷은 재표시되지 않는다(재검사 필요).
+    await userEvent.click(screen.getByRole('button', { name: '가나' }));
+    expect(screen.queryByTestId('spellcheck')).toBeNull();
+  });
+
+  // 리뷰 게이트(phase 30 ⑤) 테스트 공백 보강: 임베드가 낀 본문에서 이슈 오프셋/snippet이
+  // blocksToText(임베드 제외) 좌표와 정합하는지 잠근다 — 좌표계가 갈라지면 snippet이 밀려 어긋난다.
+  it('임베드가 낀 본문에서도 이슈 snippet이 텍스트 좌표와 정합한다(blocksToText 임베드 제외 좌표계)', async () => {
+    saveSpellPrefs({ errorTypes: { misuse: true } });
+    await openWith([
+      textBlock('제목 역활'),
+      embedBlock({ embedType: 'image', src: 'https://img/x.png' }),
+      textBlock('둘째 왠만하면'),
+    ]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('2건');
+    const snippets = screen.getAllByTestId('spellcheck-snippet').map((el) => el.textContent);
+    expect(snippets).toEqual(['역활', '왠만']); // 임베드로 오프셋이 밀리면 조각이 어긋난다
+  });
 });

@@ -69,6 +69,14 @@ describe('SpellCheckDialog — 맞춤법 검사 결과 목록 다이얼로그(�
     expect(within(withoutSuggestion).queryByTestId('spellcheck-suggestion')).toBeNull();
   });
 
+  it("suggestion이 빈 문자열(제거 제안 — misc 줄 끝 공백)이면 '→ (제거)'로 표시한다(빈 화살표 방지)", () => {
+    const issues = [{
+      start: 1, snippet: ' ', group: 'misc', message: '줄 끝 공백', suggestion: '',
+    }];
+    render(<SpellCheckDialog {...baseProps({ issues })} />);
+    expect(screen.getByTestId('spellcheck-suggestion')).toHaveTextContent('→ (제거)');
+  });
+
   it('항목 클릭 → onSelect가 그 issue 객체로 호출된다(본문은 바꾸지 않음 — 위임만)', () => {
     const issues = baseIssues();
     const onSelect = vi.fn();

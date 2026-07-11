@@ -70,7 +70,8 @@ export function SpellCheckDialog({
                   <span className="yh-spellcheck__message">{issue.message}</span>
                   {issue.suggestion != null && (
                     <span className="yh-spellcheck__suggestion" data-testid="spellcheck-suggestion">
-                      → {issue.suggestion}
+                      {/* 빈 문자열 제안 = "제거"(misc 줄 끝 공백 등) — '→ ' 뒤가 비어 보이는 렌더 방지 */}
+                      → {issue.suggestion === '' ? '(제거)' : issue.suggestion}
                     </span>
                   )}
                 </button>

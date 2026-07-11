@@ -136,10 +136,17 @@ function scanDupWord(text) {
 }
 
 // punctuation — 문장부호 문체.
-// (a) 마침표/쉼표 뒤 공백 누락: 뒤가 공백/개행/끝/닫는 부호가 아니면 이슈.
-//     숫자 사이의 . , (소수점·천단위 — 기사 본문 빈발 표기)는 제외한다.
+// (a) 마침표/쉼표 뒤 공백 누락: 뒤가 공백(NBSP 포함)/개행/끝/닫는 부호가 아니면 이슈.
+//     숫자 사이의 . , (소수점·천단위)와 라틴 문자·숫자 사이의 . (이메일/URL 도메인 — 기사 관행 표기)는 제외한다.
 // (b) !·? 3연속 이상: 연속 구간 전체를 이슈로, 첫 부호 하나로 정규화 제안.
-const PUNCT_CLOSERS = new Set(['.', ',', '!', '?', '…', ')', ']', '}', '』', '」', '》', '"', "'"]);
+// 닫는 부호에는 워드프로세서 자동 변환 타이포그래픽 인용부호(U+201D/U+2019)를 포함한다.
+const PUNCT_CLOSERS = new Set(['.', ',', '!', '?', '…', ')', ']', '}', '』', '」', '》', '"', "'", '”', '’']);
+
+// 라틴 문자/숫자 — 이메일·URL·파일명 등 단어 내부 '.' 판정용.
+function isLatinAlnum(ch) {
+  return ch !== undefined
+    && ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'));
+}
 
 function scanPunctuation(text) {
   const issues = [];
@@ -147,10 +154,11 @@ function scanPunctuation(text) {
     const ch = text[i];
     if (ch !== '.' && ch !== ',') continue;
     const next = text[i + 1];
-    if (next === undefined || next === ' ' || next === '\n' || next === '\t') continue;
+    if (next === undefined || next === ' ' || next === '\n' || next === '\t' || next === ' ') continue;
     if (PUNCT_CLOSERS.has(next)) continue;
     const prev = text[i - 1];
     if (prev >= '0' && prev <= '9' && next >= '0' && next <= '9') continue;
+    if (ch === '.' && isLatinAlnum(prev) && isLatinAlnum(next)) continue;
     issues.push(issue(i, i + 1, 'punctuation', '문장부호 뒤 공백 누락', `${ch} `));
   }
   const runRe = /[!?]{3,}/g;

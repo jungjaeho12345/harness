@@ -1148,11 +1148,18 @@ a { color: var(--yh-blue); }
 .yh-spellcheck__item-btn:hover {
   background: var(--yh-blue-light);
 }
+.yh-spellcheck__snippet {
+  /* 공백-전용 오류 조각(중복 공백·부호 앞 공백 등)이 HTML 공백 접기로 안 보이는 것 방지 */
+  white-space: pre-wrap;
+}
 .yh-spellcheck__snippet--bold {
   font-weight: 700;
 }
 .yh-spellcheck__snippet--underline {
   text-decoration: underline;
+  /* 공백 조각에도 밑줄이 보이게 최소 폭 확보 */
+  display: inline-block;
+  min-width: 0.5em;
 }
 .yh-spellcheck__message {
   color: var(--yh-gray-dark);

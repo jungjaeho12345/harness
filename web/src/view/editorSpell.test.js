@@ -239,3 +239,26 @@ describe('editorSpell — checkSpelling 계약(정렬·중복 제거·range·불
     }
   });
 });
+
+// 리뷰 게이트(phase 30 ⑤) 오탐 방지 — 기사 관행 표기(이메일/URL·스마트 인용부호·NBSP)를 오류로 잡지 않는다.
+describe('editorSpell — punctuation 오탐 방지(리뷰 게이트 fix)', () => {
+  it('이메일/URL의 단어 내부 마침표(라틴 문자·숫자 사이)는 오탐하지 않는다', () => {
+    expect(checkSpelling('문의 kim@yna.co.kr 바랍니다', { groups: ['punctuation'] })).toEqual([]);
+    expect(checkSpelling('자세한 내용은 www.yna.co.kr 참조', { groups: ['punctuation'] })).toEqual([]);
+  });
+
+  it('한글 사이 마침표 뒤 공백 누락은 여전히 잡는다(회귀 가드)', () => {
+    const issues = checkSpelling('끝났다.다음 문장', { groups: ['punctuation'] });
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toBe('문장부호 뒤 공백 누락');
+  });
+
+  it('타이포그래픽 닫는 인용부호(U+201D/U+2019) 앞 마침표는 오탐하지 않는다', () => {
+    expect(checkSpelling('그는 “간다.”라고 말했다', { groups: ['punctuation'] })).toEqual([]);
+    expect(checkSpelling('그는 ‘간다.’라고 말했다', { groups: ['punctuation'] })).toEqual([]);
+  });
+
+  it('NBSP(U+00A0)는 문장부호 뒤 공백으로 인정한다(웹 복사 텍스트)', () => {
+    expect(checkSpelling('말했다. 이어서 갔다', { groups: ['punctuation'] })).toEqual([]);
+  });
+});
