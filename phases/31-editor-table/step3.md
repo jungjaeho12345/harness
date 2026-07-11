@@ -29,15 +29,16 @@ step0(데이터 모델·순수 헬퍼), step1(에디터+상세 렌더), step2(�
 
 - `/CLAUDE.md`, `/docs/ARCHITECTURE.md`, `/docs/ADR.md`.
 - `/docs/news.md` — L181(표 메뉴 10종), L161·L167(임베딩·"(끝)" 규칙 — 삽입 위치 정합).
-- `web/src/view/WriterPage.jsx` — **결선 대상**. 읽을 앵커:
-  - `MENU_ENABLED`(L80: 결선 메뉴 id 배열 — 여기에 `table.*` 10개 추가).
-  - `onMenuSelect(id)`(L415~470: 매핑 가드 앞=임베드/열기 항목, 뒤=본문 변경 항목. `tools.insertImage`가 `setUrlEmbedKind('image')`로 다이얼로그를 여는 패턴 — table.insert도 동형).
-  - `insertEmbedAtLine(embed, caretLine, srcBody, mapping)`(L603~612)·`insertEmbed(embed)`(L615: 검색패널 삽입 = `lastCaretRef.current.lineIndex`에 삽입). table.insert가 재사용.
-  - `onRemoveEmbed(blockIndex)`(L592~597: 블록 splice 후 `updateField('body', serialize(next))`) — 표 삭제/블록 교체의 참조 패턴.
-  - `lastCaretRef`(L188: 마지막 캐럿 {lineIndex, offset})·`blocks = deserialize(body)`(L185).
-  - `onUrlEmbedSubmit(url)`(L693~702) + `<UrlEmbedDialog .../>` 렌더(L894~899) — 다이얼로그 열기/제출/닫기 결선 패턴(table 다이얼로그도 동형).
-  - `.yh-writer__canvas` 래퍼의 `onContextMenu`(L774: `e.preventDefault(); setCtxMenu({x,y})`) — `onDoubleClick` 위임을 나란히 추가할 지점.
-  - `pasteOriginalAtCaret`(L659~687: `navigator.clipboard` 미지원/거부 시 `window.alert` 가드) — 클립보드 접근·실패 안내 선례.
+- `web/src/view/WriterPage.jsx` — **결선 대상**. 읽을 앵커(phase 30까지 반영한 현행 라인 — 세션에서 grep으로 재확인 후 사용):
+  - `MENU_ENABLED`(L86: 결선 메뉴 id 배열 — 여기에 `table.*` 10개 추가).
+  - `commitBody(nextBody)`(L266~269: **본문 변경 단일 choke point** — `updateField('body', ...)` + `updateField('title', bodyTitle(...))`로 제목(본문 첫 줄)을 항상 재동기화한다. phase 28 불변식. 표의 모든 본문 반영은 반드시 이 함수를 지난다 — `updateField('body', ...)` 직접 호출 금지).
+  - `onMenuSelect(id)`(L477~596: 매핑 가드 `if (isMapping) return;` = L503. 앞=임베드/열기 항목, 뒤=본문 변경 항목. `tools.insertImage`가 `setUrlEmbedKind('image')`로 다이얼로그를 여는 패턴 — table.insert도 동형).
+  - `insertEmbedAtLine(embed, caretLine, srcBody, mapping)`(L732~741, 내부에서 `commitBody` 경유)·`insertEmbed(embed)`(L744: 검색패널 삽입 = `lastCaretRef.current.lineIndex`에 삽입). table.insert가 재사용.
+  - `onRemoveEmbed(blockIndex)`(L721~726: 블록 splice 후 **`commitBody(serialize(next))`**) — 표 삭제/블록 교체의 참조 패턴. 본문 반영은 반드시 `commitBody`(제목 재동기화 불변식) — `updateField('body', ...)`를 직접 쓰지 마라.
+  - `lastCaretRef`(L200: 마지막 캐럿 {lineIndex, offset})·`blocks = deserialize(body)`(L197).
+  - `onUrlEmbedSubmit(url)`(L822~831) + `<UrlEmbedDialog .../>` 렌더(L1023~1028) — 다이얼로그 열기/제출/닫기 결선 패턴(table 다이얼로그도 동형).
+  - `.yh-writer__canvas` 래퍼의 `onContextMenu`(L903: `e.preventDefault(); setCtxMenu({x,y})`) — `onDoubleClick` 위임을 나란히 추가할 지점.
+  - `pasteOriginalAtCaret`(L788~816: `navigator.clipboard` 미지원/거부 시 `window.alert` 가드) — 클립보드 접근·실패 안내 선례.
 - `web/src/view/tableModel.js`(step0) — `makeTableEmbed`, `insertRow`/`insertCol`/`deleteRow`/`deleteCol`, `tableToTsv`, `findTargetTableIndex`, `isTableEmbed`, `normalizeTableRows`.
 - `web/src/view/writerBody.js` — `textLineToBlockIndex(blocks, textLineIndex)`(캐럿 텍스트-줄 → 블록 인덱스).
 - `web/src/view/TableEditDialog.jsx`(step2) — props(`open`/`initialRows`/`onSubmit`/`onClose`).
@@ -69,14 +70,14 @@ TDD로 진행한다(vitest). WriterPage.test.jsx에 표 메뉴 결선 테스트�
      if (idx < 0) { window.alert('대상 표가 없습니다. 표 근처에 커서를 두세요.'); return; }
      const rows = blocks[idx].rows;
      ```
-     - `table.delete` → `blocks`에서 idx 블록 splice → `updateField('body', serialize(next))`(onRemoveEmbed 패턴).
+     - `table.delete` → `blocks.slice()`에서 idx 블록 splice → **`commitBody(serialize(next))`**(onRemoveEmbed 패턴 — 본문 반영은 반드시 commitBody).
      - `table.copy` → `writeTableToClipboard(rows)`(아래).
-     - `table.cut` → `writeTableToClipboard(rows)` 후 idx 블록 splice.
+     - `table.cut` → `writeTableToClipboard(rows)` 후 idx 블록 splice → **`commitBody(serialize(next))`**.
      - `table.deleteRow` → 블록 rows를 `deleteRow(rows, rows.length-1)`로 교체.
      - `table.deleteCol` → `deleteCol(rows, cols-1)`로 교체.
      - `table.addRowAbove` → `insertRow(rows, 0)`; `addRowBelow` → `insertRow(rows, rows.length)`.
      - `table.addColLeft` → `insertCol(rows, 0)`; `addColRight` → `insertCol(rows, cols)`.
-     - 블록 교체는 `makeTableEmbed(newRows)`로 새 임베드를 만들어 `next[idx] = newEmbed` 후 직렬화(정규화 일관 — rows를 직접 심지 말고 팩토리 경유).
+     - 블록 교체(행/열 연산)는 `makeTableEmbed(newRows)`로 새 임베드를 만들어 `next[idx] = newEmbed` 후 **`commitBody(serialize(next))`**(정규화 일관 — rows를 직접 심지 말고 팩토리 경유, 본문 반영은 commitBody 단일 경로).
 6. **클립보드 헬퍼**(WriterPage 내부, pasteOriginalAtCaret 선례):
    ```js
    const writeTableToClipboard = async (rows) => {
@@ -95,7 +96,7 @@ TDD로 진행한다(vitest). WriterPage.test.jsx에 표 메뉴 결선 테스트�
        // 편집: 해당 블록 교체(임베드면). embed가 null(전부 비었지만 구조 유효)이면 정책 결정: 빈 표 유지 위해 makeTableEmbed가 null 안 되게 최소 1×1 보장됨.
        const next = blocks.slice();
        if (embed && isTableEmbed(next[tableDialog.blockIndex])) next[tableDialog.blockIndex] = embed;
-       updateField('body', serialize(next));
+       commitBody(serialize(next)); // 본문 반영은 반드시 commitBody(제목 재동기화 불변식) — updateField('body', ...) 직접 호출 금지.
      } else if (embed) {
        insertEmbed(embed); // 삽입: 캐럿 줄 뒤(매핑 시 "(끝)" 앞 append) — 기존 임베드 경로 재사용
      }
@@ -115,7 +116,7 @@ TDD로 진행한다(vitest). WriterPage.test.jsx에 표 메뉴 결선 테스트�
    }}
    ```
    기존 `onContextMenu`는 유지(나란히 추가). 매핑 모드에서도 편집 진입 허용(임베드 변경 parity) — 단 mapping이면 편집 제출이 임베드만 바꾸므로 안전.
-9. **다이얼로그 렌더**(다른 다이얼로그 인근, L951 부근):
+9. **다이얼로그 렌더**(다른 다이얼로그 인근 — `<UrlEmbedDialog>`(L1023~1028)·`<FileInfoDialog>` 형제로 L1028 부근):
    ```jsx
    <TableEditDialog
      open={tableDialog !== null}
@@ -130,7 +131,7 @@ TDD로 진행한다(vitest). WriterPage.test.jsx에 표 메뉴 결선 테스트�
 1. **본문-only 불변식 보존**: 모든 표 연산은 **임베드 블록만** 바꾼다(splice/교체). 텍스트 블록의 텍스트·순서를 바꾸지 마라. 삽입은 기존 `insertEmbed`/`insertEmbedAtLine` 경로만 쓴다("(끝)" 최종 블록·커서 이동 규칙 재사용). 이유: 매핑/일반 모두에서 텍스트 무결성·news.md L167("(끝)" 규칙) 유지.
 2. **팩토리 경유 정규화**: 블록에 심는 rows는 항상 `makeTableEmbed`(내부 `normalizeTableRows`)로 만든 임베드로 넣는다. `blocks[idx].rows`를 직접 수정하거나 raw 2차원 배열을 블록에 심지 마라. 이유: 직사각형·문자열 강제 단일 출처(step0) 우회 방지.
 3. **매핑 = 임베드 parity**: `table.*` 라우팅은 `if (isMapping) return;` **앞**에 둔다. 이유: 표는 임베드 — phase 18/19 정책과 일치, 매핑에서도 임베드 추가/삭제/변경 허용.
-4. **불변 갱신**: `blocks.slice()` 후 교체/splice → `updateField('body', serialize(next))`만으로 본문을 바꾼다. `contentEditable` DOM을 직접 조작하지 마라(더블클릭 위임의 `closest`/`dataset` **읽기**는 허용). 이유: 안전 경로(직렬화)만 — Editor 캐럿/크래시 방지 규칙.
+4. **불변 갱신 + commitBody 단일 경로**: `blocks.slice()` 후 교체/splice → **`commitBody(serialize(next))`**만으로 본문을 바꾼다. `updateField('body', ...)`를 직접 호출하지 마라 — phase 28 이후 모든 본문 변경은 `commitBody`(L266~269) 단일 choke point를 지나 제목(본문 첫 줄)을 재동기화해야 한다(직접 `updateField('body', ...)`는 제목 stale를 남긴다). `contentEditable` DOM을 직접 조작하지 마라(더블클릭 위임의 `closest`/`dataset` **읽기**는 허용). 이유: 안전 경로(직렬화)+제목 동기화 불변식 — Editor 캐럿/크래시 방지 규칙.
 5. **Editor.jsx·InlineEmbed 미접촉**: 이 step은 `WriterPage.jsx`(+test)만 만진다. `Editor.jsx`에 prop을 추가하거나 `InlineEmbed.jsx`를 바꾸지 마라(step1에서 표 렌더 완료). 이유: 입력/키 경로 회귀 위험 — 더블클릭은 canvas DOM 위임으로 해결(Editor 결합 없음).
 6. **클립보드 실패 graceful**: `navigator.clipboard` 미지원/거부 시 예외를 던지지 말고 `window.alert`로만 안내(pasteOriginalAtCaret 선례). 이유: jsdom/구브라우저에서 죽지 않게.
 7. **대상 없음 no-op**: 대상 표가 없으면(`findTargetTableIndex` -1) alert 후 조용히 return. 본문을 바꾸지 마라. 이유: 죽은 연산 방지·본문 오염 방지.
@@ -166,6 +167,7 @@ npm run lint
    - `WriterPage.jsx`만 변경(`git diff --name-only`에 `Editor.jsx`/`InlineEmbed.jsx`/`server/`/DB/스키마 없음).
    - 모든 `table.*`가 `if (isMapping) return;` **앞**에 라우팅(매핑 parity — `grep`으로 위치 확인).
    - 블록 변경이 `blocks.slice()` + `serialize` 안전 경로만(`contentEditable` 직접 텍스트 조작 없음). rows는 `makeTableEmbed` 경유로만 블록에 심음.
+   - 본문 반영이 전부 `commitBody(serialize(...))` 경유(`grep`으로 표 결선부에 `updateField('body'` 직접 호출이 **없음** 확인 — 제목 재동기화 불변식 준수, phase 28).
    - 더블클릭 위임이 `data-embed-key`(블록 인덱스) 읽기 + `isTableEmbed` 방어를 거침.
    - 클립보드 접근이 `navigator.clipboard` 가드(미지원/거부 alert) 포함.
    - XSS end-to-end green(삽입→렌더 스크립트 미실행).
@@ -175,6 +177,7 @@ npm run lint
 
 - 표 연산에서 텍스트 블록을 추가/삭제/수정하지 마라(임베드 블록만 조작). 이유: 본문-only 불변식·매핑 정합·news.md "(끝)" 규칙.
 - `blocks[idx].rows`를 직접 mutate하거나 raw 2차원 배열을 블록에 심지 마라(반드시 `makeTableEmbed` 경유). 이유: step0 정규화(직사각형/문자열) 단일 출처 우회 시 렌더/XSS 방어가 어긋난다.
+- 본문 반영에 `updateField('body', ...)`를 직접 쓰지 마라(삽입/삭제/잘라내기/행·열 교체/편집 제출 전부 `commitBody(serialize(...))` 경유). 이유: phase 28 제목 재동기화 불변식(commitBody 단일 경로) 위반 — 리뷰 게이트 반려 사유였다. `commitBody`가 `updateField('body', ...)` + `updateField('title', bodyTitle(...))`를 함께 수행해 저장 시 제목 stale를 막는다.
 - `table.*` 라우팅을 `if (isMapping) return;` 뒤에 두지 마라. 이유: 표는 임베드 — 매핑에서도 허용(phase 18/19 정책). 뒤에 두면 매핑에서 죽은 메뉴가 된다.
 - `contentEditable` DOM의 텍스트를 코드로 직접 바꾸지 마라(더블클릭 위임의 `closest`/`dataset` 읽기만 허용). 이유: Editor 캐럿 초기화·removeChild 크래시(Editor.jsx 주석의 타이핑 안정성 규칙).
 - `Editor.jsx`에 prop을 추가하거나 `InlineEmbed.jsx`를 수정하지 마라. 이유: 표 렌더는 step1에서 완료 — 입력 경로 변경은 회귀 위험, 편집 진입은 canvas DOM 위임으로 해결.

@@ -108,6 +108,7 @@ npm run lint
 - `setCell([["a","b"]],0,1,'x')` → `[["a","x"]]`; 범위 밖 `setCell(...,5,5,'x')` → 원본 동일.
 - `tableToTsv([["a","b"],["c","d"]])` === `"a\tb\nc\td"`; 셀 안 `"x\ty"`는 구분자 파괴 없이 공백 등으로 치환됨.
 - `findTargetTableIndex([text, table, text], 0)` → `1`(뒤쪽 표); `findTargetTableIndex([text, table, text], 2)` → `1`(앞쪽 폴백); table 없으면 `-1`; 여러 표에서 캐럿 뒤 가장 가까운 표를 고른다.
+- **범위 밖/null 입력 계약(못 박기)**: `findTargetTableIndex([text, table, text], -1)` → `1`(범위 밖 fromBlockIndex → 계약 (3) 마지막 표 폴백). `findTargetTableIndex([table, text, table], null)` → `2`(null → 마지막 표). 이 두 단언으로 "null/범위 밖 → 마지막 표" 좌표 계약을 고정한다(WriterPage가 캐럿 없음/오프셋 밖일 때 넘기는 값).
 - **round-trip**: `deserialize(serialize([makeTableEmbed([["가","나"],["다","라"]])]))[0].rows` deep-equals `[["가","나"],["다","라"]]`.
 
 ## 검증 절차

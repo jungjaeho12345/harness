@@ -49,6 +49,7 @@ TDD로 진행한다(vitest). **에디터 렌더 → 상세 렌더** 순으로 �
 `embedHtml(b)`에 `image`/`video`/... 뒤, **폴백 자리표시자(L164) 앞**에 `table` 분기를 추가한다:
 
 - `normalizeTableRows(b.rows)`(tableModel에서 import) 후 `<figure class="yh-detail__embed yh-detail__embed--table" data-embed-type="table"><table>...<td>${escapeHtml(cell)}</td>...</table></figure>` 문자열을 만든다. **모든 셀은 `escapeHtml`**. 빈 rows면 폴백 자리표시자(`[table]`)로 떨어뜨린다(빈 표 미노출).
+- **표 badge 유지(결정)**: `.yh-detail__embed::before`(`articleDetail.js` L111~114)가 `data-embed-type`을 대문자 라벨("TABLE")로 표 위에 표시한다. 표 figure는 `yh-detail__embed--media`가 아니므로(`--table`) 이 라벨이 **그대로 뜬다** — 이는 **의도된 표시로 유지한다**(미디어(image/video/audio/localVideo)만 `--media::before{content:none}`로 억제해온 기존 규칙 보존). 이 phase에서 표 badge를 억제하지 마라 — 억제는 별도 UX 결정이 필요하다. `data-embed-type="table"` 그대로 두면 된다(추가 작업 없음).
 - `DETAIL_STYLE`(정적 문자열, 사용자 값 없음)에 `.yh-detail__embed--table table`(테두리·셀 패딩·`border-collapse` 등) 스타일을 더한다. 정적 CSS라 XSS 무관 — **셀 값을 CSS에 넣지 마라**.
 
 ### (3) 에디터 CSS (yonhap.css)
