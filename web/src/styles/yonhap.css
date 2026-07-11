@@ -1112,6 +1112,65 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 맞춤법 검사 결과(맞춤법 메뉴) 다이얼로그 — 오류 후보 목록 읽기전용 표시 패널(파일정보/이력비교와 동일 계열). */
+.yh-spellcheck {
+  width: 26rem;
+}
+.yh-spellcheck__count {
+  margin: 0 0 var(--yh-sp-sm);
+  font-size: 0.85rem;
+  color: var(--yh-gray-dark);
+}
+.yh-spellcheck__list {
+  list-style: none;
+  margin: 0 0 var(--yh-sp-md);
+  padding: 0;
+  max-height: 50vh;
+  overflow: auto;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+}
+.yh-spellcheck__item + .yh-spellcheck__item {
+  border-top: 1px solid var(--yh-gray-line);
+}
+.yh-spellcheck__item-btn {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: var(--yh-sp-sm);
+  padding: var(--yh-sp-sm);
+  font-size: 0.85rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.yh-spellcheck__item-btn:hover {
+  background: var(--yh-blue-light);
+}
+.yh-spellcheck__snippet--bold {
+  font-weight: 700;
+}
+.yh-spellcheck__snippet--underline {
+  text-decoration: underline;
+}
+.yh-spellcheck__message {
+  color: var(--yh-gray-dark);
+}
+.yh-spellcheck__suggestion {
+  color: var(--yh-blue-dark);
+}
+.yh-spellcheck__empty {
+  margin: 0 0 var(--yh-sp-md);
+  font-size: 0.85rem;
+  color: var(--yh-gray-mid);
+}
+.yh-spellcheck__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 메모장(도구>메모장) 다이얼로그 — 기사와 무관한 전역 스크래치패드 입력 패널(찾기/약물입력/URL임베드/파일정보와 동일 계열). */
 .yh-editor-memo {
   width: 22rem;
