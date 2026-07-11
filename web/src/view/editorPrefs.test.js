@@ -81,7 +81,7 @@ describe('editorPrefs — editor preference store', () => {
     const { edit } = loadEditorPrefs();
     expect(edit).toEqual(DEFAULT_EDITOR_PREFS.edit);
     expect(edit.columnLimit).toBe(false);
-    expect(edit.dragDrop).toBe(false); // news.md L186 기본 off 못박음
+    expect(edit.dragDrop).toBe(true); // news.md L193 "기본값은 된다" — 기본 on 못박음
     expect(edit.noCommonAbbr).toBe(false);
     expect(edit.companyCode).toBe('manual');
     expect(edit.language).toBe('ko');
@@ -114,7 +114,7 @@ describe('editorPrefs — editor preference store', () => {
     localStorage.setItem('yh.editorPrefs', JSON.stringify({ edit: { columnLimit: true } }));
     const prefs = loadEditorPrefs();
     expect(prefs.edit.columnLimit).toBe(true); // 저장값 적용
-    expect(prefs.edit.dragDrop).toBe(false); // 나머지 edit 키는 기본값 유지
+    expect(prefs.edit.dragDrop).toBe(true); // 나머지 edit 키는 기본값 유지
     expect(prefs.edit.language).toBe('ko');
     expect(prefs.edit.inputMode).toBe('unicode');
     expect(prefs.colors).toEqual(DEFAULT_EDITOR_PREFS.colors); // 저장 안 한 카테고리도 기본값
