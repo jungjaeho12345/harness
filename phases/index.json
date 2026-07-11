@@ -164,7 +164,8 @@
     {
       "dir": "29-editor-edit-menu",
       "status": "completed",
-      "completed_at": "2026-07-11T08:46:57+0900"
+      "completed_at": "2026-07-11T08:46:57+0900",
+      "note": "편집 메뉴 잔여 7종 결선 — 문단/한줄/단어 선택(editorRange 경계+editorSelect 적용, 본문 무변경) + 문서/문단 정렬·한줄/단어 지우기(editorEditOps 순수 함수: 마커 최종화·임베드 제자리·마커 줄 no-op, deleteLine은 deleteLineAt(Ctrl+D) 공용 코어 단일 소스, 반영은 commitBody 단일 경로). step3 최초 실행은 세션한도 429로 3회 즉사(가짜 error) — 상태 리셋 후 재실행 완료. 🔎 리뷰 게이트(4렌즈+3인 반박 패널, verify 14/25 세션한도 사망 → quorum 미달 4건은 오케스트레이터 직접 판정): MAJOR 1건 확정 — 탭 전환 시 lastCaretRef 미초기화로 '한줄/단어 지우기'가 이전 탭 캐럿으로 현재 탭 줄(+동반 임베드)을 오삭제 → fix(0e6bb2f) 렌더 중 조정 패턴(effect는 마운트 wipe+flush 지연 레이스 — fake-timer 날짜삽입 테스트 간헐 실패로 검출). 기각: localeCompare 로케일(계약 명시)·빈 줄 정렬 상단(스펙)·\\n malformed(도달 불가). 백로그(minor): sortParagraph 범위 밖 캐럿 clamp 비대칭·selectWord firstChild 단일 노드 가정. test:web 1200 green."
     },
     {
       "dir": "30-editor-spellcheck",
