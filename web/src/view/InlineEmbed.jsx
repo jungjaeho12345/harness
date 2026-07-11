@@ -5,6 +5,7 @@
 import {
   EMBED_SIZE, parseYouTubeId, isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
 } from './clipboardEmbed.js';
+import { normalizeTableRows } from './tableModel.js';
 
 // 이미지 src 허용 scheme 검사(https:/data:image/·상대경로만)는 임베드 모델 모듈(clipboardEmbed)로 단일화했다.
 // 상세보기 렌더(articleDetail)와 같은 규칙을 공유한다. 기존 import 경로 호환을 위해 여기서 재노출한다.
@@ -70,12 +71,29 @@ export function InlineEmbed({ embed, onRemove, readOnly = false, blockIndex }) {
         </a>
       );
     }
+  } else if (type === 'table') {
+    // 31: 표 — 읽기 전용 <table>. 셀은 사용자 입력이라 JSX 텍스트로만 렌더(자동 이스케이프 — XSS 차단).
+    // 정규화는 tableModel.normalizeTableRows 단일 출처(ragged/비문자열 방어). 빈 rows면 빈 figure.
+    const rows = normalizeTableRows(embed.rows);
+    if (rows.length > 0) {
+      body = (
+        <table className="yh-embed__table">
+          <tbody>
+            {rows.map((row, r) => (
+              <tr key={r}>
+                {row.map((cell, c) => <td key={c}>{cell}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
   }
 
   // 이미지는 figure가 612px를 예약하지 않고 캡된 이미지(<=200px)에 맞춘다(fit-content).
   // 영상(유튜브)·로컬영상은 figureWidthPx(기본 612px), 기사 참조 카드는 widthPx(기본 480px) 유지.
-  // 오디오·링크는 콘텐츠 폭(fit-content)으로 둔다.
-  const figureWidth = type === 'image' || type === 'audio' || type === 'link'
+  // 오디오·링크·표는 콘텐츠 폭(fit-content)으로 둔다.
+  const figureWidth = type === 'image' || type === 'audio' || type === 'link' || type === 'table'
     ? 'fit-content'
     : type === 'article'
       ? `${embed.widthPx ?? EMBED_SIZE.articleCardWidthPx}px`

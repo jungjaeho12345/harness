@@ -697,6 +697,19 @@ a { color: var(--yh-blue); }
   text-decoration: none;
 }
 
+/* 표 임베드 — 본문 내 읽기 전용 <table> (편집은 표 다이얼로그 담당) */
+.yh-embed__table {
+  border-collapse: collapse;
+  background: var(--yh-white);
+}
+
+.yh-embed__table td {
+  border: 1px solid var(--yh-gray-line);
+  padding: 2px var(--yh-sp-sm);
+  font-size: 0.88rem;
+  word-break: break-word;
+}
+
 /* 송고/보류/KILL 버튼 바 — 메타 패널 상단에 고정 */
 .yh-actionbar {
   display: flex;

@@ -8,6 +8,7 @@ import { deserialize, isEmbedBlock } from './editorContent.js';
 import {
   parseYouTubeId, isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
 } from './clipboardEmbed.js';
+import { normalizeTableRows } from './tableModel.js';
 
 export const EMPTY_FIELD = '—';
 const NO_TITLE = '(제목 없음)';
@@ -119,6 +120,9 @@ body{
 .yh-detail__embed--media iframe{width:100%;max-width:560px;aspect-ratio:16/9;border:0;border-radius:3px;}
 .yh-detail__embed--media video{max-width:100%;height:auto;display:block;border-radius:3px;}
 .yh-detail__embed--media audio{max-width:100%;display:block;}
+/* 표 임베드 — 셀 값은 escapeHtml로만 들어간다(이 CSS는 정적 — 사용자 값 미포함). */
+.yh-detail__embed--table table{margin-top:6px;border-collapse:collapse;background:#fff;}
+.yh-detail__embed--table td{border:1px solid var(--gl);padding:3px 8px;font-size:.82rem;color:var(--ink);word-break:break-word;}
 .yh-detail__empty{margin:0;color:var(--gm);font-style:italic;font-family:'Noto Sans KR',system-ui,sans-serif;}
 `;
 
@@ -159,6 +163,18 @@ function embedHtml(b) {
     return '<figure class="yh-detail__embed" data-embed-type="link">'
       + `<a href="${escapeHtml(b.href)}" rel="noopener noreferrer" target="_blank">`
       + `${escapeHtml(b.title || b.href)}</a></figure>`;
+  }
+  // 31: 표 — 에디터(InlineEmbed)와 동형 렌더. 셀 텍스트가 XSS 벡터이므로 모든 셀은 escapeHtml로만 넣는다.
+  // 정규화는 tableModel.normalizeTableRows 단일 출처. 빈 rows는 아래 폴백([table])으로 떨어진다(빈 표 미노출).
+  if (type === 'table') {
+    const rows = normalizeTableRows(b.rows);
+    if (rows.length > 0) {
+      const rowsHtml = rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+        .join('');
+      return '<figure class="yh-detail__embed yh-detail__embed--table" data-embed-type="table">'
+        + `<table><tbody>${rowsHtml}</tbody></table></figure>`;
+    }
   }
   // 알 수 없거나 허용되지 않은 임베드 — 원본 값(src 등)을 노출하지 않는다.
   return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(type ?? '')}">[${escapeHtml(type || '임베드')}]</figure>`;

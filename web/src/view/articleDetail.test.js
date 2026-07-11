@@ -195,6 +195,47 @@ describe('articleDetail — embed media rendering', () => {
   });
 });
 
+// 31-step1: 표 임베드 — 상세/발행 HTML에 <table> 렌더. 모든 셀은 escapeHtml(셀 텍스트 = XSS 벡터).
+describe('articleDetail — table embed rendering', () => {
+  it('renders a <table> with escaped cell texts for a table embed', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'table', rows: [['a', 'b'], ['c', 'd']] })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<table');
+    expect(html).toContain('<td>a</td>');
+    expect(html).toContain('<td>d</td>');
+    expect(html).toContain('data-embed-type="table"');
+  });
+
+  it('does not emit a raw <script> tag for a script-bearing cell (escaped only)', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'table', rows: [['<script>alert(1)</script>']] })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  it('escapes a tag-breakout attempt cell (no injected <img>)', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'table', rows: [['"><img src=x onerror=alert(1)>']] })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('"><img src=x onerror=alert(1)>');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).toContain('&quot;&gt;&lt;img');
+  });
+
+  it('falls back to the [table] placeholder for empty rows (no <table>, no raw payload)', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'table', rows: [] })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).not.toContain('<table');
+    expect(html).toContain('[table]');
+  });
+
+  it('normalizes ragged rows into a rectangular table (pads missing cells)', () => {
+    const markupVersion = serialize([embedBlock({ embedType: 'table', rows: [['a'], ['b', 'c']] })]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<tr><td>a</td><td></td></tr>');
+    expect(html).toContain('<tr><td>b</td><td>c</td></tr>');
+  });
+});
+
 describe('articleDetail — byline (작성자 부가 라인)', () => {
   it('email 사용여부 ON + 값이 있으면 작성자 영역에 email을 부가 라인으로 보여준다', () => {
     const byline = { email: true, emailValue: 'hong@yna.co.kr', blog: false, blogValue: '' };
