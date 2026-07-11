@@ -7,7 +7,7 @@
       "name": "table-model",
       "status": "completed",
       "started_at": "2026-07-11T16:17:22+0900",
-      "completed_at": "2026-07-11T16:25:00+0900",
+      "completed_at": "2026-07-11T16:23:57+0900",
       "summary": "web/src/view/tableModel.js 신규 — table 임베드 팩토리(makeTableEmbed)·정규화(normalizeTableRows)·그리드 순수 변환(insert/delete/setCell)·TSV 변환·findTargetTableIndex를 단일 모듈로 구현(editorContent 무수정, round-trip 보존 29개 테스트로 고정, web 1291 테스트·build·lint 통과)"
     },
     {
