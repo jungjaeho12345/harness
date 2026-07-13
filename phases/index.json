@@ -180,7 +180,8 @@
     },
     {
       "dir": "32-meta-popups",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-14T01:26:52+0900"
     }
   ]
 }
