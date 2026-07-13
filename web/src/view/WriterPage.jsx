@@ -219,6 +219,9 @@ export function WriterPage() {
     // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
     setShowSpell(false);
     setSpellIssues([]);
+    // 표 다이얼로그의 blockIndex/rows도 문서-로컬 좌표 — 이월되면 '적용'이 다른 기사의
+    // blocks[N]을 덮어쓴다(리뷰 게이트 phase 31). 비모달이라 열린 채 전환 가능 — 함께 닫는다.
+    setTableDialog(null);
   }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);

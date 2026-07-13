@@ -4925,4 +4925,41 @@ describe('WriterPage — 표 메뉴(table.*) 결선', () => {
     expect(document.querySelector('script')).toBeNull(); // 스크립트 노드 미주입(step1 JSX 이스케이프)
     expect(container.querySelector('figure[data-embed-type="table"] td').textContent).toBe('<script>alert(1)</script>');
   });
+
+  it('편집 다이얼로그가 열린 사이 대상 표가 삭제되면 적용은 본문을 바꾸지 않는다(stale blockIndex 방어)', async () => {
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']]), textBlock('본문')]);
+
+    // 본문 표 더블클릭으로 편집 다이얼로그를 연다 — blockIndex=1이 캡처된다.
+    fireEvent.doubleClick(container.querySelector('figure[data-embed-type="table"] td'));
+    const dialog = await screen.findByTestId('table-dialog');
+
+    // 다이얼로그가 열린 사이 메뉴로 그 표를 삭제한다 — 캡처된 blockIndex=1은 이제 텍스트 블록('본문')을 가리킨다.
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삭제'));
+    await waitFor(() => expect(tableFigure(container)).toBeNull());
+
+    // 적용 — onTableSubmit의 isTableEmbed 방어로 교체 없이 닫히기만 해야 한다.
+    // 방어가 없으면 next[1] = 표 임베드가 텍스트 블록('본문')을 덮어써 본문이 파괴된다.
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+    expect(tableFigure(container)).toBeNull(); // 삭제된 표가 되살아나지 않는다
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 블록 불변
+  });
+
+  // 리뷰 게이트(phase 31 ⑤): tableDialog의 blockIndex/rows는 문서(탭)-로컬 좌표 — 다이얼로그는 비모달이라
+  // 열린 채 탭 전환이 가능하고, 이월되면 '적용'이 다른 기사의 blocks[N]을 덮어쓴다(phase 29/30 spellIssues와 동일 계열).
+  it('탭을 전환하면 표 다이얼로그가 닫힌다(문서-로컬 blockIndex 이월 금지)', async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), tableEmbed([['a']]), textBlock('본문')], { title: '표기사' },
+    );
+    fireEvent.doubleClick(container.querySelector('figure[data-embed-type="table"] td'));
+    expect(await screen.findByTestId('table-dialog')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+
+    // 원래 탭으로 복귀해도 재표시되지 않는다(더블클릭 재진입 필요).
+    await userEvent.click(screen.getByRole('button', { name: '표기사' }));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+  });
 });
