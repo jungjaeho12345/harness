@@ -174,6 +174,23 @@ describe('MetaSelectDialog — 열림 시 포커스 이전', () => {
     render(<MetaSelectDialog {...noopProps({ groups: [{ label: 'g1', items: [] }], value: '' })} />);
     expect(document.activeElement).toBe(screen.getByTestId('meta-dialog-close'));
   });
+
+  // 리뷰 게이트 MINOR — 열림 시점에 이미 한도 도달이면 첫 항목(미체크)이 disabled라 focus()가 no-op →
+  // 포커스가 다이얼로그 밖에 남아 Esc 닫기가 발화하지 않는다. 첫 '비-disabled' focusable로 가야 한다.
+  it("한도 도달 오픈(limit=1, value='b') — 첫 항목 a는 disabled, 포커스는 체크된 b로 가고 Escape가 onClose를 발화한다", () => {
+    const onClose = vi.fn();
+    render(<MetaSelectDialog {...noopProps({ limit: 1, value: 'b', onClose })} />);
+    expect(item('a')).toBeDisabled();
+    expect(document.activeElement).toBe(item('b'));
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("그룹 항목이 전부 disabled면(limit=1, value='zzz') 포커스는 항상 해제 가능한 첫 레거시 체크박스로 간다", () => {
+    render(<MetaSelectDialog {...noopProps({ limit: 1, value: 'zzz' })} />);
+    expect(item('a')).toBeDisabled();
+    expect(document.activeElement).toBe(item('zzz'));
+  });
 });
 
 // 도구 메뉴 팝업 공통 — 화면 중앙 모달 스타일(yh-editor-dialog 공용 클래스) + 전용 클래스(yh-meta-dialog).

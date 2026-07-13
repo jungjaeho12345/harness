@@ -33,7 +33,7 @@ export function MetaSelectDialog({
     wasOpen.current = open;
   }, [open, value]);
 
-  // 열림 시 포커스를 첫 focusable(첫 체크박스, 항목이 없으면 '닫기' 버튼)로 이전 — 포커스가 에디터 본문에
+  // 열림 시 포커스를 첫 focusable(첫 비-disabled 체크박스, 없으면 '닫기' 버튼)로 이전 — 포커스가 에디터 본문에
   // 남으면 타이핑이 기사 본문에 삽입되고 Esc 닫기가 발화하지 않는다(27-editor-critical-fixes).
   const focusRef = useRef(null);
   useFocusOnOpen(focusRef, open);
@@ -51,9 +51,16 @@ export function MetaSelectDialog({
       prev.includes(token) ? prev.filter((t) => t !== token) : [...prev, token],
     );
 
-  // 포커스 대상 판정 — 첫 항목이 있는 그룹의 첫 체크박스 > 첫 레거시 체크박스 > 닫기 버튼.
-  const firstGroupIdx = groups.findIndex((group) => (group.items ?? []).length > 0);
-  const focusOnClose = firstGroupIdx === -1 && legacy.length === 0;
+  // 포커스 대상 판정 — 첫 '비-disabled' 체크박스(disabled = 미체크 && 한도 도달) > 첫 레거시 체크박스(항상
+  // 해제 가능) > 닫기 버튼. 첫 항목 고정이면 한도 도달 상태로 열릴 때 disabled 요소 focus()가 no-op →
+  // 포커스가 에디터에 남아 Esc 닫기가 발화하지 않는다. 대상은 열림 시점에만 쓰인다(useFocusOnOpen은 open
+  // 전이에서만 focus — 열려 있는 동안 토글로 대상이 바뀌어도 포커스를 훔치지 않는다).
+  const firstEnabled = groups
+    .flatMap((group, gi) => (group.items ?? []).map((token, ii) => ({ gi, ii, token })))
+    .find(({ token }) => selected.includes(token) || !atLimit);
+  let focusKey = 'close';
+  if (firstEnabled) focusKey = `item-${firstEnabled.gi}-${firstEnabled.ii}`;
+  else if (legacy.length > 0) focusKey = 'legacy-0';
 
   // 닫기는 부모에 맡긴다(onSubmit 후 부모가 open을 내린다 — TableEditDialog submit 정책과 동형).
   const submit = () => {
@@ -90,7 +97,7 @@ export function MetaSelectDialog({
                   <label className="yh-meta-dialog__item" key={`${token}-${ii}`}>
                     <input
                       type="checkbox"
-                      ref={gi === firstGroupIdx && ii === 0 ? focusRef : undefined}
+                      ref={focusKey === `item-${gi}-${ii}` ? focusRef : undefined}
                       data-testid={`meta-dialog-item-${gi}-${ii}`}
                       checked={checked}
                       disabled={!checked && atLimit}
@@ -112,7 +119,7 @@ export function MetaSelectDialog({
                 <label className="yh-meta-dialog__item" key={`${token}-${i}`}>
                   <input
                     type="checkbox"
-                    ref={firstGroupIdx === -1 && i === 0 ? focusRef : undefined}
+                    ref={focusKey === `legacy-${i}` ? focusRef : undefined}
                     data-testid={`meta-dialog-legacy-item-${i}`}
                     checked
                     onChange={() => toggle(token)}
@@ -138,7 +145,7 @@ export function MetaSelectDialog({
           type="button"
           className="yh-btn"
           data-testid="meta-dialog-close"
-          ref={focusOnClose ? focusRef : undefined}
+          ref={focusKey === 'close' ? focusRef : undefined}
           onClick={() => onClose && onClose()}
         >
           닫기

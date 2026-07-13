@@ -1158,8 +1158,11 @@ export function WriterPage() {
 
       {/* 지역/내용/속성 선택 팝업(step3) — 공통정보 트리거 클릭으로 열림(매핑에선 CommonInfo가 클릭을 no-op 처리).
           택소노미/한도는 metaFieldConfig 단일 진입점에서 주입, 현재 값은 활성 탭 필드에서 읽고
-          '적용'은 updateField(해당 필드, 조인 문자열)로만 반영한다(직접 타이핑 경로 없음 — news.md L63). */}
+          '적용'은 updateField(해당 필드, 조인 문자열)로만 반영한다(직접 타이핑 경로 없음 — news.md L63).
+          key=필드 — 열린 채 다른 트리거를 누르면 open true→true라 wasOpen 가드가 재초기화를 건너뛰므로,
+          필드 전환 시 remount로 새 필드 value 기준 재초기화를 강제한다(이전 필드 선택의 오기록 차단). */}
       <MetaSelectDialog
+        key={metaDialog}
         open={metaDialog !== null}
         title={metaDialog ? metaFieldConfig(metaDialog).title : ''}
         groups={metaDialog ? metaFieldConfig(metaDialog).groups : []}

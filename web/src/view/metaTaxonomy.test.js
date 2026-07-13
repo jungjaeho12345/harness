@@ -169,7 +169,7 @@ describe('택소노미 데이터 무결성 — Meta.md 전사 잠금', () => {
   it('원문 오타 표기 보존(정정 금지): 상임이ㅜ·항남', () => {
     expect(allLeaves(CATEGORY_GROUPS)).toContain('상임이ㅜ'); // '상임위' 아님
     expect(allLeaves(REGION_GROUPS)).toContain('항남'); // 함경남도 — '함남' 아님
-    expect(allLeaves(REGION_GROUPS)).not.toContain('상임위');
+    expect(allLeaves(CATEGORY_GROUPS)).not.toContain('상임위'); // '상임이ㅜ'는 내용(분류) 소속 — 잠금도 CATEGORY에
     expect(allLeaves(REGION_GROUPS)).not.toContain('함남');
   });
 });

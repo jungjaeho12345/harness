@@ -995,6 +995,45 @@ describe('WriterPage — 공통정보 확장 입력(공동작성/지역/내용/�
     expect(screen.getByLabelText('지역')).toHaveValue('서울, 부산');
   });
 
+  it('팝업을 다시 열면 현재 필드 값이 체크된 상태로 초기화되고, 추가 선택·적용해도 기존 선택이 보존된다', async () => {
+    setup({ identity: { role: 'R' } });
+    await pickMeta('지역', ['서울']);
+
+    // 재오픈 — WriterPage가 활성 탭의 현재 값(value)을 팝업에 넘겨야 기존 선택이 체크로 복원된다.
+    // 이 결선이 빠지면 재오픈 팝업이 빈 선택으로 시작해 '적용'이 기존 값을 조용히 지운다(비파괴 회귀 잠금).
+    await userEvent.click(screen.getByLabelText('지역'));
+    const dialog = await screen.findByTestId('meta-dialog');
+    expect(within(dialog).getByLabelText('서울')).toBeChecked();
+
+    await userEvent.click(within(dialog).getByLabelText('부산'));
+    await userEvent.click(within(dialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+    expect(screen.getByLabelText('지역')).toHaveValue('서울, 부산');
+  });
+
+  it('팝업이 열린 채 다른 메타 트리거를 클릭하면 새 필드 구성으로 재초기화되고, 이전 필드 선택이 새 필드에 기록되지 않는다', async () => {
+    setup({ identity: { role: 'R' } });
+
+    // 지역 팝업을 열고 '서울'을 체크만 한다(적용 없이 필드 전환).
+    await userEvent.click(screen.getByLabelText('지역'));
+    const regionDialog = await screen.findByTestId('meta-dialog');
+    await userEvent.click(within(regionDialog).getByLabelText('서울'));
+
+    // 닫지 않고 속성 트리거 클릭 — open true→true라 같은 인스턴스가 재사용되면 wasOpen 가드가 재초기화를
+    // 건너뛰어 지역 selected(['서울'])가 살아남고('기존 값' 섹션 노출), '적용'이 지역 값을 속성 필드에
+    // 기록한다(조용한 필드 오염). key={metaDialog} remount로 속성 value 기준 재초기화를 잠근다.
+    await userEvent.click(screen.getByLabelText('속성'));
+    const attrDialog = await screen.findByRole('dialog', { name: '속성' });
+    expect(within(attrDialog).queryByTestId('meta-dialog-legacy')).toBeNull();
+    expect(within(attrDialog).queryByLabelText('서울')).toBeNull();
+
+    // 그대로 적용해도 속성 필드에 지역 값이 기록되지 않는다(지역도 적용된 적 없으니 빈 값 유지).
+    await userEvent.click(within(attrDialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+    expect(screen.getByLabelText('속성')).toHaveValue('');
+    expect(screen.getByLabelText('지역')).toHaveValue('');
+  });
+
   it('편집 진입 시 저장된 공통정보 확장 필드가 입력란에 로드된다', async () => {
     setup({
       identity: { role: 'R' },
