@@ -47,6 +47,7 @@ const SCHEMA = {
     ['lockerClientId', 'VARCHAR'],
     ['lockedAt', 'VARCHAR'],
     ['coAuthor', 'VARCHAR'],
+    ['category', 'VARCHAR'],
     ['region', 'VARCHAR'],
     ['attribute', 'VARCHAR'],
     ['keyword', 'VARCHAR'],
