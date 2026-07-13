@@ -37,7 +37,10 @@
     {
       "step": 4,
       "name": "detail-category",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-14T01:23:38+0900",
+      "completed_at": "2026-07-14T01:26:51+0900",
+      "summary": "상세보기 '내용' 행을 신설 분류 필드 category로 교체 — DETAIL_COMMON_FIELDS의 { key:'content', label:'내용' } 키만 'category'로 변경(라벨·위치·순서 불변, buildDetail/renderDetailHtml 로직 무변경 — fieldValue '—'·escapeHtml 경로 자동 적용). 테스트 4건 추가(category 행 label/value·미제공 '—'·content 키 행 부재·script-bearing category 이스케이프 회귀). web 1381 전체·build·lint 그린, 백엔드/팝업/CommonInfo/embedHtml 무접촉"
     }
   ],
   "created_at": "2026-07-14T00:49:07+0900"
