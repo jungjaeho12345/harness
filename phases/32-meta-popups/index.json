@@ -7,7 +7,7 @@
       "name": "meta-taxonomy",
       "status": "completed",
       "started_at": "2026-07-14T00:49:07+0900",
-      "completed_at": "2026-07-14T00:57:20+0900",
+      "completed_at": "2026-07-14T00:58:57+0900",
       "summary": "web/src/view/metaTaxonomy.js 신규 — Meta.md 전사 택소노미 순수 데이터(REGION_GROUPS 34그룹/396leaf·CATEGORY_GROUPS 6그룹/57leaf·ATTRIBUTES 96, 오타 표기 '상임이ㅜ'·'항남'·공백 토큰 '봉화 상주' 등 원문 보존) + 콤마 토큰 헬퍼(parseTokens/joinTokens, 공백 split 금지) + 한도 상수(REGION_MAX 5/CATEGORY_MAX 5/ATTRIBUTE_MAX 3 단일 출처) + metaFieldConfig 단일 진입점(속성은 단일 그룹 래핑, 미지원 키 null). import 0의 순수 모듈(simpTradTable 동위상), 무결성 잠금 테스트 18개(web 1355 테스트·build·lint 통과, UI/서버 무변경)"
     },
     {
