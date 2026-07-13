@@ -29,7 +29,10 @@
     {
       "step": 3,
       "name": "commoninfo-wiring",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-14T01:11:00+0900",
+      "completed_at": "2026-07-14T01:23:00+0900",
+      "summary": "공통정보에 내용(category) 필드 신설 + 지역/내용/속성 팝업 결선 — EDITABLE_FIELDS에 'category' 한 줄 추가(단일 출처: blank 시드·편집 로드·저장 dto·updateField 게이트 자동 파생), CommonInfo 세 필드를 팝업 트리거로 전환(항상 readOnly·직접 onChange 제거·aria-haspopup, 매핑 모드 클릭 no-op, 구세션 category 부재 ?? '' 가드), WriterPage에 metaDialog 상태('region'|'category'|'attribute'|null)·MetaSelectDialog 결선(metaFieldConfig 주입, value=활성 탭 필드, onSubmit=updateField 후 닫기)·탭 전환 렌더-조정 블록에 setMetaDialog(null)(phase 29/30/31 동일 계열 탭-로컬 이월 방지). 구스펙 테스트 4곳 신스펙 갱신(내용 라벨 존재로 뒤집기·dto 팝업 플로우 재작성·편집 로드 category 단언·매핑 팝업 미오픈) + 신규 3건(복수 선택 콤마 조인 표시·탭 전환 팝업 닫힘·controller category 시드/로드/저장). web 1377 전체·build·lint 그린, Editor/editorContent/백엔드/articleDetail 무접촉"
     },
     {
       "step": 4,
