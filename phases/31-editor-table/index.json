@@ -2,9 +2,39 @@
   "project": "기사 작성기",
   "phase": "31-editor-table",
   "steps": [
-    { "step": 0, "name": "table-model", "status": "pending" },
-    { "step": 1, "name": "table-render", "status": "pending" },
-    { "step": 2, "name": "table-dialog", "status": "pending" },
-    { "step": 3, "name": "table-wiring", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "table-model",
+      "status": "completed",
+      "started_at": "2026-07-11T16:17:22+0900",
+      "completed_at": "2026-07-11T16:23:57+0900",
+      "summary": "web/src/view/tableModel.js 신규 — table 임베드 팩토리(makeTableEmbed)·정규화(normalizeTableRows)·그리드 순수 변환(insert/delete/setCell)·TSV 변환·findTargetTableIndex를 단일 모듈로 구현(editorContent 무수정, round-trip 보존 29개 테스트로 고정, web 1291 테스트·build·lint 통과)"
+    },
+    {
+      "step": 1,
+      "name": "table-render",
+      "status": "completed",
+      "started_at": "2026-07-11T16:23:58+0900",
+      "completed_at": "2026-07-11T16:31:33+0900",
+      "summary": "표 임베드 읽기 전용 렌더 양쪽 동형 확장 — InlineEmbed.jsx(table 분기, JSX {cell} 자동 이스케이프, fit-content figure)·articleDetail.js(embedHtml table 분기, 전 셀 escapeHtml, 빈 rows는 [table] 폴백, DETAIL_STYLE 표 스타일)·yonhap.css(.yh-embed__table). 정규화는 tableModel.normalizeTableRows 단일 출처, XSS 단언 포함 신규 테스트 11개(web 1302 테스트·build·lint 통과, Editor.jsx·server 무변경)"
+    },
+    {
+      "step": 2,
+      "name": "table-dialog",
+      "status": "completed",
+      "started_at": "2026-07-11T16:31:34+0900",
+      "completed_at": "2026-07-11T16:40:13+0900",
+      "summary": "web/src/view/TableEditDialog.jsx 신규 — 표 삽입/편집 겸용 순수 표시 그리드 다이얼로그(ADR-003). tableModel 순수 헬퍼(makeEmptyTableRows/insert/delete/setCell/normalizeTableRows)만으로 로컬 그리드 편집, onSubmit(정규화 rows)/onClose 위임, useFocusOnOpen 첫 셀 포커스, open false→true 재초기화(wasOpen 가드), 빈 표 제출 허용, 전용 클래스 yh-table-dialog·testid table-dialog, yonhap.css 그리드 스타일. 임베드 생성/본문 결선은 step3에 위임(Editor/WriterPage/server 무변경). 신규 테스트 19개(web 1321 테스트·build·lint 통과)"
+    },
+    {
+      "step": 3,
+      "name": "table-wiring",
+      "status": "completed",
+      "started_at": "2026-07-11T16:40:14+0900",
+      "completed_at": "2026-07-11T16:56:37+0900",
+      "summary": "표 메뉴 10종 WriterPage 결선(step0~2 조립) — MENU_ENABLED에 table.* 10개 추가, 삽입/편집 겸용 TableEditDialog 결선(삽입=insertEmbed 캐럿 줄 뒤·매핑 append, 편집=본문 표 더블클릭 canvas 위임(data-embed-key+isTableEmbed 방어)→블록 교체), 메뉴 연산 대상은 캐럿 인접(findTargetTableIndex, 없으면 alert no-op), 행/열 연산은 결정적 엣지(above/left=0·below/right=끝·delete=마지막, makeTableEmbed 팩토리 경유), 복사/잘라내기=시스템 클립보드 TSV(미지원/거부 alert graceful, 잘라내기는 복사 실패에도 제거 진행), 전 라우팅 매핑 가드 앞(임베드 parity)·본문 반영 전부 commitBody 단일 경로. WriterPage.jsx(+test)만 변경, 신규 테스트 14개+placeholder 단언 2건 갱신(web 1335 테스트·백엔드 406·build·lint 통과)"
+    }
+  ],
+  "created_at": "2026-07-11T16:17:22+0900",
+  "completed_at": "2026-07-11T16:56:38+0900"
 }

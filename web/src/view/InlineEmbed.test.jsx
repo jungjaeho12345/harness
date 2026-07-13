@@ -285,6 +285,53 @@ describe('InlineEmbed', () => {
     });
   });
 
+  // 31-step1: 표 임베드 — 읽기 전용 <table> 렌더. 셀은 JSX 텍스트로만(자동 이스케이프 — XSS 차단).
+  describe('table embed render', () => {
+    it('renders a <table> with all cell texts and a fit-content figure', () => {
+      render(<InlineEmbed embed={{ embedType: 'table', rows: [['a', 'b'], ['c', 'd']] }} onRemove={() => {}} />);
+      expect(document.querySelector('table')).not.toBeNull();
+      expect(screen.getByText('a')).toBeInTheDocument();
+      expect(screen.getByText('b')).toBeInTheDocument();
+      expect(screen.getByText('c')).toBeInTheDocument();
+      expect(screen.getByText('d')).toBeInTheDocument();
+      const fig = document.querySelector('table').closest('figure');
+      expect(fig.getAttribute('data-embed-type')).toBe('table');
+      expect(fig).toHaveStyle({ width: 'fit-content' });
+    });
+
+    it('renders a <script>-bearing cell as literal text (no script element, not parsed as HTML)', () => {
+      render(<InlineEmbed embed={{ embedType: 'table', rows: [['<script>alert(1)</script>']] }} onRemove={() => {}} />);
+      expect(document.querySelector('script')).toBeNull();
+      expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument();
+    });
+
+    it('does not render an <img> for an onerror-injection cell', () => {
+      render(<InlineEmbed embed={{ embedType: 'table', rows: [['<img src=x onerror=alert(1)>']] }} onRemove={() => {}} />);
+      expect(document.querySelector('img')).toBeNull();
+      expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+    });
+
+    it('renders an empty figure (no <table>, no crash) for empty rows', () => {
+      render(<InlineEmbed embed={{ embedType: 'table', rows: [] }} onRemove={() => {}} />);
+      expect(document.querySelector('table')).toBeNull();
+      expect(document.querySelector('figure')).not.toBeNull();
+    });
+
+    it('shows the × remove button (editable) and hides it in readOnly', () => {
+      const { rerender } = render(<InlineEmbed embed={{ embedType: 'table', rows: [['a']] }} onRemove={() => {}} />);
+      expect(screen.getByRole('button', { name: '임베드 삭제' })).toBeInTheDocument();
+      rerender(<InlineEmbed embed={{ embedType: 'table', rows: [['a']] }} readOnly />);
+      expect(screen.queryByRole('button', { name: '임베드 삭제' })).toBeNull();
+    });
+
+    it('normalizes ragged rows into a rectangular table (every row has the max column count)', () => {
+      render(<InlineEmbed embed={{ embedType: 'table', rows: [['a'], ['b', 'c']] }} onRemove={() => {}} />);
+      const trs = document.querySelectorAll('tr');
+      expect(trs).toHaveLength(2);
+      trs.forEach((tr) => expect(tr.children).toHaveLength(2));
+    });
+  });
+
   // 20-step2: 붙여넣기 신규 이미지(/uploads 상대경로)와 이미 저장된 레거시(data:image base64)가
   // 둘 다 계속 <img>로 렌더되는지 회귀 잠금(마이그레이션 없이 레거시 렌더 보존 + 하위호환).
   describe('image src backcompat regression (신규 /uploads + 레거시 base64)', () => {

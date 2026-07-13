@@ -16,6 +16,7 @@ import { EditorPrefsDialog } from './EditorPrefsDialog.jsx';
 import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
 import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
+import { TableEditDialog } from './TableEditDialog.jsx';
 import { FileInfoDialog } from './FileInfoDialog.jsx';
 import { MemoDialog } from './MemoDialog.jsx';
 import { loadMemo, saveMemo } from './memoStore.js';
@@ -58,6 +59,10 @@ import {
   makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed, isAllowedHref,
 } from './clipboardEmbed.js';
 import {
+  makeTableEmbed, insertRow, insertCol, deleteRow, deleteCol,
+  tableToTsv, findTargetTableIndex, isTableEmbed, normalizeTableRows,
+} from './tableModel.js';
+import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
 
@@ -83,7 +88,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -123,6 +128,9 @@ export function WriterPage() {
   const [showGlyphInput, setShowGlyphInput] = useState(false);
   // URL 직접 임베드 다이얼로그 — null(닫힘) | 'image' | 'video'. 도구>그림/유튜브 삽입으로 열린다(showGlyphInput 패턴 확장).
   const [urlEmbedKind, setUrlEmbedKind] = useState(null);
+  // 표 삽입/편집 다이얼로그 — null(닫힘) | { mode:'insert' } | { mode:'edit', blockIndex, rows }(urlEmbedKind 패턴 확장).
+  // 본문 표는 읽기 전용 렌더(step1)라 셀 편집은 다이얼로그에서만 한다 — 표>표 삽입(insert)·본문 표 더블클릭(edit)이 연다.
+  const [tableDialog, setTableDialog] = useState(null);
   // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
   const [showFileInfo, setShowFileInfo] = useState(false);
   // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
@@ -211,6 +219,9 @@ export function WriterPage() {
     // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
     setShowSpell(false);
     setSpellIssues([]);
+    // 표 다이얼로그의 blockIndex/rows도 문서-로컬 좌표 — 이월되면 '적용'이 다른 기사의
+    // blocks[N]을 덮어쓴다(리뷰 게이트 phase 31). 비모달이라 열린 채 전환 가능 — 함께 닫는다.
+    setTableDialog(null);
   }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
@@ -478,6 +489,33 @@ export function WriterPage() {
     commitBody(serialize(deleteLineAt(blocks, blockIndex).blocks));
   };
 
+  // 메뉴 표 연산(table.delete/copy/cut/행·열)의 대상 표 — 캐럿 인접(step0 findTargetTableIndex 규칙).
+  // 캐럿 텍스트-줄(lastCaretRef)을 블록 인덱스로 변환해 도출하고, 캐럿 기록이 없으면 마지막 표로 폴백한다.
+  // 클릭-선택 하이라이트 방식은 Editor 재렌더 결합을 부르므로 쓰지 않는다(결정적·Editor.jsx 미접촉).
+  const targetTableIndex = () => {
+    const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+    const caretBlock = caretLine == null ? null : textLineToBlockIndex(blocks, caretLine);
+    return findTargetTableIndex(blocks, caretBlock);
+  };
+
+  // 표 복사/잘라내기의 클립보드 쓰기 — 시스템 클립보드에 TSV로 쓴다(외부 앱 붙여넣기 지원 — '표 붙여넣기'
+  // 메뉴가 없어 내부 버퍼는 두지 않는다). 미지원/거부 시 예외를 던지지 않고 window.alert로만 안내한다
+  // (pasteOriginalAtCaret의 navigator.clipboard 가드 선례 — jsdom/구브라우저에서 죽지 않게).
+  const writeTableToClipboard = async (rows) => {
+    const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') {
+      window.alert('이 브라우저에서는 표 복사를 지원하지 않습니다.');
+      return false;
+    }
+    try {
+      await clip.writeText(tableToTsv(rows));
+      return true;
+    } catch {
+      window.alert('클립보드 접근이 거부되어 표를 복사할 수 없습니다.');
+      return false;
+    }
+  };
+
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
@@ -506,6 +544,43 @@ export function WriterPage() {
     if (id === 'spell.checkToCaret') { runSpellCheck('toCaret'); return; }
     if (id === 'spell.checkFromCaret') { runSpellCheck('fromCaret'); return; }
     if (id === 'spell.checkOff') { setSpellIssues([]); setShowSpell(false); return; }
+    // 표 메뉴(table.*) — 표는 임베드라 매핑 가드 앞(임베드 삽입/삭제/변경은 매핑에서도 허용 — phase 18/19 정책,
+    // tools.insertImage와 동형). 모든 표 연산은 임베드 블록만 바꾸고 텍스트 블록은 건드리지 않으므로
+    // 본문-only 불변식이 자동 보존된다. 본문 반영은 전부 commitBody(serialize(...)) 단일 경로(제목 재동기화 — phase 28).
+    if (id === 'table.insert') { setTableDialog({ mode: 'insert' }); return; }
+    if (id.startsWith('table.')) {
+      const idx = targetTableIndex();
+      if (idx < 0) { window.alert('대상 표가 없습니다. 표 근처에 커서를 두세요.'); return; }
+      // rows는 정규화 스냅샷으로 읽는다(직사각형 보장) — blocks[idx].rows를 직접 mutate하지 않는다(step0 단일 출처).
+      const rows = normalizeTableRows(blocks[idx].rows);
+      if (id === 'table.copy') { writeTableToClipboard(rows); return; }
+      if (id === 'table.delete' || id === 'table.cut') {
+        // 잘라내기의 '제거'는 복사 성공/실패와 무관하게 진행한다(사용자 의도는 제거 — 복사 실패는
+        // writeTableToClipboard가 alert로만 안내하고, 제거는 동기로 확정한다).
+        if (id === 'table.cut') writeTableToClipboard(rows);
+        const next = blocks.slice();
+        next.splice(idx, 1);
+        commitBody(serialize(next)); // onRemoveEmbed 패턴 — 본문 반영은 commitBody 단일 경로.
+        return;
+      }
+      // 행/열 연산 — 본문 표에는 셀 캐럿이 없어 위치를 결정적으로 고정한다(above/left=index 0,
+      // below/right=끝, delete=마지막 행/열 — 최소 1행/1열은 tableModel이 유지). 세밀한 위치 편집은 다이얼로그(step2) 몫.
+      const cols = rows.length > 0 ? rows[0].length : 0;
+      let nextRows = null;
+      if (id === 'table.deleteRow') nextRows = deleteRow(rows, rows.length - 1);
+      else if (id === 'table.deleteCol') nextRows = deleteCol(rows, cols - 1);
+      else if (id === 'table.addRowAbove') nextRows = insertRow(rows, 0);
+      else if (id === 'table.addRowBelow') nextRows = insertRow(rows, rows.length);
+      else if (id === 'table.addColLeft') nextRows = insertCol(rows, 0);
+      else if (id === 'table.addColRight') nextRows = insertCol(rows, cols);
+      if (!nextRows) return; // 미지의 table.* id — no-op
+      const embed = makeTableEmbed(nextRows); // rows는 팩토리(내부 정규화) 경유로만 블록에 심는다.
+      if (!embed) return; // 빈 그리드(부적격) — no-op
+      const next = blocks.slice();
+      next[idx] = embed;
+      commitBody(serialize(next));
+      return;
+    }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -836,6 +911,24 @@ export function WriterPage() {
     setUrlEmbedKind(null); // 1회성 삽입 후 닫는다(URL 1개).
   };
 
+  // 표 다이얼로그 확정 — 삽입 모드는 기존 임베드 경로(insertEmbed: 캐럿 줄 뒤 + 빈 줄, 매핑 시 "(끝)" 앞 append)를
+  // 재사용하고, 편집 모드는 그 블록만 새 임베드로 교체한다. rows는 항상 makeTableEmbed(내부 normalizeTableRows)
+  // 경유로만 블록에 심는다(step0 정규화 단일 출처). 다이얼로그가 열린 사이 본문이 바뀌었을 수 있어 blockIndex가
+  // 최신 blocks에서 여전히 표 임베드인지 isTableEmbed로 방어한다(아니면 교체 없이 닫기만).
+  const onTableSubmit = (rows) => {
+    const embed = makeTableEmbed(rows); // 부적격 rows(빈 그리드)면 null → no-op(다이얼로그가 최소 1×1 보장).
+    if (tableDialog && tableDialog.mode === 'edit' && typeof tableDialog.blockIndex === 'number') {
+      if (embed && isTableEmbed(blocks[tableDialog.blockIndex])) {
+        const next = blocks.slice();
+        next[tableDialog.blockIndex] = embed;
+        commitBody(serialize(next)); // 본문 반영은 commitBody 단일 경로(제목 재동기화 불변식 — phase 28).
+      }
+    } else if (embed) {
+      insertEmbed(embed);
+    }
+    setTableDialog(null);
+  };
+
   // 송고/보류/KILL — 가드 후 확인창, 확인 시에만 진행.
   const onAction = async (action) => {
     // 제목은 본문 첫 줄(bodyTitle) 또는 제목 FIELD 둘 중 하나라도 있으면 인정한다.
@@ -907,6 +1000,18 @@ export function WriterPage() {
               ...(columnLimit ? { paddingLeft: '10%', paddingRight: '10%' } : null),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+            // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭
+            // 제스처로 한다 — onContextMenu와 동형인 canvas DOM 위임(Editor.jsx 미접촉, closest/dataset 읽기만).
+            // figure의 data-embed-key(블록 인덱스 — InlineEmbed)를 읽고 최신 blocks에서 표 임베드인지 방어한다.
+            // 매핑 모드에서도 허용(임베드 변경 parity — 편집 제출은 임베드 블록만 교체).
+            onDoubleClick={(e) => {
+              const fig = e.target.closest && e.target.closest('figure.yh-embed[data-embed-type="table"]');
+              if (!fig) return;
+              const key = fig.dataset ? fig.dataset.embedKey : undefined;
+              const i = key == null || key === '' ? -1 : Number(key);
+              if (!Number.isInteger(i) || i < 0 || i >= blocks.length || !isTableEmbed(blocks[i])) return;
+              setTableDialog({ mode: 'edit', blockIndex: i, rows: normalizeTableRows(blocks[i].rows) });
+            }}
           >
             <Editor
               key={activeTabId}
@@ -1031,6 +1136,16 @@ export function WriterPage() {
         kind={urlEmbedKind || 'image'}
         onSubmit={onUrlEmbedSubmit}
         onClose={() => setUrlEmbedKind(null)}
+      />
+
+      {/* 표 삽입/편집 다이얼로그(step2) — 표>표 삽입(insert) 또는 본문 표 더블클릭(edit)으로 열림(매핑에서도 허용 —
+          임베드 parity). 확정 rows는 onTableSubmit이 makeTableEmbed 경유로만 본문에 반영한다(삽입=insertEmbed,
+          편집=해당 블록 교체 — 둘 다 commitBody 단일 경로). */}
+      <TableEditDialog
+        open={tableDialog !== null}
+        initialRows={tableDialog && tableDialog.mode === 'edit' ? tableDialog.rows : undefined}
+        onSubmit={onTableSubmit}
+        onClose={() => setTableDialog(null)}
       />
 
       {/* 파일 정보 다이얼로그(도구>파일 정보) — 읽기전용. 열린 시점 본문 통계(fileInfoStats)를 props로만 주입해 표시한다.

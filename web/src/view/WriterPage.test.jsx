@@ -1344,13 +1344,14 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 항목 외(표 삽입·잘라내기)는 여전히 비활성이다', async () => {
-    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐으므로,
-    // 미결선 예시는 여전히 비활성인 '잘라내기'(edit.cut)로 검증한다(표 삽입은 그대로).
+  it('활성 항목 외(새문서·잘라내기)는 여전히 비활성이다', async () => {
+    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐고,
+    // '표 삽입'(table.insert)도 31-editor-table step3에서 결선돼 활성이 됐으므로,
+    // 미결선 예시는 여전히 비활성인 '새문서'(file.new)·'잘라내기'(edit.cut)로 검증한다.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
-    await openTopMenu('표');
-    expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
+    await openTopMenu('파일');
+    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
     await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
   });
@@ -1834,12 +1835,13 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("활성 항목 외(잘라내기·표 삽입)는 여전히 비활성이다(회귀)", async () => {
+  it("활성 항목 외(잘라내기·새문서)는 여전히 비활성이다(회귀)", async () => {
+    // '표 삽입'(table.insert)은 31-editor-table step3에서 결선돼 활성 — 미결선 예시를 '새문서'(file.new)로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
-    await openTopMenu('표');
-    expect(within(screen.getByTestId('menu-표')).getByText('표 삽입').closest('button')).toBeDisabled();
+    await openTopMenu('파일');
+    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
@@ -4646,5 +4648,318 @@ describe('WriterPage — 맞춤법 검사(spell.*) 결선', () => {
     expect(screen.getByTestId('spellcheck-count')).toHaveTextContent('2건');
     const snippets = screen.getAllByTestId('spellcheck-snippet').map((el) => el.textContent);
     expect(snippets).toEqual(['역활', '왠만']); // 임베드로 오프셋이 밀리면 조각이 어긋난다
+  });
+});
+
+// Step 3(31-editor-table): 표 메뉴(table.*) 10종 결선 — step0 모델(tableModel) + step1 렌더(InlineEmbed) +
+// step2 다이얼로그(TableEditDialog) 조립. 셀 편집 UX는 다이얼로그(본문 표는 읽기 전용 렌더 — 더블클릭 진입),
+// 메뉴 연산의 대상 표는 캐럿 인접(findTargetTableIndex — 캐럿 없으면 마지막 표 폴백), 복사/잘라내기는 시스템
+// 클립보드 TSV. 표는 임베드라 매핑 가드 앞 라우팅(phase 18/19 임베드 parity). 본문 반영은 전부
+// commitBody(serialize(...)) 단일 경로(텍스트 블록 불변 — 본문-only 불변식).
+describe('WriterPage — 표 메뉴(table.*) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    window.getSelection().removeAllRanges();
+  });
+  afterEach(() => { delete navigator.clipboard; });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', title = '제목' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title, status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', title, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 캐럿을 텍스트-줄 lineIndex 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(phase 29 동형).
+  function focusCaretAt(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const tableMenuItem = (label) => within(screen.getByTestId('menu-표')).getByText(label).closest('button');
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+  const tableFigure = (container) => container.querySelector('figure[data-embed-type="table"]');
+  // 본문 표들의 렌더 그리드(셀 텍스트 2차원 배열) — 표별.
+  const grids = (container) => Array.from(container.querySelectorAll('figure[data-embed-type="table"]'))
+    .map((fig) => Array.from(fig.querySelectorAll('tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent)));
+  const grid = (container) => grids(container)[0];
+  const tableEmbed = (rows) => embedBlock({ embedType: 'table', rows });
+
+  it("'표' 메뉴 10종이 모두 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('제목'), textBlock('본문')]);
+    await openTopMenu('표');
+    for (const label of [
+      '표 삽입', '표 삭제', '표 복사', '표 잘라내기', '행 삭제', '열 삭제',
+      '위에 행 추가', '아래에 행 추가', '왼쪽에 열 추가', '오른쪽에 열 추가',
+    ]) {
+      expect(tableMenuItem(label)).toBeEnabled();
+    }
+  });
+
+  it("'표 삽입': 다이얼로그 적용 시 캐럿 줄 뒤에 table 임베드가 삽입되고 셀 값이 보존된다", async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    focusCaretAt(container, 1); // '본문' 줄 — 임베드는 그 줄 뒤에 삽입(기존 insertEmbed 경로)
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삽입'));
+    const dialog = await screen.findByTestId('table-dialog');
+    await userEvent.type(within(dialog).getByTestId('table-dialog-cell-0-0'), '값A');
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+
+    await waitFor(() => expect(tableFigure(container)).toBeTruthy());
+    expect(screen.queryByTestId('table-dialog')).toBeNull(); // 적용 후 닫힘
+    expect(grid(container)).toEqual([['값A', ''], ['', '']]); // 기본 2×2 그리드 + 입력 셀 보존
+    expect(editorLines(container)).toEqual(['제목', '본문', '']); // 텍스트 블록 불변 + 임베드 뒤 빈 줄(커서 이동용)
+  });
+
+  it('본문 표 더블클릭 → 기존 rows로 다이얼로그가 열리고 적용 시 그 블록만 갱신된다(텍스트 불변)', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), tableEmbed([['a', 'b'], ['c', 'd']]), textBlock('본문'),
+    ]);
+
+    fireEvent.doubleClick(container.querySelector('figure[data-embed-type="table"] td'));
+    const dialog = await screen.findByTestId('table-dialog');
+    expect(within(dialog).getByTestId('table-dialog-cell-0-0')).toHaveValue('a');
+    expect(within(dialog).getByTestId('table-dialog-cell-1-1')).toHaveValue('d');
+
+    await userEvent.type(within(dialog).getByTestId('table-dialog-cell-0-0'), '수정'); // 'a수정'
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+
+    await waitFor(() => expect(grid(container)).toEqual([['a수정', 'b'], ['c', 'd']]));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 블록 불변
+  });
+
+  it('표가 아닌 곳 더블클릭은 다이얼로그를 열지 않는다(no-op)', async () => {
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']]), textBlock('본문')]);
+    fireEvent.doubleClick(container.querySelectorAll('.yh-editor__line')[0]);
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+  });
+
+  it('행/열 연산: 아래/오른쪽은 끝에, 위/왼쪽은 index 0에 추가되고 행/열 삭제는 마지막을 지운다', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), tableEmbed([['a', 'b'], ['c', 'd']]), textBlock('본문'),
+    ]);
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('아래에 행 추가'));
+    await waitFor(() => expect(grid(container)).toEqual([['a', 'b'], ['c', 'd'], ['', '']]));
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('오른쪽에 열 추가'));
+    await waitFor(() => expect(grid(container)).toEqual([['a', 'b', ''], ['c', 'd', ''], ['', '', '']]));
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('위에 행 추가'));
+    await waitFor(() => expect(grid(container)).toEqual([['', '', ''], ['a', 'b', ''], ['c', 'd', ''], ['', '', '']]));
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('왼쪽에 열 추가'));
+    await waitFor(() => expect(grid(container)).toEqual([
+      ['', '', '', ''], ['', 'a', 'b', ''], ['', 'c', 'd', ''], ['', '', '', ''],
+    ]));
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('행 삭제')); // 마지막 행 삭제
+    await waitFor(() => expect(grid(container)).toEqual([['', '', '', ''], ['', 'a', 'b', ''], ['', 'c', 'd', '']]));
+
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('열 삭제')); // 마지막 열 삭제
+    await waitFor(() => expect(grid(container)).toEqual([['', '', ''], ['', 'a', 'b'], ['', 'c', 'd']]));
+
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 블록 불변
+  });
+
+  it('행/열 삭제는 최소 1행 1열을 유지한다(1×1 no-op)', async () => {
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['홀로']])]);
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('행 삭제'));
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('열 삭제'));
+    expect(grid(container)).toEqual([['홀로']]); // tableModel 최소 1행/1열 유지 규칙
+  });
+
+  it('대상 표 = 캐럿 인접(캐럿 이후 첫 표), 캐럿 기록이 없으면 마지막 표 폴백', async () => {
+    const blocks = [
+      textBlock('제목'), tableEmbed([['A']]), textBlock('중간'), tableEmbed([['B']]), textBlock('끝줄'),
+    ];
+    // 캐럿 없음 — 마지막 표(B)가 대상.
+    const first = await openWith(blocks);
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('아래에 행 추가'));
+    await waitFor(() => expect(grids(first.container).map((g) => g.length)).toEqual([1, 2]));
+    first.unmount();
+
+    // 캐럿을 '제목' 줄에 — 이후 첫 표(A)가 대상.
+    sessionStorage.clear();
+    const second = await openWith(blocks);
+    focusCaretAt(second.container, 0);
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('아래에 행 추가'));
+    await waitFor(() => expect(grids(second.container).map((g) => g.length)).toEqual([2, 1]));
+  });
+
+  it("'표 삭제': 대상 표 임베드만 제거되고 텍스트 블록은 유지된다", async () => {
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']]), textBlock('본문')]);
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삭제'));
+    await waitFor(() => expect(tableFigure(container)).toBeNull());
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+  });
+
+  it("'표 복사': TSV로 클립보드에 쓴다(본문 불변) — '표 잘라내기': 쓰기 + 블록 제거", async () => {
+    const { container } = await openWith([
+      textBlock('제목'), tableEmbed([['a', 'b'], ['c', 'd']]), textBlock('본문'),
+    ]);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true, writable: true });
+
+    await openTopMenu('표');
+    fireEvent.click(tableMenuItem('표 복사'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('a\tb\nc\td'));
+    expect(tableFigure(container)).toBeTruthy(); // 복사는 본문 불변
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+
+    await openTopMenu('표');
+    fireEvent.click(tableMenuItem('표 잘라내기'));
+    await waitFor(() => expect(tableFigure(container)).toBeNull()); // 블록 제거
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText.mock.calls[1][0]).toEqual(expect.stringContaining('\t'));
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 블록 불변
+  });
+
+  it('클립보드 미지원이면 표 복사는 alert만 하고 예외 없이 본문 불변이다', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']])]);
+    await openTopMenu('표');
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true, writable: true });
+    fireEvent.click(tableMenuItem('표 복사'));
+    expect(alert).toHaveBeenCalledWith('이 브라우저에서는 표 복사를 지원하지 않습니다.');
+    expect(tableFigure(container)).toBeTruthy(); // 본문 불변
+  });
+
+  it('클립보드 거부(reject)여도 표 잘라내기의 제거는 진행된다(복사 실패는 alert만)', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']]), textBlock('본문')]);
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true, writable: true });
+
+    await openTopMenu('표');
+    fireEvent.click(tableMenuItem('표 잘라내기'));
+
+    await waitFor(() => expect(tableFigure(container)).toBeNull()); // 사용자 의도는 제거 — 복사 실패와 무관하게 진행
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('클립보드 접근이 거부되어 표를 복사할 수 없습니다.'));
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+  });
+
+  it('대상 표가 없으면 alert 후 본문 불변(no-op)', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    for (const label of ['표 삭제', '표 복사', '표 잘라내기', '아래에 행 추가', '열 삭제']) {
+      await openTopMenu('표');
+      await userEvent.click(tableMenuItem(label));
+    }
+    expect(alert).toHaveBeenCalledTimes(5);
+    expect(alert).toHaveBeenCalledWith('대상 표가 없습니다. 표 근처에 커서를 두세요.');
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 본문 불변
+    expect(tableFigure(container)).toBeNull();
+  });
+
+  it('매핑 모드: 표 삽입/삭제가 동작하고(임베드 parity) 텍스트 블록은 불변이다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith(
+      [textBlock('제목줄'), textBlock('본문줄')],
+      { mode: 'mapping', status: 'DPS', role: 'D', title: '제목줄' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    // 삽입 — 매핑에서는 캐럿/빈 줄 없이 끝에 append(insertEmbedAtLine 매핑 폴백 — 본문 텍스트 불변).
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삽입'));
+    const dialog = await screen.findByTestId('table-dialog');
+    await userEvent.type(within(dialog).getByTestId('table-dialog-cell-0-0'), '셀');
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+    await waitFor(() => expect(tableFigure(container)).toBeTruthy());
+    expect(editorLines(container)).toEqual(['제목줄', '본문줄']); // 텍스트 블록 불변(빈 줄 미추가)
+
+    // 행 추가 — 매핑에서도 임베드 블록 변경 허용.
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('아래에 행 추가'));
+    await waitFor(() => expect(grid(container).length).toBe(3));
+
+    // 삭제 — 매핑에서도 동작.
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삭제'));
+    await waitFor(() => expect(tableFigure(container)).toBeNull());
+    expect(editorLines(container)).toEqual(['제목줄', '본문줄']);
+
+    // 저장 — 텍스트 블록이 원본 그대로 PUT된다(본문-only 불변식).
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[0][0];
+    expect(deserialize(dto.markupVersion).filter((b) => b.type === 'text').map((b) => b.text))
+      .toEqual(['제목줄', '본문줄']);
+  });
+
+  it('XSS end-to-end: 셀에 스크립트 태그를 입력해도 문자 그대로 렌더되고 script는 실행되지 않는다', async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삽입'));
+    const dialog = await screen.findByTestId('table-dialog');
+    await userEvent.type(within(dialog).getByTestId('table-dialog-cell-0-0'), '<script>alert(1)</script>');
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+
+    await waitFor(() => expect(tableFigure(container)).toBeTruthy());
+    expect(document.querySelector('script')).toBeNull(); // 스크립트 노드 미주입(step1 JSX 이스케이프)
+    expect(container.querySelector('figure[data-embed-type="table"] td').textContent).toBe('<script>alert(1)</script>');
+  });
+
+  it('편집 다이얼로그가 열린 사이 대상 표가 삭제되면 적용은 본문을 바꾸지 않는다(stale blockIndex 방어)', async () => {
+    const { container } = await openWith([textBlock('제목'), tableEmbed([['a']]), textBlock('본문')]);
+
+    // 본문 표 더블클릭으로 편집 다이얼로그를 연다 — blockIndex=1이 캡처된다.
+    fireEvent.doubleClick(container.querySelector('figure[data-embed-type="table"] td'));
+    const dialog = await screen.findByTestId('table-dialog');
+
+    // 다이얼로그가 열린 사이 메뉴로 그 표를 삭제한다 — 캡처된 blockIndex=1은 이제 텍스트 블록('본문')을 가리킨다.
+    await openTopMenu('표');
+    await userEvent.click(tableMenuItem('표 삭제'));
+    await waitFor(() => expect(tableFigure(container)).toBeNull());
+
+    // 적용 — onTableSubmit의 isTableEmbed 방어로 교체 없이 닫히기만 해야 한다.
+    // 방어가 없으면 next[1] = 표 임베드가 텍스트 블록('본문')을 덮어써 본문이 파괴된다.
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+    expect(tableFigure(container)).toBeNull(); // 삭제된 표가 되살아나지 않는다
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 블록 불변
+  });
+
+  // 리뷰 게이트(phase 31 ⑤): tableDialog의 blockIndex/rows는 문서(탭)-로컬 좌표 — 다이얼로그는 비모달이라
+  // 열린 채 탭 전환이 가능하고, 이월되면 '적용'이 다른 기사의 blocks[N]을 덮어쓴다(phase 29/30 spellIssues와 동일 계열).
+  it('탭을 전환하면 표 다이얼로그가 닫힌다(문서-로컬 blockIndex 이월 금지)', async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), tableEmbed([['a']]), textBlock('본문')], { title: '표기사' },
+    );
+    fireEvent.doubleClick(container.querySelector('figure[data-embed-type="table"] td'));
+    expect(await screen.findByTestId('table-dialog')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
+
+    // 원래 탭으로 복귀해도 재표시되지 않는다(더블클릭 재진입 필요).
+    await userEvent.click(screen.getByRole('button', { name: '표기사' }));
+    expect(screen.queryByTestId('table-dialog')).toBeNull();
   });
 });
