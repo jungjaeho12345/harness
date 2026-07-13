@@ -15,7 +15,7 @@
       "name": "backend-category",
       "status": "completed",
       "started_at": "2026-07-14T00:58:57+0900",
-      "completed_at": "2026-07-14T01:20:00+0900",
+      "completed_at": "2026-07-14T01:03:05+0900",
       "summary": "내용(분류) 서버 영속 키 category를 백엔드 4면에 비파괴 additive 추가 — schema.SCHEMA.Contents ['category','VARCHAR'](멱등 ALTER 마이그레이션, 기존 행 보존·NULL), articleModel.CONTENTS_COLS·articleService.CONTENTS_FIELDS 화이트리스트(present-only 유지), deriveArticle 복사 pick(후속/계속 승계). 컨트롤러/라우트·web/ 무접촉. 테스트: schema 옛DB 마이그레이션 보존 + create/update 라운드트립·미전달 보존 + 파생 승계 단언 추가(백엔드 407 전부·build·lint 그린)"
     },
     {
