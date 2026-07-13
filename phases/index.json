@@ -177,6 +177,10 @@
       "status": "completed",
       "completed_at": "2026-07-11T16:56:38+0900",
       "note": "표 임베드 결선 — '표' 메뉴 10종(삽입/삭제/복사/잘라내기/행·열 추가·삭제) + 본문 표 더블클릭 편집. step0 tableModel 순수 모델(makeTableEmbed 팩토리 정규화 단일 출처·findTargetTableIndex 캐럿 인접 -1 계약)→step1 에디터(InlineEmbed)/상세(articleDetail) 동형 읽기전용 렌더(JSX 자동 이스케이프+전 셀 escapeHtml — 셀 XSS 차단)→step2 TableEditDialog(삽입/편집 겸용 그리드, ADR-003 순수)→step3 WriterPage 결선(캐럿 인접 대상·행/열 결정적 엣지·TSV 시스템 클립보드·매핑 parity 가드 앞·본문 반영 commitBody 단일 경로). 🔎 게이트: ④ pass(+stale blockIndex 가드 테스트 보강) · ⑤ MAJOR 1건 — 비모달 표 편집 다이얼로그가 문서-로컬 blockIndex/rows를 든 채 탭 전환에서 안 닫혀 '적용'이 다른 탭 같은 인덱스 표를 덮어씀(phase 29 lastCaretRef·30 spellIssues와 동일한 문서-로컬 좌표 이월 계열) → fix 5d7f63f 탭 전환 렌더-조정 블록 setTableDialog(null)+회귀 2건(TDD red→green), 재리뷰 approve. 백로그(비차단): urlEmbedKind 탭 전환 미초기화(기존 잠복·삽입 전용이라 오손 아님), tableModel deleteRow/Col 최소크기 no-op 시 비정규화 원본 반환(호출부 전부 정규화 입력·무해). test:web 1337·server 406·build·lint green."
+    },
+    {
+      "dir": "32-meta-popups",
+      "status": "pending"
     }
   ]
 }

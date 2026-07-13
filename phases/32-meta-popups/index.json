@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "32-meta-popups",
+  "steps": [
+    { "step": 0, "name": "meta-taxonomy", "status": "pending" },
+    { "step": 1, "name": "backend-category", "status": "pending" },
+    { "step": 2, "name": "meta-dialog", "status": "pending" },
+    { "step": 3, "name": "commoninfo-wiring", "status": "pending" },
+    { "step": 4, "name": "detail-category", "status": "pending" }
+  ]
+}
