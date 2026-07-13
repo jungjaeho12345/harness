@@ -1,0 +1,8 @@
+{
+  "project": "기사 작성기",
+  "phase": "33-editor-linespacing-effect",
+  "steps": [
+    { "step": 0, "name": "linespacing-store", "status": "pending" },
+    { "step": 1, "name": "linespacing-effect", "status": "pending" }
+  ]
+}
