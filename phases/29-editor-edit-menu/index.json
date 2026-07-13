@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "29-editor-edit-menu",
+  "steps": [
+    { "step": 0, "name": "edit-range-helpers", "status": "pending" },
+    { "step": 1, "name": "selection-appliers", "status": "pending" },
+    { "step": 2, "name": "selection-wire", "status": "pending" },
+    { "step": 3, "name": "edit-ops-pure", "status": "pending" },
+    { "step": 4, "name": "edit-ops-wire", "status": "pending" }
+  ]
+}

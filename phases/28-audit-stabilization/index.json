@@ -1,0 +1,56 @@
+{
+  "project": "기사 작성기",
+  "phase": "28-audit-stabilization",
+  "steps": [
+    {
+      "step": 0,
+      "name": "server-fileref-href-guard",
+      "status": "completed",
+      "started_at": "2026-07-10T10:40:28+0900",
+      "summary": "articleService에 sanitizeFileRef(순수 헬퍼) 추가 — create/update 저장 시점에 attachmentFile/referenceFile을 /uploads 상대경로·https://만 허용(거부 기반: 제어문자·백슬래시·//·타 스킴·.. traversal → ''), present 필드만 검증해 미전달 필드 불변(DB 비파괴). 테스트 7건 추가, 406개 전체 통과·lint 클린",
+      "completed_at": "2026-07-10T10:46:07+0900"
+    },
+    {
+      "step": 1,
+      "name": "title-derivation-central",
+      "status": "completed",
+      "started_at": "2026-07-10T10:46:10+0900",
+      "summary": "WriterPage에 본문변경 단일 choke point(commitBody) 도입 — body 갱신 시 writerBody.bodyTitle(단일 출처)로 title을 항상 재동기화, updateField('body') 14개 지점 전수 교체(타이핑/바꾸기/대소문자/줄삭제/마커·약물·날짜/약어·간체번체/임베드). 매핑은 컨트롤러가 title 거부(본문-only 불변). 테스트 5건 추가(모두바꾸기·대문자·Ctrl+D·타이핑 회귀·매핑 무해성), web 1118개 전체 통과·빌드·lint 클린",
+      "completed_at": "2026-07-10T10:56:11+0900"
+    },
+    {
+      "step": 2,
+      "name": "ime-composition-guard",
+      "status": "completed",
+      "started_at": "2026-07-10T14:15:32+0900",
+      "summary": "WriterPage onKeyDown 최상단에 IME 조합 가드 추가 — nativeEvent.isComposing(레거시 keyCode 229) 참이면 줄삭제/preventDefault 없이 early return하여 조합 파괴 방지(news.md 173행 무개입 원칙). 조합 아닐 때 기존 단축키 동작 100% 보존. 테스트 4건(조합 중 Ctrl+D/Backspace 무개입 + 비조합 회귀 2건, 이전 시도에서 선커밋)으로 검증, web 1122개 전체 통과·빌드·lint 클린",
+      "completed_at": "2026-07-10T14:20:32+0900"
+    },
+    {
+      "step": 3,
+      "name": "date-insert-kst",
+      "status": "completed",
+      "started_at": "2026-07-10T14:20:33+0900",
+      "summary": "listFormat에 kstIsoString(epochMs) 순수·결정적 헬퍼 추가(KST_OFFSET_MS=+9h 고정, 내부 시각 읽기 없음) — WriterPage.insertDate 1줄 배선을 applyDateFormat(kstIsoString(Date.now()), fmt)로 교체해 날짜 삽입을 UTC→KST 벽시계로 교정. applyDateFormat/목록 표시(formatCell·formatDateTime)·editorDate.js 불변, 헬퍼 테스트 5건 추가 + UTC 기대값 WriterPage 테스트 2건 KST로 갱신, web 1127개 전체 통과·빌드·lint 클린",
+      "completed_at": "2026-07-10T14:29:21+0900"
+    },
+    {
+      "step": 4,
+      "name": "image-embed-empty-src",
+      "status": "completed",
+      "started_at": "2026-07-10T14:29:22+0900",
+      "summary": "makeImageEmbed에 형제 팩토리(audio/link/localVideo)와 동형의 trim+null 가드 추가 — 빈/공백/null/undefined src면 임베드 미생성(null 반환, insertEmbed no-op 흡수)으로 깨진 이미지 임베드 블록의 markupVersion 영속을 원천 차단. 정상 src는 trim 후 보존·크기 필드(EMBED_SIZE 17%/17%/612px) 불변, 호출부(WriterPage) 무수정. 테스트 2건 추가(빈값 4형 null + 정상 src·trim 회귀), web 1129개 전체 통과·빌드·lint 클린",
+      "completed_at": "2026-07-10T14:33:46+0900"
+    },
+    {
+      "step": 5,
+      "name": "editor-prefs-autosave-validation",
+      "status": "completed",
+      "started_at": "2026-07-10T14:33:47+0900",
+      "summary": "loadEditorPrefs에 normalizeAutosave(순수 헬퍼) 추가 — autosave 병합 결과를 안전 범위로 정규화(enabled는 ===true 강제 boolean, intervalSec/retentionDays는 유한 양수만 채택·아니면 기본값 60/1 폴백)해 손상 localStorage(0·음수·NaN·문자열)로 인한 WriterPage setInterval 타이트 루프/즉시 만료를 단일 출처에서 차단. 정상값 보존·타 카테고리(colors/edit/spellcheck 등) 병합 불변·저장 데이터 미수정(읽기 시 정규화만)·소비자(WriterPage) 무수정. 테스트 7건 추가(0/음수/비수치/비불리언 폴백 + 정상값 보존 + 기본값·dateFormat 회귀 가드), web 1136개 전체 통과·빌드·lint 클린",
+      "completed_at": "2026-07-10T14:39:14+0900"
+    }
+  ],
+  "created_at": "2026-07-10T10:40:28+0900",
+  "completed_at": "2026-07-10T14:39:14+0900"
+}

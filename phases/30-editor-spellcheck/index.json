@@ -1,0 +1,9 @@
+{
+  "project": "기사 작성기",
+  "phase": "30-editor-spellcheck",
+  "steps": [
+    { "step": 0, "name": "spell-engine-pure", "status": "pending" },
+    { "step": 1, "name": "spell-result-dialog", "status": "pending" },
+    { "step": 2, "name": "spell-wiring", "status": "pending" }
+  ]
+}

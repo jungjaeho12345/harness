@@ -489,6 +489,58 @@ describe('WriterPage — 라인 삭제(Ctrl+D/Backspace) + 임베드 동반 삭�
 
     expect(spy).toHaveBeenCalled(); // 삭제는 못 해도 북마크 기본동작은 막는다
   });
+
+  // IME 조합 가드 — 조합 중(isComposing)에는 커스텀 줄삭제를 실행하지 않는다(조합 파괴 방지 — news.md 173행 무개입 원칙).
+  it('IME 조합 중 Ctrl+D는 개입하지 않는다(줄 삭제·preventDefault 없음)', async () => {
+    const { container } = await openWith([
+      textBlock('헤드'), textBlock('둘째'), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // "둘째" 라인
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'd', ctrlKey: true, isComposing: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled(); // IME/브라우저 기본 동작 보존
+    expect(editorLines(container)).toEqual(['헤드', '둘째', '다음']); // 줄이 삭제되지 않음
+  });
+
+  it('IME 조합 중 빈 줄 Backspace는 개입하지 않는다(줄·임베드 보존)', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock(''), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // 빈 줄
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Backspace', isComposing: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy(); // 임베드 보존
+    expect(editorLines(container)).toEqual(['제목', '', '다음']); // 빈 줄 그대로
+  });
+
+  // 회귀 가드 — 조합이 아닐 때(isComposing:false)의 줄 삭제는 기존과 동일하게 동작한다.
+  it('조합이 아닐 때(isComposing:false) Ctrl+D 줄 삭제는 기존대로 동작한다', async () => {
+    const { container } = await openWith([
+      textBlock('헤드'), textBlock('둘째'), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true, isComposing: false });
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '다음']));
+  });
+
+  it('조합이 아닐 때(isComposing:false) 빈 줄 Backspace 줄 삭제는 기존대로 동작한다', async () => {
+    const { container } = await openWith([
+      textBlock('제목'), textBlock(''), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('다음'),
+    ]);
+    caretAtLine(container, 1); // 빈 줄
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'Backspace', isComposing: false });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeNull());
+    expect(editorLines(container)).toEqual(['제목', '다음']);
+  });
 });
 
 // Ctrl+V 이미지 붙여넣기 — Editor가 raw File을 위임하면 WriterPage가 model.uploadFile로 서버 업로드하고
@@ -2636,8 +2688,8 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
 });
 
 // Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
-// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
-// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). new Date는 WriterPage에만.
+// 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 KST 벽시계(kstIsoString)로 바꿔 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
+// 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). Date.now는 WriterPage에만.
 // 시각은 vi.useFakeTimers + setSystemTime으로 고정하고, dateFormat은 saveEditorPrefs로 주입한다(localStorage.clear 격리).
 describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
   beforeEach(() => {
@@ -2732,8 +2784,8 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
 
     await userEvent.click(actionBtn('보류'));
     await waitFor(() => expect(save).toHaveBeenCalled());
-    // 고정 시각 2026-06-24T01:23:00Z → 'YYYY-MM-DD HH:mm' = '2026-06-24 01:23'(UTC, applyDateFormat).
-    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+    // 고정 시각 2026-06-24T01:23:00Z → KST 벽시계(+9h) 'YYYY-MM-DD HH:mm' = '2026-06-24 10:23'(kstIsoString).
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 10:23본문');
   });
 
   it('dateFormat prefs가 없으면 기본 형식(YYYY-MM-DD HH:mm)으로 삽입된다(loadEditorPrefs 기본값 폴백)', async () => {
@@ -2747,8 +2799,8 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
 
     await userEvent.click(actionBtn('보류'));
     await waitFor(() => expect(save).toHaveBeenCalled());
-    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각이 그 형식으로 삽입.
-    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 01:23본문');
+    // 기본 dateFormat = 'YYYY-MM-DD HH:mm' → 고정 시각의 KST 벽시계(01:23Z → 10:23 KST)가 그 형식으로 삽입.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('헤드\n2026-06-24 10:23본문');
   });
 
   it('캐럿이 없을 때 클릭하면 "(끝)"이 아닌 마지막 텍스트 줄 끝에 삽입되고 크래시하지 않는다', async () => {
@@ -3918,5 +3970,140 @@ describe("WriterPage — Alt+V/우클릭 '원본 붙여넣기'(클립보드 이�
     fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
     const ctx = await screen.findByTestId('editor-context-menu');
     expect(within(ctx).getByText('원본 붙여넣기').closest('button')).toBeDisabled();
+  });
+});
+
+// Step 1(28-audit-stabilization): 제목 파생 중앙화(commitBody) — 본문을 바꾸는 모든 경로가 제목(본문 첫 줄)을
+// 재동기화한다. 타이핑(onTextChange) 외 경로(모두 바꾸기/대소문자 변환/줄삭제 등)가 body만 갱신해 저장 시
+// DB로 나가는 dto.title이 옛 값(stale)으로 남던 결함의 회귀 테스트 — 저장(PUT) dto의 title로 직접 관찰한다.
+describe('WriterPage — 제목 파생 중앙화(모든 본문변경 경로의 title 재동기화)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 마지막 캐럿(lastCaretRef)을 lineIndex 줄로 갱신(keyUp→onCaretChange — 대소문자 변환 메뉴 클릭 전 상태 모사).
+  function focusCaretAtLine(container, lineIndex) {
+    caretAtLine(container, lineIndex);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  // fields.title(=옛 제목)과 본문 첫 줄이 일치한 상태로 편집 진입한다 — 경로 실행 후 저장 dto.title이
+  // "바뀐 첫 줄"인지 단언한다(제목 재동기화가 누락되면 옛 제목이 그대로 서버로 나간다).
+  async function openWith(blocks, title) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title, status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', title, status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 보류(hold)로 서버에 실리는 dto를 관찰한다 — 보류는 "(끝)" 불필요·제목 가드만 지나고,
+  // submit이 저장(PUT saveArticle)에 탭 필드(title 포함)를 싣는다(toSaveDto).
+  async function holdAndGetDto(model) {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const save = vi.spyOn(model, 'saveArticle');
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    return save.mock.calls[save.mock.calls.length - 1][0];
+  }
+
+  it('모두 바꾸기로 첫 줄이 바뀌면 저장 dto의 title이 새 첫 줄로 나간다(제목 stale 방지)', async () => {
+    const { container, model } = await openWith(
+      [textBlock('한국 소식'), textBlock('본문 한국')], '한국 소식',
+    );
+
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument());
+    await userEvent.type(screen.getByTestId('find-query'), '한국');
+    await userEvent.type(screen.getByTestId('find-replacement'), '대한민국');
+    await userEvent.click(screen.getByTestId('find-replace-all'));
+    await waitFor(() => expect(editorLines(container)[0]).toBe('대한민국 소식'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('대한민국 소식');
+  });
+
+  it('보기>대문자로 바꾸기로 첫 줄이 바뀌면 저장 dto의 title이 변환된 첫 줄로 나간다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('title abc'), textBlock('본문')], 'title abc',
+    );
+    focusCaretAtLine(container, 0);
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('대문자로 바꾸기'));
+    await waitFor(() => expect(editorLines(container)[0]).toBe('TITLE ABC'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('TITLE ABC');
+  });
+
+  it('Ctrl+D로 첫 줄을 지우면 저장 dto의 title이 새 첫 줄로 동기화된다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('옛첫줄'), textBlock('새첫줄'), textBlock('본문')], '옛첫줄',
+    );
+    caretAtLine(container, 0);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+    await waitFor(() => expect(editorLines(container)[0]).toBe('새첫줄'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('새첫줄');
+  });
+
+  it('타이핑(onTextChange) 경로의 title 동기화는 회귀 없이 유지된다', async () => {
+    const { container, model } = await openWith(
+      [textBlock('옛첫줄'), textBlock('본문')], '옛첫줄',
+    );
+    const box = container.querySelector('.yh-editor');
+    box.querySelector('.yh-editor__line').textContent = '새제목줄';
+    fireEvent.input(box);
+    await waitFor(() => expect(editorLines(container)[0]).toBe('새제목줄'));
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.title).toBe('새제목줄');
+  });
+
+  // 매핑 무해성 — 임베드 삽입도 같은 choke point(commitBody)를 지나지만, 매핑에서는 컨트롤러 updateField가
+  // title을 거부(no-op)하므로 오류 없이 동작하고 원제목이 유지된다(본문-only 불변식).
+  it('매핑 모드: 임베드 삽입이 오류 없이 동작하고 title은 갱신되지 않는다(원제목 유지)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const body = serialize([textBlock('본문첫줄'), textBlock('본문')]);
+    const utils = setup({
+      identity: { role: 'D' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '원제목', status: 'DPS' }, mode: 'mapping' },
+      seed: {
+        articles: [{ articleId: 'AKR9', title: '원제목', status: 'DPS', lockYN: 'Y', markupVersion: body }],
+        mediaItems: [{ type: 'image', src: 'pic.png', title: '사진' }],
+      },
+    });
+    await waitFor(() => expect(actionBtn('저장')).toBeInTheDocument());
+    const { container, model } = utils;
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), '사진');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    await userEvent.click((await screen.findByRole('img', { name: '사진' })).closest('button'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.title).toBe('원제목'); // 매핑은 title 갱신이 컨트롤러에서 거부됨 — 원제목 그대로.
   });
 });

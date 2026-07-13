@@ -73,10 +73,13 @@ export function isAllowedHref(href) {
 }
 
 // 이미지 임베드(붙여넣기 데이터 URL 또는 검색 결과 URL).
+// 트림 후 빈 src면 null(insertEmbed no-op) — 형제 팩토리(audio/link/localVideo)와 동일 가드.
 export function makeImageEmbed(src, { alt = '' } = {}) {
+  const value = String(src ?? '').trim();
+  if (!value) return null;
   return embedBlock({
     embedType: 'image',
-    src: String(src ?? ''),
+    src: value,
     alt,
     widthPercent: EMBED_SIZE.widthPercent,
     heightPercent: EMBED_SIZE.heightPercent,

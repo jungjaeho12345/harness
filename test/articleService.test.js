@@ -248,3 +248,83 @@ test('applyAction: 존재하지 않는 기사는 not-found', () => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'not-found');
 });
+
+// ── 파일참조 가드 — 첨부/자료 파일은 /uploads 상대경로 또는 https:// 만 저장 (서버 심화 방어, ADR-004) ──
+
+test('create: 위험 스킴 파일참조는 빈 문자열로 무력화해 저장한다', () => {
+  const { service, articleModel } = setup();
+  const r = service.create({
+    title: 't', author: 'kim',
+    attachmentFile: 'javascript:alert(1)', referenceFile: 'javascript:alert(1)',
+  });
+  const c = articleModel.getById(r.articleId).contents;
+  assert.equal(c.attachmentFile, '');
+  assert.equal(c.referenceFile, '');
+});
+
+test('update: 위험 스킴 파일참조는 빈 문자열로 무력화해 저장한다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: 't', author: 'kim' });
+  service.update(articleId, { attachmentFile: 'javascript:alert(1)' });
+  assert.equal(articleModel.getById(articleId).contents.attachmentFile, '');
+});
+
+test('create/update: /uploads 상대경로 파일참조는 그대로 저장한다', () => {
+  const { service, articleModel } = setup();
+  const r = service.create({
+    title: 't', author: 'kim',
+    attachmentFile: '/uploads/stored-a.pdf', referenceFile: '/uploads/stored-r.docx',
+  });
+  let c = articleModel.getById(r.articleId).contents;
+  assert.equal(c.attachmentFile, '/uploads/stored-a.pdf');
+  assert.equal(c.referenceFile, '/uploads/stored-r.docx');
+
+  service.update(r.articleId, { attachmentFile: '/uploads/updated-a.pdf', referenceFile: '/uploads/updated-r.docx' });
+  c = articleModel.getById(r.articleId).contents;
+  assert.equal(c.attachmentFile, '/uploads/updated-a.pdf');
+  assert.equal(c.referenceFile, '/uploads/updated-r.docx');
+});
+
+test('create: https:// 파일참조는 그대로 저장한다', () => {
+  const { service, articleModel } = setup();
+  const r = service.create({ title: 't', author: 'kim', attachmentFile: 'https://example.com/x.pdf' });
+  assert.equal(articleModel.getById(r.articleId).contents.attachmentFile, 'https://example.com/x.pdf');
+});
+
+test('create/update: 우회 벡터 파일참조는 모두 빈 문자열로 저장한다', () => {
+  const { service, articleModel } = setup();
+  const vectors = [
+    'http://evil/x',              // http 스킴
+    '//evil/x',                   // 프로토콜상대
+    '/\\evil',                    // 백슬래시(브라우저가 /로 정규화)
+    ' javascript:alert(1)',       // 선행 공백 은닉
+    'java\tscript:alert(1)',      // 제어문자 은닉
+    '/uploads/../etc/passwd',     // 경로 traversal
+  ];
+  for (const v of vectors) {
+    const r = service.create({ title: 't', author: 'kim', attachmentFile: v, referenceFile: v });
+    const c = articleModel.getById(r.articleId).contents;
+    assert.equal(c.attachmentFile, '', `create 거부: ${JSON.stringify(v)}`);
+    assert.equal(c.referenceFile, '', `create 거부: ${JSON.stringify(v)}`);
+
+    const u = service.create({ title: 't', author: 'kim', attachmentFile: '/uploads/ok.pdf' });
+    service.update(u.articleId, { attachmentFile: v });
+    assert.equal(articleModel.getById(u.articleId).contents.attachmentFile, '', `update 거부: ${JSON.stringify(v)}`);
+  }
+});
+
+test('update: 빈 문자열 파일참조(첨부 제거)는 그대로 통과한다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: 't', author: 'kim', attachmentFile: '/uploads/a.pdf' });
+  service.update(articleId, { attachmentFile: '' });
+  assert.equal(articleModel.getById(articleId).contents.attachmentFile, '');
+});
+
+test('update: 파일참조 미전달이면 기존 값을 보존한다 (DB 비파괴)', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: 't', author: 'kim', attachmentFile: '/uploads/a.pdf' });
+  service.update(articleId, { region: '부산' });
+  const c = articleModel.getById(articleId).contents;
+  assert.equal(c.attachmentFile, '/uploads/a.pdf', '미전달 파일 필드는 건드리지 않는다');
+  assert.equal(c.region, '부산');
+});

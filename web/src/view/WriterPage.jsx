@@ -46,7 +46,7 @@ import {
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
 import { insertDateAtCaret } from './editorDate.js';
-import { applyDateFormat } from './listFormat.js';
+import { applyDateFormat, kstIsoString } from './listFormat.js';
 import {
   makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
   makeAudioEmbed, makeLinkEmbed, makeLocalVideoEmbed, isAllowedHref,
@@ -236,18 +236,26 @@ export function WriterPage() {
     return () => clearInterval(id); // 설정 변경/unmount 시 타이머 정리(누수 없음).
   }, [autosaveCfg]);
 
-  // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화 + 제목(첫 줄) 동기화.
+  // 본문 변경 단일 경로(choke point) — body를 갱신하고 제목(본문 첫 줄)을 항상 재동기화한다.
+  // 타이핑 외 경로(약어변환/간체번체/바꾸기/대소문자/줄삭제/마커·약물·날짜 삽입/임베드)가 body만 갱신해
+  // 저장 시 옛 제목이 DB에 남던(제목 stale) 결함 방지 — 모든 본문변경 핸들러가 updateField('body', ...)
+  // 대신 이 함수를 지난다(phase 29 편집 메뉴도 재사용). 제목 파생은 writerBody.bodyTitle 단일 출처만 쓴다.
+  // 매핑 모드에서는 컨트롤러 updateField가 title을 거부(no-op)하므로 본문-only 불변식을 깨지 않는다.
+  const commitBody = (nextBody) => {
+    updateField('body', nextBody);
+    updateField('title', bodyTitle(nextBody));
+  };
+
+  // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화해 커밋(제목 동기화는 commitBody).
   // 임베드는 "(끝)"만 최종 블록으로 보낼 뿐 위치를 옮기지 않는다(news.md 156·167행 — 커서 위치/블록 순서 보존).
   const onTextChange = (text, editedBlocks) => {
-    const next = serializeBodyFromBlocks(editedBlocks);
-    updateField('body', next);
-    updateField('title', (String(text ?? '').split('\n')[0] ?? '').trim());
+    commitBody(serializeBodyFromBlocks(editedBlocks));
   };
 
   // (끝)삽입 — 키보드 Alt+Y와 메뉴 'edit.insertEnd'의 공용 핸들러(단일 소스). "(끝)" 최종 블록 삽입 + 맞춤법 on(중복이면 무삽입).
   const insertEnd = () => {
     const r = insertEndMarker(blocks);
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     setSpell(true); // Editor가 spellcheck 상태 변화로 재렌더되어 색칠(메뉴 경로에서도 동일 부수효과).
   };
 
@@ -255,7 +263,7 @@ export function WriterPage() {
   const insertContinue = () => {
     const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
     const r = insertContinueMarker(blocks, caretLine);
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
@@ -264,20 +272,20 @@ export function WriterPage() {
     if (isMapping) return;                       // 매핑 모드(텍스트 잠금)에서는 본문 변경 금지 — no-op(약물바 숨김과 이중 방어).
     const caret = lastCaretRef.current;          // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
     const r = insertGlyphAtCaret(blocks, caret, glyph);
-    updateField('body', serialize(r.blocks));    // contentEditable 직접 조작 금지 — 직렬화 안전 경로만.
+    commitBody(serialize(r.blocks));             // contentEditable 직접 조작 금지 — 직렬화 안전 경로만.
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
-  // 도구>날짜 삽입 — 현재 시각(비결정)을 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
-  // 비결정성(new Date)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
-  // 약물입력(onGlyphPick)과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
+  // 도구>날짜 삽입 — 현재 시각(비결정)을 KST 벽시계로 바꿔 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치에 텍스트로 삽입.
+  // 비결정성(Date.now)·포맷팅(applyDateFormat)은 여기서만 — 순수 헬퍼(insertDateAtCaret)는 완성된 문자열만 받는다.
+  // 약물입력(onGlyphPick)과 동일 안전 경로(commitBody(serialize(...)) + setPendingCaretLine). DOM 직접 조작 금지.
   const insertDate = () => {
     if (isMapping) return;                                   // 매핑(텍스트 잠금) no-op — 본문-only 불변식.
     const fmt = loadEditorPrefs().dateFormat;                // 읽기 전용(저장/변경 안 함).
-    const dateString = applyDateFormat(new Date().toISOString(), fmt);
+    const dateString = applyDateFormat(kstIsoString(Date.now()), fmt);
     const caret = lastCaretRef.current;                      // {lineIndex, offset} 또는 null(캐럿 없으면 헬퍼가 줄 끝 폴백).
     const r = insertDateAtCaret(blocks, caret, dateString);
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
@@ -294,22 +302,22 @@ export function WriterPage() {
   };
 
   // 도구>약어변환 — 등록 약어(abbrevs 세션 state)를 본문 텍스트 블록에서 확장(임베드·"(끝)" 불변). 매핑 가드 뒤에서만 호출.
-  // 안전 경로(updateField('body', serialize(...)))만 쓴다 — DOM/Editor 직접 조작 금지(날짜삽입/대소문자변환과 동일).
+  // 안전 경로(commitBody(serialize(...)))만 쓴다 — DOM/Editor 직접 조작 금지(날짜삽입/대소문자변환과 동일).
   // 전체 본문 transform이라 setPendingCaretLine은 호출하지 않는다(오프셋 대량 변동 — 부정확 캐럿 이동보다 포커스 유지가 안전).
   const convertAbbrev = () => {
     const r = expandAbbrevInBlocks(blocks, abbrevs);
     if (!r.changed) return;                                   // 등록 약어 없음/매치 없음 → no-op(불필요한 dirty 방지).
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
   };
 
   // 도구>간체↔번체 변환 — 방향 다이얼로그 버튼(간체→번체/번체→간체)이 호출. 등록 표(SIMP_TRAD_PAIRS)로 본문
-  // 텍스트 블록을 방향대로 변환(임베드·"(끝)" 불변) → updateField('body', serialize(...)) 안전 경로만(약어변환과 동일).
+  // 텍스트 블록을 방향대로 변환(임베드·"(끝)" 불변) → commitBody(serialize(...)) 안전 경로만(약어변환과 동일).
   // 매핑 가드 뒤에서만 도달하지만 다이얼로그가 열린 채 탭 전환에 대비해 isMapping 이중 방어. changed일 때만 반영(no-op 시
   // dirty 방지) 후 1회성으로 닫는다. 전체 본문 transform이라 setPendingCaretLine은 호출하지 않는다(약어변환과 동일 정책).
   const applySimpTrad = (direction) => {
     if (isMapping) return;
     const r = convertSimpTradInBlocks(blocks, direction);
-    if (r.changed) updateField('body', serialize(r.blocks));
+    if (r.changed) commitBody(serialize(r.blocks));
     setShowSimpTrad(false);
   };
 
@@ -396,7 +404,7 @@ export function WriterPage() {
     const fromOffset = cur ? cur.start : (lastCaretRef.current ? lastCaretRef.current.offset : 0);
     const r = replaceOne(blocks, findQuery, replacement, { caseSensitive: findCase, fromOffset });
     if (!r.replaced) return; // 매치 없음 no-op
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     if (typeof r.caretOffset === 'number') focusMatchLine(r.caretOffset);
     setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 인덱스 무효 → 리셋(다음 찾기는 캐럿/0부터).
   };
@@ -406,7 +414,7 @@ export function WriterPage() {
     if (isMapping || !findQuery) return;
     const r = replaceAll(blocks, findQuery, replacement, { caseSensitive: findCase });
     if (r.count <= 0) return; // 매치 없음 no-op
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 무효.
   };
 
@@ -465,7 +473,7 @@ export function WriterPage() {
     const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
     if (caretLine == null) return;
     const r = transformTextLine(blocks, caretLine, fn);
-    updateField('body', serialize(r.blocks));
+    commitBody(serialize(r.blocks));
     setPendingCaretLine(caretLine); // 같은 줄 유지(메뉴 클릭으로 빠진 포커스를 그 줄로 되돌림).
   };
 
@@ -540,6 +548,9 @@ export function WriterPage() {
   // Alt+Y → "(끝)" 삽입(insertEnd). Ctrl+Y → "(계속)" 삽입(insertContinue, 브라우저 redo 가로채기).
   // Ctrl+D / 빈 줄 Backspace·Delete → 활성 라인(+동반 임베드 1개) 삭제. 문자 삭제(비어 있지 않은 줄)는 기본 동작 유지.
   const onKeyDown = (e) => {
+    // IME 조합 중에는 어떤 에디터 단축키도 가로채지 않는다(줄삭제/preventDefault 없이 브라우저·IME에 위임 —
+    // news.md 173행 조합 중 무개입 원칙. 조합 상태는 nativeEvent.isComposing(레거시 keyCode 229)로 판정).
+    if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
     // Ctrl+F → 찾기/바꾸기 다이얼로그(브라우저 기본 찾기 가로채기). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
     // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
     if (isFindReplace(e)) {
@@ -586,14 +597,14 @@ export function WriterPage() {
     const blockIndex = textLineToBlockIndex(blocks, textLineIndex);
     if (blockIndex < 0) return;
     if (!ctrlD) e.preventDefault(); // Backspace/Delete는 실제 라인 삭제가 확정될 때만 기본동작을 막는다.
-    updateField('body', serialize(deleteLineAt(blocks, blockIndex).blocks));
+    commitBody(serialize(deleteLineAt(blocks, blockIndex).blocks));
   };
 
   const onRemoveEmbed = (blockIndex) => {
     if (blockIndex < 0 || blockIndex >= blocks.length) return;
     const next = blocks.slice();
     next.splice(blockIndex, 1);
-    updateField('body', serialize(next));
+    commitBody(serialize(next));
   };
 
   // 임베드를 커서 텍스트 줄 "다음"에 삽입하고, 그 뒤 빈 줄을 만들어 커서를 그 줄로 옮긴다(news.md 156행 — 커서 위치 임베딩).
@@ -603,11 +614,11 @@ export function WriterPage() {
   const insertEmbedAtLine = (embed, caretLine, srcBody = body, mapping = isMapping) => {
     if (!embed) return;
     if (mapping || caretLine == null) {
-      updateField('body', appendEmbedToBody(srcBody, embed));
+      commitBody(appendEmbedToBody(srcBody, embed));
       return;
     }
     const r = insertEmbedAfterLine(srcBody, embed, caretLine);
-    updateField('body', r.body);
+    commitBody(r.body);
     if (typeof r.caretTextLine === 'number') setPendingCaretLine(r.caretTextLine);
   };
 
@@ -927,7 +938,7 @@ export function WriterPage() {
       />
 
       {/* 간체↔번체 변환(도구>간체↔번체 변환) — 방향 선택 다이얼로그. 버튼 클릭 시 applySimpTrad(direction)이
-          convertSimpTradInBlocks + updateField('body', serialize(...)) 안전 경로로 본문을 변환하고 닫는다.
+          convertSimpTradInBlocks + commitBody(serialize(...)) 안전 경로로 본문을 변환하고 닫는다.
           본문 변경이므로 매핑 가드 뒤 결선(매핑에선 메뉴가 다이얼로그를 열지 않음 — 약어변환과 동일 정책). */}
       <SimpTradConvertDialog
         open={showSimpTrad}

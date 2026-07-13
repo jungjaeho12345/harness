@@ -6,6 +6,8 @@ import {
   setDateFormat,
   DATE_FORMATS,
   DEFAULT_DATE_FORMAT,
+  KST_OFFSET_MS,
+  kstIsoString,
 } from './listFormat.js';
 
 // module-level currentFormat 누수 방지 — 각 테스트 후 기본 형식으로 격리.
@@ -75,6 +77,32 @@ describe('setDateFormat — 화이트리스트 적용 + formatDateTime 반영', 
     expect(formatDateTime('2026-06-21T09:05Z')).toBe('2026-06-21 09:05');
     setDateFormat(null);
     expect(formatDateTime('2026-06-21T09:05Z')).toBe('2026-06-21 09:05');
+  });
+});
+
+describe('kstIsoString — epoch ms → KST 벽시계 ISO 문자열(순수·결정적)', () => {
+  it('KST_OFFSET_MS는 +9시간 고정(DST 없음)', () => {
+    expect(KST_OFFSET_MS).toBe(9 * 60 * 60 * 1000);
+  });
+  it('UTC 자정 입력 → KST 벽시계 09:00 (+9h)', () => {
+    const ms = Date.parse('2026-07-10T00:00:00Z');
+    expect(kstIsoString(ms)).toBe('2026-07-10T09:00:00.000Z');
+  });
+  it('UTC 20:00 입력 → KST 날짜가 다음 날 05:00으로 넘어간다', () => {
+    const ms = Date.parse('2026-07-09T20:00:00Z');
+    expect(kstIsoString(ms)).toBe('2026-07-10T05:00:00.000Z');
+  });
+  it('같은 epochMs면 항상 같은 출력(결정적)', () => {
+    const ms = Date.parse('2026-07-10T06:30:00Z');
+    expect(kstIsoString(ms)).toBe(kstIsoString(ms));
+  });
+  it('삽입 파이프라인 전체 — applyDateFormat(kstIsoString(ms), fmt)가 KST 문자열을 만든다', () => {
+    const ms = Date.parse('2026-07-10T00:00:00Z');
+    expect(applyDateFormat(kstIsoString(ms), 'YYYY-MM-DD HH:mm')).toBe('2026-07-10 09:00');
+    expect(applyDateFormat(kstIsoString(Date.parse('2026-07-10T06:30:00Z')), 'YYYY-MM-DD HH:mm'))
+      .toBe('2026-07-10 15:30');
+    expect(applyDateFormat(kstIsoString(Date.parse('2026-07-09T20:00:00Z')), 'YYYY년 MM월 DD일 HH:mm'))
+      .toBe('2026년 07월 10일 05:00');
   });
 });
 

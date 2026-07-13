@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "31-editor-table",
+  "steps": [
+    { "step": 0, "name": "table-model", "status": "pending" },
+    { "step": 1, "name": "table-render", "status": "pending" },
+    { "step": 2, "name": "table-dialog", "status": "pending" },
+    { "step": 3, "name": "table-wiring", "status": "pending" }
+  ]
+}

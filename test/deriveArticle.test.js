@@ -29,7 +29,7 @@ function createSource(service) {
     title: '원본 제목', markupVersion: body, author: 'kim',
     coAuthor: 'lee', region: '서울', attribute: '자동기사', keyword: '경제',
     internalComment: '내부', externalComment: '외부',
-    attachmentFile: 'a.png', referenceFile: 'r.doc',
+    attachmentFile: '/uploads/a.png', referenceFile: '/uploads/r.doc',
     embargoAt: '2026-06-20T00:00:00.000Z', secondEmbargoAt: '2026-06-21T00:00:00.000Z',
   });
   return { articleId, body };
@@ -61,8 +61,8 @@ test('deriveArticle(followUp): 본문은 빈 값, 제목·공통정보는 복사
   assert.equal(dst.contents.keyword, '경제');
   assert.equal(dst.contents.internalComment, '내부');
   assert.equal(dst.contents.externalComment, '외부');
-  assert.equal(dst.contents.attachmentFile, 'a.png');
-  assert.equal(dst.contents.referenceFile, 'r.doc');
+  assert.equal(dst.contents.attachmentFile, '/uploads/a.png');
+  assert.equal(dst.contents.referenceFile, '/uploads/r.doc');
 });
 
 test('deriveArticle: author는 overrides 값으로 채운다(세션 stamp는 HTTP 책임)', () => {
