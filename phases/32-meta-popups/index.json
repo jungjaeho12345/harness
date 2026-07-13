@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "meta-dialog",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-14T01:03:05+0900",
+      "completed_at": "2026-07-14T01:09:16+0900",
+      "summary": "web/src/view/MetaSelectDialog.jsx 신규 — 지역/내용/속성 3용도 재사용 순수 선택 다이얼로그(ADR-003, props groups/limit/title/value 주입·onSubmit(조인 문자열)/onClose 위임, import는 react·useFocusOnOpen·parseTokens/joinTokens뿐). 순서 보존 selected 배열 + wasOpen 재초기화 가드 + 한도 추가만 차단(미체크만 disabled, 카운터 n/limit) + 레거시 미등재 토큰 '기존 값' 섹션 체크 보존(해제시만 제거, 한도 초과 상태 비파괴 제출 허용) + useFocusOnOpen 첫 체크박스(없으면 닫기 버튼). yonhap.css .yh-meta-dialog 전용 스타일 추가. 테스트 19개(web 1374 전체·build·lint 그린, WriterPage 결선 없음 — step 3)"
     },
     {
       "step": 3,
