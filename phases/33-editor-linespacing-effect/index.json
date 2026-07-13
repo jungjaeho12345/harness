@@ -2,7 +2,18 @@
   "project": "기사 작성기",
   "phase": "33-editor-linespacing-effect",
   "steps": [
-    { "step": 0, "name": "linespacing-store", "status": "pending" },
-    { "step": 1, "name": "linespacing-effect", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "linespacing-store",
+      "status": "completed",
+      "started_at": "2026-07-14T07:33:19+0900",
+      "summary": "edit.lineSpacing 기본 1.0→1.8(BASE_LINE_HEIGHT 단일출처)·옵션 [1.2,1.5,1.8,2.0](1.0 제거)·normalizeLineSpacing(value)→number 순수함수 추가(레거시 1.0·≤1.0·비유한→1.8, 유효값·문자열숫자 통과, 소비/표시 시점만 정규화·loadEditorPrefs raw 유지)·EditorPrefsDialog 줄간격 select value=normalizeLineSpacing로 표시 정규화. 테스트: editorPrefs.test.js 기본단언 1.0→1.8·normalizeLineSpacing 4케이스 추가, EditorPrefsDialog.test.jsx 미변경적용 기본 1.8 단언·제목 갱신. lint/build/test:web(1389) 통과."
+    },
+    {
+      "step": 1,
+      "name": "linespacing-effect",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-14T07:33:19+0900"
 }

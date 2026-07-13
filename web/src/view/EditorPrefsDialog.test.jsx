@@ -514,14 +514,14 @@ describe('EditorPrefsDialog — 편집 탭', () => {
     expect(edit.inputMode).toBe('ksc5601');
   });
 
-  it('줄간격을 안 건드리고 적용해도 기본 1.0이 숫자 1로 영속된다(문자열/누락 방지)', () => {
-    // edit 폼을 전혀 손대지 않고 적용 → 기본 lineSpacing(1.0)이 Number()로 저장돼 number 1이어야 한다.
+  it('줄간격을 안 건드리고 적용해도 기본 1.8이 숫자로 영속된다(문자열/누락 방지)', () => {
+    // edit 폼을 전혀 손대지 않고 적용 → 기본 lineSpacing(1.8)이 Number()로 저장돼 number 1.8이어야 한다.
     render(<EditorPrefsDialog open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId('prefs-tab-edit'));
     fireEvent.click(screen.getByTestId('prefs-apply'));
 
     const { edit } = loadEditorPrefs();
-    expect(edit.lineSpacing).toBe(1);
+    expect(edit.lineSpacing).toBe(1.8);
     expect(typeof edit.lineSpacing).toBe('number');
   });
 

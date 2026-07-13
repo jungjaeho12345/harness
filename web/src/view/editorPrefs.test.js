@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  DEFAULT_EDITOR_PREFS, loadEditorPrefs, saveEditorPrefs, setEditorPref,
+  DEFAULT_EDITOR_PREFS, loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing,
 } from './editorPrefs.js';
 import { COLORS } from './editorColoring.js';
 
@@ -85,7 +85,7 @@ describe('editorPrefs — editor preference store', () => {
     expect(edit.noCommonAbbr).toBe(false);
     expect(edit.companyCode).toBe('manual');
     expect(edit.language).toBe('ko');
-    expect(edit.lineSpacing).toBe(1.0);
+    expect(edit.lineSpacing).toBe(1.8); // base = CSS line-height 1.8 (기본 시각 회귀 방지)
     expect(edit.inputMode).toBe('unicode');
   });
 
@@ -281,5 +281,31 @@ describe('editorPrefs — editor preference store', () => {
     // dateFormat 비문자열은 기존 검증대로 기본값 폴백(선례 유지)
     localStorage.setItem('yh.editorPrefs', JSON.stringify({ dateFormat: 42 }));
     expect(loadEditorPrefs().dateFormat).toBe(DEFAULT_EDITOR_PREFS.dateFormat);
+  });
+
+  // --- normalizeLineSpacing: 저장된 줄간격을 실제 line-height로 정규화 (소비 시점 전용) ---
+  // 레거시 기본 sentinel(1.0)과 무효값(≤1.0·비유한)은 base(1.8)로, 유효 선택값(1.2/1.5/1.8/2.0)은 그대로 통과.
+
+  it('normalizeLineSpacing: 레거시 기본 sentinel 1.0을 base 1.8로 정규화한다', () => {
+    expect(normalizeLineSpacing(1.0)).toBe(1.8);
+  });
+
+  it('normalizeLineSpacing: 무효/비유한 입력(0·-1·NaN·undefined·문자열x)을 base 1.8로 폴백한다', () => {
+    expect(normalizeLineSpacing(0)).toBe(1.8);
+    expect(normalizeLineSpacing(-1)).toBe(1.8);
+    expect(normalizeLineSpacing(NaN)).toBe(1.8);
+    expect(normalizeLineSpacing(undefined)).toBe(1.8);
+    expect(normalizeLineSpacing('x')).toBe(1.8);
+  });
+
+  it('normalizeLineSpacing: 유효 선택값 1.2/1.5/1.8/2.0은 그대로 통과한다', () => {
+    expect(normalizeLineSpacing(1.2)).toBe(1.2);
+    expect(normalizeLineSpacing(1.5)).toBe(1.5);
+    expect(normalizeLineSpacing(1.8)).toBe(1.8);
+    expect(normalizeLineSpacing(2.0)).toBe(2.0);
+  });
+
+  it("normalizeLineSpacing: 문자열 숫자('1.5')도 Number()로 받아 통과한다(dialog onChange가 문자열 저장)", () => {
+    expect(normalizeLineSpacing('1.5')).toBe(1.5);
   });
 });
