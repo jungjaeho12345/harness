@@ -17,7 +17,7 @@ const NO_TITLE = '(제목 없음)';
 export const DETAIL_COMMON_FIELDS = Object.freeze([
   { key: 'author', label: '작성자' },
   { key: 'coAuthor', label: '공동작성' },
-  { key: 'content', label: '내용' },
+  { key: 'category', label: '내용' },
   { key: 'region', label: '지역' },
   { key: 'attribute', label: '속성' },
   { key: 'keyword', label: '키워드' },
