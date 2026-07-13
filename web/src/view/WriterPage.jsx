@@ -25,6 +25,8 @@ import { expandAbbrevInBlocks } from './abbrevConvert.js';
 import { SimpTradConvertDialog } from './SimpTradConvertDialog.jsx';
 import { convertSimpTradInBlocks } from './simpTradConvert.js';
 import { HistoryCompareDialog } from './HistoryCompareDialog.jsx';
+import { SpellCheckDialog } from './SpellCheckDialog.jsx';
+import { activeRuleGroups, spellRange, checkSpelling } from './editorSpell.js';
 import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
@@ -81,7 +83,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -146,6 +148,12 @@ export function WriterPage() {
   const [histRightKey, setHistRightKey] = useState(null);
   const [histLeftText, setHistLeftText] = useState(null);
   const [histRightText, setHistRightText] = useState(null);
+  // 맞춤법 검사(맞춤법 메뉴 spell.* — 30-editor-spellcheck step 2) 결과 다이얼로그 표시 state — showFileInfo/fileInfoStats 패턴.
+  // spellIssues는 검사 시점 스냅샷(엔진 이슈 + snippet), spellStyle은 오류 조각 렌더 스타일(prefs.errorStyle).
+  // 아래 spell state(브라우저 네이티브 spellCheck 속성 — Alt+Y 빨간 물결)와는 별개 기능이다(혼용 금지).
+  const [showSpell, setShowSpell] = useState(false);
+  const [spellIssues, setSpellIssues] = useState([]);
+  const [spellStyle, setSpellStyle] = useState('bold');
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -199,6 +207,10 @@ export function WriterPage() {
     setCaretTabId(activeTabId);
     lastCaretRef.current = null;
     setStatusCaret(null);
+    // 맞춤법 결과 스냅샷(spellIssues의 start/snippet)도 문서-로컬 좌표 — 이월되면 다른 기사의
+    // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
+    setShowSpell(false);
+    setSpellIssues([]);
   }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
@@ -395,6 +407,32 @@ export function WriterPage() {
     setPendingCaretLine(lineIndex);
   };
 
+  // 맞춤법 검사 실행(spell.checkAll/checkParagraph/checkToCaret/checkFromCaret) — Step 0 엔진(editorSpell)으로
+  // 본문 텍스트를 읽기전용 스캔한다. prefs는 실행 시점 로드(insertDate의 dateFormat과 동형 — 환경설정 적용이
+  // 다음 검사에 즉시 반영, 별도 state 미러/effect 없음). 캐럿 offset은 lastCaretRef(없으면 statusCaret) —
+  // scoped 검사(paragraph/toCaret/fromCaret)의 기준점이며 둘 다 없으면 no-op(all만 캐럿 무관).
+  // 본문/캐럿/임베드 불변 — 이슈 스냅샷(+snippet)을 표시 state에만 담는다(updateField/serialize 미호출).
+  const runSpellCheck = (scope) => {
+    const prefs = loadEditorPrefs().spellcheck;
+    const groups = activeRuleGroups(prefs);
+    const caret = lastCaretRef.current || statusCaret;
+    // scoped 검사(문단/까지/부터)는 캐럿 기록이 없으면 no-op — 폴백 0으로 빈 범위/첫 문단을 검사해
+    // "맞춤법 오류가 없습니다"로 오보고하는 것을 막는다(phase 29 편집 메뉴 캐럿 no-op 선례, 리뷰 게이트 phase 30).
+    if (scope !== 'all' && !caret) return;
+    const caretOffset = caret ? caret.offset : 0;
+    const range = spellRange(bodyText, scope, caretOffset);
+    const raw = checkSpelling(bodyText, { groups, range });
+    setSpellIssues(raw.map((i) => ({ ...i, snippet: bodyText.slice(i.start, i.end) })));
+    setSpellStyle(prefs.errorStyle);
+    setShowSpell(true);
+  };
+
+  // 결과 항목 클릭 — 이슈 시작 오프셋의 텍스트-줄로 캐럿만 이동(focusMatchLine — 찾기 선례).
+  // 다이얼로그는 열린 채 유지하고 본문/직렬화는 호출하지 않는다(읽기전용 검사 불변식).
+  const onSpellSelect = (issue) => {
+    if (typeof issue.start === 'number') focusMatchLine(issue.start);
+  };
+
   // 다음/이전 찾기 — 현재 활성 매치 기준으로 순환 인덱스를 구해 그 줄로 이동.
   // forward는 현재 매치 끝(cur.end)부터 다음 매치를, backward는 현재 매치 시작(cur.start)부터 이전 매치를 찾는다.
   // (backward에 cur.end를 쓰면 현재 매치 자신이 start<cur.end를 항상 만족해 제자리에 정체된다 — onReplaceOne과 동일하게 cur.start 사용.)
@@ -461,6 +499,13 @@ export function WriterPage() {
     if (id === 'tools.abbrManage') { setShowAbbrevManage(true); return; }
     // 기사이력비교 — 읽기전용(이력/스냅샷 조회 결과는 표시 state로만). 매핑 가드 앞(매핑에서도 열림, 파일 정보와 동일 정책).
     if (id === 'tools.historyCompare') { openHistoryCompare(); return; }
+    // 맞춤법 검사(spell.*) — 읽기전용(본문/캐럿/임베드 불변 — 결과 다이얼로그 표시만). 매핑 가드 앞
+    // (매핑에서도 동작 — 죽은 버튼 방지, 파일 정보/기사이력비교와 동일 정책). 해제(checkOff)는 결과 비움 + 닫기.
+    if (id === 'spell.checkAll') { runSpellCheck('all'); return; }
+    if (id === 'spell.checkParagraph') { runSpellCheck('paragraph'); return; }
+    if (id === 'spell.checkToCaret') { runSpellCheck('toCaret'); return; }
+    if (id === 'spell.checkFromCaret') { runSpellCheck('fromCaret'); return; }
+    if (id === 'spell.checkOff') { setSpellIssues([]); setShowSpell(false); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
@@ -1038,6 +1083,17 @@ export function WriterPage() {
         onSelectLeft={(key) => selectCompareTarget('left', key)}
         onSelectRight={(key) => selectCompareTarget('right', key)}
         onClose={() => setShowHistoryCompare(false)}
+      />
+
+      {/* 맞춤법 검사(맞춤법 메뉴 spell.*) — 읽기전용 결과 목록. 검사 시점 스냅샷(spellIssues + snippet)과
+          prefs.errorStyle을 주입해 표시만 하고, 항목 클릭은 onSpellSelect(focusMatchLine 캐럿 이동)만 한다.
+          본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선 — 파일 정보와 동일 정책). */}
+      <SpellCheckDialog
+        open={showSpell}
+        issues={spellIssues}
+        errorStyle={spellStyle}
+        onSelect={onSpellSelect}
+        onClose={() => setShowSpell(false)}
       />
 
       {/* 에디터 본문 우클릭 컨텍스트 메뉴(news.md L173) — ctxMenu 있을 때만 렌더. 항목선택/Esc/마우스 이탈 시 닫힌다.

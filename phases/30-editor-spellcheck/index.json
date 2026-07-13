@@ -2,8 +2,31 @@
   "project": "기사 작성기",
   "phase": "30-editor-spellcheck",
   "steps": [
-    { "step": 0, "name": "spell-engine-pure", "status": "pending" },
-    { "step": 1, "name": "spell-result-dialog", "status": "pending" },
-    { "step": 2, "name": "spell-wiring", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "spell-engine-pure",
+      "status": "completed",
+      "started_at": "2026-07-11T11:27:17+0900",
+      "summary": "web/src/view/editorSpell.js 순수 맞춤법 엔진 신규 — 규칙군 6종(misuse/dupWord/punctuation/loanword/spacing/misc) 탐지 전용 checkSpelling + activeRuleGroups(errorTypes·checkOption 매핑, freeze) + spellRange(all/paragraph/toCaret/fromCaret), vitest 30케이스 통과(test:web 1230·build·lint 통과)",
+      "completed_at": "2026-07-11T11:36:12+0900"
+    },
+    {
+      "step": 1,
+      "name": "spell-result-dialog",
+      "status": "completed",
+      "started_at": "2026-07-11T11:36:13+0900",
+      "summary": "web/src/view/SpellCheckDialog.jsx 맞춤법 결과 목록 다이얼로그 신규 — 순수 표시 컴포넌트(엔진/오프셋/transport 미접촉, onSelect/onClose 콜백 위임), errorStyle bold/underline snippet 렌더·suggestion 표시만(자동교체 없음)·빈 상태·Esc/닫기 포커스, yonhap.css yh-spellcheck* 추가, vitest+RTL 14케이스 통과(test:web 1244·build·lint 통과)",
+      "completed_at": "2026-07-11T11:43:15+0900"
+    },
+    {
+      "step": 2,
+      "name": "spell-wiring",
+      "status": "completed",
+      "started_at": "2026-07-11T11:43:16+0900",
+      "summary": "web/src/view/WriterPage.jsx 맞춤법 메뉴 5종(spell.checkAll/checkParagraph/checkToCaret/checkFromCaret/checkOff) 결선 — 실행 시점 loadEditorPrefs().spellcheck로 activeRuleGroups·errorStyle 반영, spellRange scoped 검사 후 SpellCheckDialog 표시만(본문/캐럿/임베드 불변, 항목 클릭은 focusMatchLine 캐럿 이동, 매핑 가드 앞·Editor.jsx 미접촉), vitest 10케이스 추가(test:web 1254·build·lint 통과)",
+      "completed_at": "2026-07-11T11:54:11+0900"
+    }
+  ],
+  "created_at": "2026-07-11T11:27:17+0900",
+  "completed_at": "2026-07-11T11:54:12+0900"
 }

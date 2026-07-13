@@ -169,7 +169,8 @@
     },
     {
       "dir": "30-editor-spellcheck",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-11T11:54:12+0900"
     },
     {
       "dir": "31-editor-table",
