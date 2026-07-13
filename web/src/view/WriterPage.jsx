@@ -17,6 +17,8 @@ import { FindReplaceDialog } from './FindReplaceDialog.jsx';
 import { GlyphInputDialog } from './GlyphInputDialog.jsx';
 import { UrlEmbedDialog } from './UrlEmbedDialog.jsx';
 import { TableEditDialog } from './TableEditDialog.jsx';
+import { MetaSelectDialog } from './MetaSelectDialog.jsx';
+import { metaFieldConfig } from './metaTaxonomy.js';
 import { FileInfoDialog } from './FileInfoDialog.jsx';
 import { MemoDialog } from './MemoDialog.jsx';
 import { loadMemo, saveMemo } from './memoStore.js';
@@ -131,6 +133,9 @@ export function WriterPage() {
   // 표 삽입/편집 다이얼로그 — null(닫힘) | { mode:'insert' } | { mode:'edit', blockIndex, rows }(urlEmbedKind 패턴 확장).
   // 본문 표는 읽기 전용 렌더(step1)라 셀 편집은 다이얼로그에서만 한다 — 표>표 삽입(insert)·본문 표 더블클릭(edit)이 연다.
   const [tableDialog, setTableDialog] = useState(null);
+  // 지역/내용/속성 선택 팝업 — null(닫힘) | 'region' | 'category' | 'attribute'(열린 필드 키).
+  // tableDialog 패턴과 동형 — 공통정보 트리거 클릭이 열고, 적용/닫기/탭 전환이 닫는다.
+  const [metaDialog, setMetaDialog] = useState(null);
   // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
   const [showFileInfo, setShowFileInfo] = useState(false);
   // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
@@ -222,6 +227,9 @@ export function WriterPage() {
     // 표 다이얼로그의 blockIndex/rows도 문서-로컬 좌표 — 이월되면 '적용'이 다른 기사의
     // blocks[N]을 덮어쓴다(리뷰 게이트 phase 31). 비모달이라 열린 채 전환 가능 — 함께 닫는다.
     setTableDialog(null);
+    // 메타 선택 팝업의 value/onSubmit도 활성 탭-로컬 — 열린 채 전환하면 '적용'이 다른 탭의
+    // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
+    setMetaDialog(null);
   }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
@@ -1068,7 +1076,7 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} />
+              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} onOpenMeta={setMetaDialog} />
             )}
             {metaTab === 'image' && (
               <SearchPanel
@@ -1146,6 +1154,22 @@ export function WriterPage() {
         initialRows={tableDialog && tableDialog.mode === 'edit' ? tableDialog.rows : undefined}
         onSubmit={onTableSubmit}
         onClose={() => setTableDialog(null)}
+      />
+
+      {/* 지역/내용/속성 선택 팝업(step3) — 공통정보 트리거 클릭으로 열림(매핑에선 CommonInfo가 클릭을 no-op 처리).
+          택소노미/한도는 metaFieldConfig 단일 진입점에서 주입, 현재 값은 활성 탭 필드에서 읽고
+          '적용'은 updateField(해당 필드, 조인 문자열)로만 반영한다(직접 타이핑 경로 없음 — news.md L63).
+          key=필드 — 열린 채 다른 트리거를 누르면 open true→true라 wasOpen 가드가 재초기화를 건너뛰므로,
+          필드 전환 시 remount로 새 필드 value 기준 재초기화를 강제한다(이전 필드 선택의 오기록 차단). */}
+      <MetaSelectDialog
+        key={metaDialog}
+        open={metaDialog !== null}
+        title={metaDialog ? metaFieldConfig(metaDialog).title : ''}
+        groups={metaDialog ? metaFieldConfig(metaDialog).groups : []}
+        limit={metaDialog ? metaFieldConfig(metaDialog).limit : 0}
+        value={metaDialog ? (activeTab.fields[metaDialog] || '') : ''}
+        onSubmit={(joined) => { updateField(metaDialog, joined); setMetaDialog(null); }}
+        onClose={() => setMetaDialog(null)}
       />
 
       {/* 파일 정보 다이얼로그(도구>파일 정보) — 읽기전용. 열린 시점 본문 통계(fileInfoStats)를 props로만 주입해 표시한다.
@@ -1226,13 +1250,19 @@ export function WriterPage() {
   );
 }
 
-// 공통정보 — 편집 가능(작성자/엠바고/2차엠바고/공동작성/지역/속성/키워드/내부·외부코멘트 + 첨부/자료파일)
-//   + 읽기전용 매핑 필드. 본문(내용)은 좌측 에디터가 담당하므로 별도 내용 입력란은 두지 않는다.
+// 공통정보 — 편집 가능(작성자/엠바고/2차엠바고/공동작성/내용/지역/속성/키워드/내부·외부코멘트 + 첨부/자료파일)
+//   + 읽기전용 매핑 필드. 내용(category)은 본문이 아니라 분류 택소노미 필드다(Meta.md — 본문은 좌측 에디터).
+// 지역/내용/속성은 팝업(MetaSelectDialog) 선택 전용 트리거다 — 항상 readOnly, 클릭 시 onOpenMeta(field)로
+//   부모 팝업을 열고 값은 팝업 '적용'(updateField)으로만 바뀐다(직접 onChange 없음 — news.md "누르면 팝업창이 열리고").
 // 매핑 모드(readOnly)에서는 모든 공통정보 입력란을 readOnly/disabled로 잠근다(임베드만 변경 — step11, 본문-only 불변식).
+//   트리거 클릭도 no-op — 팝업을 열지 않는다(공통정보 잠금 계약).
 // 파일 업로드는 ADR-003에 따라 view에서 직접 fetch하지 않고 model.uploadFile(file)로만 처리한다.
-function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef }) {
+function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef, onOpenMeta }) {
   const f = tab.fields;
   const ro = tab.readOnly || {};
+
+  // 지역/내용/속성 팝업 트리거 — 매핑(readOnly)에서는 열지 않는다.
+  const openMeta = (field) => { if (!readOnly && onOpenMeta) onOpenMeta(field); };
 
   // 첨부/자료파일 — 선택 즉시 업로드(model.uploadFile) → 성공 시 반환 path를 해당 필드에 보관.
   // updateField는 항상 '현재 활성 탭'에 쓰므로, 업로드(네트워크 왕복) 대기 중 탭을 바꾸면 응답이 다른 기사에
@@ -1263,13 +1293,19 @@ function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef })
           <label htmlFor="meta-coauthor">공동작성</label>
           <input id="meta-coauthor" value={f.coAuthor} readOnly={readOnly} onChange={(e) => updateField('coAuthor', e.target.value)} />
         </div>
+        {/* 내용/지역/속성 — 팝업 선택 전용 트리거(항상 readOnly, 값 표시만). 구세션 복원 탭에는
+            category 키가 없을 수 있어 ?? ''로 controlled 입력을 보장한다(신규 탭은 blankFields가 시드). */}
+        <div className="yh-field">
+          <label htmlFor="meta-category">내용</label>
+          <input id="meta-category" value={f.category ?? ''} readOnly aria-haspopup="dialog" onClick={() => openMeta('category')} />
+        </div>
         <div className="yh-field">
           <label htmlFor="meta-region">지역</label>
-          <input id="meta-region" value={f.region} readOnly={readOnly} onChange={(e) => updateField('region', e.target.value)} />
+          <input id="meta-region" value={f.region} readOnly aria-haspopup="dialog" onClick={() => openMeta('region')} />
         </div>
         <div className="yh-field">
           <label htmlFor="meta-attribute">속성</label>
-          <input id="meta-attribute" value={f.attribute} readOnly={readOnly} onChange={(e) => updateField('attribute', e.target.value)} />
+          <input id="meta-attribute" value={f.attribute} readOnly aria-haspopup="dialog" onClick={() => openMeta('attribute')} />
         </div>
         <div className="yh-field">
           <label htmlFor="meta-embargo">엠바고 시간</label>

@@ -23,7 +23,7 @@ function setup(seed) {
 const FULL = {
   articleId: 'AKR1', title: '제목', body: '본문', author: '원작성자',
   embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
-  coAuthor: '박기자', region: '서울', attribute: '단독', keyword: '키워드',
+  coAuthor: '박기자', region: '서울', category: '정치일반', attribute: '단독', keyword: '키워드',
   internalComment: '내부메모', externalComment: '외부메모',
   attachmentFile: '/uploads/a.pdf', referenceFile: '/uploads/r.docx',
   modifier: 'lee', sender: 'park', department: '경제', departmentCode: 'EC',
@@ -70,7 +70,7 @@ describe('useWriteController', () => {
     expect(tab.fields).toEqual({
       title: '제목', body: '본문', author: '원작성자',
       embargoAt: '2026-01-01T00:00:00Z', secondEmbargoAt: '2026-01-02T00:00:00Z',
-      coAuthor: '박기자', region: '서울', attribute: '단독', keyword: '키워드',
+      coAuthor: '박기자', region: '서울', category: '정치일반', attribute: '단독', keyword: '키워드',
       internalComment: '내부메모', externalComment: '외부메모',
       attachmentFile: '/uploads/a.pdf', referenceFile: '/uploads/r.docx',
     });
@@ -175,7 +175,7 @@ describe('useWriteController', () => {
     const { result } = setup({ articles: [{ ...FULL }] });
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
     for (const [k, v] of [
-      ['coAuthor', '새공동'], ['region', '부산'], ['attribute', '기획'], ['keyword', 'kw'],
+      ['coAuthor', '새공동'], ['region', '부산'], ['category', '경제일반'], ['attribute', '기획'], ['keyword', 'kw'],
       ['internalComment', '내부'], ['externalComment', '외부'],
       ['attachmentFile', '/uploads/x.pdf'], ['referenceFile', '/uploads/y.docx'],
     ]) {
@@ -187,9 +187,25 @@ describe('useWriteController', () => {
   it('a blank new tab seeds the new common-info fields as empty strings', () => {
     const { result } = setup({});
     const f = result.current.activeTab.fields;
-    for (const k of ['coAuthor', 'region', 'attribute', 'keyword', 'internalComment', 'externalComment', 'attachmentFile', 'referenceFile']) {
+    for (const k of ['coAuthor', 'region', 'category', 'attribute', 'keyword', 'internalComment', 'externalComment', 'attachmentFile', 'referenceFile']) {
       expect(f[k]).toBe('');
     }
+  });
+
+  // 내용(분류) category — EDITABLE_FIELDS 단일 출처가 시드/로드/저장 dto를 자동 파생한다(32-meta-popups step 3).
+  it('category is seeded blank, loaded from the article, and included in the save dto', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    expect(result.current.activeTab.fields.category).toBe(''); // 신규 빈 탭 시드
+
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    expect(result.current.activeTab.fields.category).toBe('정치일반'); // 편집 로드 반영
+
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('category', '경제일반, 물가'); });
+    await act(async () => { await result.current.save(); });
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({ category: '경제일반, 물가' }), expect.anything(),
+    );
   });
 
   it('updateField in mapping mode rejects the new common-info fields too (body-only invariant)', async () => {

@@ -14,7 +14,7 @@ const ARTICLE_FIELDS = ['title', 'markupVersion', 'modifier'];
 const CONTENTS_FIELDS = [
   'title', 'author', 'modifier', 'department', 'departmentCode',
   'embargoAt', 'secondEmbargoAt',
-  'coAuthor', 'region', 'attribute', 'keyword',
+  'coAuthor', 'category', 'region', 'attribute', 'keyword',
   'internalComment', 'externalComment', 'attachmentFile', 'referenceFile',
 ];
 
@@ -203,7 +203,7 @@ export function createArticleService({ articleModel, db, historyModel }) {
       author: overrides.author,
       // 공통정보/메타는 출발점으로 복사한다.
       ...pick(srcContents, [
-        'coAuthor', 'region', 'attribute', 'keyword',
+        'coAuthor', 'category', 'region', 'attribute', 'keyword',
         'internalComment', 'externalComment', 'attachmentFile', 'referenceFile',
       ]),
       // 엠바고는 새 기사에서 새로 설정한다 — 초기화(빈 값).

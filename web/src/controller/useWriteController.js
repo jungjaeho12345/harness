@@ -17,10 +17,11 @@ const TABS_KEY = 'yh.writer.tabs';
 export const PENDING_NEW_KEY = 'yh.pendingNew';
 
 // 편집 진입 시 입력란에 채우는(편집 가능) 필드 vs 읽기전용으로 보존하는 필드 (news.md 매핑).
-// 공통정보 확장(공동작성/지역/속성/키워드/내부·외부코멘트) + 첨부파일/자료파일(업로드 후 path 문자열 보관).
+// 공통정보 확장(공동작성/지역/내용(category — 분류 택소노미)/속성/키워드/내부·외부코멘트)
+// + 첨부파일/자료파일(업로드 후 path 문자열 보관).
 const EDITABLE_FIELDS = [
   'title', 'body', 'author', 'embargoAt', 'secondEmbargoAt',
-  'coAuthor', 'region', 'attribute', 'keyword', 'internalComment', 'externalComment',
+  'coAuthor', 'region', 'category', 'attribute', 'keyword', 'internalComment', 'externalComment',
   'attachmentFile', 'referenceFile',
 ];
 const READONLY_FIELDS = [

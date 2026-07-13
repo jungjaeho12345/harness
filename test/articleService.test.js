@@ -58,15 +58,27 @@ test('create: 공통정보 필드를 Contents에 조립해 저장한다', () => 
   const { service, articleModel } = setup();
   const r = service.create({
     title: '제목', author: 'kim',
-    coAuthor: 'lee', region: '서울', attribute: '자동기사',
+    coAuthor: 'lee', category: '정치일반', region: '서울', attribute: '자동기사',
     keyword: '경제', embargoAt: '2026-06-20T00:00:00.000Z',
   });
   const c = articleModel.getById(r.articleId).contents;
   assert.equal(c.coAuthor, 'lee');
+  assert.equal(c.category, '정치일반');
   assert.equal(c.region, '서울');
   assert.equal(c.attribute, '자동기사');
   assert.equal(c.keyword, '경제');
   assert.equal(c.embargoAt, '2026-06-20T00:00:00.000Z');
+});
+
+test('update: category를 부분 갱신하고, 미전달이면 기존 값을 보존한다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim', category: '정치일반' });
+  service.update(articleId, { category: '경제일반' });
+  assert.equal(articleModel.getById(articleId).contents.category, '경제일반');
+  service.update(articleId, { region: '부산' });
+  const c = articleModel.getById(articleId).contents;
+  assert.equal(c.category, '경제일반', '미전달 category는 건드리지 않는다');
+  assert.equal(c.region, '부산');
 });
 
 test('update: Article/Contents를 부분 갱신한다', () => {

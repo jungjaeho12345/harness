@@ -926,11 +926,23 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
   });
 });
 
-// 공통정보 확장 — 공동작성/지역/속성/키워드(text) + 내부/외부코멘트(textarea) + 첨부/자료파일(file upload).
-describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/키워드/코멘트)', () => {
+// 공통정보 확장 — 공동작성/키워드(text)·내부/외부코멘트(textarea)는 직접 입력, 지역/내용/속성은
+// MetaSelectDialog 팝업 선택 전용 트리거(readOnly input — 32-meta-popups step 3) + 첨부/자료파일(file upload).
+describe('WriterPage — 공통정보 확장 입력(공동작성/지역/내용/속성/키워드/코멘트)', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  const LABELS = ['공동작성', '지역', '속성', '키워드', '내부코멘트', '외부코멘트'];
+  const LABELS = ['공동작성', '내용', '지역', '속성', '키워드', '내부코멘트', '외부코멘트'];
+
+  // 지역/내용/속성 팝업 플로우 — 트리거 클릭 → 팝업에서 항목 체크 → 적용 → 닫힘(값은 이 경로로만 바뀐다).
+  async function pickMeta(triggerLabel, items) {
+    await userEvent.click(screen.getByLabelText(triggerLabel));
+    const dialog = await screen.findByTestId('meta-dialog');
+    for (const item of items) {
+      await userEvent.click(within(dialog).getByLabelText(item));
+    }
+    await userEvent.click(within(dialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+  }
 
   it('새 공통정보 입력란이 모두 라벨로 노출된다', () => {
     setup({ identity: { role: 'R' } });
@@ -939,29 +951,31 @@ describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/�
     }
   });
 
-  it('내용(content) 별도 입력란은 추가하지 않는다(본문 에디터가 내용)', () => {
+  it("내용(분류) 입력란이 라벨 '내용'으로 존재하고, 지역/내용/속성은 팝업 트리거(readOnly)다", () => {
     setup({ identity: { role: 'R' } });
-    expect(screen.queryByLabelText('내용')).toBeNull();
+    expect(screen.getByLabelText('내용')).toBeInTheDocument();
+    // 직접 타이핑 경로 제거 — 값은 팝업 제출(updateField)로만 바뀐다(news.md "누르면 팝업창이 열리고").
+    for (const label of ['지역', '내용', '속성']) {
+      expect(screen.getByLabelText(label)).toHaveAttribute('readonly');
+    }
   });
 
-  it('입력 변경이 dto(저장)에 반영된다(coAuthor/region/attribute/keyword/comments)', async () => {
+  it('입력 변경이 dto(저장)에 반영된다 — 직접 입력(coAuthor/keyword/comments) + 팝업(region/category/attribute)', async () => {
     const { model } = setup({ identity: { role: 'R' } });
     const save = vi.spyOn(model, 'saveArticle');
 
     await userEvent.type(screen.getByLabelText('공동작성'), '박기자');
-    await userEvent.type(screen.getByLabelText('지역'), '서울');
-    await userEvent.type(screen.getByLabelText('속성'), '단독');
     await userEvent.type(screen.getByLabelText('키워드'), 'kw');
     await userEvent.type(screen.getByLabelText('내부코멘트'), '내부');
     await userEvent.type(screen.getByLabelText('외부코멘트'), '외부');
+    // 지역/내용/속성은 직접 타이핑 불가(readOnly) — 팝업 선택으로만 값이 들어간다.
+    await pickMeta('지역', ['서울']);
+    await pickMeta('내용', ['정치일반']);
+    await pickMeta('속성', ['단신']);
 
-    // 제목을 넣고 송고(신규 → POST 저장) → dto 검사.
-    await userEvent.type(screen.getByLabelText('작성자'), '김기자'); // 무관 필드(아무 입력)
-    // 신규 빈 탭은 제목이 본문 첫 줄에서 나온다 → 제목 필드만 채워도 통과하도록 본문 대신 제목 필드 사용 불가.
-    // 대신 송고가 아닌 저장 경로를 직접 타기 위해 보류(신규는 전이 없이 RDS 저장)로 dto를 만든다.
+    // 송고가 아닌 저장 경로를 직접 타기 위해 보류(신규는 전이 없이 RDS 저장)로 dto를 만든다.
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    // 신규 보류는 제목(첫 줄) 필요 — 제목 필드를 채워 가드를 통과시킨다(send/hold 가드 수정 후 동작).
-    // title 필드는 별도 입력란이 없으므로 본문 에디터 첫 줄로 제목을 만든다.
+    // 신규 보류는 제목(첫 줄) 필요 — title 필드는 별도 입력란이 없으므로 본문 에디터 첫 줄로 제목을 만든다.
     const editor = screen.getByRole('textbox', { name: '본문' });
     editor.focus();
     await userEvent.type(editor, '제목줄');
@@ -970,9 +984,54 @@ describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/�
     await waitFor(() => expect(save).toHaveBeenCalled());
     const dto = save.mock.calls[save.mock.calls.length - 1][0];
     expect(dto).toMatchObject({
-      coAuthor: '박기자', region: '서울', attribute: '단독', keyword: 'kw',
-      internalComment: '내부', externalComment: '외부',
+      coAuthor: '박기자', keyword: 'kw', internalComment: '내부', externalComment: '외부',
+      region: '서울', category: '정치일반', attribute: '단신',
     });
+  });
+
+  it('팝업에서 복수 선택·적용하면 트리거 입력란에 콤마 조인 값이 표시된다', async () => {
+    setup({ identity: { role: 'R' } });
+    await pickMeta('지역', ['서울', '부산']);
+    expect(screen.getByLabelText('지역')).toHaveValue('서울, 부산');
+  });
+
+  it('팝업을 다시 열면 현재 필드 값이 체크된 상태로 초기화되고, 추가 선택·적용해도 기존 선택이 보존된다', async () => {
+    setup({ identity: { role: 'R' } });
+    await pickMeta('지역', ['서울']);
+
+    // 재오픈 — WriterPage가 활성 탭의 현재 값(value)을 팝업에 넘겨야 기존 선택이 체크로 복원된다.
+    // 이 결선이 빠지면 재오픈 팝업이 빈 선택으로 시작해 '적용'이 기존 값을 조용히 지운다(비파괴 회귀 잠금).
+    await userEvent.click(screen.getByLabelText('지역'));
+    const dialog = await screen.findByTestId('meta-dialog');
+    expect(within(dialog).getByLabelText('서울')).toBeChecked();
+
+    await userEvent.click(within(dialog).getByLabelText('부산'));
+    await userEvent.click(within(dialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+    expect(screen.getByLabelText('지역')).toHaveValue('서울, 부산');
+  });
+
+  it('팝업이 열린 채 다른 메타 트리거를 클릭하면 새 필드 구성으로 재초기화되고, 이전 필드 선택이 새 필드에 기록되지 않는다', async () => {
+    setup({ identity: { role: 'R' } });
+
+    // 지역 팝업을 열고 '서울'을 체크만 한다(적용 없이 필드 전환).
+    await userEvent.click(screen.getByLabelText('지역'));
+    const regionDialog = await screen.findByTestId('meta-dialog');
+    await userEvent.click(within(regionDialog).getByLabelText('서울'));
+
+    // 닫지 않고 속성 트리거 클릭 — open true→true라 같은 인스턴스가 재사용되면 wasOpen 가드가 재초기화를
+    // 건너뛰어 지역 selected(['서울'])가 살아남고('기존 값' 섹션 노출), '적용'이 지역 값을 속성 필드에
+    // 기록한다(조용한 필드 오염). key={metaDialog} remount로 속성 value 기준 재초기화를 잠근다.
+    await userEvent.click(screen.getByLabelText('속성'));
+    const attrDialog = await screen.findByRole('dialog', { name: '속성' });
+    expect(within(attrDialog).queryByTestId('meta-dialog-legacy')).toBeNull();
+    expect(within(attrDialog).queryByLabelText('서울')).toBeNull();
+
+    // 그대로 적용해도 속성 필드에 지역 값이 기록되지 않는다(지역도 적용된 적 없으니 빈 값 유지).
+    await userEvent.click(within(attrDialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+    expect(screen.getByLabelText('속성')).toHaveValue('');
+    expect(screen.getByLabelText('지역')).toHaveValue('');
   });
 
   it('편집 진입 시 저장된 공통정보 확장 필드가 입력란에 로드된다', async () => {
@@ -982,20 +1041,21 @@ describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/�
       seed: {
         articles: [{
           articleId: 'AKR1', title: '제목', status: 'RDS', lockYN: 'Y', markupVersion: '제목\n본문',
-          coAuthor: '공동기자', region: '대전', attribute: '기획', keyword: '키워드값',
+          coAuthor: '공동기자', region: '대전', category: '정치일반', attribute: '기획', keyword: '키워드값',
           internalComment: '내부메모', externalComment: '외부메모',
         }],
       },
     });
     await waitFor(() => expect(screen.getByLabelText('공동작성')).toHaveValue('공동기자'));
     expect(screen.getByLabelText('지역')).toHaveValue('대전');
+    expect(screen.getByLabelText('내용')).toHaveValue('정치일반');
     expect(screen.getByLabelText('속성')).toHaveValue('기획');
     expect(screen.getByLabelText('키워드')).toHaveValue('키워드값');
     expect(screen.getByLabelText('내부코멘트')).toHaveValue('내부메모');
     expect(screen.getByLabelText('외부코멘트')).toHaveValue('외부메모');
   });
 
-  it('매핑 모드에서는 새 공통정보 입력란이 readOnly로 잠긴다', async () => {
+  it('매핑 모드에서는 새 공통정보 입력란이 readOnly로 잠기고, 지역/내용/속성 트리거도 팝업을 열지 않는다', async () => {
     setup({
       identity: { role: 'D' },
       pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'DPS' }, mode: 'mapping' },
@@ -1005,6 +1065,19 @@ describe('WriterPage — 공통정보 확장 입력(공동작성/지역/속성/�
     for (const label of LABELS) {
       expect(screen.getByLabelText(label)).toHaveAttribute('readonly');
     }
+    // 매핑은 공통정보 잠금 — 트리거 클릭이 no-op(팝업 미오픈).
+    for (const label of ['지역', '내용', '속성']) {
+      await userEvent.click(screen.getByLabelText(label));
+      expect(screen.queryByTestId('meta-dialog')).toBeNull();
+    }
+  });
+
+  it('열린 메타 팝업은 탭 전환 시 닫힌다(팝업 적용이 다른 탭 필드를 덮지 않도록)', async () => {
+    setup({ identity: { role: 'R' } });
+    await userEvent.click(screen.getByLabelText('속성'));
+    await screen.findByTestId('meta-dialog');
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
   });
 });
 

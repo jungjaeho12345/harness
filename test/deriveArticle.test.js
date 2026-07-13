@@ -27,7 +27,7 @@ function createSource(service) {
   const body = markup('원문 본문', true);
   const { articleId } = service.create({
     title: '원본 제목', markupVersion: body, author: 'kim',
-    coAuthor: 'lee', region: '서울', attribute: '자동기사', keyword: '경제',
+    coAuthor: 'lee', category: '정치일반', region: '서울', attribute: '자동기사', keyword: '경제',
     internalComment: '내부', externalComment: '외부',
     attachmentFile: '/uploads/a.png', referenceFile: '/uploads/r.doc',
     embargoAt: '2026-06-20T00:00:00.000Z', secondEmbargoAt: '2026-06-21T00:00:00.000Z',
@@ -56,6 +56,7 @@ test('deriveArticle(followUp): 본문은 빈 값, 제목·공통정보는 복사
   assert.equal(dst.article.markupVersion, '', 'followUp=빈 본문(새로 작성)');
   assert.equal(dst.article.title, '원본 제목', '제목 복사');
   assert.equal(dst.contents.coAuthor, 'lee');
+  assert.equal(dst.contents.category, '정치일반');
   assert.equal(dst.contents.region, '서울');
   assert.equal(dst.contents.attribute, '자동기사');
   assert.equal(dst.contents.keyword, '경제');

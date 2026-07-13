@@ -9,7 +9,7 @@ const CONTENTS_COLS = [
   'department', 'departmentCode', 'createdAt', 'editedAt', 'sentAt',
   'distributedAt', 'embargoAt', 'secondEmbargoAt', 'status',
   'lockYN', 'lockerUserId', 'lockerSessionId', 'lockerClientId', 'lockedAt',
-  'coAuthor', 'region', 'attribute', 'keyword',
+  'coAuthor', 'category', 'region', 'attribute', 'keyword',
   'internalComment', 'externalComment', 'attachmentFile', 'referenceFile',
 ];
 

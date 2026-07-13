@@ -1,0 +1,48 @@
+{
+  "project": "기사 작성기",
+  "phase": "32-meta-popups",
+  "steps": [
+    {
+      "step": 0,
+      "name": "meta-taxonomy",
+      "status": "completed",
+      "started_at": "2026-07-14T00:49:07+0900",
+      "completed_at": "2026-07-14T00:58:57+0900",
+      "summary": "web/src/view/metaTaxonomy.js 신규 — Meta.md 전사 택소노미 순수 데이터(REGION_GROUPS 34그룹/396leaf·CATEGORY_GROUPS 6그룹/57leaf·ATTRIBUTES 96, 오타 표기 '상임이ㅜ'·'항남'·공백 토큰 '봉화 상주' 등 원문 보존) + 콤마 토큰 헬퍼(parseTokens/joinTokens, 공백 split 금지) + 한도 상수(REGION_MAX 5/CATEGORY_MAX 5/ATTRIBUTE_MAX 3 단일 출처) + metaFieldConfig 단일 진입점(속성은 단일 그룹 래핑, 미지원 키 null). import 0의 순수 모듈(simpTradTable 동위상), 무결성 잠금 테스트 18개(web 1355 테스트·build·lint 통과, UI/서버 무변경)"
+    },
+    {
+      "step": 1,
+      "name": "backend-category",
+      "status": "completed",
+      "started_at": "2026-07-14T00:58:57+0900",
+      "completed_at": "2026-07-14T01:03:05+0900",
+      "summary": "내용(분류) 서버 영속 키 category를 백엔드 4면에 비파괴 additive 추가 — schema.SCHEMA.Contents ['category','VARCHAR'](멱등 ALTER 마이그레이션, 기존 행 보존·NULL), articleModel.CONTENTS_COLS·articleService.CONTENTS_FIELDS 화이트리스트(present-only 유지), deriveArticle 복사 pick(후속/계속 승계). 컨트롤러/라우트·web/ 무접촉. 테스트: schema 옛DB 마이그레이션 보존 + create/update 라운드트립·미전달 보존 + 파생 승계 단언 추가(백엔드 407 전부·build·lint 그린)"
+    },
+    {
+      "step": 2,
+      "name": "meta-dialog",
+      "status": "completed",
+      "started_at": "2026-07-14T01:03:05+0900",
+      "completed_at": "2026-07-14T01:10:59+0900",
+      "summary": "web/src/view/MetaSelectDialog.jsx 신규 — 지역/내용/속성 3용도 재사용 순수 선택 다이얼로그(ADR-003, props groups/limit/title/value 주입·onSubmit(조인 문자열)/onClose 위임, import는 react·useFocusOnOpen·parseTokens/joinTokens뿐). 순서 보존 selected 배열 + wasOpen 재초기화 가드 + 한도 추가만 차단(미체크만 disabled, 카운터 n/limit) + 레거시 미등재 토큰 '기존 값' 섹션 체크 보존(해제시만 제거, 한도 초과 상태 비파괴 제출 허용) + useFocusOnOpen 첫 체크박스(없으면 닫기 버튼). yonhap.css .yh-meta-dialog 전용 스타일 추가. 테스트 19개(web 1374 전체·build·lint 그린, WriterPage 결선 없음 — step 3)"
+    },
+    {
+      "step": 3,
+      "name": "commoninfo-wiring",
+      "status": "completed",
+      "started_at": "2026-07-14T01:11:00+0900",
+      "completed_at": "2026-07-14T01:23:37+0900",
+      "summary": "공통정보에 내용(category) 필드 신설 + 지역/내용/속성 팝업 결선 — EDITABLE_FIELDS에 'category' 한 줄 추가(단일 출처: blank 시드·편집 로드·저장 dto·updateField 게이트 자동 파생), CommonInfo 세 필드를 팝업 트리거로 전환(항상 readOnly·직접 onChange 제거·aria-haspopup, 매핑 모드 클릭 no-op, 구세션 category 부재 ?? '' 가드), WriterPage에 metaDialog 상태('region'|'category'|'attribute'|null)·MetaSelectDialog 결선(metaFieldConfig 주입, value=활성 탭 필드, onSubmit=updateField 후 닫기)·탭 전환 렌더-조정 블록에 setMetaDialog(null)(phase 29/30/31 동일 계열 탭-로컬 이월 방지). 구스펙 테스트 4곳 신스펙 갱신(내용 라벨 존재로 뒤집기·dto 팝업 플로우 재작성·편집 로드 category 단언·매핑 팝업 미오픈) + 신규 3건(복수 선택 콤마 조인 표시·탭 전환 팝업 닫힘·controller category 시드/로드/저장). web 1377 전체·build·lint 그린, Editor/editorContent/백엔드/articleDetail 무접촉"
+    },
+    {
+      "step": 4,
+      "name": "detail-category",
+      "status": "completed",
+      "started_at": "2026-07-14T01:23:38+0900",
+      "completed_at": "2026-07-14T01:26:51+0900",
+      "summary": "상세보기 '내용' 행을 신설 분류 필드 category로 교체 — DETAIL_COMMON_FIELDS의 { key:'content', label:'내용' } 키만 'category'로 변경(라벨·위치·순서 불변, buildDetail/renderDetailHtml 로직 무변경 — fieldValue '—'·escapeHtml 경로 자동 적용). 테스트 4건 추가(category 행 label/value·미제공 '—'·content 키 행 부재·script-bearing category 이스케이프 회귀). web 1381 전체·build·lint 그린, 백엔드/팝업/CommonInfo/embedHtml 무접촉"
+    }
+  ],
+  "created_at": "2026-07-14T00:49:07+0900",
+  "completed_at": "2026-07-14T01:26:52+0900"
+}

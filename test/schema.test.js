@@ -72,7 +72,7 @@ test('createSchema: Contents 컬럼 (공통정보·생애주기·편집잠금)',
     'department', 'departmentCode', 'createdAt', 'editedAt', 'sentAt',
     'distributedAt', 'embargoAt', 'secondEmbargoAt', 'status',
     'lockYN', 'lockerUserId', 'lockerSessionId', 'lockedAt',
-    'coAuthor', 'region', 'attribute', 'keyword',
+    'coAuthor', 'category', 'region', 'attribute', 'keyword',
     'internalComment', 'externalComment', 'attachmentFile', 'referenceFile',
   ];
   for (const c of expected) assert.ok(cols.includes(c), `Contents.${c}`);
@@ -177,11 +177,10 @@ test('createSchema: 누락 컬럼을 ALTER ADD COLUMN으로 추가하고 기존 
   const cols = columns(db, 'Contents');
   assert.ok(cols.includes('status'), '누락된 status 컬럼이 추가되어야 함');
   assert.ok(cols.includes('lockYN'), '누락된 lockYN 컬럼이 추가되어야 함');
-  assert.equal(
-    db.prepare("SELECT title FROM Contents WHERE articleId='a1'").get().title,
-    '옛 기사',
-    '기존 데이터는 보존되어야 함',
-  );
+  assert.ok(cols.includes('category'), '누락된 category 컬럼이 추가되어야 함');
+  const row = db.prepare("SELECT * FROM Contents WHERE articleId='a1'").get();
+  assert.equal(row.title, '옛 기사', '기존 데이터는 보존되어야 함');
+  assert.equal(row.category, null, '기존 행의 category는 NULL(미설정 — 정상)');
 });
 
 test('createSchema: ArticleHistory.id는 INTEGER PRIMARY KEY (ROWID alias 자동증가)', () => {

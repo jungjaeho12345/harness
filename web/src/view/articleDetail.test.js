@@ -26,6 +26,33 @@ describe('articleDetail — data construction', () => {
   });
 });
 
+// 32-step4: 공통정보 '내용' 행은 신설 분류 필드 category를 읽는다.
+// 구스펙 content(미사용 본문 평문 컬럼) 매핑은 제거 — '내용' 행은 category 단일 행만.
+describe('articleDetail — 내용(category) 행', () => {
+  it("maps the '내용' row to the category field", () => {
+    const { common } = buildDetail({ category: '정치일반' });
+    const row = common.find((f) => f.key === 'category');
+    expect(row.label).toBe('내용');
+    expect(row.value).toBe('정치일반');
+  });
+
+  it('shows "—" when category is absent', () => {
+    const { common } = buildDetail({});
+    expect(common.find((f) => f.key === 'category').value).toBe(EMPTY_FIELD);
+  });
+
+  it('does not list a content-keyed common row anymore', () => {
+    const { common } = buildDetail({ content: '본문평문' });
+    expect(common.find((f) => f.key === 'content')).toBeUndefined();
+  });
+
+  it('escapes a script-bearing category value in the detail HTML', () => {
+    const html = renderDetailHtml({ category: '<script>alert(1)</script>' });
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+});
+
 describe('articleDetail — HTML escaping', () => {
   it('escapeHtml neutralizes script-bearing markup', () => {
     expect(escapeHtml('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
