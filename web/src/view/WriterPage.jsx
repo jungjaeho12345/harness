@@ -29,7 +29,11 @@ import { EditorContextMenu } from './EditorContextMenu.jsx';
 import {
   isFindReplace, findMatches, nextMatchIndex, replaceOne, replaceAll,
 } from './editorFind.js';
-import { selectAllInEditor } from './editorSelect.js';
+import {
+  selectAllInEditor, selectLineInEditor, selectWordInEditor, selectParagraphInEditor,
+} from './editorSelect.js';
+import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
+import { sortDocument, sortParagraph, deleteWordAt } from './editorEditOps.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
@@ -77,7 +81,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences'];
+const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -186,6 +190,16 @@ export function WriterPage() {
 
   // 마지막 에디터 캐럿(텍스트-줄) — 검색패널 클릭 시 에디터 포커스가 빠져 라이브 readCaret이 null이므로 여기 보관(Editor onCaretChange).
   const lastCaretRef = useRef(null);
+  // 탭 전환 시 캐럿 소스 초기화 — lastCaretRef는 문서(탭)-로컬 좌표라 다른 탭으로 이월되면 편집 메뉴
+  // (한줄/단어 지우기·문단 정렬 등)가 사용자가 가리킨 적 없는 줄을 변경·삭제한다(되돌리기 미구현 — 복구 불가).
+  // 상태표시줄(statusCaret)도 같은 좌표라 함께 비운다. effect가 아니라 렌더 중 조정 패턴인 이유:
+  // effect는 마운트에서도 돌고 flush가 늦으면 전환/마운트 후 새로 기록된 캐럿을 지운다(레이스).
+  const [caretTabId, setCaretTabId] = useState(activeTabId);
+  if (caretTabId !== activeTabId) {
+    setCaretTabId(activeTabId);
+    lastCaretRef.current = null;
+    setStatusCaret(null);
+  }
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
   useEffect(() => {
@@ -418,6 +432,14 @@ export function WriterPage() {
     setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 무효.
   };
 
+  // 라인 삭제 코어 — onKeyDown Ctrl+D(빈 줄 Backspace/Delete 포함)와 메뉴 'edit.deleteLine'의 단일 소스.
+  // deleteLineAt(동반 임베드 1개 삭제 승계) → commitBody(제목 재동기화 자동 — phase 28)만 담는다.
+  // setPendingCaretLine은 넣지 않는다 — Ctrl+D는 캐럿 복원을 Editor refocus에 맡기므로(기존 동작 불변),
+  // 메뉴 경로만 호출부에서 따로 부른다.
+  const deleteLineByBlockIndex = (blockIndex) => {
+    commitBody(serialize(deleteLineAt(blocks, blockIndex).blocks));
+  };
+
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
@@ -465,6 +487,63 @@ export function WriterPage() {
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
+    // 문단/한줄/단어 선택 — 선택 연산(본문 무변경, updateField/serialize/setPendingCaretLine 미호출).
+    // 형제 edit.selectAll과 동일하게 매핑 가드 뒤(매핑에서 no-op — 메뉴 내 일관성). 캐럿은 lastCaretRef
+    // (메뉴 클릭으로 포커스가 빠짐 — 기존 결선 규약), 경계 계산은 editorRange만(단일 출처), 적용은 editorSelect.
+    if (id === 'edit.selectLine' || id === 'edit.selectWord' || id === 'edit.selectParagraph') {
+      const caret = lastCaretRef.current;
+      if (!caret) return; // 캐럿 없음 no-op
+      const root = document.querySelector('.yh-editor');
+      if (id === 'edit.selectLine') { selectLineInEditor(root, caret.lineIndex); return; }
+      if (id === 'edit.selectWord') {
+        const { start } = lineAtOffset(bodyText, caret.offset);
+        const column = caret.offset - start;
+        const lineText = bodyText.split('\n')[caret.lineIndex] ?? '';
+        const { start: colStart, end: colEnd } = wordBoundsAt(lineText, column);
+        selectWordInEditor(root, caret.lineIndex, colStart, colEnd); // 빈 범위면 헬퍼가 no-op
+        return;
+      }
+      const { startLine, endLine } = paragraphBoundsAt(bodyText.split('\n'), caret.lineIndex);
+      selectParagraphInEditor(root, startLine, endLine);
+      return;
+    }
+    // 문서/문단 정렬·한줄/단어 지우기 — 본문 변경 op(매핑 가드 뒤). 계산은 editorEditOps(step 3)·
+    // deleteLineAt(Ctrl+D 단일 출처)만 재사용하고, 반영은 commitBody(serialize(...)) 단일 choke point만
+    // (제목 재동기화는 commitBody 자동 — phase 28 불변식, 결선부 별도 title 단계 없음).
+    // changed:false/캐럿 없음/blockIndex<0은 no-op(불필요한 dirty/remount 회피).
+    if (id === 'edit.sortDocument') {
+      const r = sortDocument(blocks);
+      // 전체 본문 transform — setPendingCaretLine 미호출(오프셋 대량 변동, convertAbbrev와 동일 정책).
+      if (r.changed) commitBody(serialize(r.blocks));
+      return;
+    }
+    if (id === 'edit.sortParagraph') {
+      const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+      if (caretLine == null) return;
+      const r = sortParagraph(blocks, caretLine);
+      // 줄 순서가 바뀌는 transform — sortDocument와 동일하게 setPendingCaretLine 미호출.
+      if (r.changed) commitBody(serialize(r.blocks));
+      return;
+    }
+    if (id === 'edit.deleteLine') {
+      const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+      if (caretLine == null) return;
+      const blockIndex = textLineToBlockIndex(blocks, caretLine);
+      if (blockIndex < 0) return;
+      deleteLineByBlockIndex(blockIndex); // Ctrl+D와 공용 코어(단일 소스)
+      setPendingCaretLine(caretLine); // 메뉴 클릭으로 빠진 포커스를 삭제 자리 줄로(메뉴 경로 한정).
+      return;
+    }
+    if (id === 'edit.deleteWord') {
+      const caret = lastCaretRef.current;
+      if (!caret) return;
+      const { start } = lineAtOffset(bodyText, caret.offset);
+      const r = deleteWordAt(blocks, caret.lineIndex, caret.offset - start);
+      if (!r.changed) return; // 마커 줄/단어 없음/매핑 실패 — no-op
+      commitBody(serialize(r.blocks));
+      setPendingCaretLine(caret.lineIndex);
+      return;
+    }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
     const fn = VIEW_TRANSFORMS[id];
@@ -597,7 +676,7 @@ export function WriterPage() {
     const blockIndex = textLineToBlockIndex(blocks, textLineIndex);
     if (blockIndex < 0) return;
     if (!ctrlD) e.preventDefault(); // Backspace/Delete는 실제 라인 삭제가 확정될 때만 기본동작을 막는다.
-    commitBody(serialize(deleteLineAt(blocks, blockIndex).blocks));
+    deleteLineByBlockIndex(blockIndex); // 메뉴 'edit.deleteLine'과 공용 코어(단일 소스).
   };
 
   const onRemoveEmbed = (blockIndex) => {

@@ -17,7 +17,7 @@
   - `web/src/view/editorSelect.js` (step 1) — `selectAllInEditor`, `selectLineInEditor(root, lineIndex)`, `selectWordInEditor(root, lineIndex, colStart, colEnd)`, `selectParagraphInEditor(root, startLine, endLine)`.
 - `web/src/view/WriterPage.jsx` — **수정 대상**. 핵심 참조점:
   - `MENU_ENABLED`(약 80행) — 결선된 메뉴 id 배열. `edit.selectAll`이 이미 들어 있다. 여기에 3개를 **추가(append)** 한다.
-  - `onMenuSelect(id)`(약 415행) — 라우팅 핸들러. `edit.selectAll` 분기(약 459행)가 **`if (isMapping) return;`(약 434행) 뒤**에 있음을 확인하라: `selectAllInEditor(document.querySelector('.yh-editor'))` — 즉 selectAll은 매핑 모드에서 no-op이다. 신규 3개도 **매핑 가드 뒤**(selectAll과 같은 위치, 매핑에서 no-op)에 둔다.
+  - `onMenuSelect(id)`(약 423행) — 라우팅 핸들러. `edit.selectAll` 분기(약 467행)가 **`if (isMapping) return;`(약 442행) 뒤**에 있음을 확인하라: `selectAllInEditor(document.querySelector('.yh-editor'))` — 즉 selectAll은 매핑 모드에서 no-op이다. 신규 3개도 **매핑 가드 뒤**(selectAll과 같은 위치, 매핑에서 no-op)에 둔다.
   - `lastCaretRef`(약 188행) — Editor `onCaretChange`로 갱신되는 마지막 캐럿 `{ lineIndex, offset }`(offset은 `blocksToText` 전역 오프셋). 메뉴 클릭은 에디터 포커스가 빠지므로 라이브 캐럿 대신 이 ref를 쓴다(기존 결선 규약).
   - `bodyText`(약 201행) = `blocksToText(blocks)` — 문단/단어 계산의 기준 텍스트.
   - `lineAtOffset`(import 약 46행, editorCaret.js) — `lineAtOffset(bodyText, offset)` → `{ lineIndex, start, end }`. 컬럼 = `offset - start`.
@@ -44,7 +44,7 @@
 - `edit.selectParagraph` →
   - `const { startLine, endLine } = paragraphBoundsAt(bodyText.split('\n'), caret.lineIndex);`
   - `selectParagraphInEditor(root, startLine, endLine);`
-- **위치 규칙**: 반드시 `if (isMapping) return;`(약 434행) **뒤**, `edit.selectAll` 분기 근처에 둔다. 이유: 같은 편집 메뉴 형제 `edit.selectAll`이 가드 뒤(매핑에서 no-op)이므로 메뉴 내 일관성을 맞춘다(매핑 모드에서 신규 3종도 no-op). 선택이 본문을 안 바꿔도 위치는 selectAll과 동일하게 둔다 — 기존 selectAll 동작을 바꾸지 않는 최소 변경.
+- **위치 규칙**: 반드시 `if (isMapping) return;`(약 442행) **뒤**, `edit.selectAll` 분기 근처에 둔다. 이유: 같은 편집 메뉴 형제 `edit.selectAll`이 가드 뒤(매핑에서 no-op)이므로 메뉴 내 일관성을 맞춘다(매핑 모드에서 신규 3종도 no-op). 선택이 본문을 안 바꿔도 위치는 selectAll과 동일하게 둔다 — 기존 selectAll 동작을 바꾸지 않는 최소 변경.
 
 ## 핵심 규칙 (반드시 준수 — 위반 시 반려)
 

@@ -2,10 +2,47 @@
   "project": "기사 작성기",
   "phase": "29-editor-edit-menu",
   "steps": [
-    { "step": 0, "name": "edit-range-helpers", "status": "pending" },
-    { "step": 1, "name": "selection-appliers", "status": "pending" },
-    { "step": 2, "name": "selection-wire", "status": "pending" },
-    { "step": 3, "name": "edit-ops-pure", "status": "pending" },
-    { "step": 4, "name": "edit-ops-wire", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "edit-range-helpers",
+      "status": "completed",
+      "started_at": "2026-07-10T15:03:51+0900",
+      "summary": "editorRange.js 신설 — wordBoundsAt(\\S 런 단어 경계)·paragraphBoundsAt(editorStats.paragraphIndex 동일 정의 문단 줄 범위) 순수 헬퍼 + vitest 17케이스(한글 포함)",
+      "completed_at": "2026-07-10T15:09:27+0900"
+    },
+    {
+      "step": 1,
+      "name": "selection-appliers",
+      "status": "completed",
+      "started_at": "2026-07-10T15:09:28+0900",
+      "summary": "editorSelect.js에 selectLine/selectWord/selectParagraphInEditor 3함수 추가 — selectAllInEditor 선례 동형(selection API만, DOM 무변경, 방어적 no-op, 단어 col clamp·문단 swap/clamp) + vitest 13케이스(한글 포함)",
+      "completed_at": "2026-07-10T15:18:27+0900"
+    },
+    {
+      "step": 2,
+      "name": "selection-wire",
+      "status": "completed",
+      "started_at": "2026-07-10T15:18:27+0900",
+      "summary": "WriterPage 편집 메뉴 문단/한줄/단어 선택 결선 — MENU_ENABLED 3종 append + onMenuSelect 매핑 가드 뒤(selectAll parity) lastCaretRef→editorRange 경계→editorSelect 적용(본문 무변경) + vitest 6케이스(활성·선택·no-op·매핑 가드)",
+      "completed_at": "2026-07-10T15:27:06+0900"
+    },
+    {
+      "step": 3,
+      "name": "edit-ops-pure",
+      "status": "completed",
+      "started_at": "2026-07-11T08:29:21+0900",
+      "summary": "editorEditOps.js 신설 — sortDocument/sortParagraph(localeCompare 오름차순, 마커 정렬 제외·최종 재정규화, 임베드 제자리)·deleteWordAt(wordBoundsAt 단어 삭제, 마커 줄 no-op, caretColumn=start) 순수 함수 + vitest 18케이스(불변·한글 포함), deleteLine 헬퍼 미신설(deleteLineAt 단일 출처 유지)",
+      "completed_at": "2026-07-11T08:37:52+0900"
+    },
+    {
+      "step": 4,
+      "name": "edit-ops-wire",
+      "status": "completed",
+      "started_at": "2026-07-11T08:37:53+0900",
+      "summary": "WriterPage 편집 메뉴 문서/문단 정렬·한줄/단어 지우기 4종 결선 — MENU_ENABLED append + 매핑 가드 뒤 editorEditOps/deleteLineAt(Ctrl+D 공용 코어 deleteLineByBlockIndex 추출, 단일 소스) 계산을 commitBody(serialize) 단일 choke point로만 반영(제목 자동 재동기화, 결선부 title 호출 없음), 매핑/no-op 차단 + vitest 9케이스",
+      "completed_at": "2026-07-11T08:46:56+0900"
+    }
+  ],
+  "created_at": "2026-07-10T15:03:51+0900",
+  "completed_at": "2026-07-11T08:46:57+0900"
 }

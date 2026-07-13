@@ -400,8 +400,8 @@ describe('EditorPrefsDialog — 편집 탭', () => {
     fireEvent.click(screen.getByTestId('prefs-apply'));
 
     const prefs = loadEditorPrefs();
-    // 편집 반영
-    expect(prefs.edit.dragDrop).toBe(true);
+    // 편집 반영 — 기본값 true에서 토글 off가 영속된다.
+    expect(prefs.edit.dragDrop).toBe(false);
     // 나머지 보존
     expect(prefs.colors.subtitle).toBe('#00ff00');
     expect(prefs.autosave.enabled).toBe(true);
@@ -454,7 +454,7 @@ describe('EditorPrefsDialog — 편집 탭', () => {
       ...loadEditorPrefs(),
       edit: {
         columnLimit: true,
-        dragDrop: true,
+        dragDrop: false, // 기본값(true)의 반대로 시드해 리셋 복원을 검증
         noCommonAbbr: true,
         companyCode: 'auto',
         language: 'ru',
@@ -469,7 +469,7 @@ describe('EditorPrefsDialog — 편집 탭', () => {
     fireEvent.click(screen.getByTestId('prefs-reset'));
     const d = DEFAULT_EDITOR_PREFS.edit;
     expect(screen.getByTestId('pref-edit-columnLimit')).not.toBeChecked();
-    expect(screen.getByTestId('pref-edit-dragDrop')).not.toBeChecked();
+    expect(screen.getByTestId('pref-edit-dragDrop')).toBeChecked(); // 기본값 on 복원
     expect(screen.getByTestId('pref-edit-noCommonAbbr')).not.toBeChecked();
     expect(screen.getByTestId('pref-edit-companyCode')).toHaveValue(d.companyCode);
     expect(screen.getByTestId('pref-edit-language')).toHaveValue(d.language);

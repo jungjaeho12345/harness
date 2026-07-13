@@ -13,7 +13,7 @@ export const DEFAULT_EDITOR_PREFS = Object.freeze({
   },
   // 편집(edit): columnLimit effect는 step4(래퍼 margin). language 허용 9종 ko/en/ja/zh/es/fr/ar/vi/ru.
   edit: {
-    columnLimit: false, dragDrop: false, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: 1.0, inputMode: 'unicode',
+    columnLimit: false, dragDrop: true, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: 1.0, inputMode: 'unicode',
   },
   // 맞춤법(spellcheck): checkOption 단일 enum, errorTypes 다중 bool 6종, errorStyle bold/underline.
   spellcheck: {
