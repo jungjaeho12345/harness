@@ -1417,14 +1417,14 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 항목 외(새문서·잘라내기)는 여전히 비활성이다', async () => {
+  it('활성 항목 외(문서열기·잘라내기)는 여전히 비활성이다', async () => {
     // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐고,
-    // '표 삽입'(table.insert)도 31-editor-table step3에서 결선돼 활성이 됐으므로,
-    // 미결선 예시는 여전히 비활성인 '새문서'(file.new)·'잘라내기'(edit.cut)로 검증한다.
+    // '표 삽입'(table.insert)도 31-editor-table step3에서, '새문서'(file.new)도 34-editor-file-menu step0에서
+    // 결선돼 활성이 됐으므로, 미결선 예시는 여전히 비활성인 '문서열기'(file.open)·'잘라내기'(edit.cut)로 검증한다.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await openTopMenu('파일');
-    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-파일')).getByText('문서열기').closest('button')).toBeDisabled();
     await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
   });
@@ -1920,6 +1920,78 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
   });
 });
 
+// Step 0(34-editor-file-menu): 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 —
+// 컨트롤러 addTab/closeTab에 위임(새 빈 탭 열기 / 활성 탭 닫기 — × 버튼과 동일 경로, 편집 탭이면 잠금 해제).
+describe('WriterPage — 파일 메뉴(새문서/닫기)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // writer-tabs 스트립의 문서 탭(span.yh-tab)만 센다 — ＋ 버튼(.yh-tab__add)·메타 탭(별 컨테이너)은 제외.
+  const docTabs = (container) => container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab');
+  const activeDocTab = (container) => container.querySelector('[data-testid="writer-tabs"] .yh-tab--active');
+
+  // 파일 메뉴를 열고 항목을 클릭한다(복구 결선과 동일 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  it("'새문서'·'닫기'가 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('새문서').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('닫기').closest('button')).toBeEnabled();
+  });
+
+  it("'새문서' 클릭 시 빈 새 탭이 1개 추가되고 활성화된다", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    expect(docTabs(container)).toHaveLength(1);
+
+    await clickFileItem('새문서');
+
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2));
+    // 새로 추가된(마지막) 탭이 활성 + 빈 본문(신규 → 라벨 '새 기사').
+    expect(activeDocTab(container)).toBe(docTabs(container)[1]);
+    expect(within(activeDocTab(container)).getByText('새 기사')).toBeInTheDocument();
+  });
+
+  it("'닫기'(다중 탭) 클릭 시 활성 탭이 제거되고 개수가 1 감소한다", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' })); // ＋ → 2탭(새 탭 활성)
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2));
+
+    await clickFileItem('닫기');
+
+    await waitFor(() => expect(docTabs(container)).toHaveLength(1));
+  });
+
+  it("'닫기'(마지막 탭) 클릭 시 빈 새 기사 탭 1개가 유지된다(0으로 떨어지지 않음)", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    expect(docTabs(container)).toHaveLength(1);
+
+    await clickFileItem('닫기');
+
+    // 마지막 탭 닫기 → 빈 새 기사 탭 1개 유지(개수 불변).
+    await waitFor(() => expect(docTabs(container)).toHaveLength(1));
+    expect(within(activeDocTab(container)).getByText('새 기사')).toBeInTheDocument();
+  });
+
+  it("'닫기'(편집 탭) 클릭 시 그 기사의 잠금을 해제한다(unlockArticle 호출)", async () => {
+    const { model, container } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: serialize([textBlock('제목')]) }] },
+    });
+    // 편집 탭이 로드(에디터 본문 렌더)될 때까지 대기 — openArticle가 이 탭을 활성으로 둔다.
+    await waitFor(() => expect(container.querySelector('.yh-editor__line')).toBeTruthy());
+    const unlock = vi.spyOn(model, 'unlockArticle');
+
+    await clickFileItem('닫기');
+
+    await waitFor(() => expect(unlock).toHaveBeenCalledWith('AKR1', expect.anything()));
+  });
+});
+
 // Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
 // Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
 describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {
@@ -1984,13 +2056,13 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("활성 항목 외(잘라내기·새문서)는 여전히 비활성이다(회귀)", async () => {
-    // '표 삽입'(table.insert)은 31-editor-table step3에서 결선돼 활성 — 미결선 예시를 '새문서'(file.new)로 교체.
+  it("활성 항목 외(잘라내기·문서열기)는 여전히 비활성이다(회귀)", async () => {
+    // '새문서'(file.new)는 34-editor-file-menu step0에서 결선돼 활성 — 미결선 예시를 '문서열기'(file.open)로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
     await openTopMenu('파일');
-    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-파일')).getByText('문서열기').closest('button')).toBeDisabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
