@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "34-editor-file-menu",
+  "steps": [
+    { "step": 0, "name": "file-menu-basic", "status": "pending" },
+    { "step": 1, "name": "file-print", "status": "pending" },
+    { "step": 2, "name": "file-save", "status": "pending" },
+    { "step": 3, "name": "file-open-dialog", "status": "pending" }
+  ]
+}
