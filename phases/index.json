@@ -183,6 +183,11 @@
       "status": "completed",
       "completed_at": "2026-07-14T01:26:52+0900",
       "note": "공통정보 지역/내용/속성 클릭 팝업(한도 5/5/3) + '내용'(category) 필드 풀스택 신설(신스펙 '내용'=분류 택소노미, dto content=본문 컬럼이라 키 분리). step0 metaTaxonomy 순수 데이터(Meta.md 전사 지역 34그룹/396leaf·내용 6/57·속성 96, 오타 '상임이ㅜ'·공백 토큰 '봉화 상주' 등 원문 보존+무결성 잠금)→step1 백엔드 category additive(멱등 ALTER·화이트리스트 3면·deriveArticle 승계·present-only 보존)→step2 MetaSelectDialog(재사용 순수 다이얼로그 — 한도 추가만 차단·레거시 미등재 토큰 '기존 값' 섹션 보존·초과 시작 비파괴 제출)→step3 CommonInfo 결선(EDITABLE_FIELDS 'category' 1줄 단일 출처 파생·트리거 전환(직접 타이핑 제거)·매핑 미오픈·탭 전환 조정 블록 setMetaDialog(null) 계획 단계 선제)→step4 상세보기 '내용' 행 content→category 재매핑(content는 미사용 컬럼 확인). 🔎 게이트: ② approve(차단0·한도초과 단언 보강) · ④ pass(택소노미 독립 파서 전수 대조 Meta.md 불일치 0·재오픈 복원 테스트 보강) · ⑤ MAJOR 1 — 팝업 열린 채 다른 필드 트리거 클릭 시 동일 인스턴스 재사용으로 wasOpen 가드가 재초기화 스킵 → 이전 필드 선택이 새 필드에 기록(필드-스위치 stale, p29~31 계열 변종·실증 재현) → fix 9b6d6e6 key={metaDialog} remount(+MINOR 한도 도달 오픈 시 포커스 폴백(Esc 회귀)·NIT 전사 잠금 단언 REGION→CATEGORY 교정), 재리뷰 approve. test:web 1385·백엔드 407·build·lint green."
+    },
+    {
+      "dir": "33-editor-linespacing-effect",
+      "status": "completed",
+      "completed_at": "2026-07-15T09:58:04+0900"
     }
   ]
 }

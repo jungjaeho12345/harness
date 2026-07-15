@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS,
+  loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS, normalizeLineSpacing,
 } from './editorPrefs.js';
 import { setEditorColors } from './editorColoring.js';
 import { DATE_FORMATS } from './listFormat.js';
@@ -46,8 +46,9 @@ const EDIT_LANGUAGES = [
   { value: 'ru', label: '러시아어' },
 ];
 
-// 편집 탭 — 줄간격 옵션(news.md L191). value=문자열, 저장 시 Number()로 변환.
-const EDIT_LINE_SPACINGS = [1.0, 1.2, 1.5, 1.8, 2.0];
+// 편집 탭 — 줄간격 옵션(news.md L191, CSS line-height 직접값). value=문자열, 저장 시 Number()로 변환.
+// 1.0은 제거(줄이 붙어 신문 본문 편집에 무의미 + 레거시 기본 sentinel과 충돌 — normalizeLineSpacing 1.0→1.8과 한 쌍).
+const EDIT_LINE_SPACINGS = [1.2, 1.5, 1.8, 2.0];
 
 // 편집 탭 — 기업코드(수동/자동) · 입력모드(KSC-5601/Unicode) select 옵션.
 const EDIT_COMPANY_CODES = [
@@ -331,7 +332,7 @@ export function EditorPrefsDialog({ open, onClose }) {
               <select
                 id="pref-edit-lineSpacing"
                 data-testid="pref-edit-lineSpacing"
-                value={edit.lineSpacing}
+                value={normalizeLineSpacing(edit.lineSpacing)}
                 onChange={(e) => setEdit((s) => ({ ...s, lineSpacing: e.target.value }))}
               >
                 {EDIT_LINE_SPACINGS.map((v) => (

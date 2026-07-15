@@ -5,6 +5,10 @@
 
 const STORAGE_KEY = 'yh.editorPrefs';
 
+// 줄간격(edit.lineSpacing) base(기본이자 정규화 기준값). CSS line-height 직접값(unitless)이며
+// 에디터 줄의 현재 CSS(line-height 1.8)와 일치한다 — 손대지 않은 기본 상태의 시각 회귀를 막는 단일 출처.
+const BASE_LINE_HEIGHT = 1.8;
+
 export const DEFAULT_EDITOR_PREFS = Object.freeze({
   colors: { title: '#0a4da6', subtitle: '#c8102e', body: '#1a1a1a', end: '#d4af37', background: '#ffffff' },
   autosave: { enabled: false, intervalSec: 60, retentionDays: 1 },
@@ -13,7 +17,7 @@ export const DEFAULT_EDITOR_PREFS = Object.freeze({
   },
   // 편집(edit): columnLimit effect는 step4(래퍼 margin). language 허용 9종 ko/en/ja/zh/es/fr/ar/vi/ru.
   edit: {
-    columnLimit: false, dragDrop: true, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: 1.0, inputMode: 'unicode',
+    columnLimit: false, dragDrop: true, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: BASE_LINE_HEIGHT, inputMode: 'unicode',
   },
   // 맞춤법(spellcheck): checkOption 단일 enum, errorTypes 다중 bool 6종, errorStyle bold/underline.
   spellcheck: {
@@ -73,6 +77,16 @@ export function saveEditorPrefs(prefs) {
     // localStorage 불가 — 이번 세션은 저장 없이 진행.
   }
   return prefs;
+}
+
+// 저장된 줄간격을 실제 CSS line-height(unitless number)로 정규화한다.
+// 레거시 기본 sentinel(1.0)과 무효값(비유한·≤1.0)은 base(1.8)로, 유효 선택값(1.2/1.5/1.8/2.0)은 Number로 통과.
+// dialog select의 onChange가 문자열('1.5')을 저장하므로 문자열 입력도 Number()로 받아 처리한다.
+// 정규화는 소비 시점(WriterPage·dialog 표시)에서만 — loadEditorPrefs 병합은 raw를 유지한다.
+export function normalizeLineSpacing(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 1.0) return BASE_LINE_HEIGHT;
+  return n;
 }
 
 // 순수: 해당 category 객체를 patch로 얕은 병합한 새 prefs 반환(입력 mutate 금지). 알 수 없는 category면 그대로 반환.
