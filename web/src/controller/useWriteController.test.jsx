@@ -582,4 +582,35 @@ describe('useWriteController', () => {
     expect(r.articleId).toEqual(expect.stringMatching(/^AKRFAKE/)); // 서버가 발번한 새 복제본 id
     expect(r.articleId).not.toBe('AKR1'); // 원본 id가 아님
   });
+
+  // ── queryArticles/searchArticles passthrough(문서열기 피커 — ADR-003 view는 controller 경유) ─────────
+  it('queryArticles passthrough delegates to the injected model.queryArticles and returns its result verbatim', async () => {
+    const { result, model } = setup({
+      articles: [{ articleId: 'AKR1', title: '가', status: 'RDS' }, { articleId: 'AKR2', title: '나', status: 'DPS' }],
+    });
+    const spy = vi.spyOn(model, 'queryArticles');
+
+    let r;
+    await act(async () => { r = await result.current.queryArticles({ status: 'DPS' }); });
+
+    expect(spy).toHaveBeenCalledWith({ status: 'DPS' }); // 필터 그대로 위임
+    expect(r.ok).toBe(true);
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0].articleId).toBe('AKR2'); // model 결과 그대로 반환(미가공)
+  });
+
+  it('searchArticles passthrough delegates to the injected model.searchArticles and returns its result verbatim', async () => {
+    const { result, model } = setup({
+      articles: [{ articleId: 'AKR1', title: '올림픽 개막', status: 'RDS' }, { articleId: 'AKR2', title: '선거 결과', status: 'RDS' }],
+    });
+    const spy = vi.spyOn(model, 'searchArticles');
+
+    let r;
+    await act(async () => { r = await result.current.searchArticles('올림픽'); });
+
+    expect(spy).toHaveBeenCalledWith('올림픽'); // 검색어 그대로 위임
+    expect(r.ok).toBe(true);
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0].articleId).toBe('AKR1');
+  });
 });

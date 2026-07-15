@@ -240,6 +240,11 @@ export function useWriteController() {
     return tab.id;
   }, [identity, model]);
 
+  // 목록/검색 passthrough — view(문서열기 피커)는 transport를 controller 경유로만 접근한다(ADR-003). model 계약을
+  // 그대로 얇게 위임한다(shape 미가공 — { ok, items }). 편집 진입은 openArticle(잠금/dedup/locked 단일 경로)이 담당한다.
+  const queryArticles = useCallback((filters) => model.queryArticles(filters), [model]);
+  const searchArticles = useCallback((q) => model.searchArticles(q), [model]);
+
   // 후속/계속 진입 — 원본에서 파생한 신규 기사 탭을 push+활성화한다. 잠금은 획득하지 않는다(원본 미잠금).
   // 목록행에는 본문이 없으므로 model.getArticle로 단건 재조회해 markupVersion을 본문으로 채운다(조회 실패 시 폴백).
   const openFromSource = useCallback(async (article, mode) => {
@@ -400,5 +405,6 @@ export function useWriteController() {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab, openArticle, openFromSource,
     updateField, save, saveAsNew, submit, saveMapping,
+    queryArticles, searchArticles,
   };
 }

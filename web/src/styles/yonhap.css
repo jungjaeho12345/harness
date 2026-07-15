@@ -1124,6 +1124,69 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 문서열기(파일>문서열기) 다이얼로그 — 중앙 모달(yh-editor-dialog 공통). DB 기사 피커. 내부 요소만 정의. */
+.yh-doc-open-dialog {
+  width: 34rem;
+}
+.yh-doc-open-dialog__search {
+  display: flex;
+  gap: var(--yh-sp-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-doc-open-dialog__search input {
+  flex: 1;
+}
+.yh-doc-open-dialog__list {
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  margin-bottom: var(--yh-sp-md);
+}
+.yh-doc-open-dialog__empty {
+  padding: var(--yh-sp-md);
+  font-size: 0.85rem;
+  color: var(--yh-gray-mid);
+  text-align: center;
+}
+.yh-doc-open-dialog__row {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-sm);
+  width: 100%;
+  padding: var(--yh-sp-sm) var(--yh-sp-md);
+  border: none;
+  border-bottom: 1px solid var(--yh-gray-line);
+  background: transparent;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.yh-doc-open-dialog__row:last-child {
+  border-bottom: none;
+}
+.yh-doc-open-dialog__row:hover {
+  background: var(--yh-blue-light);
+}
+.yh-doc-open-dialog__id {
+  font-weight: 700;
+  color: var(--yh-blue);
+}
+.yh-doc-open-dialog__row-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.yh-doc-open-dialog__status {
+  color: var(--yh-gray-dark);
+}
+.yh-doc-open-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 파일 정보(도구>파일 정보) 다이얼로그 — 본문 통계 읽기전용 표시 패널(찾기/약물입력/URL임베드와 동일 계열). */
 .yh-file-info {
   width: 22rem;
