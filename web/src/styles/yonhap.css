@@ -504,7 +504,7 @@ a { color: var(--yh-blue); }
   box-shadow: var(--yh-shadow-sm);
   background: transparent;
   font-size: 0.95rem;
-  line-height: 1.8;
+  line-height: var(--yh-editor-line-height, 1.8);
   outline: none;
   transition: border-color var(--yh-transition), box-shadow var(--yh-transition);
 }
@@ -514,7 +514,7 @@ a { color: var(--yh-blue); }
   box-shadow: var(--yh-shadow-md);
 }
 
-.yh-editor__line { min-height: 1.8em; white-space: pre-wrap; }
+.yh-editor__line { min-height: calc(var(--yh-editor-line-height, 1.8) * 1em); white-space: pre-wrap; }
 
 /* 에디터 상태표시줄 — 워드수·Byte·단락/행/열·삽입/수정·언어. 신문형 밀도(좁은 행간·작은 글씨). */
 .yh-editor-statusbar {

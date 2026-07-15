@@ -1647,6 +1647,82 @@ describe('WriterPage — 편집>컬럼제한(editor-canvas 좌우 여백) 적용
   });
 });
 
+// Step 1(33-editor-linespacing-effect): 편집>줄간격(edit.lineSpacing)을 WriterPage 캔버스 래퍼(editor-canvas)
+// 레벨에서 CSS 변수(--yh-editor-line-height) 주입으로 적용(columnLimit 동형 게이트 — 마운트 적용 + onPrefsClose(applied)).
+// 자식 .yh-editor/.yh-editor__line의 line-height/min-height가 var()로 이 변수를 상속한다(주입 없으면 fallback 1.8). Editor.jsx 무변경.
+describe('WriterPage — 편집>줄간격(editor-canvas line-height 변수) 적용', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 편집 탭의 lineSpacing만 저장(다른 카테고리는 기본값 유지).
+  const saveLineSpacing = (v) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    edit: { ...loadEditorPrefs().edit, lineSpacing: v },
+  });
+
+  async function openPrefsViaMenu() {
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  const lineHeightVar = (el) => el.style.getPropertyValue('--yh-editor-line-height');
+
+  it('lineSpacing=1.5로 저장된 상태로 렌더하면 editor-canvas가 변수를 1.5로 반영한다', () => {
+    saveLineSpacing(1.5);
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(lineHeightVar(getByTestId('editor-canvas'))).toBe('1.5');
+  });
+
+  it('미저장(기본)이면 변수가 step0 기본 1.8로 주입된다', () => {
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(lineHeightVar(getByTestId('editor-canvas'))).toBe('1.8');
+  });
+
+  it('레거시 lineSpacing=1.0으로 저장돼 있어도 변수는 1.8로 정규화된다(정규화 회귀 가드)', () => {
+    saveLineSpacing(1.0);
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(lineHeightVar(getByTestId('editor-canvas'))).toBe('1.8');
+  });
+
+  it('배경색·컬럼제한·줄간격을 함께 저장하면 셋 다 캔버스에 공존한다(회귀 없음)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...loadEditorPrefs().colors, background: '#123456' },
+      edit: { ...loadEditorPrefs().edit, columnLimit: true, lineSpacing: 1.5 },
+    });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(canvas).toHaveStyle({ backgroundColor: '#123456' });
+    expect(canvas).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' });
+    expect(lineHeightVar(canvas)).toBe('1.5');
+  });
+
+  it("편집 탭에서 줄간격 2.0을 골라 '적용'하면 변수가 '2'로 반영된다(2.0 직렬화 = '2')", async () => {
+    setup({ identity: { role: 'R' } });
+    expect(lineHeightVar(screen.getByTestId('editor-canvas'))).toBe('1.8'); // 적용 전 기본
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    // React가 value={2.0}을 "2"로 직렬화하므로 selectOptions에도 '2'를 넘긴다('2.0'은 무매칭).
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-lineSpacing'), '2');
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    await waitFor(() => expect(loadEditorPrefs().edit.lineSpacing).toBe(2));
+    await waitFor(() => expect(lineHeightVar(screen.getByTestId('editor-canvas'))).toBe('2'));
+  });
+
+  it("'취소' 시 줄간격 변수가 바뀌지 않는다(columnLimit 게이트와 동일 — 적용 시에만 갱신)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-lineSpacing'), '2');
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().edit.lineSpacing).toBe(DEFAULT_EDITOR_PREFS.edit.lineSpacing); // 저장 불변(1.8)
+    expect(lineHeightVar(screen.getByTestId('editor-canvas'))).toBe('1.8'); // 변수 불변
+  });
+});
+
 // Step 1(13-editor-autosave): 자동저장 타이머(간격마다 활성 탭 초안 스냅샷) + 파일>복구 + 송고/저장 후 초안 무효화.
 // editorPrefs(localStorage 자동저장 설정) + editorDraft(localStorage 초안)를 쓰므로 localStorage.clear()로 격리한다.
 describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {

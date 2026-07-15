@@ -39,7 +39,7 @@ import {
 } from './editorSelect.js';
 import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
 import { sortDocument, sortParagraph, deleteWordAt } from './editorEditOps.js';
-import { loadEditorPrefs } from './editorPrefs.js';
+import { loadEditorPrefs, normalizeLineSpacing } from './editorPrefs.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
@@ -178,6 +178,10 @@ export function WriterPage() {
   // editorBg와 동일 게이트: 마운트 적용 + onPrefsClose(applied) 갱신. Editor.jsx 내부는 미접촉(여백은 바깥 래퍼에서만).
   const [columnLimit, setColumnLimit] = useState(() => loadEditorPrefs().edit.columnLimit);
 
+  // 편집>줄간격(edit.lineSpacing) — 캔버스 래퍼(editor-canvas)에 CSS 변수(--yh-editor-line-height) 주입 →
+  // 자식 .yh-editor/.yh-editor__line이 상속(columnLimit 동형 게이트). raw 저장값을 보관하고 정규화는 주입 시점에.
+  const [lineSpacing, setLineSpacing] = useState(() => loadEditorPrefs().edit.lineSpacing);
+
   // 자동저장 설정(환경설정>자동저장: enabled/intervalSec/retentionDays) — 타이머 effect의 단일 의존성.
   // 모달 적용(onPrefsClose(true)) 시 저장값으로 갱신한다(취소 시 불필요 — editorBg와 동일 게이트).
   const [autosaveCfg, setAutosaveCfg] = useState(() => loadEditorPrefs().autosave);
@@ -188,6 +192,7 @@ export function WriterPage() {
     setEditorColors({ title: c.title, subtitle: c.subtitle, body: c.body });
     setEditorBg(c.background);
     setColumnLimit(loadEditorPrefs().edit.columnLimit); // 새로고침 후에도 컬럼제한 반영.
+    setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 새로고침 후에도 줄간격 반영.
   }, []);
 
   // 모달 닫힘 — applied=true(적용)면 바탕색을 저장값으로 갱신(모달이 이미 setEditorColors 호출 → 자연 재렌더로 텍스트색 반영).
@@ -197,6 +202,7 @@ export function WriterPage() {
       setEditorBg(loadEditorPrefs().colors.background);
       setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
       setColumnLimit(loadEditorPrefs().edit.columnLimit); // 컬럼제한(좌우 여백) 변경 반영 — 취소 시 불변(editorBg와 동일 게이트).
+      setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 줄간격 변경 반영 — 취소 시 불변(동일 게이트).
       setGlyphFavorites(loadEditorPrefs().glyphFavorites.items); // 환경설정에서 등록한 자주쓰는 약물을 약물바/약물입력 다이얼로그에 즉시 반영.
       setGlyphKeymap(loadEditorPrefs().glyphKeymap.items); // 사용자 키보드 약물(참조 표시)도 동일 게이트로 즉시 반영.
     }
@@ -1006,6 +1012,9 @@ export function WriterPage() {
               backgroundColor: editorBg,
               // 컬럼제한 on → 에디터 캔버스 좌우 여백 10%씩(위/아래는 불변). 래퍼 레벨이라 Editor 내부 미접촉.
               ...(columnLimit ? { paddingLeft: '10%', paddingRight: '10%' } : null),
+              // 줄간격 — CSS 변수로 상시 주입(정규화된 line-height는 항상 유효). 자식 .yh-editor(line-height)/
+              // .yh-editor__line(min-height)이 var()로 상속. String(2.0)==='2'라 CSS line-height로 유효(소수 탈락 무해).
+              '--yh-editor-line-height': String(normalizeLineSpacing(lineSpacing)),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
             // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭

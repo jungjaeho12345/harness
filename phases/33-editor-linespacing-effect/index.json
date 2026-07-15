@@ -12,7 +12,9 @@
     {
       "step": 1,
       "name": "linespacing-effect",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-15T09:51:52+0900",
+      "summary": "줄간격 effect 배선 — WriterPage 캔버스 래퍼(editor-canvas) style에 CSS 변수 `--yh-editor-line-height`=String(normalizeLineSpacing(lineSpacing)) 상시 주입(columnLimit 동형 게이트: lineSpacing state·마운트 effect·onPrefsClose(applied) 갱신, 취소 시 불변). yonhap.css L507 `.yh-editor` line-height·L517 `.yh-editor__line` min-height를 var(--yh-editor-line-height, 1.8) fallback으로 변수화(자식 상속). 기본 1.8·레거시 1.0→1.8 정규화·2.0→'2' 직렬화. Editor.jsx 무접촉. 테스트: WriterPage.test.jsx 신규 describe 6케이스(1.5/기본1.8/레거시1.0/공존/라이브적용2.0/취소). lint·build·test:web(1395) 통과."
     }
   ],
   "created_at": "2026-07-14T07:33:19+0900"
