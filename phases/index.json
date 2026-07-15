@@ -191,7 +191,8 @@
     },
     {
       "dir": "34-editor-file-menu",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-15T17:52:32+0900"
     }
   ]
 }
