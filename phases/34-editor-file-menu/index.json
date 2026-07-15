@@ -32,7 +32,7 @@
       "status": "completed",
       "started_at": "2026-07-15T17:38:08+0900",
       "summary": "파일 메뉴 '문서열기'(file.open) 결선 — 신규 순수·controlled 다이얼로그 DocumentOpenDialog(MetaSelectDialog 동형: if(!open)null·useFocusOnOpen(검색입력)·Esc→onClose·yh-editor-dialog+yh-doc-open-dialog/testid, model/fetch/window/document 미접근 — 목록/검색/선택/닫기 위임만). 컨트롤러에 passthrough 2개(queryArticles/searchArticles, useCallback·model 계약 그대로) additive 노출. WriterPage: 구조분해에 openArticle+passthrough 추가 + showOpenDialog/openArticles state + openDocumentPicker(queryArticles 초기목록, 조회실패 빈목록)·searchDocuments(빈검색어=전체복귀)·pickDocument(openArticle에 잠금/dedup/locked 위임, id면 닫고 null이면 유지) + MENU_ENABLED에 file.open + onMenuSelect 매핑 가드 앞 분기(탭관리 계열, file.new/close/print 동일 정책) + 다이얼로그 렌더. DocumentOpenDialog.test 12종 + 컨트롤러 passthrough 2종 + WriterPage 통합 6종(활성/목록·queryArticles/openArticle경로 getArticle+lockArticle·locked '편집중입니다.'·dedup·검색). file.open 결선으로 깨진 기존 회귀 테스트 2건은 편집 메뉴 '되돌리기'(edit.undo)로 교체. Editor·server·DB·httpModel 무변경. lint/build/test:web(1438) 통과.",
-      "completed_at": "2026-07-15T17:49:00+0900"
+      "completed_at": "2026-07-15T17:52:31+0900"
     }
   ],
   "created_at": "2026-07-15T17:07:22+0900"
