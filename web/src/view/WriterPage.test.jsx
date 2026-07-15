@@ -1992,6 +1992,81 @@ describe('WriterPage — 파일 메뉴(새문서/닫기)', () => {
   });
 });
 
+// Step 1(34-editor-file-menu): 파일 메뉴 '인쇄'(file.print)·'인쇄미리보기'(file.printPreview) 결선 —
+// 현재 편집 탭 본문·공통정보를 상세보기(renderPrintHtml→renderDetailHtml) 형태로 새 창에 동기 렌더.
+// 인쇄만 렌더 후 w.print()까지, 인쇄미리보기는 창만 연다. (ListPage.openDetail의 async 재조회 없는 동기 버전)
+describe('WriterPage — 파일 메뉴(인쇄/인쇄미리보기)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 새 창 fake — document.open/write/close + print를 스파이로 잡는다(원복은 beforeEach의 restoreAllMocks).
+  const fakeWindow = () => ({
+    document: { open: vi.fn(), write: vi.fn(), close: vi.fn() },
+    print: vi.fn(),
+  });
+
+  // 파일 메뉴를 열고 항목을 클릭한다(step0 결선과 동일 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  // 제목(첫 줄)이 든 본문으로 편집 탭을 연다 — 인쇄 HTML에 그 제목이 나타나는지 검증용.
+  async function openEditTab(title) {
+    const body = serialize([textBlock(title)]);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title, status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("'인쇄'·'인쇄미리보기'가 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('인쇄').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('인쇄미리보기').closest('button')).toBeEnabled();
+  });
+
+  it("'인쇄' 클릭 시 새 창을 열어 인쇄 HTML을 write하고 w.print()를 호출한다", async () => {
+    const w = fakeWindow();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(w);
+    await openEditTab('인쇄될 제목');
+
+    await clickFileItem('인쇄');
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalled());
+    expect(w.document.write).toHaveBeenCalledTimes(1);
+    const html = w.document.write.mock.calls[0][0];
+    expect(html.startsWith('<!doctype html>')).toBe(true);
+    expect(html).toContain('인쇄될 제목');
+    expect(w.print).toHaveBeenCalledTimes(1);
+  });
+
+  it("'인쇄미리보기' 클릭 시 새 창을 열어 write하나 w.print()는 호출하지 않는다(인쇄와의 유일한 차이)", async () => {
+    const w = fakeWindow();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(w);
+    await openEditTab('미리보기 제목');
+
+    await clickFileItem('인쇄미리보기');
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalled());
+    expect(w.document.write).toHaveBeenCalledTimes(1);
+    expect(w.print).not.toHaveBeenCalled();
+  });
+
+  it('window.open이 null(팝업 차단)이어도 예외 없이 no-op이다', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    await openEditTab('차단 제목');
+
+    // 예외 없이 통과해야 한다(fake window 없음 → w.document 접근 방어).
+    await clickFileItem('인쇄');
+    expect(openSpy).toHaveBeenCalled();
+  });
+});
+
 // Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
 // Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
 describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {

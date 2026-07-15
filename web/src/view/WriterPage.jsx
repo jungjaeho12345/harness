@@ -67,6 +67,7 @@ import {
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
+import { renderPrintHtml } from './printDocument.js';
 
 const META_TABS = [
   { key: 'common', label: '공통정보' },
@@ -90,7 +91,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.close', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.close', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -530,6 +531,20 @@ export function WriterPage() {
     }
   };
 
+  // 파일>인쇄/인쇄미리보기 — 현재 편집 탭 본문·공통정보를 상세보기(renderPrintHtml→renderDetailHtml) 형태로 새 창에 동기 렌더한다.
+  // ListPage.openDetail의 동기 버전이다 — async 재조회 없음(현재 탭 본문이 이미 메모리에 있어 window.open 후 await 사이
+  // 탭 전환으로 다른 기사를 인쇄하는 레이스를 피한다). HTML은 반드시 renderPrintHtml 경유(모든 값 escapeHtml —
+  // document.write 싱크에서 스크립트 비실행, 발행/상세보기 XSS 이중차단). doPrint면 렌더 후 w.print()까지, 아니면 창만 연다.
+  const printCurrentTab = (doPrint) => {
+    const html = renderPrintHtml(activeTab, loadEditorPrefs().byline);
+    const w = window.open('', '_blank', 'width=720,height=800');
+    if (!w || !w.document) return; // 팝업 차단/미지원 — 조용히 종료(죽지 않음).
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    if (doPrint) { try { w.print(); } catch { /* print 미지원 — 무시 */ } }
+  };
+
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
@@ -600,6 +615,10 @@ export function WriterPage() {
     // 특히 매핑 탭을 닫으면 closeTab이 잠금을 해제하므로 매핑 취소 경로로 자연스럽다.
     if (id === 'file.new') { addTab(); return; }
     if (id === 'file.close') { closeTab(activeTabId); return; }
+    // 파일>인쇄/인쇄미리보기 — 읽기전용 렌더(현재 탭 본문 무변경)라 매핑 가드 앞(매핑에서도 열림, tools.fileInfo와 동일 정책).
+    // 유일한 차이: 인쇄는 렌더 후 w.print()까지, 인쇄미리보기는 창만 연다.
+    if (id === 'file.print') { printCurrentTab(true); return; }
+    if (id === 'file.printPreview') { printCurrentTab(false); return; }
     if (isMapping) return;
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
