@@ -7,7 +7,8 @@
       "name": "file-menu-basic",
       "status": "completed",
       "started_at": "2026-07-15T17:07:22+0900",
-      "summary": "WriterPage 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 — MENU_ENABLED에 두 id 추가 + onMenuSelect 매핑 가드 앞에 분기 2개(addTab/closeTab 위임, 새 모듈·컨트롤러 메서드·서버/DB 무변경). WriterPage.test.jsx에 신규 describe(활성/새문서 추가·활성화/닫기 다중·마지막 탭 유지/편집 탭 unlockArticle) 5종 추가, file.new 결선으로 깨진 기존 회귀 테스트 2건은 '문서열기'(file.open)로 교체. lint/build/test:web(1400) 통과."
+      "summary": "WriterPage 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 — MENU_ENABLED에 두 id 추가 + onMenuSelect 매핑 가드 앞에 분기 2개(addTab/closeTab 위임, 새 모듈·컨트롤러 메서드·서버/DB 무변경). WriterPage.test.jsx에 신규 describe(활성/새문서 추가·활성화/닫기 다중·마지막 탭 유지/편집 탭 unlockArticle) 5종 추가, file.new 결선으로 깨진 기존 회귀 테스트 2건은 '문서열기'(file.open)로 교체. lint/build/test:web(1400) 통과.",
+      "completed_at": "2026-07-15T17:15:22+0900"
     },
     {
       "step": 1,
