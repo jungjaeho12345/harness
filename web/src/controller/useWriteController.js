@@ -278,6 +278,17 @@ export function useWriteController() {
     return r;
   }, [model]);
 
+  // 다른이름으로 저장 — 현재 활성 탭 본문/공통정보를 articleId 없이 POST해 새 AKR 복제본을 만든다.
+  // save가 신규 POST 성공 시 탭에 articleId를 바인딩하는 것과 달리, 현재 탭의 articleId/clientId는
+  // 절대 재바인딩하지 않는다(복제본 생성이지 현재 문서 정체성 전환이 아님 — 원본 편집 세션/잠금을 그대로 유지).
+  // 편집 잠금 clientId도 넘기지 않는다(새 기사는 잠금 대상이 아님). 결과 { ok, articleId }를 그대로 반환(호출자 피드백용).
+  const saveAsNew = useCallback(async () => {
+    const tab = tabsRef.current.find((t) => t.id === activeRef.current);
+    if (!tab) return { ok: false, reason: 'no-tab' };
+    const { articleId, ...dto } = toSaveDto(tab); // eslint-disable-line no-unused-vars -- articleId 제거 → POST(새 발번)
+    return model.saveArticle(dto); // clientId 미전달 — 원본 잠금과 무관한 신규 생성.
+  }, [model]);
+
   // 매핑 저장 — 본문 텍스트는 그대로(readOnly) 두고 추가된 임베드만 PUT으로 저장한다. 생애주기 전이가 없으므로
   // applyAction을 호출하지 않는다(전이는 submit 전용). 저장(PUT, articleId 포함) 성공 시 잠금 해제 + 빈 새 기사 탭으로 전환.
   // body는 toSaveDto가 tab.fields.body를 그대로 markupVersion으로 싣는다 — 텍스트 블록 재조립 없음(appendEmbedToBody로 들어온 값 보존).
@@ -388,6 +399,6 @@ export function useWriteController() {
   return {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab, openArticle, openFromSource,
-    updateField, save, submit, saveMapping,
+    updateField, save, saveAsNew, submit, saveMapping,
   };
 }

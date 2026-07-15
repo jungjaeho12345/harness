@@ -542,4 +542,44 @@ describe('useWriteController', () => {
     expect(result.current.activeTab.articleId).toBeNull();
     expect(result.current.activeTab.fields.body).toBe('');
   });
+
+  // ── saveAsNew(다른이름으로 저장 — articleId 없는 POST 복제본) ─────────────────────
+  it('saveAsNew POSTs an articleId-less dto even from an edit tab (복제본 생성)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    expect(result.current.activeTab.articleId).toBe('AKR1'); // 기존 편집 탭
+
+    await act(async () => { await result.current.saveAsNew(); });
+
+    const last = save.mock.calls[save.mock.calls.length - 1];
+    expect(last[0].articleId).toBeUndefined(); // dto에서 articleId 제거 → POST(새 발번)
+    expect(last[0].markupVersion).toBe('본문'); // 본문은 markupVersion으로 실린다
+    expect(last[0].role).toBeUndefined(); // role 미포함(ADR-004)
+    expect(last[1]).toBeUndefined(); // clientId 미전달 — 새 기사는 잠금 대상이 아님
+  });
+
+  it('saveAsNew does NOT rebind the current tab articleId/clientId (원본 편집 세션/잠금 유지)', async () => {
+    const { result } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    const beforeArticleId = result.current.activeTab.articleId;
+    const beforeClientId = result.current.activeTab.clientId;
+
+    await act(async () => { await result.current.saveAsNew(); });
+
+    // 복제본이 현재 탭을 하이재킹하지 않는다 — articleId/clientId 불변(save의 신규 POST 바인딩과 다름).
+    expect(result.current.activeTab.articleId).toBe(beforeArticleId); // 'AKR1'
+    expect(result.current.activeTab.clientId).toBe(beforeClientId);
+  });
+
+  it('saveAsNew returns the model result ({ ok, articleId }) verbatim (새 발번 복제본)', async () => {
+    const { result } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    let r;
+    await act(async () => { r = await result.current.saveAsNew(); });
+    expect(r.ok).toBe(true);
+    expect(r.articleId).toEqual(expect.stringMatching(/^AKRFAKE/)); // 서버가 발번한 새 복제본 id
+    expect(r.articleId).not.toBe('AKR1'); // 원본 id가 아님
+  });
 });

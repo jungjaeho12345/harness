@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "file-save",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-15T17:23:34+0900",
+      "summary": "파일 메뉴 '저장'(file.save)·'다른이름으로 저장'(file.saveAs) 결선 — 컨트롤러에 saveAsNew 추가(toSaveDto에서 articleId 제거한 dto를 clientId 없이 POST → 새 AKR 복제본, 현재 탭 articleId/clientId 재바인딩 없음). WriterPage에 saveDocument(기존=save() PUT+전이/unlock 없음 / 신규=saveDraft 로컬 초안만·POST 금지로 DB 미오염, key=tab.articleId||tab.id)·saveAsDocument 헬퍼 + MENU_ENABLED 두 id 추가 + onMenuSelect 매핑 가드 뒤 분기 2개(매핑은 자체 saveMapping 보유 → no-op). 컨트롤러 테스트 3종(edit 탭 articleId-less POST·현재 탭 불변·{ok,articleId} 반환) + WriterPage 6종(활성/기존 PUT 무전이·신규 POST금지+tab.id 초안·복구 라운드트립/saveAs POST+정체성 불변/실패 alert). Editor·server·DB·httpModel 무변경(saveArticle 재사용). lint/build/test:web(1418) 통과.",
+      "completed_at": "2026-07-15T17:36:00+0900"
     },
     {
       "step": 3,

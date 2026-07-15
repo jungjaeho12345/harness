@@ -2067,6 +2067,133 @@ describe('WriterPage — 파일 메뉴(인쇄/인쇄미리보기)', () => {
   });
 });
 
+// Step 2(34-editor-file-menu): 파일 메뉴 '저장'(file.save)·'다른이름으로 저장'(file.saveAs) 결선 —
+// 저장은 기사 상태로 갈린다(기존=서버 PUT 부분수정, 신규=로컬 초안만·DB 미생성). 다른이름으로 저장은 현재 본문을 새 기사로 POST(복제본).
+describe('WriterPage — 파일 메뉴(저장/다른이름으로 저장)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const docTabs = (container) => container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab');
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+  // localStorage 초안 저장소(yh.editorDrafts) 원본을 파싱한다(신규 탭 초안 key 검증용).
+  const readDraftsStore = () => {
+    try { return JSON.parse(localStorage.getItem('yh.editorDrafts')) || {}; }
+    catch { return {}; }
+  };
+
+  // 파일 메뉴를 열고 항목을 클릭한다(step0/step1 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  // 본문(markupVersion)을 가진 기사로 편집 탭을 연다(기존 기사 저장 검증용).
+  async function openEditTab({ articleId = 'AKR1', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize([textBlock('제목'), textBlock('본문')]);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId, title: '제목', status }, mode: 'edit' },
+      seed: { articles: [{ articleId, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("'저장'·'다른이름으로 저장'이 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('저장').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('다른이름으로 저장').closest('button')).toBeEnabled();
+  });
+
+  it("'저장'(기존 편집 탭): PUT(dto.articleId 포함)로 저장하고 전이/unlock/탭 리셋이 없다", async () => {
+    const { model, container } = await openEditTab();
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const tabCountBefore = docTabs(container).length; // 빈 새 기사 탭 + 편집 탭
+
+    await clickFileItem('저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.articleId).toBe('AKR1'); // PUT(부분 수정) — 기존 기사
+    expect(apply).not.toHaveBeenCalled(); // 상태 전이 없음(편집 유지)
+    expect(unlock).not.toHaveBeenCalled(); // 잠금 해제 없음(편집 유지)
+    // 탭 리셋/추가 없음 — 개수 불변, 편집 본문도 그대로 유지된다.
+    expect(docTabs(container).length).toBe(tabCountBefore);
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+  });
+
+  it("'저장'(신규 탭): POST를 내지 않고 tab.id 키로 로컬 초안만 저장한다(DB 미오염)", async () => {
+    const { model, container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭(articleId 없음)
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    // 본문 입력 → onTextChange가 tab.fields.body를 채운다(autosave 테스트와 동일 경로).
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '신규본문';
+    fireEvent.input(editor);
+
+    await clickFileItem('저장');
+
+    expect(save).not.toHaveBeenCalled(); // 신규 POST 금지 — 송고 전 DB에 draft 행을 만들지 않는다(이 phase 핵심)
+    const store = readDraftsStore();
+    const keys = Object.keys(store);
+    expect(keys).toHaveLength(1); // 활성(신규) 탭 1개의 초안만
+    expect(keys[0]).toMatch(/^tab-/); // 신규 탭 key=tab.id(자동저장/파일>복구와 동일 규약)
+    expect(blocksToText(deserialize(store[keys[0]].data.body))).toContain('신규본문');
+  });
+
+  it("'저장'(신규 탭) 초안은 파일>복구가 같은 tab.id 키로 되살릴 수 있다(key 규약 일치)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '복구대상본문';
+    fireEvent.input(editor);
+
+    await clickFileItem('저장'); // tab.id 키로 초안 저장
+
+    // 본문을 다른 내용으로 바꾼 뒤 복구 → 초안 본문이 되살아난다(같은 tab.id 키로 조회).
+    editor.textContent = '지워짐';
+    fireEvent.input(editor);
+    await clickFileItem('복구');
+
+    await waitFor(() => expect(editorLines(container).join('\n')).toContain('복구대상본문'));
+  });
+
+  it("'다른이름으로 저장': articleId 없는 dto(POST)로 저장하고 현재 탭 정체성은 불변이다", async () => {
+    const { model, container } = await openEditTab();
+    await waitFor(() => expect(document.title).toBe('AKR1')); // 현재 탭=원본 AKR1 편집 중
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const tabCountBefore = docTabs(container).length;
+
+    await clickFileItem('다른이름으로 저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const last = save.mock.calls[save.mock.calls.length - 1];
+    expect(last[0].articleId).toBeUndefined(); // POST(복제본) — 원본 articleId 미포함
+    expect(last[1]).toBeUndefined(); // clientId 미전달(새 기사는 잠금 대상 아님)
+    // 현재 탭은 여전히 원본(AKR1)을 편집 중 — 복제본이 현재 문서를 하이재킹하지 않는다(articleId 재바인딩 없음).
+    expect(document.title).toBe('AKR1');
+    expect(docTabs(container).length).toBe(tabCountBefore); // 탭 추가/리셋 없음
+  });
+
+  it("'다른이름으로 저장' 실패({ ok:false }) 시 실패 alert를 띄운다", async () => {
+    const { model } = await openEditTab();
+    vi.spyOn(model, 'saveArticle').mockResolvedValue({ ok: false });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('다른이름으로 저장');
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining('실패')));
+  });
+});
+
 // Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
 // Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
 describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {

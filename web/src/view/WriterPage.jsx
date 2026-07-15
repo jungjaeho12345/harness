@@ -91,7 +91,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.close', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -105,7 +105,7 @@ export function WriterPage() {
   const {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab,
-    updateField, submit, saveMapping,
+    updateField, save, saveAsNew, submit, saveMapping,
   } = useWriteController();
   const search = useSearchController();
 
@@ -545,6 +545,30 @@ export function WriterPage() {
     if (doPrint) { try { w.print(); } catch { /* print 미지원 — 무시 */ } }
   };
 
+  // 파일>저장 — 기사 상태로 갈린다. 기존 기사(articleId 有)는 컨트롤러 save()로 서버 PUT 부분 수정(잠금 보유자)
+  // — 상태 전이·잠금 해제·탭 리셋 없이 편집을 이어간다(save의 기존 계약). 신규 기사(articleId 無)는 saveDraft로
+  // 로컬 초안만 저장한다 — 절대 save()/POST를 부르지 않는다(송고 전 DB에 draft 행이 생겨 DB를 오염시킴).
+  // 초안 key는 tab.articleId || tab.id(신규=tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
+  const saveDocument = async () => {
+    const tab = activeTab;
+    if (tab.articleId) {
+      const r = await save();                                   // 기존 → PUT(전이/unlock 없음)
+      window.alert(r && r.ok ? '저장되었습니다.' : '저장에 실패했습니다.');
+    } else {
+      saveDraft(tab.articleId || tab.id, { ...tab.fields }, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
+      window.alert('임시 저장했습니다. (송고 전에는 DB에 생성되지 않으며, 파일>복구로 되살릴 수 있습니다.)');
+    }
+  };
+
+  // 파일>다른이름으로 저장 — 현재 본문/공통정보를 articleId 없이 POST해 새 기사(복제본)를 만든다.
+  // 현재 탭의 articleId는 재바인딩하지 않는다(원본 편집 세션·잠금 유지 — saveAsNew가 보장, 복제본이라 정체성 불변).
+  const saveAsDocument = async () => {
+    const r = await saveAsNew();
+    window.alert(r && r.ok && r.articleId
+      ? `새 기사로 저장했습니다: ${r.articleId}`
+      : '다른 이름으로 저장에 실패했습니다.');
+  };
+
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
@@ -620,6 +644,11 @@ export function WriterPage() {
     if (id === 'file.print') { printCurrentTab(true); return; }
     if (id === 'file.printPreview') { printCurrentTab(false); return; }
     if (isMapping) return;
+    // 파일>저장/다른이름으로 저장 — 매핑 가드 뒤(매핑은 자체 '저장' 버튼(saveMapping — 저장+unlock+리셋)을
+    // 가지므로 파일 메뉴 save/saveAs는 no-op으로 두어 잠금/리셋 이원화를 막는다). 저장은 상태 전이·잠금 해제·탭
+    // 리셋이 없다(편집 유지) — submit/applyAction/saveMapping 경로가 아니다. async지만 fire-and-forget(openHistoryCompare 패턴).
+    if (id === 'file.save') { saveDocument(); return; }      // 기존=PUT / 신규=로컬 초안만(DB 미생성 — POST 금지)
+    if (id === 'file.saveAs') { saveAsDocument(); return; }  // 현재 본문을 새 기사로 POST(복제본, 현재 탭 articleId 불변)
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
       const tab = activeTab;
