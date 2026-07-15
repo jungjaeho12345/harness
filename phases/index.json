@@ -186,7 +186,8 @@
     },
     {
       "dir": "33-editor-linespacing-effect",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-15T09:58:04+0900"
     }
   ]
 }
