@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-07-15T17:15:23+0900",
       "summary": "파일 메뉴 '인쇄'(file.print)·'인쇄미리보기'(file.printPreview) 결선 — 신규 순수 모듈 printDocument.js(buildPrintArticle: 현재 탭 fields+readOnly+markupVersion 매핑 / renderPrintHtml: renderDetailHtml 경유 인쇄 HTML). WriterPage에 얇은 printCurrentTab(window.open 동기 → document.write → doPrint 시 w.print()) 배선 + MENU_ENABLED 두 id 추가 + onMenuSelect 매핑 가드 앞 분기 2개(읽기전용 렌더, tools.fileInfo 동일 정책). printDocument.test.js 5종(매핑·XSS 회귀 잠금·빈 탭 방어) + WriterPage.test.jsx 4종(활성/인쇄 print()/미리보기 print() 미호출/팝업차단 no-op). articleDetail·ListPage·Editor·server·DB 무변경. lint/build/test:web(1409) 통과.",
-      "completed_at": "2026-07-15T17:21:00+0900"
+      "completed_at": "2026-07-15T17:23:33+0900"
     },
     {
       "step": 2,
