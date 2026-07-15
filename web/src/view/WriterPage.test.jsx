@@ -1417,16 +1417,16 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 항목 외(새문서·잘라내기)는 여전히 비활성이다', async () => {
-    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐고,
-    // '표 삽입'(table.insert)도 31-editor-table step3에서 결선돼 활성이 됐으므로,
-    // 미결선 예시는 여전히 비활성인 '새문서'(file.new)·'잘라내기'(edit.cut)로 검증한다.
+  it('활성 항목 외(되돌리기·잘라내기)는 여전히 비활성이다', async () => {
+    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐고, '표 삽입'(table.insert)도
+    // 31-editor-table step3에서, 파일 메뉴 전 항목(새문서/문서열기/저장/…)도 34-editor-file-menu에서 결선돼 활성이 됐으므로,
+    // 미결선 예시는 여전히 비활성인 편집 메뉴 '되돌리기'(edit.undo)·'잘라내기'(edit.cut)로 검증한다.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
-    await openTopMenu('파일');
-    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
     await openTopMenu('편집');
-    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
+    const menu = screen.getByTestId('menu-편집');
+    expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('잘라내기').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -1920,6 +1920,390 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
   });
 });
 
+// Step 0(34-editor-file-menu): 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 —
+// 컨트롤러 addTab/closeTab에 위임(새 빈 탭 열기 / 활성 탭 닫기 — × 버튼과 동일 경로, 편집 탭이면 잠금 해제).
+describe('WriterPage — 파일 메뉴(새문서/닫기)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // writer-tabs 스트립의 문서 탭(span.yh-tab)만 센다 — ＋ 버튼(.yh-tab__add)·메타 탭(별 컨테이너)은 제외.
+  const docTabs = (container) => container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab');
+  const activeDocTab = (container) => container.querySelector('[data-testid="writer-tabs"] .yh-tab--active');
+
+  // 파일 메뉴를 열고 항목을 클릭한다(복구 결선과 동일 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  it("'새문서'·'닫기'가 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('새문서').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('닫기').closest('button')).toBeEnabled();
+  });
+
+  it("'새문서' 클릭 시 빈 새 탭이 1개 추가되고 활성화된다", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    expect(docTabs(container)).toHaveLength(1);
+
+    await clickFileItem('새문서');
+
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2));
+    // 새로 추가된(마지막) 탭이 활성 + 빈 본문(신규 → 라벨 '새 기사').
+    expect(activeDocTab(container)).toBe(docTabs(container)[1]);
+    expect(within(activeDocTab(container)).getByText('새 기사')).toBeInTheDocument();
+  });
+
+  it("'닫기'(다중 탭) 클릭 시 활성 탭이 제거되고 개수가 1 감소한다", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' })); // ＋ → 2탭(새 탭 활성)
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2));
+
+    await clickFileItem('닫기');
+
+    await waitFor(() => expect(docTabs(container)).toHaveLength(1));
+  });
+
+  it("'닫기'(마지막 탭) 클릭 시 빈 새 기사 탭 1개가 유지된다(0으로 떨어지지 않음)", async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    expect(docTabs(container)).toHaveLength(1);
+
+    await clickFileItem('닫기');
+
+    // 마지막 탭 닫기 → 빈 새 기사 탭 1개 유지(개수 불변).
+    await waitFor(() => expect(docTabs(container)).toHaveLength(1));
+    expect(within(activeDocTab(container)).getByText('새 기사')).toBeInTheDocument();
+  });
+
+  it("'닫기'(편집 탭) 클릭 시 그 기사의 잠금을 해제한다(unlockArticle 호출)", async () => {
+    const { model, container } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: serialize([textBlock('제목')]) }] },
+    });
+    // 편집 탭이 로드(에디터 본문 렌더)될 때까지 대기 — openArticle가 이 탭을 활성으로 둔다.
+    await waitFor(() => expect(container.querySelector('.yh-editor__line')).toBeTruthy());
+    const unlock = vi.spyOn(model, 'unlockArticle');
+
+    await clickFileItem('닫기');
+
+    await waitFor(() => expect(unlock).toHaveBeenCalledWith('AKR1', expect.anything()));
+  });
+});
+
+// Step 1(34-editor-file-menu): 파일 메뉴 '인쇄'(file.print)·'인쇄미리보기'(file.printPreview) 결선 —
+// 현재 편집 탭 본문·공통정보를 상세보기(renderPrintHtml→renderDetailHtml) 형태로 새 창에 동기 렌더.
+// 인쇄만 렌더 후 w.print()까지, 인쇄미리보기는 창만 연다. (ListPage.openDetail의 async 재조회 없는 동기 버전)
+describe('WriterPage — 파일 메뉴(인쇄/인쇄미리보기)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 새 창 fake — document.open/write/close + print를 스파이로 잡는다(원복은 beforeEach의 restoreAllMocks).
+  const fakeWindow = () => ({
+    document: { open: vi.fn(), write: vi.fn(), close: vi.fn() },
+    print: vi.fn(),
+  });
+
+  // 파일 메뉴를 열고 항목을 클릭한다(step0 결선과 동일 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  // 제목(첫 줄)이 든 본문으로 편집 탭을 연다 — 인쇄 HTML에 그 제목이 나타나는지 검증용.
+  async function openEditTab(title) {
+    const body = serialize([textBlock(title)]);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title, status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("'인쇄'·'인쇄미리보기'가 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('인쇄').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('인쇄미리보기').closest('button')).toBeEnabled();
+  });
+
+  it("'인쇄' 클릭 시 새 창을 열어 인쇄 HTML을 write하고 w.print()를 호출한다", async () => {
+    const w = fakeWindow();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(w);
+    await openEditTab('인쇄될 제목');
+
+    await clickFileItem('인쇄');
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalled());
+    expect(w.document.write).toHaveBeenCalledTimes(1);
+    const html = w.document.write.mock.calls[0][0];
+    expect(html.startsWith('<!doctype html>')).toBe(true);
+    expect(html).toContain('인쇄될 제목');
+    expect(w.print).toHaveBeenCalledTimes(1);
+  });
+
+  it("'인쇄미리보기' 클릭 시 새 창을 열어 write하나 w.print()는 호출하지 않는다(인쇄와의 유일한 차이)", async () => {
+    const w = fakeWindow();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(w);
+    await openEditTab('미리보기 제목');
+
+    await clickFileItem('인쇄미리보기');
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalled());
+    expect(w.document.write).toHaveBeenCalledTimes(1);
+    expect(w.print).not.toHaveBeenCalled();
+  });
+
+  it('window.open이 null(팝업 차단)이어도 예외 없이 no-op이다', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    await openEditTab('차단 제목');
+
+    // 예외 없이 통과해야 한다(fake window 없음 → w.document 접근 방어).
+    await clickFileItem('인쇄');
+    expect(openSpy).toHaveBeenCalled();
+  });
+});
+
+// Step 2(34-editor-file-menu): 파일 메뉴 '저장'(file.save)·'다른이름으로 저장'(file.saveAs) 결선 —
+// 저장은 기사 상태로 갈린다(기존=서버 PUT 부분수정, 신규=로컬 초안만·DB 미생성). 다른이름으로 저장은 현재 본문을 새 기사로 POST(복제본).
+describe('WriterPage — 파일 메뉴(저장/다른이름으로 저장)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const docTabs = (container) => container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab');
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+  // localStorage 초안 저장소(yh.editorDrafts) 원본을 파싱한다(신규 탭 초안 key 검증용).
+  const readDraftsStore = () => {
+    try { return JSON.parse(localStorage.getItem('yh.editorDrafts')) || {}; }
+    catch { return {}; }
+  };
+
+  // 파일 메뉴를 열고 항목을 클릭한다(step0/step1 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  // 본문(markupVersion)을 가진 기사로 편집 탭을 연다(기존 기사 저장 검증용).
+  async function openEditTab({ articleId = 'AKR1', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize([textBlock('제목'), textBlock('본문')]);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId, title: '제목', status }, mode: 'edit' },
+      seed: { articles: [{ articleId, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("'저장'·'다른이름으로 저장'이 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    const menu = screen.getByTestId('menu-파일');
+    expect(within(menu).getByText('저장').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('다른이름으로 저장').closest('button')).toBeEnabled();
+  });
+
+  it("'저장'(기존 편집 탭): PUT(dto.articleId 포함)로 저장하고 전이/unlock/탭 리셋이 없다", async () => {
+    const { model, container } = await openEditTab();
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const tabCountBefore = docTabs(container).length; // 빈 새 기사 탭 + 편집 탭
+
+    await clickFileItem('저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.articleId).toBe('AKR1'); // PUT(부분 수정) — 기존 기사
+    expect(apply).not.toHaveBeenCalled(); // 상태 전이 없음(편집 유지)
+    expect(unlock).not.toHaveBeenCalled(); // 잠금 해제 없음(편집 유지)
+    // 탭 리셋/추가 없음 — 개수 불변, 편집 본문도 그대로 유지된다.
+    expect(docTabs(container).length).toBe(tabCountBefore);
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+  });
+
+  it("'저장'(신규 탭): POST를 내지 않고 tab.id 키로 로컬 초안만 저장한다(DB 미오염)", async () => {
+    const { model, container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭(articleId 없음)
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    // 본문 입력 → onTextChange가 tab.fields.body를 채운다(autosave 테스트와 동일 경로).
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '신규본문';
+    fireEvent.input(editor);
+
+    await clickFileItem('저장');
+
+    expect(save).not.toHaveBeenCalled(); // 신규 POST 금지 — 송고 전 DB에 draft 행을 만들지 않는다(이 phase 핵심)
+    const store = readDraftsStore();
+    const keys = Object.keys(store);
+    expect(keys).toHaveLength(1); // 활성(신규) 탭 1개의 초안만
+    expect(keys[0]).toMatch(/^tab-/); // 신규 탭 key=tab.id(자동저장/파일>복구와 동일 규약)
+    expect(blocksToText(deserialize(store[keys[0]].data.body))).toContain('신규본문');
+  });
+
+  it("'저장'(신규 탭) 초안은 파일>복구가 같은 tab.id 키로 되살릴 수 있다(key 규약 일치)", async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '복구대상본문';
+    fireEvent.input(editor);
+
+    await clickFileItem('저장'); // tab.id 키로 초안 저장
+
+    // 본문을 다른 내용으로 바꾼 뒤 복구 → 초안 본문이 되살아난다(같은 tab.id 키로 조회).
+    editor.textContent = '지워짐';
+    fireEvent.input(editor);
+    await clickFileItem('복구');
+
+    await waitFor(() => expect(editorLines(container).join('\n')).toContain('복구대상본문'));
+  });
+
+  it("'다른이름으로 저장': articleId 없는 dto(POST)로 저장하고 현재 탭 정체성은 불변이다", async () => {
+    const { model, container } = await openEditTab();
+    await waitFor(() => expect(document.title).toBe('AKR1')); // 현재 탭=원본 AKR1 편집 중
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const tabCountBefore = docTabs(container).length;
+
+    await clickFileItem('다른이름으로 저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const last = save.mock.calls[save.mock.calls.length - 1];
+    expect(last[0].articleId).toBeUndefined(); // POST(복제본) — 원본 articleId 미포함
+    expect(last[1]).toBeUndefined(); // clientId 미전달(새 기사는 잠금 대상 아님)
+    // 현재 탭은 여전히 원본(AKR1)을 편집 중 — 복제본이 현재 문서를 하이재킹하지 않는다(articleId 재바인딩 없음).
+    expect(document.title).toBe('AKR1');
+    expect(docTabs(container).length).toBe(tabCountBefore); // 탭 추가/리셋 없음
+  });
+
+  it("'다른이름으로 저장' 실패({ ok:false }) 시 실패 alert를 띄운다", async () => {
+    const { model } = await openEditTab();
+    vi.spyOn(model, 'saveArticle').mockResolvedValue({ ok: false });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('다른이름으로 저장');
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith(expect.stringContaining('실패')));
+  });
+});
+
+// Step 3(34-editor-file-menu): 파일 메뉴 '문서열기'(file.open) 결선 — DB 기사 피커 다이얼로그(DocumentOpenDialog)를
+// 열어 목록/검색으로 기사를 고르면 편집 진입 단일 경로(openArticle → getArticle + lockArticle, 잠금/dedup/locked)로 편집 탭을 연다.
+describe('WriterPage — 파일 메뉴(문서열기)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const docTabs = (container) => container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab');
+
+  // 파일 메뉴를 열고 항목을 클릭한다(step0~2 패턴 — 메뉴는 선택 즉시 닫히므로 매번 다시 연다).
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  // 매 호출마다 새 기사 객체를 만든다 — fakeModel.lockArticle이 잠금 시 객체를 mutate(lockYN/lockerClientId)하므로,
+  // 공유 리터럴을 쓰면 이전 테스트의 잠금이 다음 테스트로 새어 dedup 등이 깨진다(테스트 격리).
+  const pickerSeed = () => ({
+    articles: [
+      { articleId: 'AKR1', title: '첫 기사', status: 'RDS', lockYN: 'N', markupVersion: serialize([textBlock('첫 기사')]) },
+      { articleId: 'AKR2', title: '둘째 기사', status: 'DPS', lockYN: 'N', markupVersion: serialize([textBlock('둘째 기사')]) },
+    ],
+  });
+
+  it("'문서열기'가 활성(enabled)이다(placeholder→결선)", async () => {
+    setup({ identity: { role: 'R' } });
+    await openTopMenu('파일');
+    expect(within(screen.getByTestId('menu-파일')).getByText('문서열기').closest('button')).toBeEnabled();
+  });
+
+  it("'문서열기' 클릭 시 다이얼로그가 열리고 queryArticles로 받은 목록이 보인다", async () => {
+    const { model } = setup({ identity: { role: 'R' }, seed: pickerSeed() });
+    const query = vi.spyOn(model, 'queryArticles');
+
+    await clickFileItem('문서열기');
+
+    await waitFor(() => expect(screen.getByTestId('doc-open-dialog')).toBeInTheDocument());
+    expect(query).toHaveBeenCalled(); // 초기 목록은 controller passthrough queryArticles로 채운다(ADR-003)
+    await waitFor(() => expect(screen.getByText('첫 기사')).toBeInTheDocument());
+    expect(screen.getByText('둘째 기사')).toBeInTheDocument();
+  });
+
+  it('목록에서 기사를 고르면 openArticle 경로(getArticle+lockArticle)가 타고 편집 탭이 생긴다', async () => {
+    const { model, container } = setup({ identity: { role: 'R' }, seed: pickerSeed() });
+    const getArticle = vi.spyOn(model, 'getArticle');
+    const lock = vi.spyOn(model, 'lockArticle');
+    expect(docTabs(container)).toHaveLength(1); // 시작: 빈 새 기사 탭 1개
+
+    await clickFileItem('문서열기');
+    await waitFor(() => expect(screen.getByTestId('doc-open-row-0')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('doc-open-row-0')); // 첫 기사 선택
+
+    await waitFor(() => expect(getArticle).toHaveBeenCalledWith('AKR1'));
+    expect(lock).toHaveBeenCalled(); // 편집 진입 = 잠금 획득(openArticle 단일 경로 재사용)
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2)); // 편집 탭이 새로 열림
+    // 성공 시 다이얼로그는 닫힌다.
+    await waitFor(() => expect(screen.queryByTestId('doc-open-dialog')).toBeNull());
+  });
+
+  it("다른 세션이 편집 중(locked)이면 '편집중입니다.' alert가 뜨고 편집 탭이 열리지 않는다", async () => {
+    const seed = {
+      articles: [
+        // 다른 clientId가 이미 잠근 기사 — fakeModel.lockArticle이 { ok:false, reason:'locked' }를 돌려준다.
+        { articleId: 'AKR1', title: '잠긴 기사', status: 'RDS', lockYN: 'Y', lockerClientId: 'other-client', markupVersion: serialize([textBlock('잠긴 기사')]) },
+      ],
+    };
+    const { container } = setup({ identity: { role: 'R' }, seed });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('문서열기');
+    await waitFor(() => expect(screen.getByTestId('doc-open-row-0')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('doc-open-row-0'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('편집중입니다.'));
+    expect(docTabs(container)).toHaveLength(1); // 편집 탭 안 열림(빈 새 기사 탭만)
+    expect(screen.getByTestId('doc-open-dialog')).toBeInTheDocument(); // 다이얼로그는 열린 채 유지
+  });
+
+  it('이미 열린 기사를 다시 고르면 새 탭을 만들지 않고 dedup한다(기존 탭 활성)', async () => {
+    const { container } = setup({ identity: { role: 'R' }, seed: pickerSeed() });
+
+    await clickFileItem('문서열기');
+    await waitFor(() => expect(screen.getByTestId('doc-open-row-0')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('doc-open-row-0')); // 첫 기사 편집 탭 생성
+    await waitFor(() => expect(docTabs(container)).toHaveLength(2));
+
+    // 같은 기사를 다시 연다 → dedup(새 탭 없음).
+    await clickFileItem('문서열기');
+    await waitFor(() => expect(screen.getByTestId('doc-open-row-0')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('doc-open-row-0'));
+
+    await waitFor(() => expect(screen.queryByTestId('doc-open-dialog')).toBeNull());
+    expect(docTabs(container)).toHaveLength(2); // 탭 개수 불변(dedup)
+  });
+
+  it("검색 제출 시 searchArticles로 목록을 좁힌다(빈 검색어는 전체 목록으로 복귀)", async () => {
+    const { model } = setup({ identity: { role: 'R' }, seed: pickerSeed() });
+    const searchSpy = vi.spyOn(model, 'searchArticles');
+
+    await clickFileItem('문서열기');
+    await waitFor(() => expect(screen.getByText('첫 기사')).toBeInTheDocument());
+
+    // '둘째'로 검색 → searchArticles 위임 + 목록이 좁혀진다(fakeModel은 제목 substring 매치).
+    fireEvent.change(screen.getByTestId('doc-open-search'), { target: { value: '둘째' } });
+    fireEvent.click(screen.getByTestId('doc-open-search-btn'));
+
+    await waitFor(() => expect(searchSpy).toHaveBeenCalledWith('둘째'));
+    await waitFor(() => expect(screen.queryByText('첫 기사')).toBeNull());
+    expect(screen.getByText('둘째 기사')).toBeInTheDocument();
+  });
+});
+
 // Step 2(14-editor-find-context): 찾기/바꾸기(Ctrl+F·편집 메뉴) + 전체 선택 결선.
 // Step 0 엔진(editorFind) + Step 1 다이얼로그(FindReplaceDialog)를 WriterPage 안전 본문 경로에 연결.
 describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·FindReplaceDialog)', () => {
@@ -1984,13 +2368,13 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("활성 항목 외(잘라내기·새문서)는 여전히 비활성이다(회귀)", async () => {
-    // '표 삽입'(table.insert)은 31-editor-table step3에서 결선돼 활성 — 미결선 예시를 '새문서'(file.new)로 교체.
+  it("활성 항목 외(잘라내기·되돌리기)는 여전히 비활성이다(회귀)", async () => {
+    // 파일 메뉴 전 항목(새문서/문서열기/저장/…)이 34-editor-file-menu에서 결선돼 활성 — 미결선 예시를 편집 메뉴 '되돌리기'(edit.undo)로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
-    expect(within(screen.getByTestId('menu-편집')).getByText('잘라내기').closest('button')).toBeDisabled();
-    await openTopMenu('파일');
-    expect(within(screen.getByTestId('menu-파일')).getByText('새문서').closest('button')).toBeDisabled();
+    const menu = screen.getByTestId('menu-편집');
+    expect(within(menu).getByText('잘라내기').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.

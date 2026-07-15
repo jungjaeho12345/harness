@@ -1,0 +1,40 @@
+{
+  "project": "기사 작성기",
+  "phase": "34-editor-file-menu",
+  "steps": [
+    {
+      "step": 0,
+      "name": "file-menu-basic",
+      "status": "completed",
+      "started_at": "2026-07-15T17:07:22+0900",
+      "summary": "WriterPage 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 — MENU_ENABLED에 두 id 추가 + onMenuSelect 매핑 가드 앞에 분기 2개(addTab/closeTab 위임, 새 모듈·컨트롤러 메서드·서버/DB 무변경). WriterPage.test.jsx에 신규 describe(활성/새문서 추가·활성화/닫기 다중·마지막 탭 유지/편집 탭 unlockArticle) 5종 추가, file.new 결선으로 깨진 기존 회귀 테스트 2건은 '문서열기'(file.open)로 교체. lint/build/test:web(1400) 통과.",
+      "completed_at": "2026-07-15T17:15:22+0900"
+    },
+    {
+      "step": 1,
+      "name": "file-print",
+      "status": "completed",
+      "started_at": "2026-07-15T17:15:23+0900",
+      "summary": "파일 메뉴 '인쇄'(file.print)·'인쇄미리보기'(file.printPreview) 결선 — 신규 순수 모듈 printDocument.js(buildPrintArticle: 현재 탭 fields+readOnly+markupVersion 매핑 / renderPrintHtml: renderDetailHtml 경유 인쇄 HTML). WriterPage에 얇은 printCurrentTab(window.open 동기 → document.write → doPrint 시 w.print()) 배선 + MENU_ENABLED 두 id 추가 + onMenuSelect 매핑 가드 앞 분기 2개(읽기전용 렌더, tools.fileInfo 동일 정책). printDocument.test.js 5종(매핑·XSS 회귀 잠금·빈 탭 방어) + WriterPage.test.jsx 4종(활성/인쇄 print()/미리보기 print() 미호출/팝업차단 no-op). articleDetail·ListPage·Editor·server·DB 무변경. lint/build/test:web(1409) 통과.",
+      "completed_at": "2026-07-15T17:23:33+0900"
+    },
+    {
+      "step": 2,
+      "name": "file-save",
+      "status": "completed",
+      "started_at": "2026-07-15T17:23:34+0900",
+      "summary": "파일 메뉴 '저장'(file.save)·'다른이름으로 저장'(file.saveAs) 결선 — 컨트롤러에 saveAsNew 추가(toSaveDto에서 articleId 제거한 dto를 clientId 없이 POST → 새 AKR 복제본, 현재 탭 articleId/clientId 재바인딩 없음). WriterPage에 saveDocument(기존=save() PUT+전이/unlock 없음 / 신규=saveDraft 로컬 초안만·POST 금지로 DB 미오염, key=tab.articleId||tab.id)·saveAsDocument 헬퍼 + MENU_ENABLED 두 id 추가 + onMenuSelect 매핑 가드 뒤 분기 2개(매핑은 자체 saveMapping 보유 → no-op). 컨트롤러 테스트 3종(edit 탭 articleId-less POST·현재 탭 불변·{ok,articleId} 반환) + WriterPage 6종(활성/기존 PUT 무전이·신규 POST금지+tab.id 초안·복구 라운드트립/saveAs POST+정체성 불변/실패 alert). Editor·server·DB·httpModel 무변경(saveArticle 재사용). lint/build/test:web(1418) 통과.",
+      "completed_at": "2026-07-15T17:38:07+0900"
+    },
+    {
+      "step": 3,
+      "name": "file-open-dialog",
+      "status": "completed",
+      "started_at": "2026-07-15T17:38:08+0900",
+      "summary": "파일 메뉴 '문서열기'(file.open) 결선 — 신규 순수·controlled 다이얼로그 DocumentOpenDialog(MetaSelectDialog 동형: if(!open)null·useFocusOnOpen(검색입력)·Esc→onClose·yh-editor-dialog+yh-doc-open-dialog/testid, model/fetch/window/document 미접근 — 목록/검색/선택/닫기 위임만). 컨트롤러에 passthrough 2개(queryArticles/searchArticles, useCallback·model 계약 그대로) additive 노출. WriterPage: 구조분해에 openArticle+passthrough 추가 + showOpenDialog/openArticles state + openDocumentPicker(queryArticles 초기목록, 조회실패 빈목록)·searchDocuments(빈검색어=전체복귀)·pickDocument(openArticle에 잠금/dedup/locked 위임, id면 닫고 null이면 유지) + MENU_ENABLED에 file.open + onMenuSelect 매핑 가드 앞 분기(탭관리 계열, file.new/close/print 동일 정책) + 다이얼로그 렌더. DocumentOpenDialog.test 12종 + 컨트롤러 passthrough 2종 + WriterPage 통합 6종(활성/목록·queryArticles/openArticle경로 getArticle+lockArticle·locked '편집중입니다.'·dedup·검색). file.open 결선으로 깨진 기존 회귀 테스트 2건은 편집 메뉴 '되돌리기'(edit.undo)로 교체. Editor·server·DB·httpModel 무변경. lint/build/test:web(1438) 통과.",
+      "completed_at": "2026-07-15T17:52:31+0900"
+    }
+  ],
+  "created_at": "2026-07-15T17:07:22+0900",
+  "completed_at": "2026-07-15T17:52:32+0900"
+}

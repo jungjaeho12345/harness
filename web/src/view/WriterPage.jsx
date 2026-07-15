@@ -67,6 +67,8 @@ import {
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
+import { renderPrintHtml } from './printDocument.js';
+import { DocumentOpenDialog } from './DocumentOpenDialog.jsx';
 
 const META_TABS = [
   { key: 'common', label: '공통정보' },
@@ -90,7 +92,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -103,8 +105,9 @@ export function WriterPage() {
   const { identity, model } = useAppContext();
   const {
     tabs, activeTabId, activeTab,
-    addTab, closeTab, selectTab,
-    updateField, submit, saveMapping,
+    addTab, closeTab, selectTab, openArticle,
+    updateField, save, saveAsNew, submit, saveMapping,
+    queryArticles, searchArticles,
   } = useWriteController();
   const search = useSearchController();
 
@@ -136,6 +139,11 @@ export function WriterPage() {
   // 지역/내용/속성 선택 팝업 — null(닫힘) | 'region' | 'category' | 'attribute'(열린 필드 키).
   // tableDialog 패턴과 동형 — 공통정보 트리거 클릭이 열고, 적용/닫기/탭 전환이 닫는다.
   const [metaDialog, setMetaDialog] = useState(null);
+  // 파일>문서열기(file.open) — DB 기사 피커 다이얼로그(부모 소유·controlled). showFileInfo와 동일한 표시 토글 +
+  // 목록 상태. 목록/검색은 컨트롤러 passthrough(queryArticles/searchArticles)로 채우고, 선택은 openArticle
+  // (잠금/dedup/locked 단일 경로)에 위임한다 — 현재 편집 탭 본문은 건드리지 않는다(다른 기사를 새 탭으로 연다).
+  const [showOpenDialog, setShowOpenDialog] = useState(false);
+  const [openArticles, setOpenArticles] = useState([]);
   // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
   const [showFileInfo, setShowFileInfo] = useState(false);
   // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
@@ -530,6 +538,69 @@ export function WriterPage() {
     }
   };
 
+  // 파일>인쇄/인쇄미리보기 — 현재 편집 탭 본문·공통정보를 상세보기(renderPrintHtml→renderDetailHtml) 형태로 새 창에 동기 렌더한다.
+  // ListPage.openDetail의 동기 버전이다 — async 재조회 없음(현재 탭 본문이 이미 메모리에 있어 window.open 후 await 사이
+  // 탭 전환으로 다른 기사를 인쇄하는 레이스를 피한다). HTML은 반드시 renderPrintHtml 경유(모든 값 escapeHtml —
+  // document.write 싱크에서 스크립트 비실행, 발행/상세보기 XSS 이중차단). doPrint면 렌더 후 w.print()까지, 아니면 창만 연다.
+  const printCurrentTab = (doPrint) => {
+    const html = renderPrintHtml(activeTab, loadEditorPrefs().byline);
+    const w = window.open('', '_blank', 'width=720,height=800');
+    if (!w || !w.document) return; // 팝업 차단/미지원 — 조용히 종료(죽지 않음).
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    if (doPrint) { try { w.print(); } catch { /* print 미지원 — 무시 */ } }
+  };
+
+  // 파일>저장 — 기사 상태로 갈린다. 기존 기사(articleId 有)는 컨트롤러 save()로 서버 PUT 부분 수정(잠금 보유자)
+  // — 상태 전이·잠금 해제·탭 리셋 없이 편집을 이어간다(save의 기존 계약). 신규 기사(articleId 無)는 saveDraft로
+  // 로컬 초안만 저장한다 — 절대 save()/POST를 부르지 않는다(송고 전 DB에 draft 행이 생겨 DB를 오염시킴).
+  // 초안 key는 tab.articleId || tab.id(신규=tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
+  const saveDocument = async () => {
+    const tab = activeTab;
+    if (tab.articleId) {
+      const r = await save();                                   // 기존 → PUT(전이/unlock 없음)
+      window.alert(r && r.ok ? '저장되었습니다.' : '저장에 실패했습니다.');
+    } else {
+      saveDraft(tab.articleId || tab.id, { ...tab.fields }, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
+      window.alert('임시 저장했습니다. (송고 전에는 DB에 생성되지 않으며, 파일>복구로 되살릴 수 있습니다.)');
+    }
+  };
+
+  // 파일>다른이름으로 저장 — 현재 본문/공통정보를 articleId 없이 POST해 새 기사(복제본)를 만든다.
+  // 현재 탭의 articleId는 재바인딩하지 않는다(원본 편집 세션·잠금 유지 — saveAsNew가 보장, 복제본이라 정체성 불변).
+  const saveAsDocument = async () => {
+    const r = await saveAsNew();
+    window.alert(r && r.ok && r.articleId
+      ? `새 기사로 저장했습니다: ${r.articleId}`
+      : '다른 이름으로 저장에 실패했습니다.');
+  };
+
+  // 파일>문서열기 — DB 기사 피커. queryArticles로 초기 목록을 채운 뒤 다이얼로그를 연다(조회 실패해도 빈 목록으로
+  // 열어 죽지 않게 한다). 목록/검색은 controller passthrough만, 편집 진입은 openArticle에 위임한다(ADR-003).
+  const openDocumentPicker = async () => {
+    setShowOpenDialog(true);
+    try {
+      const r = await queryArticles({});
+      setOpenArticles((r && r.items) || []);
+    } catch { setOpenArticles([]); }
+  };
+
+  // 검색 제출 — 빈 검색어면 전체 목록(queryArticles)으로 되돌리고, 아니면 searchArticles로 좁힌다. 실패해도 빈 목록.
+  const searchDocuments = async (q) => {
+    try {
+      const r = q ? await searchArticles(q) : await queryArticles({});
+      setOpenArticles((r && r.items) || []);
+    } catch { setOpenArticles([]); }
+  };
+
+  // 목록 선택 — openArticle(잠금 획득·dedup·locked '편집중입니다.' 안내)에 위임한다. 탭 id(성공/dedup)면 닫고,
+  // null(다른 세션 편집 중)이면 열어 둔 채 다른 기사를 고를 수 있게 한다(잠금/dedup/locked 재구현 금지).
+  const pickDocument = async (article) => {
+    const id = await openArticle(article, 'edit');
+    if (id) setShowOpenDialog(false);
+  };
+
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
@@ -595,7 +666,24 @@ export function WriterPage() {
       commitBody(serialize(next));
       return;
     }
+    // 파일>새문서/닫기 — 탭 관리 동작(현재 탭 본문 무변경)이라 매핑 가드 앞(본문-only 불변식과 무관, 죽은 버튼 방지).
+    // 컨트롤러 addTab/closeTab에 그대로 위임한다(빈 탭 생성·활성화 / 편집 탭 잠금 해제 + 마지막 탭 유지 — × 버튼과 동일 경로).
+    // 특히 매핑 탭을 닫으면 closeTab이 잠금을 해제하므로 매핑 취소 경로로 자연스럽다.
+    if (id === 'file.new') { addTab(); return; }
+    if (id === 'file.close') { closeTab(activeTabId); return; }
+    // 파일>인쇄/인쇄미리보기 — 읽기전용 렌더(현재 탭 본문 무변경)라 매핑 가드 앞(매핑에서도 열림, tools.fileInfo와 동일 정책).
+    // 유일한 차이: 인쇄는 렌더 후 w.print()까지, 인쇄미리보기는 창만 연다.
+    if (id === 'file.print') { printCurrentTab(true); return; }
+    if (id === 'file.printPreview') { printCurrentTab(false); return; }
+    // 파일>문서열기 — DB 기사 피커 다이얼로그를 연다(현재 탭 본문 무변경 — 다른 기사를 새 탭으로 여는 동작). 매핑 가드 앞
+    // (탭 관리 계열 — file.new/close/print와 동일 정책, 죽은 버튼 방지). 선택은 openArticle(잠금/dedup/locked 단일 경로)에 위임.
+    if (id === 'file.open') { openDocumentPicker(); return; }
     if (isMapping) return;
+    // 파일>저장/다른이름으로 저장 — 매핑 가드 뒤(매핑은 자체 '저장' 버튼(saveMapping — 저장+unlock+리셋)을
+    // 가지므로 파일 메뉴 save/saveAs는 no-op으로 두어 잠금/리셋 이원화를 막는다). 저장은 상태 전이·잠금 해제·탭
+    // 리셋이 없다(편집 유지) — submit/applyAction/saveMapping 경로가 아니다. async지만 fire-and-forget(openHistoryCompare 패턴).
+    if (id === 'file.save') { saveDocument(); return; }      // 기존=PUT / 신규=로컬 초안만(DB 미생성 — POST 금지)
+    if (id === 'file.saveAs') { saveAsDocument(); return; }  // 현재 본문을 새 기사로 POST(복제본, 현재 탭 articleId 불변)
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
       const tab = activeTab;
@@ -1179,6 +1267,17 @@ export function WriterPage() {
         value={metaDialog ? (activeTab.fields[metaDialog] || '') : ''}
         onSubmit={(joined) => { updateField(metaDialog, joined); setMetaDialog(null); }}
         onClose={() => setMetaDialog(null)}
+      />
+
+      {/* 파일>문서열기 다이얼로그(file.open) — DB 기사 피커. 부모가 open/목록/열림을 소유(controlled). 목록/검색은
+          컨트롤러 passthrough(queryArticles/searchArticles)로만 채우고(View는 transport 미호출 — ADR-003), 선택은
+          openArticle(잠금 획득·dedup·locked 안내 단일 경로)에 위임한다. 현재 편집 탭 본문은 불변(다른 기사를 새 탭으로 연다). */}
+      <DocumentOpenDialog
+        open={showOpenDialog}
+        articles={openArticles}
+        onSearch={searchDocuments}
+        onPick={pickDocument}
+        onClose={() => setShowOpenDialog(false)}
       />
 
       {/* 파일 정보 다이얼로그(도구>파일 정보) — 읽기전용. 열린 시점 본문 통계(fileInfoStats)를 props로만 주입해 표시한다.

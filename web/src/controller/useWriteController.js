@@ -240,6 +240,11 @@ export function useWriteController() {
     return tab.id;
   }, [identity, model]);
 
+  // 목록/검색 passthrough — view(문서열기 피커)는 transport를 controller 경유로만 접근한다(ADR-003). model 계약을
+  // 그대로 얇게 위임한다(shape 미가공 — { ok, items }). 편집 진입은 openArticle(잠금/dedup/locked 단일 경로)이 담당한다.
+  const queryArticles = useCallback((filters) => model.queryArticles(filters), [model]);
+  const searchArticles = useCallback((q) => model.searchArticles(q), [model]);
+
   // 후속/계속 진입 — 원본에서 파생한 신규 기사 탭을 push+활성화한다. 잠금은 획득하지 않는다(원본 미잠금).
   // 목록행에는 본문이 없으므로 model.getArticle로 단건 재조회해 markupVersion을 본문으로 채운다(조회 실패 시 폴백).
   const openFromSource = useCallback(async (article, mode) => {
@@ -276,6 +281,17 @@ export function useWriteController() {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
     return r;
+  }, [model]);
+
+  // 다른이름으로 저장 — 현재 활성 탭 본문/공통정보를 articleId 없이 POST해 새 AKR 복제본을 만든다.
+  // save가 신규 POST 성공 시 탭에 articleId를 바인딩하는 것과 달리, 현재 탭의 articleId/clientId는
+  // 절대 재바인딩하지 않는다(복제본 생성이지 현재 문서 정체성 전환이 아님 — 원본 편집 세션/잠금을 그대로 유지).
+  // 편집 잠금 clientId도 넘기지 않는다(새 기사는 잠금 대상이 아님). 결과 { ok, articleId }를 그대로 반환(호출자 피드백용).
+  const saveAsNew = useCallback(async () => {
+    const tab = tabsRef.current.find((t) => t.id === activeRef.current);
+    if (!tab) return { ok: false, reason: 'no-tab' };
+    const { articleId, ...dto } = toSaveDto(tab); // eslint-disable-line no-unused-vars -- articleId 제거 → POST(새 발번)
+    return model.saveArticle(dto); // clientId 미전달 — 원본 잠금과 무관한 신규 생성.
   }, [model]);
 
   // 매핑 저장 — 본문 텍스트는 그대로(readOnly) 두고 추가된 임베드만 PUT으로 저장한다. 생애주기 전이가 없으므로
@@ -388,6 +404,7 @@ export function useWriteController() {
   return {
     tabs, activeTabId, activeTab,
     addTab, closeTab, selectTab, openArticle, openFromSource,
-    updateField, save, submit, saveMapping,
+    updateField, save, saveAsNew, submit, saveMapping,
+    queryArticles, searchArticles,
   };
 }
