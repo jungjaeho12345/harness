@@ -24,7 +24,7 @@
       "status": "completed",
       "started_at": "2026-07-16T09:31:06+0900",
       "summary": "WriterPage.jsx만 결선: import ALIGN_BY_MENU·setLineAlign(editorAlign.js) 추가 + MENU_ENABLED에 view.justify/alignLeft/alignCenter/alignRight 4종 활성화. onMenuSelect에서 VIEW_TRANSFORMS 조회 앞에 정렬 dispatch 추가(정렬 id는 VIEW_TRANSFORMS에 없어 if(!fn)return에 먼저 걸리므로 그 앞에 위치) — 대소문자 변환과 동형: isMapping 가드(본문-only 불변식)·lastCaretRef 캐럿줄(없으면 no-op)·setLineAlign(blocks,caretLine,align)·changed:false면 미커밋(불필요 dirty 방지)·commitBody(serialize) 단일 경로(제목 재동기화)·setPendingCaretLine(같은 줄 유지). 정렬은 캐럿 텍스트-줄에만 적용, 임베드·다른 줄·'(끝)' 불변. 테스트 5개(가운데정렬 캐럿줄만 center+임베드 생존·4종 justify/left/center/right·매핑 no-op·캐럿없음 no-op·동일정렬 재클릭 no-op). AC: lint/build/test:web(1462) 그린.",
-      "completed_at": "2026-07-16T09:40:34+0900"
+      "completed_at": "2026-07-16T09:41:53+0900"
     },
     {
       "step": 3,
