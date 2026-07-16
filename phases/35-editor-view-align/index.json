@@ -32,7 +32,7 @@
       "status": "completed",
       "started_at": "2026-07-16T09:41:54+0900",
       "summary": "articleDetail.js만 변경: isValidAlign import + alignStyleAttr(align) 헬퍼(화이트리스트—ALIGN_VALUES 4종만 ` style=\"text-align:<값>\"` 방출, 미정렬/무효는 빈 문자열=좌측 기본·style 생략) 추가 후 본문 텍스트-줄 map에 주입(`<p class=\"yh-detail__line\"${alignStyleAttr(b.align)}>${escapeHtml(b.text)}</p>`). escapeHtml(b.text) 그대로 유지(텍스트 항상 이스케이프—XSS 비실행 news.md L112), align은 enum이라 이스케이프 아닌 화이트리스트로 통제(임의 CSS 주입 차단). 하위호환: 미정렬 블록·레거시 평문은 style 없이 렌더. embedHtml·:first-child 제목·DETAIL_STYLE 불변. 백엔드(src/)·스키마·DB 무변경(markupVersion verbatim 저장으로 정렬 라운드트립). 테스트 5개(center 주입·미정렬 style無·4종 정확·무효 align 방어 style無·정렬+escapeHtml 병존). AC: lint/build/test:web(1467)/test(407 backend) 그린. [PHASE 35 완료] 보기 정렬 4종(왼쪽/가운데/오른쪽/양쪽) end-to-end: step0 모델(editorContent align 보존 직렬화 + editorAlign.setLineAlign/ALIGN_BY_MENU) → step1 에디터(Editor.jsx data-align+text-align 렌더·readEditorBlocks 승계·alignSig remount) → step2 결선(WriterPage 보기메뉴 4종 활성·캐럿줄 정렬 dispatch) → step3 상세보기(articleDetail 저장 정렬 <p> text-align 렌더). 캐럿 텍스트-줄에만 적용, 임베드·다른 줄·'(끝)' 불변, 화이트리스트 통제로 XSS/CSS 주입 차단.",
-      "completed_at": "2026-07-16T09:45:37+0900"
+      "completed_at": "2026-07-16T09:46:52+0900"
     }
   ],
   "created_at": "2026-07-16T08:58:17+0900"
