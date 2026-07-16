@@ -196,7 +196,8 @@
     },
     {
       "dir": "35-editor-view-align",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-16T09:46:52+0900"
     }
   ]
 }
