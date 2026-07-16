@@ -4827,6 +4827,37 @@ describe('WriterPage — 편집/우클릭 클립보드 5종 결선(clipboard-dis
     const lines = editorLines(container);
     expect(lines.join('\n')).not.toContain('PASTED');
     expect(lines).not.toContain('본문');
+
+    // 전환 후 원 탭 A로 되돌아가 본문이 원본 그대로 보존됐는지 직접 재검증(커밋 폐기 → 붙여넣기 텍스트 부재).
+    // 탭 순서: [시드 빈 탭(0), A=AKR1(1), 새 작성 탭 B(2)] — openArticle/addTab이 모두 append(useWriteController).
+    await userEvent.click(container.querySelectorAll('.yh-tab__label')[1]);
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문']));
+    expect(editorLines(container).join('\n')).not.toContain('PASTED');
+  });
+
+  // ---- 같은-탭 stale 가드(리뷰 게이트 Major): readText 대기 중 같은 탭 본문이 바뀌면 최신 본문 위에 삽입 ----
+  it('텍스트 붙여넣기: readText 대기 중 같은 탭 본문이 바뀌면 최신 본문 위에 삽입한다(변경 보존)', async () => {
+    let resolveText;
+    stubClipboard({ readText: () => new Promise((res) => { resolveText = res; }) });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1); // 캐럿 = 텍스트-줄 1('본문') 시작
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+    await waitFor(() => expect(typeof resolveText).toBe('function')); // readText in-flight
+
+    // 대기 중(권한 버블 등) 같은 탭에서 본문을 편집한다: 줄 0 '헤드' → '헤드EDIT'.
+    // onInput→onTextChange→commitBody로 활성 탭 fields.body가 '헤드EDIT\n본문'으로 갱신된다(에디터는 echo라 remount 없음).
+    const editorEl = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[0].textContent = '헤드EDIT';
+    fireEvent.input(editorEl);
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드EDIT', '본문']));
+
+    await act(async () => { resolveText('PASTED'); });
+
+    // 커밋은 렌더 클로저의 stale blocks(['헤드','본문'])가 아니라 최신 본문(['헤드EDIT','본문']) 위에 얹혀야 한다.
+    // 붙여넣기 텍스트가 삽입되면서도 대기 중 편집('헤드EDIT')이 유실되지 않는다(같은-탭 stale 유실 회귀 방지).
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드EDIT', 'PASTED본문']));
   });
 
   // ---- 우클릭 ctx.pasteText도 동일 핸들러(pasteTextAtCaret)로 결선 ----

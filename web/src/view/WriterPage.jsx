@@ -1038,8 +1038,10 @@ export function WriterPage() {
   // 편집/우클릭 '텍스트 붙여넣기' 공용 코어 — 이미 캡처된 tabId를 받아 클립보드 평문(마커-안전)을 캐럿에 삽입한다.
   // 본문 반영은 commitBody(serialize(...)) 단일 choke point만(제목 재동기화·마커 무결성). 마커 가드/줄 분할은
   // insertPasteTextAtCaret(step0 단일 출처)에 위임(빈 클립보드·"(끝)" 뒤 캐럿이면 changed:false로 no-op).
-  // 탭-stale 가드: await readText() 사이 탭이 전환됐으면(activeTabRef.current.id !== tabId) 폐기한다 — 렌더 클로저의
-  // blocks/lastCaretRef로 커밋하면 다른 기사 본문에 쓰이므로(pasteImageAtCaret의 탭 고정 가드와 동형).
+  // 탭-stale 가드(pasteImageAtCaret의 탭 고정 가드와 동형): await readText() 대기 중 (1) 탭이 전환됐거나
+  // (activeTabRef.current.id !== tabId), (2) 같은 탭이 매핑으로 바뀌었으면(본문-only 불변식) 폐기한다. 그리고
+  // (3) 커밋은 렌더 클로저의 stale blocks가 아니라 활성 탭의 최신 본문(current.fields.body)에서 재파생한다 —
+  // 같은 탭에서 대기 중 본문이 바뀌었어도(타이핑·날짜삽입 등) 그 최신 본문 위에 얹혀 사용자 입력이 유실되지 않는다.
   const pasteClipboardTextInto = async (tabId) => {
     const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
     if (!clip || typeof clip.readText !== 'function') {
@@ -1055,7 +1057,9 @@ export function WriterPage() {
     }
     const current = activeTabRef.current;
     if (!current || current.id !== tabId) return; // 탭 전환 — 폐기(stale-write 방지)
-    const r = insertPasteTextAtCaret(blocks, lastCaretRef.current, text);
+    if (current.mode === 'mapping') return; // await 사이 매핑 전환 — 본문-only 불변식(폐기)
+    const latestBlocks = deserialize(current.fields.body); // 렌더 클로저 blocks 대신 최신 본문에서 재파생(같은-탭 stale 유실 방지)
+    const r = insertPasteTextAtCaret(latestBlocks, lastCaretRef.current, text);
     if (!r.changed) return; // 빈 클립보드/마커 뒤 캐럿 → no-op
     commitBody(serialize(r.blocks));
     if (typeof r.caretLineIndex === 'number') setPendingCaretLine(r.caretLineIndex);
