@@ -1451,6 +1451,117 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
   });
 });
 
+// Step 2(35-editor-view-align): 보기 정렬(양쪽/왼쪽/가운데/오른쪽) 결선 — 대소문자 변환과 동형 dispatch.
+// 마지막 캐럿 텍스트-줄에 setLineAlign을 적용하고 commitBody(serialize) 단일 경로로 반영한다(임베드·다른 줄·"(끝)" 불변).
+// 정렬은 DOM `.yh-editor__line[data-align]`(step1 렌더)로 검증한다.
+describe('WriterPage — 보기 정렬 결선(EditorMenuBar view.align*)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  // 마지막 캐럿(lastCaretRef)을 lineIndex 줄로 갱신(keyUp→onCaretChange — 대소문자/약물 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    caretAtLine(container, lineIndex);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+  // 텍스트 줄별 data-align 속성(미정렬은 null).
+  const alignAttrs = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.getAttribute('data-align'));
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it("보기>'가운데로 정렬' 클릭 시 캐럿 줄만 data-align='center'가 되고 다른 줄·임베드는 불변이다", async () => {
+    const { container } = await openWith([
+      textBlock('제목'), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('본문'),
+    ]);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = '본문'(임베드 제외 좌표)
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('가운데로 정렬'));
+
+    await waitFor(() => expect(alignAttrs(container)).toEqual([null, 'center'])); // 캐럿 줄만 center
+    expect(editorLines(container)).toEqual(['제목', '본문']); // 텍스트 불변(임베드가 텍스트 줄로 변질 안 됨)
+    expect(container.querySelector('.yh-embed')).toBeTruthy(); // 임베드 생존
+  });
+
+  it('4종 정렬 각각 해당 값으로 캐럿 줄에 반영된다(양쪽→justify/왼쪽→left/가운데→center/오른쪽→right)', async () => {
+    for (const [label, value] of [
+      ['양쪽으로 정렬', 'justify'], ['왼쪽으로 정렬', 'left'],
+      ['가운데로 정렬', 'center'], ['오른쪽으로 정렬', 'right'],
+    ]) {
+      sessionStorage.clear();
+      const { container, unmount } = await openWith([textBlock('제목'), textBlock('본문')]);
+      focusCaretAtLine(container, 1);
+
+      await openTopMenu('보기');
+      await userEvent.click(screen.getByText(label));
+
+      await waitFor(() => expect(
+        container.querySelectorAll('.yh-editor__line')[1].getAttribute('data-align'),
+      ).toBe(value));
+      expect(container.querySelectorAll('.yh-editor__line')[0].getAttribute('data-align')).toBeNull();
+      unmount(); // 다음 라벨 렌더 전 정리(단일 트리 유지 — screen 조회 모호성 방지).
+    }
+  });
+
+  it('매핑 모드에서는 정렬 클릭이 본문(정렬)을 바꾸지 않는다(본문-only 불변식)', async () => {
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('본문')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    focusCaretAtLine(container, 1);
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('가운데로 정렬'));
+
+    expect(alignAttrs(container)).toEqual([null, null]); // 정렬 미적용(no-op)
+  });
+
+  it('캐럿이 없으면(에디터 미포커스) 정렬 클릭은 no-op이다', async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문')]);
+    // 캐럿 세팅 없음 → lastCaretRef.current === null(대소문자 변환과 동일 no-op 조건).
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('가운데로 정렬'));
+
+    expect(alignAttrs(container)).toEqual([null, null]); // 정렬 미적용(no-op)
+  });
+
+  it('이미 그 정렬인 줄에 같은 정렬 재클릭은 no-op이다(changed:false → 미커밋)', async () => {
+    const { container } = await openWith([textBlock('제목'), textBlock('본문', 'center')]);
+    focusCaretAtLine(container, 1);
+
+    await openTopMenu('보기');
+    await userEvent.click(screen.getByText('가운데로 정렬'));
+
+    // 이미 center — 변화 없이 그대로 유지(setLineAlign changed:false는 step0 단위테스트가 보증).
+    expect(alignAttrs(container)).toEqual([null, 'center']);
+    expect(editorLines(container)).toEqual(['제목', '본문']);
+  });
+});
+
 // Step 1(11-editor-color-prefs): 색상 환경설정 모달 결선(도움말>환경설정) + 적용/취소 + 배경 + 마운트 영속 적용.
 // editorPrefs(localStorage) + editorColoring(module 상태)을 쓰므로 localStorage.clear()(마운트 effect 오염 차단) +
 // resetEditorColors()(module 상태 복원)로 격리한다.
