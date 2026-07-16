@@ -1,0 +1,40 @@
+{
+  "project": "기사 작성기",
+  "phase": "35-editor-view-align",
+  "steps": [
+    {
+      "step": 0,
+      "name": "align-model",
+      "status": "completed",
+      "started_at": "2026-07-16T08:58:17+0900",
+      "summary": "editorContent.js: ALIGN_VALUES=['left','center','right','justify']·isValidAlign(v)·textBlock(text,align)/normalizeBlocks 텍스트 분기가 유효 align만 보존(무효/부재는 키 생략, 미정렬 블록은 {type,text} 바이트 안정). 신규 editorAlign.js: ALIGN_BY_MENU({'view.justify':'justify','view.alignLeft':'left','view.alignCenter':'center','view.alignRight':'right'})·setLineAlign(blocks,textLineIndex,align)→{blocks,changed}(writerBody.textLineToBlockIndex로 텍스트줄→blocks 인덱스 환산, 범위밖/무효/동일 no-op, 임베드·다른줄·'(끝)' 불변). import: web/src/view/editorAlign.js, web/src/view/editorContent.js. 테스트 24개(editorContent +8, editorAlign 8).",
+      "completed_at": "2026-07-16T09:03:52+0900"
+    },
+    {
+      "step": 1,
+      "name": "editor-roundtrip",
+      "status": "completed",
+      "started_at": "2026-07-16T09:03:53+0900",
+      "summary": "Editor.jsx만 변경: 텍스트 줄을 data-align + text-align(화이트리스트 통과값만, 미정렬/무효는 속성·스타일 생략—현행 DOM 동일)으로 렌더. readEditorBlocks 클린패스가 el.dataset.align을 되읽어 elementToLines 첫 줄에만 승계(dirty 새 줄은 미정렬 정상). alignSig(텍스트블록 align 서명) 추가 후 structural 판정에 포함해 정렬-only 변경도 remount. CRITICAL 버그 수정: alignSig를 snapRef가 아닌 lastAlignRef(마지막 emit 정렬, lastEmittedRef와 동형; handleInput/compositionEnd/structural에서 갱신)와 비교—빈줄→입력·줄병합 등 줄수 바뀌는 echo에서 서명 길이 어긋나 헛remount로 편집 노드가 stale해지던 회귀(자동저장 최신본문 유실) 제거. 타이핑/색상/임베드/Ctrl+D/(끝) 라운드트립 불변. 테스트 5개 추가(렌더 data-align·무효 필터·타이핑 라운드트립 보존·정렬-only remount·정렬동일 no-remount). AC: lint/build/test:web(1457) 그린.",
+      "completed_at": "2026-07-16T09:31:05+0900"
+    },
+    {
+      "step": 2,
+      "name": "writer-dispatch",
+      "status": "completed",
+      "started_at": "2026-07-16T09:31:06+0900",
+      "summary": "WriterPage.jsx만 결선: import ALIGN_BY_MENU·setLineAlign(editorAlign.js) 추가 + MENU_ENABLED에 view.justify/alignLeft/alignCenter/alignRight 4종 활성화. onMenuSelect에서 VIEW_TRANSFORMS 조회 앞에 정렬 dispatch 추가(정렬 id는 VIEW_TRANSFORMS에 없어 if(!fn)return에 먼저 걸리므로 그 앞에 위치) — 대소문자 변환과 동형: isMapping 가드(본문-only 불변식)·lastCaretRef 캐럿줄(없으면 no-op)·setLineAlign(blocks,caretLine,align)·changed:false면 미커밋(불필요 dirty 방지)·commitBody(serialize) 단일 경로(제목 재동기화)·setPendingCaretLine(같은 줄 유지). 정렬은 캐럿 텍스트-줄에만 적용, 임베드·다른 줄·'(끝)' 불변. 테스트 5개(가운데정렬 캐럿줄만 center+임베드 생존·4종 justify/left/center/right·매핑 no-op·캐럿없음 no-op·동일정렬 재클릭 no-op). AC: lint/build/test:web(1462) 그린.",
+      "completed_at": "2026-07-16T09:41:53+0900"
+    },
+    {
+      "step": 3,
+      "name": "detail-render",
+      "status": "completed",
+      "started_at": "2026-07-16T09:41:54+0900",
+      "summary": "articleDetail.js만 변경: isValidAlign import + alignStyleAttr(align) 헬퍼(화이트리스트—ALIGN_VALUES 4종만 ` style=\"text-align:<값>\"` 방출, 미정렬/무효는 빈 문자열=좌측 기본·style 생략) 추가 후 본문 텍스트-줄 map에 주입(`<p class=\"yh-detail__line\"${alignStyleAttr(b.align)}>${escapeHtml(b.text)}</p>`). escapeHtml(b.text) 그대로 유지(텍스트 항상 이스케이프—XSS 비실행 news.md L112), align은 enum이라 이스케이프 아닌 화이트리스트로 통제(임의 CSS 주입 차단). 하위호환: 미정렬 블록·레거시 평문은 style 없이 렌더. embedHtml·:first-child 제목·DETAIL_STYLE 불변. 백엔드(src/)·스키마·DB 무변경(markupVersion verbatim 저장으로 정렬 라운드트립). 테스트 5개(center 주입·미정렬 style無·4종 정확·무효 align 방어 style無·정렬+escapeHtml 병존). AC: lint/build/test:web(1467)/test(407 backend) 그린. [PHASE 35 완료] 보기 정렬 4종(왼쪽/가운데/오른쪽/양쪽) end-to-end: step0 모델(editorContent align 보존 직렬화 + editorAlign.setLineAlign/ALIGN_BY_MENU) → step1 에디터(Editor.jsx data-align+text-align 렌더·readEditorBlocks 승계·alignSig remount) → step2 결선(WriterPage 보기메뉴 4종 활성·캐럿줄 정렬 dispatch) → step3 상세보기(articleDetail 저장 정렬 <p> text-align 렌더). 캐럿 텍스트-줄에만 적용, 임베드·다른 줄·'(끝)' 불변, 화이트리스트 통제로 XSS/CSS 주입 차단.",
+      "completed_at": "2026-07-16T09:46:52+0900"
+    }
+  ],
+  "created_at": "2026-07-16T08:58:17+0900",
+  "completed_at": "2026-07-16T09:46:52+0900"
+}

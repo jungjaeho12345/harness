@@ -4,7 +4,7 @@
 // 새 창은 앱 CSS(yonhap.css)를 로드하지 않으므로 디자인은 인라인 <style>(DETAIL_STYLE)로 포함한다.
 // CRITICAL: 모든 내용은 HTML 이스케이프되어 스크립트가 실행되지 않는다(<style>은 정적이라 사용자 값을 담지 않는다).
 
-import { deserialize, isEmbedBlock } from './editorContent.js';
+import { deserialize, isEmbedBlock, isValidAlign } from './editorContent.js';
 import {
   parseYouTubeId, isAllowedImageSrc, isAllowedMediaSrc, isAllowedHref,
 } from './clipboardEmbed.js';
@@ -180,6 +180,12 @@ function embedHtml(b) {
   return `<figure class="yh-detail__embed" data-embed-type="${escapeHtml(type ?? '')}">[${escapeHtml(type || '임베드')}]</figure>`;
 }
 
+// 텍스트 줄 정렬 → style 조각. 통제된 enum(ALIGN_VALUES 4종)만 방출한다 — 임의 문자열 주입 차단(방어).
+// 미정렬/무효 → 빈 문자열(좌측 기본, style 속성 생략 — 하위호환). align은 enum이라 escapeHtml 대상이 아니라 화이트리스트로 통제.
+function alignStyleAttr(align) {
+  return isValidAlign(align) ? ` style="text-align:${align}"` : '';
+}
+
 // 상세보기 새 창에 write할 HTML 문서 문자열 — 모든 값 이스케이프(스크립트 실행 불가).
 // byline은 선택적(기본 {}) — 작성자 <dd> 안에 부가 라인을 줄 단위로 렌더한다(값은 반드시 escapeHtml).
 export function renderDetailHtml(article = {}, byline = {}) {
@@ -200,7 +206,7 @@ export function renderDetailHtml(article = {}, byline = {}) {
     ? blocks
       .map((b) => {
         if (isEmbedBlock(b)) return embedHtml(b);
-        return `<p class="yh-detail__line">${escapeHtml(b.text)}</p>`;
+        return `<p class="yh-detail__line"${alignStyleAttr(b.align)}>${escapeHtml(b.text)}</p>`;
       })
       .join('')
     : '<p class="yh-detail__empty">본문 내용이 없습니다.</p>';

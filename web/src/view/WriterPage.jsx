@@ -67,6 +67,7 @@ import {
 import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
+import { ALIGN_BY_MENU, setLineAlign } from './editorAlign.js';
 import { renderPrintHtml } from './printDocument.js';
 import { DocumentOpenDialog } from './DocumentOpenDialog.jsx';
 
@@ -92,7 +93,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -768,6 +769,20 @@ export function WriterPage() {
     }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
+    // 보기>정렬(양쪽/왼쪽/가운데/오른쪽) — 대소문자 변환과 동형 dispatch. 반드시 VIEW_TRANSFORMS 조회 앞에
+    // 둔다(정렬 id는 VIEW_TRANSFORMS에 없어 아래 `if (!fn) return`에 먼저 걸려 도달하지 못한다). 캐럿 소스·반영
+    // 경로는 대소문자 변환과 동일하되 transformTextLine(텍스트 변경) 대신 setLineAlign(정렬 필드 설정)을 쓴다.
+    const alignValue = ALIGN_BY_MENU[id];
+    if (alignValue) {
+      if (isMapping) return;                       // 매핑=본문-only 불변식(insertDate/glyph/abbrev 동일 가드).
+      const caretLine = lastCaretRef.current ? lastCaretRef.current.lineIndex : null;
+      if (caretLine == null) return;               // 캐럿 없으면 no-op(대소문자 변환과 동일).
+      const r = setLineAlign(blocks, caretLine, alignValue);
+      if (!r.changed) return;                      // 동일값/범위밖 → no-op(불필요 dirty 방지).
+      commitBody(serialize(r.blocks));
+      setPendingCaretLine(caretLine);              // 같은 줄 유지(대소문자 변환과 동일).
+      return;
+    }
     const fn = VIEW_TRANSFORMS[id];
     if (!fn) return;
     // 대소문자 변환은 마지막 캐럿 텍스트-줄에만 적용한다. 캐럿이 없으면 no-op.
