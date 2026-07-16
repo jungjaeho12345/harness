@@ -7,8 +7,18 @@ export const EDITOR_FORMAT = 'yh-editor';
 export const EDITOR_VERSION = 1;
 export const END_MARKER = '(끝)';
 
-export function textBlock(text = '') {
-  return { type: 'text', text: String(text ?? '') };
+// 보기 정렬 4종 화이트리스트(왼쪽/가운데/오른쪽/양쪽). 텍스트 블록의 선택적 align 필드에만 저장한다.
+export const ALIGN_VALUES = ['left', 'center', 'right', 'justify'];
+
+export function isValidAlign(v) {
+  return ALIGN_VALUES.includes(v);
+}
+
+// 유효한 align만 필드로 넣고, 무효/부재면 키 자체를 생략한다(미정렬 블록은 {type,text} 그대로 — 하위호환·직렬화 바이트 안정).
+export function textBlock(text = '', align) {
+  const block = { type: 'text', text: String(text ?? '') };
+  if (isValidAlign(align)) block.align = align;
+  return block;
 }
 
 export function embedBlock(embed = {}) {
@@ -28,8 +38,11 @@ export function normalizeBlocks(blocks) {
   if (!Array.isArray(blocks)) return [];
   const out = [];
   for (const b of blocks) {
-    if (isTextBlock(b)) out.push({ type: 'text', text: String(b.text ?? '') });
-    else if (isEmbedBlock(b)) out.push({ ...b, type: 'embed' });
+    if (isTextBlock(b)) {
+      const t = { type: 'text', text: String(b.text ?? '') };
+      if (isValidAlign(b.align)) t.align = b.align; // 유효 align만 보존(무효/부재는 키 생략).
+      out.push(t);
+    } else if (isEmbedBlock(b)) out.push({ ...b, type: 'embed' });
   }
   return out;
 }
