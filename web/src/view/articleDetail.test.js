@@ -263,6 +263,49 @@ describe('articleDetail — table embed rendering', () => {
   });
 });
 
+// 35-step3: 보기 정렬 — 저장된 text 블록 align이 상세보기 <p>에 text-align으로 렌더된다.
+// align은 통제된 enum(ALIGN_VALUES 4종)만 화이트리스트로 방출하고, 텍스트는 항상 escapeHtml(XSS 비실행).
+describe('articleDetail — 텍스트 정렬(text-align) 렌더', () => {
+  it('center 정렬 텍스트 블록을 style="text-align:center"로 방출한다', () => {
+    const markupVersion = serialize([textBlock('가운데', 'center')]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<p class="yh-detail__line" style="text-align:center">가운데</p>');
+  });
+
+  it('미정렬 블록은 style 없이 렌더한다(하위호환)', () => {
+    const markupVersion = serialize([textBlock('기본')]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<p class="yh-detail__line">기본</p>');
+    expect(html).not.toContain('style="text-align');
+  });
+
+  it('4종(left/center/right/justify) 각각 정확한 style 문자열을 방출한다', () => {
+    for (const align of ['left', 'center', 'right', 'justify']) {
+      const html = renderDetailHtml({ markupVersion: serialize([textBlock('줄', align)]) });
+      expect(html).toContain(`<p class="yh-detail__line" style="text-align:${align}">줄</p>`);
+    }
+  });
+
+  it('무효 align(방어)은 style 없이 렌더한다 — 임의 CSS 주입 차단', () => {
+    // deserialize/normalize가 무효 align을 떨궈내고 alignStyleAttr 화이트리스트가 재차 방어한다(belt-and-suspenders).
+    const markupVersion = JSON.stringify({
+      format: 'yh-editor', version: 1, blocks: [{ type: 'text', text: '나쁨', align: 'red;position:fixed' }],
+    });
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('<p class="yh-detail__line">나쁨</p>');
+    expect(html).not.toContain('text-align');
+    expect(html).not.toContain('position:fixed');
+  });
+
+  it('정렬이 있어도 텍스트는 여전히 escapeHtml된다(XSS 비실행)', () => {
+    const markupVersion = serialize([textBlock('<b>&</b>', 'center')]);
+    const html = renderDetailHtml({ markupVersion });
+    expect(html).toContain('style="text-align:center"');
+    expect(html).toContain('&lt;b&gt;&amp;&lt;/b&gt;');
+    expect(html).not.toContain('<b>&</b>');
+  });
+});
+
 describe('articleDetail — byline (작성자 부가 라인)', () => {
   it('email 사용여부 ON + 값이 있으면 작성자 영역에 email을 부가 라인으로 보여준다', () => {
     const byline = { email: true, emailValue: 'hong@yna.co.kr', blog: false, blogValue: '' };
