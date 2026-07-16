@@ -68,6 +68,7 @@ import {
   bodyTitle, appendEmbedToBody, insertEmbedAfterLine, serializeBodyFromBlocks, textLineToBlockIndex,
 } from './writerBody.js';
 import { ALIGN_BY_MENU, setLineAlign } from './editorAlign.js';
+import { insertPasteTextAtCaret } from './editorClipboard.js';
 import { renderPrintHtml } from './printDocument.js';
 import { DocumentOpenDialog } from './DocumentOpenDialog.jsx';
 
@@ -93,7 +94,7 @@ const READONLY_LABELS = [
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -769,6 +770,14 @@ export function WriterPage() {
     }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
+    // 편집 메뉴 클립보드 5종 — 매핑 가드(682) 뒤라 매핑에서는 전부 no-op(본문-only 불변식). 잘라내기/복사는 브라우저
+    // 기본 동작에 위임(runEditorClipboardCommand, ctx와 공유), 붙여넣기/텍스트·원본 붙여넣기는 비동기 클립보드 핸들러다
+    // (메뉴 클릭은 포커스가 빠져 동기 execCommand 붙여넣기가 안 되므로 navigator.clipboard로 읽어 안전 경로로 삽입).
+    if (id === 'edit.cut') { runEditorClipboardCommand('cut'); return; }
+    if (id === 'edit.copy') { runEditorClipboardCommand('copy'); return; }
+    if (id === 'edit.paste') { pasteAtCaret(); return; }
+    if (id === 'edit.pasteText') { pasteTextAtCaret(); return; }
+    if (id === 'edit.pasteOriginal') { pasteOriginalAtCaret(); return; }
     // 보기>정렬(양쪽/왼쪽/가운데/오른쪽) — 대소문자 변환과 동형 dispatch. 반드시 VIEW_TRANSFORMS 조회 앞에
     // 둔다(정렬 id는 VIEW_TRANSFORMS에 없어 아래 `if (!fn) return`에 먼저 걸려 도달하지 못한다). 캐럿 소스·반영
     // 경로는 대소문자 변환과 동일하되 transformTextLine(텍스트 변경) 대신 setLineAlign(정렬 필드 설정)을 쓴다.
@@ -799,10 +808,11 @@ export function WriterPage() {
   //    단순화한다(본문 변경 항목과 같은 가드 — 잘라내기/붙여넣기는 텍스트를 바꾸므로 반드시 비활성).
   //  - 약물입력(ctx.symbolInput): 비매핑(본문 편집 가능)일 때만 활성(약물 삽입=본문 변경 → 매핑 비활성, 찾기와 동일 가드).
   //  - 원본 붙여넣기(ctx.pasteOriginal): 클립보드 이미지 붙여넣기(Alt+V와 동일 경로) — 본문 변경이라 비매핑에서만 활성.
-  //  - aux-tools 의존(기업코드변환/텍스트 붙여넣기): 항상 비활성 placeholder(미구현).
+  //  - 텍스트 붙여넣기(ctx.pasteText): 클립보드 평문 삽입(마커-안전) — 본문 변경이라 비매핑에서만 활성.
+  //  - aux-tools 의존(기업코드변환): 항상 비활성 placeholder(미구현).
   const ctxEnabledIds = [
     'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
-    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.pasteOriginal', 'ctx.symbolInput']),
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.pasteOriginal', 'ctx.pasteText', 'ctx.symbolInput']),
   ];
   // 보이기 토글의 현재 on 상태(체크 표식용).
   const ctxCheckedIds = [
@@ -844,19 +854,16 @@ export function WriterPage() {
       case 'ctx.symbolInput': if (!isMapping) setShowGlyphInput(true); break;
       // 원본 붙여넣기 — Alt+V와 동일 경로(클립보드 이미지 → 업로드 → 경로 임베드). 비매핑에서만(이중 방어).
       case 'ctx.pasteOriginal': if (!isMapping) pasteOriginalAtCaret(); break;
-      // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 —
-      // (끝) 차단·이미지 임베드는 Editor.handlePaste가 이미 처리하므로 그 경로를 깨지 않기 위함). 메뉴 클릭으로 빠진 포커스를
-      // 에디터로 되돌린 뒤 document.execCommand를 시도하되, 미지원 환경(jsdom)에서는 no-op으로 두고 메뉴만 닫는다(브라우저 단축키 정상).
+      // 텍스트 붙여넣기 — 클립보드 평문을 캐럿에 삽입(마커-안전). pasteTextAtCaret 내부에 매핑 가드가 있어 이중 방어.
+      case 'ctx.pasteText': pasteTextAtCaret(); break;
+      // 잘라내기/복사/붙여넣기 — 브라우저 기본 클립보드 동작에 위임(편집 메뉴 edit.cut/copy와 공유하는 runEditorClipboardCommand).
+      // contentEditable 텍스트/블록을 코드로 직접 조작하지 않는다 — (끝) 차단·이미지 임베드는 Editor.handlePaste가 처리.
       case 'ctx.cut':
       case 'ctx.copy':
-      case 'ctx.paste': {
-        const cmd = id === 'ctx.cut' ? 'cut' : id === 'ctx.copy' ? 'copy' : 'paste';
-        const root = document.querySelector('.yh-editor');
-        if (root && typeof root.focus === 'function') root.focus();
-        try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
+      case 'ctx.paste':
+        runEditorClipboardCommand(id === 'ctx.cut' ? 'cut' : id === 'ctx.copy' ? 'copy' : 'paste');
         break;
-      }
-      // aux 항목(ctx.companyCode/pasteText)은 비활성이라 호출되지 않는다.
+      // aux 항목(ctx.companyCode)은 비활성이라 호출되지 않는다.
       default: break;
     }
   };
@@ -978,11 +985,26 @@ export function WriterPage() {
     );
   };
 
-  // Alt+V/우클릭 '원본 붙여넣기' — keydown에서는 클립보드를 동기로 읽을 수 없어(브라우저 보안) 비동기 클립보드
+  // 클립보드 항목에서 첫 이미지 File을 찾아 돌려준다(없으면 null). clip.read()가 던지면(권한 거부) 그대로 전파해
+  // 호출부(원본/붙여넣기)가 각자의 안내 문구로 처리한다. 원본 붙여넣기·붙여넣기(이미지 분기)의 단일 출처.
+  const readClipboardImageFile = async (clip) => {
+    const items = await clip.read();
+    for (const item of items || []) {
+      const type = (item.types || []).find((t) => typeof t === 'string' && t.startsWith('image/'));
+      if (type) {
+        const blob = await item.getType(type);
+        // 클립보드 blob은 이름이 없다 — 빈 이름 File로 감싸면 httpModel.resolveUploadFilename이 MIME으로 파일명을 합성한다.
+        return new File([blob], '', { type });
+      }
+    }
+    return null;
+  };
+
+  // Alt+V/우클릭·편집 메뉴 '원본 붙여넣기' — keydown에서는 클립보드를 동기로 읽을 수 없어(브라우저 보안) 비동기 클립보드
   // API(navigator.clipboard.read)로 이미지를 찾아 Ctrl+V와 동일한 안전 경로(pasteImageAtCaret: 업로드→경로 임베드)로
   // 삽입한다. 캐럿은 호출 시점 lastCaretRef 스냅샷(검색패널 insertEmbed와 동일 소스 — 우클릭으로 포커스가 빠져도 유지).
-  // 미지원/권한 거부/이미지 없음은 window.alert로만 안내한다(pasteImageAtCaret 실패 정책과 동일). 텍스트 붙여넣기는
-  // 브라우저 기본 Ctrl+V가 담당하므로 여기서 다루지 않는다(ctx.pasteText는 여전히 placeholder).
+  // 미지원/권한 거부/이미지 없음은 window.alert로만 안내한다(pasteImageAtCaret 실패 정책과 동일). 텍스트는 다루지
+  // 않는다(원본 붙여넣기=이미지 전용) — 평문은 pasteTextAtCaret/pasteAtCaret가 담당한다.
   const pasteOriginalAtCaret = async () => {
     const caret = lastCaretRef.current;
     const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
@@ -992,16 +1014,7 @@ export function WriterPage() {
     }
     let file = null;
     try {
-      const items = await clip.read();
-      for (const item of items || []) {
-        const type = (item.types || []).find((t) => typeof t === 'string' && t.startsWith('image/'));
-        if (type) {
-          const blob = await item.getType(type);
-          // 클립보드 blob은 이름이 없다 — 빈 이름 File로 감싸면 httpModel.resolveUploadFilename이 MIME으로 파일명을 합성한다.
-          file = new File([blob], '', { type });
-          break;
-        }
-      }
+      file = await readClipboardImageFile(clip);
     } catch {
       window.alert('클립보드 읽기 권한이 거부되어 원본 붙여넣기를 할 수 없습니다.');
       return;
@@ -1011,6 +1024,72 @@ export function WriterPage() {
       return;
     }
     await pasteImageAtCaret(file, caret);
+  };
+
+  // 에디터에 포커스 후 표준 클립보드 커맨드(cut/copy/paste)를 브라우저 기본 동작에 위임한다(contentEditable 텍스트/
+  // 블록을 코드로 직접 조작하지 않음 — (끝) 차단·이미지 임베드는 Editor.handlePaste가 처리). 우클릭 ctx와 편집 메뉴가
+  // 공유하는 단일 헬퍼. jsdom은 execCommand가 없으므로(typeof 가드 + try/catch) 예외 없이 no-op으로 둔다.
+  const runEditorClipboardCommand = (cmd) => {
+    const root = document.querySelector('.yh-editor');
+    if (root && typeof root.focus === 'function') root.focus();
+    try { if (typeof document.execCommand === 'function') document.execCommand(cmd); } catch { /* jsdom 미지원 — no-op */ }
+  };
+
+  // 편집/우클릭 '텍스트 붙여넣기' 공용 코어 — 이미 캡처된 tabId를 받아 클립보드 평문(마커-안전)을 캐럿에 삽입한다.
+  // 본문 반영은 commitBody(serialize(...)) 단일 choke point만(제목 재동기화·마커 무결성). 마커 가드/줄 분할은
+  // insertPasteTextAtCaret(step0 단일 출처)에 위임(빈 클립보드·"(끝)" 뒤 캐럿이면 changed:false로 no-op).
+  // 탭-stale 가드: await readText() 사이 탭이 전환됐으면(activeTabRef.current.id !== tabId) 폐기한다 — 렌더 클로저의
+  // blocks/lastCaretRef로 커밋하면 다른 기사 본문에 쓰이므로(pasteImageAtCaret의 탭 고정 가드와 동형).
+  const pasteClipboardTextInto = async (tabId) => {
+    const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    if (!clip || typeof clip.readText !== 'function') {
+      window.alert('이 브라우저에서는 텍스트 붙여넣기를 지원하지 않습니다. Ctrl+V를 사용하세요.');
+      return;
+    }
+    let text = '';
+    try {
+      text = await clip.readText();
+    } catch {
+      window.alert('클립보드 읽기 권한이 거부되어 붙여넣기를 할 수 없습니다.');
+      return;
+    }
+    const current = activeTabRef.current;
+    if (!current || current.id !== tabId) return; // 탭 전환 — 폐기(stale-write 방지)
+    const r = insertPasteTextAtCaret(blocks, lastCaretRef.current, text);
+    if (!r.changed) return; // 빈 클립보드/마커 뒤 캐럿 → no-op
+    commitBody(serialize(r.blocks));
+    if (typeof r.caretLineIndex === 'number') setPendingCaretLine(r.caretLineIndex);
+  };
+
+  // 편집/우클릭 '텍스트 붙여넣기' — 클립보드 평문만 캐럿에 삽입(이미지 무시). 매핑=본문-only 불변식이라 no-op.
+  const pasteTextAtCaret = async () => {
+    if (isMapping) return;
+    await pasteClipboardTextInto(activeTab.id); // await 전 tabId 캡처(탭-stale 가드)
+  };
+
+  // 편집/우클릭 '붙여넣기' — 클립보드에 이미지가 있으면 Ctrl+V/원본 붙여넣기와 동일 경로(pasteImageAtCaret: 업로드→
+  // 경로 임베드), 없으면 평문 경로(pasteTextAtCaret와 공유). 메뉴 클릭은 포커스가 빠져 동기 클립보드 접근이 안 되므로
+  // 비동기 navigator.clipboard를 쓴다(pasteOriginalAtCaret 선례). 매핑=본문-only 불변식이라 no-op.
+  const pasteAtCaret = async () => {
+    if (isMapping) return;
+    const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    const tabId = activeTab.id; // await 전 tabId 캡처(텍스트 폴백의 탭-stale 가드)
+    // 이미지 우선 — read() 지원 시 클립보드 이미지를 찾는다(pasteImageAtCaret가 자체 탭 고정 가드).
+    if (clip && typeof clip.read === 'function') {
+      let file = null;
+      try {
+        file = await readClipboardImageFile(clip);
+      } catch {
+        window.alert('클립보드 읽기 권한이 거부되어 붙여넣기를 할 수 없습니다.');
+        return;
+      }
+      if (file) {
+        await pasteImageAtCaret(file, lastCaretRef.current);
+        return;
+      }
+    }
+    // 이미지 없음/read 미지원 → 평문 붙여넣기(캡처한 tabId로 탭 고정).
+    await pasteClipboardTextInto(tabId);
   };
 
   // URL 직접 입력(도구>그림/유튜브/오디오/링크/로컬영상 삽입) → 종류별 팩토리로 임베드 생성 → insertEmbed

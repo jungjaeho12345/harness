@@ -1417,16 +1417,16 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 항목 외(되돌리기·잘라내기)는 여전히 비활성이다', async () => {
-    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가 결선돼 활성이 됐고, '표 삽입'(table.insert)도
-    // 31-editor-table step3에서, 파일 메뉴 전 항목(새문서/문서열기/저장/…)도 34-editor-file-menu에서 결선돼 활성이 됐으므로,
-    // 미결선 예시는 여전히 비활성인 편집 메뉴 '되돌리기'(edit.undo)·'잘라내기'(edit.cut)로 검증한다.
+  it('활성 항목 외(되돌리기·다시실행)는 여전히 비활성이다', async () => {
+    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가, 파일 메뉴 전 항목도 34-editor-file-menu에서,
+    // 클립보드 5종(잘라내기/복사/붙여넣기/원본·텍스트 붙여넣기)도 36-editor-edit-clipboard에서 결선돼 활성이 됐으므로,
+    // 미결선 예시는 여전히 비활성인 편집 메뉴 '되돌리기'(edit.undo)·'다시실행'(edit.redo)로 검증한다(undo/redo는 별도 phase).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
     expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
-    expect(within(menu).getByText('잘라내기').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('다시실행').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -2479,12 +2479,12 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("활성 항목 외(잘라내기·되돌리기)는 여전히 비활성이다(회귀)", async () => {
-    // 파일 메뉴 전 항목(새문서/문서열기/저장/…)이 34-editor-file-menu에서 결선돼 활성 — 미결선 예시를 편집 메뉴 '되돌리기'(edit.undo)로 교체.
+  it("활성 항목 외(다시실행·되돌리기)는 여전히 비활성이다(회귀)", async () => {
+    // 클립보드 5종(잘라내기 포함)이 36-editor-edit-clipboard에서 결선돼 활성 — 미결선 예시를 편집 메뉴 '다시실행'(edit.redo)로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
-    expect(within(menu).getByText('잘라내기').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('다시실행').closest('button')).toBeDisabled();
     expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
   });
 
@@ -2670,7 +2670,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
 // editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
-// aux-tools 의존(기업코드변환/원본·텍스트 붙여넣기/약물입력)은 항상 비활성 placeholder. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
+// aux-tools 의존(기업코드변환)은 여전히 비활성 placeholder. 텍스트 붙여넣기는 36-editor-edit-clipboard에서 결선. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
 describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -2763,27 +2763,27 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환/텍스트 붙여넣기)은 비활성으로 보인다(약물입력=phase17·원본 붙여넣기=Alt+V 결선됨)', async () => {
+  it('aux 항목(기업코드변환)만 비활성으로 보인다(약물입력=phase17·원본 붙여넣기=Alt+V·텍스트 붙여넣기=phase36 결선됨)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['기업코드변환', '텍스트 붙여넣기']) {
+    for (const label of ['기업코드변환']) {
       expect(ctxItem(label)).toBeDisabled();
     }
   });
 
-  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
+  it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·원본·텍스트 붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '텍스트 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
 
-  it('매핑 모드: 컨텍스트 찾기/바꾸기 클릭이 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다 + 잘라내기/붙여넣기 비활성', async () => {
+  it('매핑 모드: 컨텍스트 찾기/바꾸기 클릭이 다이얼로그를 열지 않고 updateField(body)가 호출되지 않는다 + 잘라내기/붙여넣기/텍스트 붙여넣기 비활성', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const original = serialize([textBlock('foo bar')]);
     const { container, model } = await openWith(
@@ -2795,9 +2795,10 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    // 매핑: 잘라내기/붙여넣기 비활성(본문 텍스트 잠금).
+    // 매핑: 잘라내기/붙여넣기/텍스트 붙여넣기 비활성(본문 텍스트 잠금).
     expect(ctxItem('잘라내기')).toBeDisabled();
     expect(ctxItem('붙여넣기')).toBeDisabled();
+    expect(ctxItem('텍스트 붙여넣기')).toBeDisabled();
 
     await userEvent.click(ctxItem('찾기/바꾸기'));
     expect(findDialog()).toBeNull(); // 매핑은 다이얼로그 안 열림
@@ -4619,6 +4620,229 @@ describe("WriterPage — Alt+V/우클릭 '원본 붙여넣기'(클립보드 이�
   });
 });
 
+// Step 1(36-editor-edit-clipboard): 편집 메뉴/우클릭 클립보드 5종 결선(clipboard-dispatch).
+// 잘라내기·복사=execCommand 위임(runEditorClipboardCommand, ctx와 공유), 붙여넣기·텍스트 붙여넣기=비동기 navigator.clipboard
+// 핸들러(pasteAtCaret/pasteTextAtCaret), 원본 붙여넣기=기존 pasteOriginalAtCaret 재사용. 본문 반영은 전부
+// commitBody(serialize(...))(텍스트) / pasteImageAtCaret(이미지) 안전 경로만 — DOM/contentEditable 직접 조작 없음.
+describe('WriterPage — 편집/우클릭 클립보드 5종 결선(clipboard-dispatch)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    window.getSelection().removeAllRanges();
+  });
+  afterEach(() => { delete navigator.clipboard; });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 클립보드 stub — { read?, readText? } 조합을 주입한다(원본 붙여넣기 테스트와 동일 패턴).
+  const stubClipboard = (impl) => {
+    Object.defineProperty(navigator, 'clipboard', { value: impl, configurable: true, writable: true });
+  };
+  const imageClipItem = (type = 'image/png') => ({ types: [type], getType: async () => new Blob(['x'], { type }) });
+  const textClipItem = () => ({ types: ['text/plain'], getType: async () => new Blob(['t'], { type: 'text/plain' }) });
+
+  // 캐럿을 텍스트-줄 lineIndex 시작에 두고 keyUp으로 onCaretChange를 발생시켜 lastCaretRef를 갱신한다(약물/날짜 삽입과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  const editMenuItem = (label) => within(screen.getByTestId('menu-편집')).getByText(label).closest('button');
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+  const embeds = (container) => container.querySelectorAll('.yh-editor .yh-embed');
+
+  // ---- 잘라내기/복사: execCommand 위임(runEditorClipboardCommand) ----
+  it("편집 메뉴 '잘라내기'/'복사' 클릭은 execCommand(cut/copy)로 위임하고 에디터 root에 focus한다", async () => {
+    const { container } = await openWith([textBlock('foo bar')]);
+    const exec = vi.fn(() => true);
+    document.execCommand = exec; // jsdom 미정의 → 위임 경로 검증용 주입.
+    const root = container.querySelector('.yh-editor');
+    const focus = vi.spyOn(root, 'focus');
+    try {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem('복사'));
+      expect(exec).toHaveBeenCalledWith('copy');
+
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem('잘라내기'));
+      expect(exec).toHaveBeenCalledWith('cut');
+      expect(focus).toHaveBeenCalled(); // 코드 직접 조작이 아니라 에디터 focus 후 브라우저 위임.
+    } finally {
+      delete document.execCommand;
+    }
+  });
+
+  it("매핑 모드: 편집 메뉴 '잘라내기'는 execCommand를 호출하지 않는다(본문 잠금)", async () => {
+    await openWith([textBlock('foo')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    const exec = vi.fn(() => true);
+    document.execCommand = exec;
+    try {
+      await openTopMenu('편집');
+      await userEvent.click(editMenuItem('잘라내기'));
+      expect(exec).not.toHaveBeenCalled(); // isMapping 가드로 조기 return.
+    } finally {
+      delete document.execCommand;
+    }
+  });
+
+  // ---- 텍스트 붙여넣기: 클립보드 평문 삽입(pasteTextAtCaret) ----
+  it("편집 메뉴 '텍스트 붙여넣기': 클립보드 평문을 캐럿 줄에 삽입하고 다중 줄로 분할한다(임베드 보존)", async () => {
+    stubClipboard({ readText: async () => 'X\nY' });
+    const { container } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = '본문' 시작
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+
+    // '본문' 시작에 'X\nY' 삽입 → ['헤드','X','Y본문'] (임베드는 위치 보존).
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', 'X', 'Y본문']));
+    expect(embeds(container).length).toBe(1);
+  });
+
+  it("편집 메뉴 '텍스트 붙여넣기': 캐럿이 \"(끝)\" 뒤면 삽입되지 않는다(마커 무결성)", async () => {
+    stubClipboard({ readText: async () => 'X' });
+    const { container } = await openWith([textBlock('본문'), textBlock('(끝)')]);
+    focusCaretAtLine(container, 1); // '(끝)' 줄 시작 = 마커 시작 → isInputBlocked
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+    await act(async () => {}); // readText 마이크로태스크 플러시.
+
+    expect(editorLines(container)).toEqual(['본문', '(끝)']); // 불변(no-op)
+  });
+
+  it("매핑 모드: 편집 메뉴 '텍스트 붙여넣기'는 readText를 호출하지 않는다(본문-only 불변식)", async () => {
+    const readText = vi.fn(async () => 'X');
+    stubClipboard({ readText });
+    await openWith([textBlock('foo')], { mode: 'mapping', status: 'DPS', role: 'D' });
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+    await act(async () => {});
+
+    expect(readText).not.toHaveBeenCalled(); // isMapping 가드로 조기 return.
+  });
+
+  it("편집 메뉴 '텍스트 붙여넣기': 클립보드 API 미지원이면 안내만 한다", async () => {
+    // navigator.clipboard 미정의(stub 안 함).
+    await openWith([textBlock('본문')]);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('이 브라우저에서는 텍스트 붙여넣기를 지원하지 않습니다. Ctrl+V를 사용하세요.'));
+  });
+
+  it("편집 메뉴 '텍스트 붙여넣기': 클립보드 읽기 권한 거부면 안내만 한다", async () => {
+    stubClipboard({ readText: async () => { throw new Error('denied'); } });
+    const { container } = await openWith([textBlock('본문')]);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    focusCaretAtLine(container, 0);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('클립보드 읽기 권한이 거부되어 붙여넣기를 할 수 없습니다.'));
+    expect(editorLines(container)).toEqual(['본문']); // 본문 불변.
+  });
+
+  // ---- 붙여넣기: 이미지 우선 → 없으면 평문(pasteAtCaret) ----
+  it("편집 메뉴 '붙여넣기': 클립보드에 이미지가 있으면 업로드 후 경로(/uploads/) 임베드로 삽입된다", async () => {
+    stubClipboard({ read: async () => [imageClipItem()] });
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    focusCaretAtLine(container, 1);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('붙여넣기'));
+
+    await waitFor(() => expect(embeds(container).length).toBe(1));
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.yh-embed img').getAttribute('src')).toMatch(/^\/uploads\//);
+  });
+
+  it("편집 메뉴 '붙여넣기': 클립보드에 이미지가 없으면 평문을 캐럿 줄에 삽입한다", async () => {
+    stubClipboard({ read: async () => [textClipItem()], readText: async () => 'Z' });
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    focusCaretAtLine(container, 1);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('붙여넣기'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', 'Z본문']));
+    expect(upload).not.toHaveBeenCalled(); // 이미지 없음 → 업로드 경로 미진입.
+  });
+
+  // ---- 원본 붙여넣기: 편집 메뉴에서도 기존 핸들러 재사용 ----
+  it("편집 메뉴 '원본 붙여넣기': 클립보드 이미지를 업로드 경로 임베드로 삽입한다", async () => {
+    stubClipboard({ read: async () => [imageClipItem()] });
+    const { container, model } = await openWith([textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('원본 붙여넣기'));
+
+    await waitFor(() => expect(embeds(container).length).toBe(1));
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- 탭-stale 가드: await 사이 탭 전환 시 어느 탭 본문도 오염되지 않는다(pasteImageAtCaret 탭 고정 가드와 동형) ----
+  it("텍스트 붙여넣기: readText 대기 중 다른 탭으로 이동하면 어느 탭 본문도 바뀌지 않는다(탭 고정 가드)", async () => {
+    let resolveText;
+    stubClipboard({ readText: () => new Promise((res) => { resolveText = res; }) });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem('텍스트 붙여넣기'));
+    await waitFor(() => expect(typeof resolveText).toBe('function')); // readText in-flight
+
+    // 대기 중 새 작성 탭으로 전환(addTab → 새 탭 활성). 에디터에서 이전 탭 본문('본문')이 사라지면 전환 완료.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(editorLines(container)).not.toContain('본문'));
+
+    await act(async () => { resolveText('PASTED'); });
+
+    // 탭이 바뀌었으므로 커밋은 폐기(activeTabRef.current.id !== tabId) — 새(활성) 탭에 붙여넣기가 새지 않고
+    // 이전 탭(A) 본문도 새 탭으로 새지 않는다(image 탭 고정 가드 테스트와 동일 관찰 — 커밋 자체가 일어나지 않음).
+    const lines = editorLines(container);
+    expect(lines.join('\n')).not.toContain('PASTED');
+    expect(lines).not.toContain('본문');
+  });
+
+  // ---- 우클릭 ctx.pasteText도 동일 핸들러(pasteTextAtCaret)로 결선 ----
+  it("우클릭 '텍스트 붙여넣기': 클립보드 평문을 캐럿 줄에 삽입한다", async () => {
+    stubClipboard({ readText: async () => 'Q' });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(ctx).getByText('텍스트 붙여넣기').closest('button'));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', 'Q본문']));
+  });
+});
+
 // Step 1(28-audit-stabilization): 제목 파생 중앙화(commitBody) — 본문을 바꾸는 모든 경로가 제목(본문 첫 줄)을
 // 재동기화한다. 타이핑(onTextChange) 외 경로(모두 바꾸기/대소문자 변환/줄삭제 등)가 body만 갱신해 저장 시
 // DB로 나가는 dto.title이 옛 값(stale)으로 남던 결함의 회귀 테스트 — 저장(PUT) dto의 title로 직접 관찰한다.
@@ -4955,8 +5179,9 @@ describe('WriterPage — 편집 메뉴 문서/문단 정렬·한줄/단어 지�
     // 기존 활성/비활성 항목 불변(회귀) — step 2 선택 3종 활성·미결선(DEFER) 항목 비활성.
     expect(editMenuItem('문단 선택')).toBeEnabled();
     expect(editMenuItem('전체 선택')).toBeEnabled();
+    // 되돌리기/다시실행(undo/redo)은 이 phase 후에도 미결선 유지 — 잘라내기는 36-editor-edit-clipboard에서 결선됨.
     expect(editMenuItem('되돌리기')).toBeDisabled();
-    expect(editMenuItem('잘라내기')).toBeDisabled();
+    expect(editMenuItem('다시실행')).toBeDisabled();
   });
 
   it("'문서 정렬': 텍스트 줄이 정렬되고 \"(끝)\" 마커는 최종 유지, 제목이 새 첫 줄로 재동기화된다(commitBody)", async () => {
