@@ -16,7 +16,7 @@
       "status": "completed",
       "started_at": "2026-07-16T09:03:53+0900",
       "summary": "Editor.jsx만 변경: 텍스트 줄을 data-align + text-align(화이트리스트 통과값만, 미정렬/무효는 속성·스타일 생략—현행 DOM 동일)으로 렌더. readEditorBlocks 클린패스가 el.dataset.align을 되읽어 elementToLines 첫 줄에만 승계(dirty 새 줄은 미정렬 정상). alignSig(텍스트블록 align 서명) 추가 후 structural 판정에 포함해 정렬-only 변경도 remount. CRITICAL 버그 수정: alignSig를 snapRef가 아닌 lastAlignRef(마지막 emit 정렬, lastEmittedRef와 동형; handleInput/compositionEnd/structural에서 갱신)와 비교—빈줄→입력·줄병합 등 줄수 바뀌는 echo에서 서명 길이 어긋나 헛remount로 편집 노드가 stale해지던 회귀(자동저장 최신본문 유실) 제거. 타이핑/색상/임베드/Ctrl+D/(끝) 라운드트립 불변. 테스트 5개 추가(렌더 data-align·무효 필터·타이핑 라운드트립 보존·정렬-only remount·정렬동일 no-remount). AC: lint/build/test:web(1457) 그린.",
-      "completed_at": "2026-07-16T09:28:00+0900"
+      "completed_at": "2026-07-16T09:31:05+0900"
     },
     {
       "step": 2,
