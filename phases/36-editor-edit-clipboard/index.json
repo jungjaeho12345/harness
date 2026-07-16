@@ -7,7 +7,8 @@
       "name": "paste-text-model",
       "status": "completed",
       "started_at": "2026-07-16T12:34:25+0900",
-      "summary": "web/src/view/editorClipboard.js 신설 — insertPasteTextAtCaret(blocks, caret, text) → { blocks, caretLineIndex, changed }. 마커-안전 텍스트 삽입 순수 헬퍼(insertTextIntoBlocks·isInputBlocked·hasEndMarker 재사용, 단일 출처). 규칙: 빈텍스트(String(text??'')==='') → no-op(changed:false); 마커 가드 — 캐럿 유효(정수 offset)면 isInputBlocked(full, caret.offset) true 시 no-op, 캐럿 null/무효면 hasEndMarker(full) 시 no-op; 그 외 insertTextIntoBlocks 위임(changed:true). \\r\\n·\\r만 \\n으로 통일, 원문 트림/공백제거 금지, 입력 blocks 불변. step1(WriterPage)에서 import { insertPasteTextAtCaret } from '../view/editorClipboard.js'. 테스트 web/src/view/editorClipboard.test.js 16개 통과."
+      "summary": "web/src/view/editorClipboard.js 신설 — insertPasteTextAtCaret(blocks, caret, text) → { blocks, caretLineIndex, changed }. 마커-안전 텍스트 삽입 순수 헬퍼(insertTextIntoBlocks·isInputBlocked·hasEndMarker 재사용, 단일 출처). 규칙: 빈텍스트(String(text??'')==='') → no-op(changed:false); 마커 가드 — 캐럿 유효(정수 offset)면 isInputBlocked(full, caret.offset) true 시 no-op, 캐럿 null/무효면 hasEndMarker(full) 시 no-op; 그 외 insertTextIntoBlocks 위임(changed:true). \\r\\n·\\r만 \\n으로 통일, 원문 트림/공백제거 금지, 입력 blocks 불변. step1(WriterPage)에서 import { insertPasteTextAtCaret } from '../view/editorClipboard.js'. 테스트 web/src/view/editorClipboard.test.js 16개 통과.",
+      "completed_at": "2026-07-16T12:40:48+0900"
     },
     {
       "step": 1,
