@@ -7,7 +7,8 @@
       "name": "align-model",
       "status": "completed",
       "started_at": "2026-07-16T08:58:17+0900",
-      "summary": "editorContent.js: ALIGN_VALUES=['left','center','right','justify']·isValidAlign(v)·textBlock(text,align)/normalizeBlocks 텍스트 분기가 유효 align만 보존(무효/부재는 키 생략, 미정렬 블록은 {type,text} 바이트 안정). 신규 editorAlign.js: ALIGN_BY_MENU({'view.justify':'justify','view.alignLeft':'left','view.alignCenter':'center','view.alignRight':'right'})·setLineAlign(blocks,textLineIndex,align)→{blocks,changed}(writerBody.textLineToBlockIndex로 텍스트줄→blocks 인덱스 환산, 범위밖/무효/동일 no-op, 임베드·다른줄·'(끝)' 불변). import: web/src/view/editorAlign.js, web/src/view/editorContent.js. 테스트 24개(editorContent +8, editorAlign 8)."
+      "summary": "editorContent.js: ALIGN_VALUES=['left','center','right','justify']·isValidAlign(v)·textBlock(text,align)/normalizeBlocks 텍스트 분기가 유효 align만 보존(무효/부재는 키 생략, 미정렬 블록은 {type,text} 바이트 안정). 신규 editorAlign.js: ALIGN_BY_MENU({'view.justify':'justify','view.alignLeft':'left','view.alignCenter':'center','view.alignRight':'right'})·setLineAlign(blocks,textLineIndex,align)→{blocks,changed}(writerBody.textLineToBlockIndex로 텍스트줄→blocks 인덱스 환산, 범위밖/무효/동일 no-op, 임베드·다른줄·'(끝)' 불변). import: web/src/view/editorAlign.js, web/src/view/editorContent.js. 테스트 24개(editorContent +8, editorAlign 8).",
+      "completed_at": "2026-07-16T09:03:52+0900"
     },
     {
       "step": 1,
