@@ -594,3 +594,69 @@ describe('Editor — pendingCaretLine 지정 줄 포커스', () => {
     });
   });
 });
+
+// 35-1: 보기 정렬 — 텍스트 줄을 data-align + text-align으로 렌더하고, 타이핑 라운드트립에서 되읽어 살린다.
+// (임베드가 data-embed-key로 생존하는 것과 동형 — align도 DOM에 실어야 매 입력 재구성에서 유실되지 않는다.)
+describe('Editor — 보기 정렬(data-align/text-align 렌더·라운드트립)', () => {
+  it('정렬된 텍스트 블록은 data-align + text-align 스타일로 렌더하고, 미정렬 블록은 속성/스타일이 없다', () => {
+    const { container } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('가운데', 'center')]} onTextChange={() => {}} />,
+    );
+    const lines = container.querySelectorAll('.yh-editor__line');
+    // 미정렬(제목) 줄 — data-align 속성 없음, textAlign 비어 있음(현행 DOM과 동일 — 회귀 안전).
+    expect(lines[0].getAttribute('data-align')).toBeNull();
+    expect(lines[0].style.textAlign).toBe('');
+    // 정렬된 줄 — data-align="center" + textAlign 'center'.
+    expect(lines[1].getAttribute('data-align')).toBe('center');
+    expect(lines[1].style.textAlign).toBe('center');
+  });
+
+  it('무효 align은 화이트리스트에서 걸러져 렌더에 반영되지 않는다(속성/스타일 생략)', () => {
+    const { container } = render(
+      <Editor blocks={[textBlock('제목'), { type: 'text', text: '무효', align: 'middle' }]} onTextChange={() => {}} />,
+    );
+    const lines = container.querySelectorAll('.yh-editor__line');
+    expect(lines[1].getAttribute('data-align')).toBeNull();
+    expect(lines[1].style.textAlign).toBe('');
+  });
+
+  it('타이핑(input) 라운드트립에서 정렬된 줄의 align이 보존된다(DOM data-align 되읽기)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('가운데', 'center')]} onTextChange={onTextChange} />,
+    );
+    // 매 입력마다 readEditorBlocks가 DOM에서 블록을 재구성한다 — data-align이 살아 있어야 align이 살아남는다.
+    fireEvent.input(container.querySelector('.yh-editor'));
+    const blocks = onTextChange.mock.calls[0][1];
+    expect(blocks[1]).toMatchObject({ type: 'text', text: '가운데', align: 'center' });
+    expect(blocks[0].align).toBeUndefined(); // 미정렬 줄은 align 키가 없다.
+  });
+
+  it('정렬만 바뀐 blocks(같은 텍스트/임베드)는 remount되어 DOM 정렬이 갱신된다(alignSig structural)', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문')]} onTextChange={() => {}} />,
+    );
+    // 텍스트·임베드는 동일하고 둘째 줄 정렬만 추가 — alignSig가 달라 remount되어야 화면에 반영된다.
+    rerender(
+      <Editor blocks={[textBlock('제목'), textBlock('본문', 'right')]} onTextChange={() => {}} />,
+    );
+    await waitFor(() => {
+      const lines = container.querySelectorAll('.yh-editor__line');
+      expect(lines[1].getAttribute('data-align')).toBe('right');
+      expect(lines[1].style.textAlign).toBe('right');
+    });
+  });
+
+  it('정렬·텍스트 모두 그대로면 재렌더(remount)하지 않는다(회귀 — alignSig 오탐 없음)', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문', 'center')]} onTextChange={() => {}} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    rerender(
+      <Editor blocks={[textBlock('제목'), textBlock('본문', 'center')]} onTextChange={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector('.yh-editor')).toBe(before); // 동일 노드 → remount 없음
+    });
+  });
+});

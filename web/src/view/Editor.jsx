@@ -9,7 +9,7 @@
 //   임베드 추가/삭제·Alt+Y·포커스 이탈 재색칠)일 때만 snapshot을 갱신하고 편집 div를 깨끗이 remount한다.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { blocksToText, isEmbedBlock, isTextBlock, textBlock } from './editorContent.js';
+import { blocksToText, isEmbedBlock, isTextBlock, isValidAlign, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked, insertTextIntoBlocks } from './editorNewline.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
@@ -86,7 +86,12 @@ function readEditorBlocks(root, snapshotBlocks) {
       pending = null;
     } else if ((el.classList && el.classList.contains('yh-editor__line')) || BLOCK_TAGS.has(el.tagName)) {
       flush();
-      for (const line of elementToLines(el)) out.push(textBlock(line));
+      // 정렬을 DOM(data-align)에서 되읽어 첫 줄에만 승계한다(임베드가 data-embed-key로 생존하는 것과 동형).
+      // 클린 케이스(.yh-editor__line 1요소=1줄)에선 그 줄에 정렬이 살아나고, dirty(중첩→여러 줄)면 새로 생긴
+      // 나머지 줄은 미정렬로 둔다(새 줄은 미정렬이 정상 — stale 좌표 추정 금지).
+      const a = (el.dataset && isValidAlign(el.dataset.align)) ? el.dataset.align : undefined;
+      const lines = elementToLines(el);
+      lines.forEach((line, idx) => out.push(textBlock(line, idx === 0 ? a : undefined)));
     } else { // 인라인 요소
       add(el.textContent ?? '');
     }
@@ -98,6 +103,11 @@ function readEditorBlocks(root, snapshotBlocks) {
 // 임베드 블록들의 서명 — 구조(임베드 추가/삭제/변경) 변화 감지에 쓴다(텍스트 타이핑과 무관).
 function embedSig(blocks) {
   return JSON.stringify((Array.isArray(blocks) ? blocks : []).filter(isEmbedBlock));
+}
+
+// 텍스트 블록들의 정렬 서명 — 정렬만 바뀐 변경도 remount(재렌더)시키기 위함(텍스트/임베드와 독립).
+function alignSig(blocks) {
+  return JSON.stringify((Array.isArray(blocks) ? blocks : []).filter(isTextBlock).map((b) => b.align || ''));
 }
 
 // 현재 selection 캐럿을 { lineIndex, offset }으로 읽는다 — lineIndex는 라인 div(=텍스트 블록) 순서,
@@ -249,10 +259,14 @@ export function Editor({
   // ── 타이핑 중 재렌더 방지(캐럿 안정 + 크래시 방지) ──────────────────────────
   // snapRef: 실제로 DOM에 그려진 블록(렌더 소스). 타이핑 echo로는 갱신하지 않는다.
   // lastEmittedRef: 마지막으로 onTextChange로 내보낸 본문 텍스트(= DOM의 현재 텍스트). echo 판별 기준.
+  // lastAlignRef: 마지막으로 emit/렌더된 정렬 서명(= DOM의 현재 정렬). 정렬-only 변경 판별 기준 — 텍스트의
+  //   lastEmittedRef와 동형이다. snapRef(스냅샷)와 비교하면 줄 수가 바뀌는 echo(빈줄→입력·브라우저 줄병합)에서
+  //   서명 길이가 어긋나 헛remount가 나므로, 반드시 "마지막 emit 기준"으로 비교한다.
   // forceRecolorRef: blur 시 한 번 재색칠을 강제하는 플래그.
   // renderTick: 구조 변경 시 증가 → 편집 div의 key가 바뀌어 깨끗이 remount(브라우저가 바꾼 DOM과의 diff 회피).
   const snapRef = useRef(blocks);
   const lastEmittedRef = useRef(blocksToText(blocks));
+  const lastAlignRef = useRef(alignSig(blocks));
   const forceRecolorRef = useRef(false);
   // rootRef: 편집 div DOM 참조(remount 후 포커스/캐럿 복원용). refocusRef: 복원 대상 { lineIndex } 또는 null.
   const rootRef = useRef(null);
@@ -267,7 +281,8 @@ export function Editor({
     const incomingText = blocksToText(blocks);
     const structural = forceRecolorRef.current
       || incomingText !== lastEmittedRef.current
-      || embedSig(blocks) !== embedSig(snapRef.current);
+      || embedSig(blocks) !== embedSig(snapRef.current)
+      || alignSig(blocks) !== lastAlignRef.current;
     if (!structural) { nextCaretLineRef.current = null; return; }
     // remount(아래 setRenderTick)로 편집 div가 새로 그려지면 포커스/캐럿이 빠진다.
     // Enter 분할/여러 줄 붙여넣기는 새 줄 위치를 nextCaretLineRef로 명시한다(이 경로는 항상 편집 중).
@@ -285,6 +300,7 @@ export function Editor({
     }
     snapRef.current = blocks;
     lastEmittedRef.current = incomingText;
+    lastAlignRef.current = alignSig(blocks);
     forceRecolorRef.current = false;
     setRenderTick((t) => t + 1);
   }, [blocks]);
@@ -396,6 +412,7 @@ export function Editor({
     const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
     const text = blocksToText(editBlocks);
     lastEmittedRef.current = text;
+    lastAlignRef.current = alignSig(editBlocks); // DOM에서 되읽은 정렬을 echo 기준으로 갱신(헛remount 방지)
     if (onTextChange) onTextChange(text, editBlocks);
     reportCaret(e.currentTarget); // 타이핑 후 캐럿 위치 갱신(echo 경로라 selection이 보존됨)
   };
@@ -407,6 +424,7 @@ export function Editor({
       const editBlocks = readEditorBlocks(e.currentTarget, snapRef.current);
       const text = blocksToText(editBlocks);
       lastEmittedRef.current = text;
+      lastAlignRef.current = alignSig(editBlocks); // 조합 완료 emit도 정렬 echo 기준 갱신(handleInput과 동형)
       onTextChange(text, editBlocks);
     }
   };
@@ -462,12 +480,16 @@ export function Editor({
         if (isTextBlock(block)) {
           textLine += 1;
           const role = lineRoles[textLine];
+          // 화이트리스트를 통과한 정렬만 렌더에 쓴다(step3와 방어 깊이 통일). 미정렬/무효면 속성·스타일 생략
+          // → data-align={undefined}는 속성이 안 붙어 현행 DOM과 동일(회귀 안전).
+          const align = isValidAlign(block.align) ? block.align : undefined;
           return (
             <div
               key={`text-${i}`}
               className="yh-editor__line"
               data-role={role}
-              style={{ color: colorForRole(role) }}
+              data-align={align}
+              style={{ color: colorForRole(role), ...(align ? { textAlign: align } : null) }}
             >
               {block.text}
             </div>
