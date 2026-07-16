@@ -1,0 +1,24 @@
+{
+  "project": "기사 작성기",
+  "phase": "36-editor-edit-clipboard",
+  "steps": [
+    {
+      "step": 0,
+      "name": "paste-text-model",
+      "status": "completed",
+      "started_at": "2026-07-16T12:34:25+0900",
+      "summary": "web/src/view/editorClipboard.js 신설 — insertPasteTextAtCaret(blocks, caret, text) → { blocks, caretLineIndex, changed }. 마커-안전 텍스트 삽입 순수 헬퍼(insertTextIntoBlocks·isInputBlocked·hasEndMarker 재사용, 단일 출처). 규칙: 빈텍스트(String(text??'')==='') → no-op(changed:false); 마커 가드 — 캐럿 유효(정수 offset)면 isInputBlocked(full, caret.offset) true 시 no-op, 캐럿 null/무효면 hasEndMarker(full) 시 no-op; 그 외 insertTextIntoBlocks 위임(changed:true). \\r\\n·\\r만 \\n으로 통일, 원문 트림/공백제거 금지, 입력 blocks 불변. step1(WriterPage)에서 import { insertPasteTextAtCaret } from '../view/editorClipboard.js'. 테스트 web/src/view/editorClipboard.test.js 16개 통과.",
+      "completed_at": "2026-07-16T12:40:48+0900"
+    },
+    {
+      "step": 1,
+      "name": "clipboard-dispatch",
+      "status": "completed",
+      "started_at": "2026-07-16T12:40:49+0900",
+      "summary": "WriterPage.jsx에 편집 메뉴/우클릭 클립보드 5종 결선(단일 모듈 변경). MENU_ENABLED에 edit.cut/copy/paste/pasteOriginal/pasteText 추가. 공용 헬퍼 runEditorClipboardCommand(에디터 focus 후 execCommand 위임, ctx.cut/copy/paste와 편집 메뉴 edit.cut/copy 공유)·readClipboardImageFile(클립보드 첫 이미지 File 추출, pasteOriginalAtCaret/pasteAtCaret 공유)로 추출. 신규 async 핸들러: pasteClipboardTextInto(tabId)(readText→step0 insertPasteTextAtCaret→commitBody(serialize) 단일 choke point, 마커 가드·줄분할은 step0 위임) + pasteTextAtCaret(=편집/ctx '텍스트 붙여넣기', 매핑 no-op)·pasteAtCaret(=편집 '붙여넣기': 이미지 우선 read()→pasteImageAtCaret, 없으면 평문 폴백). 탭-stale 가드: await 전 tabId 캡처→commit 직전 activeTabRef.current.id 재확인, 다르면 폐기(pasteImageAtCaret 탭 고정 가드와 동형). 매핑 가드: 5종 전부 매핑에서 no-op(cut/copy=onMenuSelect isMapping return 682 뒤 배치, pasteText/paste=내부 isMapping 가드, ctx.pasteOriginal/pasteText=enabledIds 비매핑 한정). ctx.pasteText 활성화(비매핑) + onCtxSelect 라우팅. 본문 반영은 commitBody(serialize(...))(텍스트)/pasteImageAtCaret(이미지) 안전 경로만 — DOM 직접 조작 없음, 서버 호출 미추가(ADR-003), client 전용. 기존 테스트 갱신: 편집 메뉴 '잘라내기' 비활성 단언 3곳(L1420·2482·4959)을 미결선 edit.undo/redo로 교체, ctx aux 비활성 루프에서 '텍스트 붙여넣기' 제거·활성 목록에 추가·매핑 비활성 추가. 신규 테스트 12개(execCommand 위임·매핑 no-op·텍스트 삽입/다중줄/임베드보존·마커 뒤 no-op·미지원/거부 alert·붙여넣기 이미지/텍스트 분기·원본 붙여넣기·탭 고정 가드·ctx.pasteText). AC 전부 그린: lint·build·test:web(1495 passed). phase 36 완료 — step0 editorClipboard.insertPasteTextAtCaret(순수 마커-안전 헬퍼) + step1 WriterPage 결선으로 편집/우클릭 클립보드 5종(잘라내기·복사·붙여넣기·원본 붙여넣기·텍스트 붙여넣기) 완성. ⑤리뷰 Major fix: pasteClipboardTextInto가 await 후 activeTabRef.current.fields.body(최신)에서 재파생(같은-탭 stale 유실 제거, pasteImageAtCaret와 동형)+회귀테스트.",
+      "completed_at": "2026-07-16T13:03:14+0900"
+    }
+  ],
+  "created_at": "2026-07-16T12:34:25+0900",
+  "completed_at": "2026-07-16T13:03:15+0900"
+}
