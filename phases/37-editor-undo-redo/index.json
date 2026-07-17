@@ -19,5 +19,6 @@
       "summary": "[phase 37 완성 — 에디터 되돌리기/다시실행] step0 editorHistory.js(순수 히스토리 모델: createHistory/pushHistory{coalesce,limit}/undo/redo/canUndo/canRedo, 베이스라인 불멸·redo 분기 절단·입력 불변) 위에 step1이 WriterPage 결선: editorShortcuts.js에 isUndo(Ctrl/Cmd+Z, Shift·Alt 배제)·isRedo(Ctrl/Cmd+Shift+Z — Ctrl+Y는 (계속)삽입 점유라 미사용) 프레디킷 추가(code KeyZ 병행); MENU_ENABLED에 edit.undo/edit.redo 활성; historiesRef(탭 id 키 Map, 세션-로컬 휘발)+렌더-중 lazy 시드(변경 前 body 베이스라인)+applyingHistoryRef(적용 커밋 재캡처 억제)+lastCommitRef(코얼레싱 미러); commitBody 단일 지점 캡처(HISTORY_LIMIT=100, 타이핑만 coalesce — COALESCE_MS=500ms·직전도 타이핑(wasTyping)일 때만 top 교체, 편집 op는 각자 한 단계); doUndo/doRedo(매핑 no-op, commitBody→blocks prop→Editor remount 단일 복원 경로, DOM 직접 조작 없음); onMenuSelect edit.undo/redo(매핑 가드 뒤)+onKeyDown Ctrl+Z/Ctrl+Shift+Z preventDefault(네이티브 undo 차단, Ctrl+Y insertContinue 회귀 없음); 탭 닫기 prune effect([tabs])+submit/매핑저장 성공 시 histories delete(송고 본문 부활 금지)+file.recover body를 commitBody 경로로(복구=undo 한 단계, title은 body 파생). 테스트: editorShortcuts 프레디킷 2건, WriterPage 기존 비활성 단언 3곳(L1420·L2482·L5213) 활성+미결선 예시(tools.publishPhoto) 교체, 신규 8건(왕복·redo 분기 절단·Ctrl+Z/Ctrl+Shift+Z preventDefault·Ctrl+Y 회귀·탭별 격리/보존·보류 리셋 후 부활 금지·매핑 no-op·타이핑 코얼레싱). Editor.jsx/editorHistory.js/컨트롤러/server 미변경. AC: lint·build·test:web(72 files, 1520 tests) 통과."
     }
   ],
-  "created_at": "2026-07-17T09:00:28+0900"
+  "created_at": "2026-07-17T09:00:28+0900",
+  "completed_at": "2026-07-17T09:25:59+0900"
 }

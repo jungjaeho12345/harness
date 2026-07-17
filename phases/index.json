@@ -206,7 +206,8 @@
     },
     {
       "dir": "37-editor-undo-redo",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-17T09:25:59+0900"
     }
   ]
 }
