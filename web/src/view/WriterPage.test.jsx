@@ -3339,6 +3339,172 @@ describe('WriterPage — 약물입력 다이얼로그(GlyphInputDialog) 결선',
   });
 });
 
+// Step 1(38-editor-glyph-keymap): 사용자 키보드약물(glyphKeymap) 인터셉트 —
+// step0 editorGlyphKeymap(compileGlyphKeymap/matchGlyphKeymap)을 onKeyDown에 결선: 등록 키조합(예: Ctrl+1) keydown 시
+// 매칭 약물을 onGlyphPick 안전 경로(insertGlyphAtCaret → commitBody)로 캐럿에 삽입하고 preventDefault한다.
+// 예약 단축키(Ctrl+F/Ctrl+D 등)는 항상 keymap보다 우선(섀도잉 금지 — 조기 return 1차 + RESERVED_COMBOS 컴파일 제외 2차).
+// 매핑(onKeyDown 미부착 + onGlyphPick 가드)·IME 조합 중(최상단 조기 return)·수식어 없는 일반 타이핑(빠른 탈출)은 무개입.
+describe('WriterPage — 사용자 키보드약물 인터셉트(glyphKeymap 결선)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  // 사용자 키보드 약물을 시드한다(마운트 lazy 초기화가 읽는다 — 약물입력 다이얼로그 스위트와 동형).
+  const seedPrefs = ({ favorites = [], keymap = [] } = {}) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    glyphFavorites: { items: favorites },
+    glyphKeymap: { items: keymap },
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+
+  // 에디터 캐럿을 줄 시작에 두고 keyUp으로 onCaretChange를 발생시킨다(lastCaretRef 갱신 — 약물바 결선과 동일 경로).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  it('등록 조합(Ctrl+1) keydown 시 약물(★)이 캐럿 줄에 삽입되고 preventDefault된다(임베드·순서 불변)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container, model } = await openWith([
+      textBlock('헤드'), embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('본문'),
+    ]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    focusCaretAtLine(container, 1); // 텍스트-줄 1 = "본문" 시작(임베드 제외 좌표)
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: '1', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+    expect(spy).toHaveBeenCalled(); // 브라우저 기본(Ctrl+숫자) 억제 + Editor 후속 처리 건너뛰기
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    expect(blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text']); // 순서·개수 불변
+    expect(blocksToText(blocks)).toBe('헤드\n★본문'); // 캐럿 줄 시작에 삽입
+  });
+
+  it("한글 입력 상태에서도 e.code로 매칭된다 — Ctrl+K(key:'ㅏ', code:'KeyK') → '§' 삽입", async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+K', glyph: '§' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'ㅏ', code: 'KeyK', ctrlKey: true }));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '§본문']));
+  });
+
+  it('예약 섀도잉 금지: keymap에 Ctrl+F를 등록해도 찾기/바꾸기가 열리고 약물은 삽입되지 않는다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+F', glyph: '✕' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '찾기/바꾸기' })).toBeInTheDocument());
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // '✕' 미삽입 — 기존 동작 보존
+  });
+
+  it('예약 섀도잉 금지: keymap에 Ctrl+D를 등록해도 라인 삭제가 일어나고 약물은 삽입되지 않는다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+D', glyph: '✕' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('둘째'), textBlock('다음')]);
+    focusCaretAtLine(container, 1); // "둘째" 라인
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '다음'])); // 라인 삭제(기존 동작 보존)
+    expect(editorLines(container).join('')).not.toContain('✕'); // 약물 미삽입
+  });
+
+  it('매핑 모드: 등록 조합 keydown이 본문을 바꾸지 않는다(저장 시 원본 PUT)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const original = serialize([textBlock('foo bar')]);
+    const { container, model } = await openWith(
+      [textBlock('foo bar')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+
+    // 매핑은 onKeyDown 자체가 Editor에 부착되지 않아(1차 방어) keymap 분기·onGlyphPick 가드(2차)에 도달하지 않는다.
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true }));
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 본문 불변
+  });
+
+  it('IME 조합 중에는 등록 조합도 개입하지 않는다(삽입·preventDefault 없음)', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: '1', ctrlKey: true, isComposing: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled(); // IME 가드가 keymap 분기보다 먼저 return — 무개입(news.md 173행)
+    expect(editorLines(container)).toEqual(['헤드', '본문']);
+  });
+
+  it('keymap이 비어 있으면 임의 조합(Ctrl+1)은 무개입이다', async () => {
+    seedPrefs({ keymap: [] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: '1', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문']);
+  });
+
+  it('등록돼 있어도 수식어 없는 일반 타이핑(1)은 삽입을 트리거하지 않는다(빠른 탈출)', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: '1' }); // ctrl 없음 — 일반 타이핑
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // '★' 미삽입
+  });
+
+  it('키보드약물 삽입은 독립 undo 한 단계다 — Ctrl+Z 한 번으로 그 삽입만 되돌려진다(phase 37 회귀)', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '★본문']));
+
+    // 삽입은 coalesce 없는 commitBody 기본 경로 — undo 한 번에 삽입 전으로 복귀한다.
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문']));
+  });
+});
+
 // Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
 // 도구 메뉴 '날짜 삽입' 클릭 시 현재 시각(비결정)을 KST 벽시계(kstIsoString)로 바꿔 날짜형식 prefs(dateFormat)대로 포맷해 캐럿 위치 본문에 텍스트로 삽입한다.
 // 약물입력과 동일 안전 경로(updateField('body', serialize(...)) + setPendingCaretLine). Date.now는 WriterPage에만.

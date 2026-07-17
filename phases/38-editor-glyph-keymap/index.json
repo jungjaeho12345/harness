@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "writer-glyph-keymap-wiring",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-17T10:55:58+0900",
+      "summary": "phase 38 완결(사용자 키보드약물 인터셉트). step0: editorGlyphKeymap.js 순수 매칭 모델(parseKeyCombo/compileGlyphKeymap/matchGlyphKeymap/RESERVED_COMBOS 13개 — 실수식어 필수·예약충돌/빈 glyph 컴파일 제외·a-z/0-9 e.key+e.code 병행 매칭·수식어 없으면 빠른 탈출, 테스트 41개). step1: WriterPage.jsx 결선 — compiledKeymap=useMemo(compileGlyphKeymap,[glyphKeymap])(keydown 재파싱 없음, onPrefsClose(applied) 게이트 재사용), onKeyDown의 isRedo 조기 return 뒤/const ctrlD 바일아웃 앞에 matchGlyphKeymap 분기(예약 조기 return 1차 + RESERVED_COMBOS 컴파일 제외 2차 섀도잉 방어, IME 가드 뒤), 매칭 시 preventDefault + onGlyphPick 재사용(insertGlyphAtCaret→commitBody 안전 경로 — (끝) 차단·독립 undo 1단계·매핑 no-op 내장, DOM 직접 조작 없음). 신규 테스트 9개(기본 삽입+preventDefault·code 한영 매칭·Ctrl+F/Ctrl+D 섀도잉 금지·매핑 원본 PUT·IME 무개입·미등록/수식어 없음 무개입·독립 undo) — lint/build/test:web(1573) 전부 통과.",
+      "completed_at": "2026-07-17T11:14:00+0900"
     }
   ],
   "created_at": "2026-07-17T10:49:19+0900"
