@@ -3,7 +3,7 @@ import {
   isInsertEndMarker, isDeleteLine, insertEndMarker, deleteLineAt,
   CONTINUE_MARKER, isInsertContinueMarker, insertContinueMarker,
   transformTextLine, toUpper, toLower, capitalizeFirst, toggleCase,
-  isGlyphInput, isPasteOriginal,
+  isGlyphInput, isPasteOriginal, isUndo, isRedo,
 } from './editorShortcuts.js';
 import { textBlock, embedBlock, END_MARKER, blocksToText } from './editorContent.js';
 
@@ -42,6 +42,32 @@ describe('editorShortcuts — key recognition', () => {
     expect(isPasteOriginal({ altKey: true, ctrlKey: true, key: 'v' })).toBe(false);
     expect(isPasteOriginal({ key: 'v' })).toBe(false);
     expect(isPasteOriginal(null)).toBe(false);
+  });
+
+  it('recognizes Ctrl+Z (되돌리기) — Shift 없이, Ctrl+Shift+Z와 상호 배타', () => {
+    expect(isUndo({ ctrlKey: true, key: 'z' })).toBe(true);
+    expect(isUndo({ metaKey: true, key: 'z' })).toBe(true); // Cmd+Z(맥)
+    expect(isUndo({ ctrlKey: true, code: 'KeyZ' })).toBe(true); // 레이아웃 무관 code 인식
+    expect(isUndo({ ctrlKey: true, shiftKey: true, key: 'Z' })).toBe(false); // Shift 동반은 redo
+    expect(isRedo({ ctrlKey: true, key: 'z' })).toBe(false);
+    // Alt 동반/그냥 z/Ctrl+Y는 오인하지 않는다.
+    expect(isUndo({ ctrlKey: true, altKey: true, key: 'z' })).toBe(false);
+    expect(isUndo({ key: 'z' })).toBe(false);
+    expect(isUndo({ ctrlKey: true, key: 'y' })).toBe(false);
+    expect(isUndo(null)).toBe(false);
+  });
+
+  it('recognizes Ctrl+Shift+Z (다시실행) — Ctrl+Y("(계속)삽입")와 불간섭', () => {
+    expect(isRedo({ ctrlKey: true, shiftKey: true, key: 'z' })).toBe(true);
+    expect(isRedo({ ctrlKey: true, shiftKey: true, key: 'Z' })).toBe(true);
+    expect(isRedo({ metaKey: true, shiftKey: true, key: 'Z' })).toBe(true); // Cmd+Shift+Z(맥)
+    expect(isRedo({ ctrlKey: true, shiftKey: true, code: 'KeyZ' })).toBe(true); // 레이아웃 무관 code 인식
+    expect(isRedo({ ctrlKey: true, shiftKey: true, altKey: true, key: 'z' })).toBe(false);
+    expect(isRedo({ shiftKey: true, key: 'Z' })).toBe(false); // 그냥 Shift+Z(타이핑)
+    // Ctrl+Y는 "(계속)삽입" 점유 — undo/redo 어느 쪽으로도 인식하지 않는다(회귀).
+    expect(isRedo({ ctrlKey: true, key: 'y' })).toBe(false);
+    expect(isUndo({ ctrlKey: true, code: 'KeyY' })).toBe(false);
+    expect(isRedo(null)).toBe(false);
   });
 });
 

@@ -203,6 +203,11 @@
       "dir": "36-editor-edit-clipboard",
       "status": "completed",
       "completed_at": "2026-07-16T13:03:15+0900"
+    },
+    {
+      "dir": "37-editor-undo-redo",
+      "status": "completed",
+      "completed_at": "2026-07-17T09:25:59+0900"
     }
   ]
 }

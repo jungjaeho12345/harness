@@ -1417,16 +1417,18 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('활성 항목 외(되돌리기·다시실행)는 여전히 비활성이다', async () => {
-    // 14-editor-find-context step2에서 '찾기/바꾸기'(edit.findReplace)가, 파일 메뉴 전 항목도 34-editor-file-menu에서,
-    // 클립보드 5종(잘라내기/복사/붙여넣기/원본·텍스트 붙여넣기)도 36-editor-edit-clipboard에서 결선돼 활성이 됐으므로,
-    // 미결선 예시는 여전히 비활성인 편집 메뉴 '되돌리기'(edit.undo)·'다시실행'(edit.redo)로 검증한다(undo/redo는 별도 phase).
+  it('되돌리기·다시실행은 활성이고, 미결선 항목(사진발행/DB등록)은 여전히 비활성이다', async () => {
+    // 되돌리기/다시실행(edit.undo/redo)도 37-editor-undo-redo에서 결선돼 활성이 됐으므로(찾기/바꾸기=14,
+    // 파일 메뉴=34, 클립보드 5종=36과 동일 계보), 미결선 예시는 도구 '사진발행/DB등록'(tools.publishPhoto —
+    // 백엔드/DB 필요, out-of-scope)으로 검증한다.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
-    expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
-    expect(within(menu).getByText('다시실행').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
+    await openTopMenu('도구');
+    expect(within(screen.getByTestId('menu-도구')).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -2479,13 +2481,16 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("활성 항목 외(다시실행·되돌리기)는 여전히 비활성이다(회귀)", async () => {
-    // 클립보드 5종(잘라내기 포함)이 36-editor-edit-clipboard에서 결선돼 활성 — 미결선 예시를 편집 메뉴 '다시실행'(edit.redo)로 교체.
+  it("다시실행·되돌리기는 활성이고, 미결선 항목(사진발행/DB등록)은 여전히 비활성이다(회귀)", async () => {
+    // 다시실행/되돌리기(edit.redo/undo)가 37-editor-undo-redo에서 결선돼 활성 — 미결선 예시를
+    // 도구 '사진발행/DB등록'(tools.publishPhoto — 백엔드/DB 필요, out-of-scope)으로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
-    expect(within(menu).getByText('다시실행').closest('button')).toBeDisabled();
-    expect(within(menu).getByText('되돌리기').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
+    await openTopMenu('도구');
+    expect(within(screen.getByTestId('menu-도구')).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
@@ -5210,9 +5215,9 @@ describe('WriterPage — 편집 메뉴 문서/문단 정렬·한줄/단어 지�
     // 기존 활성/비활성 항목 불변(회귀) — step 2 선택 3종 활성·미결선(DEFER) 항목 비활성.
     expect(editMenuItem('문단 선택')).toBeEnabled();
     expect(editMenuItem('전체 선택')).toBeEnabled();
-    // 되돌리기/다시실행(undo/redo)은 이 phase 후에도 미결선 유지 — 잘라내기는 36-editor-edit-clipboard에서 결선됨.
-    expect(editMenuItem('되돌리기')).toBeDisabled();
-    expect(editMenuItem('다시실행')).toBeDisabled();
+    // 되돌리기/다시실행(undo/redo)은 37-editor-undo-redo에서 결선돼 활성 — 잘라내기는 36-editor-edit-clipboard에서 결선됨.
+    expect(editMenuItem('되돌리기')).toBeEnabled();
+    expect(editMenuItem('다시실행')).toBeEnabled();
   });
 
   it("'문서 정렬': 텍스트 줄이 정렬되고 \"(끝)\" 마커는 최종 유지, 제목이 새 첫 줄로 재동기화된다(commitBody)", async () => {
@@ -5861,5 +5866,257 @@ describe('WriterPage — 표 메뉴(table.*) 결선', () => {
     // 원래 탭으로 복귀해도 재표시되지 않는다(더블클릭 재진입 필요).
     await userEvent.click(screen.getByRole('button', { name: '표기사' }));
     expect(screen.queryByTestId('table-dialog')).toBeNull();
+  });
+});
+
+// Step 1(37-editor-undo-redo): 편집 메뉴 되돌리기(edit.undo)/다시실행(edit.redo) + Ctrl+Z/Ctrl+Shift+Z 결선.
+// 캡처는 commitBody 단일 지점(타이핑만 코얼레싱), 히스토리는 탭 id 키 Map(세션-로컬·휘발, 탭 전환에 보존),
+// 복원은 commitBody→blocks prop→Editor remount 단일 경로(DOM 직접 조작 없음). 매핑 no-op,
+// 문서 리셋(submit/매핑저장 성공 → resetTabToBlank) 시 그 탭 히스토리 폐기(송고 본문 부활 금지).
+describe('WriterPage — 되돌리기/다시실행(editorHistory 결선)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    window.getSelection().removeAllRanges();
+  });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', title = '제목' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title, status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', title, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const editorLines = (container) => Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+  const editMenuItem = (label) => within(screen.getByTestId('menu-편집')).getByText(label).closest('button');
+
+  // 캐럿을 텍스트-줄 lineIndex 시작에 두고 keyUp으로 onCaretChange를 발생시킨다(lastCaretRef 갱신 — 기존 스위트 동형).
+  function focusCaretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+    fireEvent.keyUp(container.querySelector('.yh-editor'));
+  }
+
+  // 결정적 본문 변경 헬퍼 — 보기>'대문자로 바꾸기'(view.toUpper)로 캐럿 줄을 변경한다(DOM 타이핑보다 안정,
+  // coalesce=false 경로라 편집 op 하나 = undo 한 단계).
+  async function upperLine(container, lineIndex) {
+    focusCaretAtLine(container, lineIndex);
+    await openTopMenu('보기');
+    await userEvent.click(within(screen.getByTestId('menu-보기')).getByText('대문자로 바꾸기'));
+  }
+
+  async function clickEdit(label) {
+    await openTopMenu('편집');
+    await userEvent.click(editMenuItem(label));
+  }
+
+  it('본문 되돌리기/다시실행 왕복 — 편집 op 2회는 각자 한 단계씩 되돌려진다', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    await upperLine(container, 0);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await upperLine(container, 1);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'DEF']));
+
+    await clickEdit('되돌리기');
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await clickEdit('되돌리기');
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+    // 베이스라인(문서를 연 시점) 도달 — 추가 되돌리기는 no-op.
+    await clickEdit('되돌리기');
+    expect(editorLines(container)).toEqual(['abc', 'def']);
+
+    await clickEdit('다시실행');
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+  });
+
+  it('redo 분기 절단 — 되돌리기 후 새 변경이 생기면 다시실행은 no-op이다', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')]);
+    await upperLine(container, 0);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await clickEdit('되돌리기');
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+    await upperLine(container, 1); // 새 변경 — 이전 redo 분기('ABC') 소실
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'DEF']));
+
+    await clickEdit('다시실행');
+    expect(editorLines(container)).toEqual(['abc', 'DEF']); // 'ABC' 분기는 되살아나지 않는다
+  });
+
+  it('Ctrl+Z keydown → 되돌리기 + preventDefault(네이티브 undo 차단), Ctrl+Shift+Z → 다시실행', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')]);
+    await upperLine(container, 0);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+
+    const box = container.querySelector('.yh-editor');
+    const undoEv = createEvent.keyDown(box, { key: 'z', ctrlKey: true });
+    const undoSpy = vi.spyOn(undoEv, 'preventDefault');
+    fireEvent(box, undoEv);
+    expect(undoSpy).toHaveBeenCalled();
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+
+    const redoEv = createEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true, shiftKey: true });
+    const redoSpy = vi.spyOn(redoEv, 'preventDefault');
+    fireEvent(container.querySelector('.yh-editor'), redoEv);
+    expect(redoSpy).toHaveBeenCalled();
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+  });
+
+  it('Ctrl+Y는 여전히 "(계속)삽입"이다 — 되돌리기가 아니다(회귀)', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')]);
+    await upperLine(container, 0);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    focusCaretAtLine(container, 1);
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'y', ctrlKey: true });
+    await waitFor(() => expect(editorLines(container)).toContain('(계속)'));
+    expect(editorLines(container)[0]).toBe('ABC'); // 직전 변경이 되돌려지지 않았다
+  });
+
+  it('히스토리는 탭별로 격리·보존된다 — 전환 후에도 각 탭의 되돌리기는 그 탭 본문만 되돌린다', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    await upperLine(container, 0); // 탭 A: ['ABC','def'] (제목도 'ABC'로 재동기화 — 탭 라벨)
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+
+    // 새 작성 탭 B에서 타이핑 — B의 히스토리가 따로 쌓인다(blank 베이스라인).
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(editorLines(container)).toEqual([]));
+    const box = () => container.querySelector('.yh-editor');
+    box().textContent = '비본문';
+    fireEvent.input(box());
+    // 빈 에디터의 bare 텍스트 입력은 echo 경로라 라인 div가 없다 — 제목 재동기화(탭 라벨)로 커밋을 관찰한다.
+    await waitFor(() => expect(screen.getByRole('button', { name: '비본문' })).toBeInTheDocument());
+
+    // 탭 A로 복귀 — 전환에도 A의 히스토리가 보존되어 A 본문만 되돌려진다(B 불변).
+    await userEvent.click(screen.getByRole('button', { name: 'ABC' }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await clickEdit('되돌리기');
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+
+    // 탭 B — B의 되돌리기는 B의 타이핑만 되돌리고 A 내용을 건드리지 않는다(문서-로컬 이월 없음).
+    // 전환은 Editor remount(key=tabId)라 B의 본문이 라인 div로 렌더된다.
+    await userEvent.click(screen.getByRole('button', { name: '비본문' }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['비본문']));
+    await clickEdit('되돌리기');
+    await waitFor(() => expect(editorLines(container)).toEqual([])); // B의 blank 베이스라인
+    await userEvent.click(screen.getByRole('button', { name: 'abc' }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def'])); // A 불변
+  });
+
+  it('보류 성공으로 탭이 빈 새 기사로 리셋되면 되돌리기가 이전 기사 본문을 되살리지 않는다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    await upperLine(container, 0);
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+
+    await userEvent.click(actionBtn('보류')); // R+RDS 보류 → RRH 성공 → resetTabToBlank(같은 탭 id, blank fields)
+    await waitFor(() => expect(editorLines(container)).toEqual([]));
+
+    // 히스토리가 폐기되고 다음 렌더의 lazy 시드가 blank 베이스라인 — 되돌리기/다시실행 no-op(송고 본문 부활 없음).
+    await clickEdit('되돌리기');
+    expect(editorLines(container)).toEqual([]);
+    await clickEdit('다시실행');
+    expect(editorLines(container)).toEqual([]);
+  });
+
+  it('매핑 모드에서는 되돌리기/다시실행이 본문을 바꾸지 않는다(메뉴·키 모두 no-op)', async () => {
+    const { container } = await openWith(
+      [textBlock('abc'), textBlock('def')],
+      { mode: 'mapping', status: 'DPS', role: 'D', title: 'abc' },
+    );
+    // 매핑에서 허용되는 임베드 변경(표 삽입)으로 히스토리에 스냅샷을 만든다 — 가드가 없으면 undo가 표를 지운다.
+    await openTopMenu('표');
+    await userEvent.click(within(screen.getByTestId('menu-표')).getByText('표 삽입'));
+    const dialog = await screen.findByTestId('table-dialog');
+    await userEvent.type(within(dialog).getByTestId('table-dialog-cell-0-0'), '셀');
+    await userEvent.click(within(dialog).getByTestId('table-dialog-submit'));
+    const tableFigure = () => container.querySelector('figure.yh-embed[data-embed-type="table"]');
+    await waitFor(() => expect(tableFigure()).toBeTruthy());
+
+    await clickEdit('되돌리기'); // 매핑 no-op — 표가 사라지지 않는다
+    expect(tableFigure()).toBeTruthy();
+    expect(editorLines(container)).toEqual(['abc', 'def']);
+    // 키보드 — 매핑은 Editor에 onKeyDown 자체가 미결선(이중 방어) → 본문 불변.
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true });
+    expect(tableFigure()).toBeTruthy();
+    await clickEdit('다시실행');
+    expect(editorLines(container)).toEqual(['abc', 'def']);
+  });
+
+  it('타이핑 연타는 코얼레싱되어 되돌리기 1회로 버스트 전체가 되돌려진다', async () => {
+    const { container } = await openWith([textBlock('가'), textBlock('나')], { title: '가' });
+    vi.spyOn(Date, 'now').mockReturnValue(1000); // 코얼레싱 시간창(COALESCE_MS) 안에 고정
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '나다';
+    fireEvent.input(box);
+    await waitFor(() => expect(editorLines(container)).toEqual(['가', '나다']));
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '나다라';
+    fireEvent.input(box);
+    await waitFor(() => expect(editorLines(container)).toEqual(['가', '나다라']));
+
+    await clickEdit('되돌리기'); // 버스트가 한 단계 — 글자 단위('나다')로 멈추지 않는다
+    await waitFor(() => expect(editorLines(container)).toEqual(['가', '나']));
+  });
+
+  it('코얼레싱 경계 — 편집 op 직후 시간창 내 타이핑은 op 스냅샷을 교체하지 않는다(각자 독립 undo 단계)', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    // 모든 커밋을 같은 시각에 고정 — 시간창(COALESCE_MS)이 아니라 '직전 커밋도 타이핑'(wasTyping)이
+    // 코얼레싱 지속의 판정자임을 검증한다. 가드가 없으면 아래 타이핑이 op 스냅샷을 top 교체로 덮는다.
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    await upperLine(container, 0); // 편집 op(coalesce=false): ['ABC','def']
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = 'def가';
+    fireEvent.input(box); // 시간창 안 첫 타이핑 — 직전이 op라 push(교체 아님)여야 한다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def가']));
+
+    await clickEdit('되돌리기'); // 타이핑만 되돌아간다 — op 스냅샷('ABC')이 보존돼 있다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await clickEdit('되돌리기'); // op 자체도 별도 한 단계
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+  });
+
+  it('파일>복구는 하나의 undo 단계다 — 되돌리기 한 번으로 복구 전 본문으로 돌아가고 다시실행으로 재적용된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container } = await openWith([textBlock('원본제목'), textBlock('원본본문')], { title: '원본제목' });
+    saveDraft('AKR1', { title: '초안제목', body: serialize([textBlock('초안제목'), textBlock('초안본문')]) }, 1000);
+
+    await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText('복구'));
+    await waitFor(() => expect(editorLines(container)).toEqual(['초안제목', '초안본문']));
+
+    await clickEdit('되돌리기'); // 복구(commitBody 경로)가 한 단계 — 복구 전 본문으로 복귀
+    await waitFor(() => expect(editorLines(container)).toEqual(['원본제목', '원본본문']));
+    await clickEdit('다시실행'); // 대칭 — 복구 상태 재적용
+    await waitFor(() => expect(editorLines(container)).toEqual(['초안제목', '초안본문']));
+  });
+
+  it('에디터 밖 입력(키워드 필드)의 Ctrl+Z/Ctrl+Shift+Z는 가로채지 않는다 — preventDefault 없음·본문 불변(네이티브 undo 보존)', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    await upperLine(container, 0); // undo 가능한 스냅샷을 만들어 둔다 — 오간섭 시 본문이 바뀌어 드러난다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+
+    // 키 인터셉트는 에디터 컨테이너(contentEditable) 스코프다 — 다른 입력 필드에서는 버블돼도
+    // 가로채지 않아 필드 자체의 네이티브 undo가 살아 있어야 한다(전역 리스너 회귀 가드).
+    const keyword = screen.getByLabelText('키워드');
+    const undoEv = createEvent.keyDown(keyword, { key: 'z', ctrlKey: true });
+    const undoSpy = vi.spyOn(undoEv, 'preventDefault');
+    fireEvent(keyword, undoEv);
+    expect(undoSpy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['ABC', 'def']); // 본문 되돌리기도 실행되지 않는다
+
+    const redoEv = createEvent.keyDown(keyword, { key: 'z', ctrlKey: true, shiftKey: true });
+    const redoSpy = vi.spyOn(redoEv, 'preventDefault');
+    fireEvent(keyword, redoEv);
+    expect(redoSpy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['ABC', 'def']);
   });
 });
