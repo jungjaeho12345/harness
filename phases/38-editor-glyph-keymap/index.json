@@ -7,7 +7,8 @@
       "name": "keymap-match-model",
       "status": "completed",
       "started_at": "2026-07-17T10:49:19+0900",
-      "summary": "web/src/view/editorGlyphKeymap.js 신설(순수·zero-dep) — export parseKeyCombo(keys→combo|null)/compileGlyphKeymap(items→{combo,glyph}[])/matchGlyphKeymap(compiled,e→glyph|null)/RESERVED_COMBOS(13개 frozen). combo shape {ctrl,alt,shift,meta,key(소문자)}. 규칙: 실수식어(Ctrl/Alt/Meta) 필수(바 키·Shift-only는 null), RESERVED_COMBOS(Ctrl+B/X/C/V/F/A/Y/Z/D·Ctrl+Shift+Z·Alt+V/O/Y) 정확 일치 항목·빈 glyph 컴파일 제외(등록 순서 우선), a–z는 e.key 대소문자 무관+e.code Key*, 0–9는 e.key+Digit*/Numpad* 병행 매칭(한영 견고), 수식어 정확 일치, matchGlyphKeymap은 Ctrl/Alt/Meta 없으면 빠른 탈출 null. 테스트 editorGlyphKeymap.test.js 41개(vitest) — step1은 이 경로에서 import해 compile 결과를 useMemo 재사용·onKeyDown에서 match 후 insertGlyphAtCaret로 결선."
+      "summary": "web/src/view/editorGlyphKeymap.js 신설(순수·zero-dep) — export parseKeyCombo(keys→combo|null)/compileGlyphKeymap(items→{combo,glyph}[])/matchGlyphKeymap(compiled,e→glyph|null)/RESERVED_COMBOS(13개 frozen). combo shape {ctrl,alt,shift,meta,key(소문자)}. 규칙: 실수식어(Ctrl/Alt/Meta) 필수(바 키·Shift-only는 null), RESERVED_COMBOS(Ctrl+B/X/C/V/F/A/Y/Z/D·Ctrl+Shift+Z·Alt+V/O/Y) 정확 일치 항목·빈 glyph 컴파일 제외(등록 순서 우선), a–z는 e.key 대소문자 무관+e.code Key*, 0–9는 e.key+Digit*/Numpad* 병행 매칭(한영 견고), 수식어 정확 일치, matchGlyphKeymap은 Ctrl/Alt/Meta 없으면 빠른 탈출 null. 테스트 editorGlyphKeymap.test.js 41개(vitest) — step1은 이 경로에서 import해 compile 결과를 useMemo 재사용·onKeyDown에서 match 후 insertGlyphAtCaret로 결선.",
+      "completed_at": "2026-07-17T10:55:56+0900"
     },
     {
       "step": 1,
