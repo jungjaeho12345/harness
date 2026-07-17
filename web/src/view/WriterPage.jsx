@@ -346,6 +346,9 @@ export function WriterPage() {
     // top-교체로 덮어 op의 독립 undo 단계가 사라진다.
     const coalesceNow = coalesce && last.wasTyping && last.tabId === activeTabId && (now - last.at) < COALESCE_MS;
     const hist = historiesRef.current.get(activeTabId); // 렌더 시드가 항상 채워둔다 — nextBody 폴백에 의존하지 않는다(베이스라인 부정확 방지).
+    // 문서 리셋 delete와 다음 렌더 시드 사이(스케줄러 타이밍 의존 이론 창)에는 캡처만 생략한다. 폴백 시드를
+    // 만들지 않는 이유: 이 창의 클로저 body는 리셋 前 본문일 수 있어 undo로 송고 본문이 부활한다(금지 불변식).
+    if (!hist) return;
     historiesRef.current.set(activeTabId, pushHistory(hist, nextBody, { coalesce: coalesceNow, limit: HISTORY_LIMIT }));
     lastCommitRef.current = { tabId: activeTabId, at: now, wasTyping: coalesce };
   };
@@ -362,22 +365,32 @@ export function WriterPage() {
   // (메뉴 클릭은 blur 상태, Ctrl+Z는 Editor의 wasFocused 복원 경로 — 정밀 캐럿 복원은 범위 밖).
   const doUndo = () => {
     if (isMapping) return; // 매핑(본문-only 불변식) no-op — 메뉴 매핑 가드·키 preventDefault와 이중 방어.
-    const r = undoHistory(historiesRef.current.get(activeTabId));
+    const hist = historiesRef.current.get(activeTabId);
+    if (!hist) return; // 리셋 delete~재시드 사이 이론 창 — 되돌릴 히스토리 없음(no-op).
+    const r = undoHistory(hist);
     if (!r.changed) return; // 베이스라인 — no-op.
     historiesRef.current.set(activeTabId, r.history);
     applyingHistoryRef.current = true;
-    commitBody(r.body); // body 복원 + 제목 재동기화(캡처는 억제됨).
-    applyingHistoryRef.current = false;
+    try {
+      commitBody(r.body); // body 복원 + 제목 재동기화(캡처는 억제됨).
+    } finally {
+      applyingHistoryRef.current = false; // commitBody가 던져도 플래그가 남아 이후 캡처를 죽이지 않게.
+    }
   };
   // 다시실행 — 대칭.
   const doRedo = () => {
     if (isMapping) return;
-    const r = redoHistory(historiesRef.current.get(activeTabId));
+    const hist = historiesRef.current.get(activeTabId);
+    if (!hist) return; // doUndo와 동일한 이론 창 가드.
+    const r = redoHistory(hist);
     if (!r.changed) return; // 이미 최신 — no-op.
     historiesRef.current.set(activeTabId, r.history);
     applyingHistoryRef.current = true;
-    commitBody(r.body);
-    applyingHistoryRef.current = false;
+    try {
+      commitBody(r.body);
+    } finally {
+      applyingHistoryRef.current = false;
+    }
   };
 
   // (끝)삽입 — 키보드 Alt+Y와 메뉴 'edit.insertEnd'의 공용 핸들러(단일 소스). "(끝)" 최종 블록 삽입 + 맞춤법 on(중복이면 무삽입).
