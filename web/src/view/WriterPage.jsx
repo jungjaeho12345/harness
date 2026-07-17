@@ -51,7 +51,11 @@ import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
   toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput, isPasteOriginal,
+  isUndo, isRedo,
 } from './editorShortcuts.js';
+import {
+  createHistory, pushHistory, undo as undoHistory, redo as redoHistory,
+} from './editorHistory.js';
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
 import { insertDateAtCaret } from './editorDate.js';
@@ -93,8 +97,12 @@ const READONLY_LABELS = [
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
+// 편집>되돌리기/다시실행(37-editor-undo-redo) — 탭별 본문 히스토리 상한과 타이핑 코얼레싱 창.
+const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — body 문자열 × 100 × 열린 탭. 이미지는 업로드 경로라 base64 폭증 없음).
+const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
+
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -247,6 +255,29 @@ export function WriterPage() {
     // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
     setMetaDialog(null);
   }
+
+  // 탭(문서)별 본문 히스토리 — 탭 id → editorHistory 상태. 세션-로컬(휘발, sessionStorage/tab.fields 미저장).
+  // lastCaretRef 계열(문서-로컬 임시 좌표)과 반대로 탭 전환에도 '보존'이 목적이라 위 caretTabId 리셋 블록에
+  // 넣지 않는다 — 제거는 탭 닫기(prune effect)·문서 리셋(submit/매핑저장 성공 시 delete)에서만.
+  const historiesRef = useRef(new Map());
+  // undo/redo 적용 중 commitBody 재캡처 억제 플래그(적용이 새 스냅샷을 만들면 루프/스택 오염 — 캡처 금지).
+  const applyingHistoryRef = useRef(false);
+  // 코얼레싱 시각/탭 미러 — 같은 탭에서 짧은 간격의 '타이핑' 연속 커밋을 top 교체로 합친다.
+  // wasTyping: 직전 커밋이 타이핑이었는지 — 코얼레싱은 '직전도 타이핑'일 때만 지속한다(편집 op 스냅샷 보호).
+  const lastCommitRef = useRef({ tabId: null, at: 0, wasTyping: false });
+  // 활성 탭 히스토리 lazy 시드 — 없으면 '변경 前 body'(현재 렌더의 body)를 베이스라인으로 생성한다. 이 렌더-중
+  // 시드가 변경 전 상태를 캡처하는 유일한 지점이다(commitBody의 nextBody는 이미 바뀐 본문 — 폴백 금지). ref 지연
+  // 초기화라 setState 없이 렌더-중 실행이 안전하다(caretTabId 블록과 동형). 신규/편집 진입/리셋 후 모두 이 경로.
+  if (!historiesRef.current.has(activeTabId)) {
+    historiesRef.current.set(activeTabId, createHistory(body));
+  }
+  // 닫힌 탭 히스토리 prune — ×/파일>닫기/SSE force-unlock/마지막 탭 등 모든 닫기 경로를 한 곳에서 처리(메모리 정리).
+  useEffect(() => {
+    const live = new Set(tabs.map((t) => t.id));
+    for (const key of Array.from(historiesRef.current.keys())) {
+      if (!live.has(key)) historiesRef.current.delete(key);
+    }
+  }, [tabs]);
   // 임베드 삽입 후 커서를 옮길 빈 줄(텍스트-줄 인덱스). Editor가 소비(focus)하면 비워, 같은 줄 연속 삽입도 매번 커서를 옮긴다.
   const [pendingCaretLine, setPendingCaretLine] = useState(null);
   useEffect(() => {
@@ -302,15 +333,51 @@ export function WriterPage() {
   // 저장 시 옛 제목이 DB에 남던(제목 stale) 결함 방지 — 모든 본문변경 핸들러가 updateField('body', ...)
   // 대신 이 함수를 지난다(phase 29 편집 메뉴도 재사용). 제목 파생은 writerBody.bodyTitle 단일 출처만 쓴다.
   // 매핑 모드에서는 컨트롤러 updateField가 title을 거부(no-op)하므로 본문-only 불변식을 깨지 않는다.
-  const commitBody = (nextBody) => {
+  // 되돌리기용 히스토리 캡처도 여기 단일 지점에서만 한다(분산 금지 — 경로 누락 방지). 두 번째 인자는 선택 —
+  // onTextChange(타이핑)만 { coalesce: true }를 넘기고 나머지 호출부는 인자 없이 그대로(기본 false, 개별 undo 단계).
+  const commitBody = (nextBody, { coalesce = false } = {}) => {
     updateField('body', nextBody);
     updateField('title', bodyTitle(nextBody));
+    if (applyingHistoryRef.current) return; // undo/redo 적용 커밋은 캡처하지 않음(루프 방지).
+    const now = Date.now(); // 비결정 시각은 여기서만(순수 모델은 coalesce 불리언만 받음 — insertDate의 Date.now 패턴).
+    const last = lastCommitRef.current;
+    // 코얼레싱(top 교체)은 이번 커밋이 타이핑이고 '직전 커밋도 타이핑'(last.wasTyping)이며 같은 탭·시간창일 때만
+    // 지속한다. last.wasTyping을 빼면 정렬/줄삭제 등 편집 op 직후 시간창 내 첫 타이핑이 그 op 스냅샷을
+    // top-교체로 덮어 op의 독립 undo 단계가 사라진다.
+    const coalesceNow = coalesce && last.wasTyping && last.tabId === activeTabId && (now - last.at) < COALESCE_MS;
+    const hist = historiesRef.current.get(activeTabId); // 렌더 시드가 항상 채워둔다 — nextBody 폴백에 의존하지 않는다(베이스라인 부정확 방지).
+    historiesRef.current.set(activeTabId, pushHistory(hist, nextBody, { coalesce: coalesceNow, limit: HISTORY_LIMIT }));
+    lastCommitRef.current = { tabId: activeTabId, at: now, wasTyping: coalesce };
   };
 
   // 본문 타이핑 → 에디터가 읽은 블록(텍스트 + 임베드, 커서 위치 보존)을 직렬화해 커밋(제목 동기화는 commitBody).
   // 임베드는 "(끝)"만 최종 블록으로 보낼 뿐 위치를 옮기지 않는다(news.md 156·167행 — 커서 위치/블록 순서 보존).
+  // 타이핑 경로만 코얼레싱을 켠다 — 연타가 하나의 undo 단계로 합쳐진다(편집 op는 각자 한 단계).
   const onTextChange = (text, editedBlocks) => {
-    commitBody(serializeBodyFromBlocks(editedBlocks));
+    commitBody(serializeBodyFromBlocks(editedBlocks), { coalesce: true });
+  };
+
+  // 편집>되돌리기/다시실행 — 활성 탭 히스토리의 이전/다음 스냅샷을 commitBody로 복원(제목 재동기화 자동).
+  // 복원은 commitBody→blocks prop→Editor remount 단일 경로(DOM 직접 조작 금지). 캐럿 복원은 강제하지 않는다
+  // (메뉴 클릭은 blur 상태, Ctrl+Z는 Editor의 wasFocused 복원 경로 — 정밀 캐럿 복원은 범위 밖).
+  const doUndo = () => {
+    if (isMapping) return; // 매핑(본문-only 불변식) no-op — 메뉴 매핑 가드·키 preventDefault와 이중 방어.
+    const r = undoHistory(historiesRef.current.get(activeTabId));
+    if (!r.changed) return; // 베이스라인 — no-op.
+    historiesRef.current.set(activeTabId, r.history);
+    applyingHistoryRef.current = true;
+    commitBody(r.body); // body 복원 + 제목 재동기화(캡처는 억제됨).
+    applyingHistoryRef.current = false;
+  };
+  // 다시실행 — 대칭.
+  const doRedo = () => {
+    if (isMapping) return;
+    const r = redoHistory(historiesRef.current.get(activeTabId));
+    if (!r.changed) return; // 이미 최신 — no-op.
+    historiesRef.current.set(activeTabId, r.history);
+    applyingHistoryRef.current = true;
+    commitBody(r.body);
+    applyingHistoryRef.current = false;
   };
 
   // (끝)삽입 — 키보드 Alt+Y와 메뉴 'edit.insertEnd'의 공용 핸들러(단일 소스). "(끝)" 최종 블록 삽입 + 맞춤법 on(중복이면 무삽입).
@@ -693,7 +760,12 @@ export function WriterPage() {
       const draft = loadDraft(key);
       if (!draft) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
       if (!window.confirm('자동저장된 내용으로 복구하시겠습니까?')) return;
-      Object.entries(draft).forEach(([k, v]) => updateField(k, v)); // updateField가 EDITABLE_FIELDS만 통과(메타 무시)
+      // body만 commitBody 경로로 — 복구가 하나의 undo 단계가 되고(복구 전으로 되돌리기 가능) 히스토리
+      // 베이스라인과 불일치가 없다. title은 commitBody가 body에서 재동기화(updateField 이중 기록 방지).
+      Object.entries(draft).forEach(([k, v]) => {
+        if (k === 'body') commitBody(v);
+        else if (k !== 'title') updateField(k, v); // updateField가 EDITABLE_FIELDS만 통과(메타 무시)
+      });
       clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
       return;
     }
@@ -770,6 +842,9 @@ export function WriterPage() {
     }
     if (id === 'edit.insertEnd') { insertEnd(); return; }
     if (id === 'edit.insertContinue') { insertContinue(); return; }
+    // 되돌리기/다시실행 — 본문 변경이라 매핑 가드 뒤(doUndo/doRedo 내부 매핑 가드와 이중 방어).
+    if (id === 'edit.undo') { doUndo(); return; }
+    if (id === 'edit.redo') { doRedo(); return; }
     // 편집 메뉴 클립보드 5종 — 매핑 가드(682) 뒤라 매핑에서는 전부 no-op(본문-only 불변식). 잘라내기/복사는 브라우저
     // 기본 동작에 위임(runEditorClipboardCommand, ctx와 공유), 붙여넣기/텍스트·원본 붙여넣기는 비동기 클립보드 핸들러다
     // (메뉴 클릭은 포커스가 빠져 동기 execCommand 붙여넣기가 안 되므로 navigator.clipboard로 읽어 안전 경로로 삽입).
@@ -903,6 +978,19 @@ export function WriterPage() {
     if (isInsertContinueMarker(e)) {
       e.preventDefault(); // 브라우저 redo(Ctrl+Y) 가로채기.
       insertContinue();
+      return;
+    }
+    // Ctrl+Z / Ctrl+Shift+Z — 제어 히스토리 undo/redo. 네이티브 contentEditable undo는 structural remount마다
+    // 스택이 지워져 신뢰 불가 — preventDefault로 차단하고 제어 히스토리만 쓴다(이원화 방지). 매핑은 preventDefault만
+    // 하고 doUndo/doRedo 내부 가드가 no-op(isFindReplace의 매핑 관례와 동형).
+    if (isUndo(e)) {
+      e.preventDefault();
+      doUndo();
+      return;
+    }
+    if (isRedo(e)) {
+      e.preventDefault();
+      doRedo();
       return;
     }
     const ctrlD = isDeleteLine(e);
@@ -1145,16 +1233,20 @@ export function WriterPage() {
     if (!window.confirm(`${ACTION_VERB[action]}하시겠습니까?`)) return;
     // 전이 직전 탭 키를 잡아둔다 — 성공 후 초안을 무효화(빈 새 기사 탭에서 복구 시 송고/제출 내용 부활 방지).
     const key = activeTab.articleId || activeTab.id;
+    const histTabId = activeTab.id; // 리셋 대상 탭 id(resetTabToBlank가 유지) — key와 대칭으로 await 전 캡처.
     const r = await submit(action);
-    if (r && r.ok) clearDraft(key);
+    // 히스토리도 함께 폐기 — 안 지우면 빈 새 기사 탭에서 undo가 방금 송고한 본문을 되살린다(문서-로컬 이월).
+    // 다음 렌더의 lazy 시드가 blank body로 베이스라인을 다시 만든다.
+    if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }
   };
 
   // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
   const onSaveMapping = async () => {
     if (!window.confirm('저장하시겠습니까?')) return;
     const key = activeTab.articleId || activeTab.id; // 저장 직전 키 — 성공 후 초안 무효화.
+    const histTabId = activeTab.id; // 성공 시 히스토리 폐기 — onAction과 동일(resetTabToBlank로 문서가 바뀜).
     const r = await saveMapping();
-    if (r && r.ok) clearDraft(key);
+    if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }
   };
 
   const buttons = submitButtons({

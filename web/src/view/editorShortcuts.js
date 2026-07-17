@@ -23,6 +23,18 @@ export function isInsertContinueMarker(e) {
   return !!(e && e.ctrlKey && !e.altKey && (e.key === 'y' || e.key === 'Y' || e.code === 'KeyY'));
 }
 
+// Ctrl+Z / Cmd+Z — 되돌리기(undo). Shift 없이(Shift+Z는 redo). Alt 없이(다른 조합 오인 방지).
+export function isUndo(e) {
+  return !!(e && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+    && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'));
+}
+
+// Ctrl+Shift+Z / Cmd+Shift+Z — 다시실행(redo). Ctrl+Y는 이미 "(계속)삽입" 점유라 redo에 쓰지 않는다.
+export function isRedo(e) {
+  return !!(e && (e.ctrlKey || e.metaKey) && !e.altKey && e.shiftKey
+    && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'));
+}
+
 // Alt+O — 약물입력 다이얼로그 열기. 레이아웃 무관하게 code(KeyO)도 본다. ctrl/meta 없이 alt만(Alt+Y와 key가 달라 충돌하지 않음).
 export function isGlyphInput(e) {
   return !!(e && e.altKey && !e.ctrlKey && (e.key === 'o' || e.key === 'O' || e.code === 'KeyO'));
