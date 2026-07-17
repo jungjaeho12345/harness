@@ -211,7 +211,8 @@
     },
     {
       "dir": "38-editor-glyph-keymap",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-17T11:15:33+0900"
     }
   ]
 }
