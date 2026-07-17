@@ -118,9 +118,12 @@ describe('editorGlyphKeymap — compileGlyphKeymap 제외 규칙', () => {
     }]);
   });
 
-  it('excludes Ctrl+Shift+Z (redo 예약) but keeps Ctrl+Shift+F (비예약 — shift 차이로 충돌 판정 정확)', () => {
+  // Ctrl+Shift+F는 ⑤ 리뷰 Minor fix로 계약 변경 — isFindReplace가 shift를 무시하고 삼키는 죽은 항목이라
+  // 이제 컴파일 제외된다(느슨 변형 describe에서 잠금). shift 정밀 판정의 양성 예시는 상위 핸들러가 삼키지
+  // 않는 Ctrl+Shift+D(라인 삭제 처리는 keymap 분기 뒤 — 등록 시 keymap이 이김)로 유지한다.
+  it('excludes Ctrl+Shift+Z (redo 예약) but keeps Ctrl+Shift+D (비예약 — shift 차이로 충돌 판정 정확)', () => {
     expect(compileGlyphKeymap([{ keys: 'Ctrl+Shift+Z', glyph: 'x' }])).toEqual([]);
-    const compiled = compileGlyphKeymap([{ keys: 'Ctrl+Shift+F', glyph: '☆' }]);
+    const compiled = compileGlyphKeymap([{ keys: 'Ctrl+Shift+D', glyph: '☆' }]);
     expect(compiled).toHaveLength(1);
     expect(compiled[0].glyph).toBe('☆');
   });
@@ -227,5 +230,33 @@ describe('editorGlyphKeymap — RESERVED_COMBOS 잠금 (news.md L178 회귀 방�
 
   it.each(reservedStrings)('compile drops a keymap entry for reserved %s', (keys) => {
     expect(compileGlyphKeymap([{ keys, glyph: 'x' }])).toEqual([]);
+  });
+});
+
+// 예약 핸들러 '느슨 변형' 컴파일 제외(⑤ 리뷰 Minor fix) — 상위 하드코딩 predicate가 shift/meta를 무시하거나
+// Ctrl/Cmd를 동일 취급해 keymap 분기보다 먼저 삼키는 조합은, RESERVED 정확 일치를 통과해도 발화 불가한
+// 죽은 항목이 되므로 등록 단계에서 버린다. 반대로 predicate가 배제하는 조합은 과차단하면 안 된다.
+describe('editorGlyphKeymap — 예약 핸들러 느슨 변형 제외(죽은 항목 방지)', () => {
+  it.each([
+    ['Ctrl+Shift+F'], // isFindReplace가 shift 무시하고 삼킴
+    ['Ctrl+Shift+Y'], // isInsertContinueMarker가 shift 무시하고 삼킴
+    ['Alt+Shift+Y'], // isInsertEndMarker가 shift 무시하고 삼킴
+    ['Alt+Shift+O'], // isGlyphInput이 shift 무시하고 삼킴
+    ['Alt+Shift+V'], // isPasteOriginal이 shift 무시하고 삼킴
+    ['Cmd+Z'], // isUndo가 Ctrl/Cmd 동일 취급으로 삼킴
+    ['Meta+Shift+Z'], // isRedo가 Ctrl/Cmd 동일 취급으로 삼킴
+    ['Ctrl+Meta+Z'], // isUndo(meta 무시 아님 — ctrl||meta)로 삼킴
+  ])('%s 은 컴파일에서 제외된다(상위 핸들러가 삼켜 발화 불가)', (keys) => {
+    expect(compileGlyphKeymap([{ keys, glyph: '★' }])).toEqual([]);
+  });
+
+  it.each([
+    ['Ctrl+Alt+Y'], // (계속)=!alt·(끝)=!ctrl 양쪽 배제 — 발화 가능
+    ['Ctrl+Alt+F'], // isFindReplace가 !alt — 발화 가능
+    ['Alt+Z'], // isUndo/isRedo는 ctrl||meta 필수 — 발화 가능
+    ['Ctrl+Alt+Z'], // isUndo/isRedo가 !alt — 발화 가능
+    ['Ctrl+Shift+D'], // 라인 삭제 처리는 keymap 분기 뒤 — 등록 시 keymap이 정당하게 이김
+  ])('%s 은 예약이 아니다 — 정상 컴파일된다(과차단 금지)', (keys) => {
+    expect(compileGlyphKeymap([{ keys, glyph: '★' }])).toHaveLength(1);
   });
 });

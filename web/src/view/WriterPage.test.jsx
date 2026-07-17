@@ -3432,6 +3432,19 @@ describe('WriterPage — 사용자 키보드약물 인터셉트(glyphKeymap 결�
     expect(editorLines(container).join('')).not.toContain('✕'); // 약물 미삽입
   });
 
+  // ⑤ 리뷰 Minor fix 회귀 잠금: 예약키의 shift 변형(Ctrl+Shift+Y)은 상위 isInsertContinueMarker가 shift를
+  // 무시하고 삼키므로 keymap에 등록해도 발화 불가 — 컴파일 제외(죽은 항목 방지)로 기존 (계속)삽입이 그대로 이긴다.
+  it('예약 느슨 변형: keymap에 Ctrl+Shift+Y를 등록해도 (계속) 삽입이 일어나고 약물은 삽입되지 않는다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+Shift+Y', glyph: '✕' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'y', ctrlKey: true, shiftKey: true }));
+
+    await waitFor(() => expect(editorLines(container).join('\n')).toContain('(계속)')); // 기존 동작 보존
+    expect(editorLines(container).join('')).not.toContain('✕'); // 약물 미삽입(죽은 항목 — 컴파일 제외)
+  });
+
   it('매핑 모드: 등록 조합 keydown이 본문을 바꾸지 않는다(저장 시 원본 PUT)', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
