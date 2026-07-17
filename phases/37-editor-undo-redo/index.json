@@ -7,7 +7,7 @@
       "name": "history-model",
       "status": "completed",
       "started_at": "2026-07-17T09:00:28+0900",
-      "completed_at": "2026-07-17T09:05:00+0900",
+      "completed_at": "2026-07-17T09:05:59+0900",
       "summary": "web/src/view/editorHistory.js 신설(순수, 의존성 0) — shape {entries:string[], index}(entries[index]=현재 body, 불투명 markupVersion 문자열). createHistory(initialBody)→베이스라인 1개/index 0; pushHistory(history,nextBody,{coalesce,limit})→동일 body no-op(동일 참조 반환), coalesce=true&top&index>0이면 top 교체(베이스라인 비교체), 그 외 redo 분기 절단 후 push, limit(양의 정수) 초과 시 오래된 항목 절단+index 보정; undo/redo→{history,body,changed}(불가 시 동일 history·body null·changed false); canUndo/canRedo→boolean. 입력 불변(mutate 없음). 테스트 editorHistory.test.js 14개(왕복·분기절단·no-op·코얼레싱·베이스라인 불멸·limit·입력불변·불투명성) — lint/build/test:web(1510) 통과."
     },
     {
