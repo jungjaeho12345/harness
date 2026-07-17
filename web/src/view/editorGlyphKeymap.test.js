@@ -124,6 +124,22 @@ describe('editorGlyphKeymap — compileGlyphKeymap 제외 규칙', () => {
     expect(compiled).toHaveLength(1);
     expect(compiled[0].glyph).toBe('☆');
   });
+
+  // 보강(harness-tester): 쓰레기 항목 혼합 안전성 — EditorPrefsDialog는 keys를 trim만 하고 그대로 저장하므로
+  // 어떤 자유입력이 섞여 있어도 컴파일이 크래시 없이 쓰레기만 버리고 정상 항목은 살려야 한다.
+  it('compiles a garbage-mixed keymap without crashing and keeps only the valid entry', () => {
+    const compiled = compileGlyphKeymap([
+      { keys: 'ㅋㅋ', glyph: '✕' }, // 수식어 없는 비ASCII 키 토큰
+      { keys: 'Shift+1', glyph: '✕' }, // Shift-only(실수식어 아님)
+      { keys: '', glyph: '✕' }, // 빈 keys
+      { keys: '1', glyph: '✕' }, // bare key
+      { keys: 'Ctrl+', glyph: '✕' }, // 키 토큰 없음
+      { keys: 'Ctrl+2', glyph: '♠' }, // 정상 항목
+    ]);
+    expect(compiled).toHaveLength(1);
+    expect(compiled[0].glyph).toBe('♠');
+    expect(matchGlyphKeymap(compiled, { ctrlKey: true, key: '2' })).toBe('♠');
+  });
 });
 
 describe('editorGlyphKeymap — matchGlyphKeymap', () => {

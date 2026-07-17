@@ -3503,6 +3503,162 @@ describe('WriterPage — 사용자 키보드약물 인터셉트(glyphKeymap 결�
     fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true });
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문']));
   });
+
+  // 보강(harness-tester): 예약 섀도잉 금지 확장 — undo 계열(Ctrl+Z). isUndo 조기 return(1차 방어)이 keymap 분기보다
+  // 위에 있고 RESERVED_COMBOS 컴파일 제외(2차 방어)도 겹쳐, 사용자가 Ctrl+Z를 등록해도 되돌리기가 그대로 동작해야 한다.
+  it('예약 섀도잉 금지: keymap에 Ctrl+Z를 등록해도 되돌리기가 동작하고 약물은 삽입되지 않는다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }, { keys: 'Ctrl+Z', glyph: '✕' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true })); // 히스토리 한 단계(★ 삽입)
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '★본문']));
+
+    // 커밋 후 Editor remount — keydown 대상은 재조회한다(기존 '독립 undo' 테스트 관례).
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true }); // 등록돼 있어도 undo가 우선
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문'])); // 삽입이 되돌려졌다
+    expect(editorLines(container).join('')).not.toContain('✕'); // keymap 약물 미삽입
+  });
+
+  // 보강(harness-tester): 예약 섀도잉 금지 확장 — Alt 계열(Alt+O 약물입력 다이얼로그).
+  it('예약 섀도잉 금지: keymap에 Alt+O를 등록해도 약물입력 다이얼로그가 열리고 약물은 삽입되지 않는다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Alt+O', glyph: '✕' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'o', altKey: true }));
+
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '약물 입력' })).toBeInTheDocument());
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // '✕' 미삽입 — 기존 동작 보존
+  });
+
+  // 보강(harness-tester): 수식어 정확 일치 결선 — 모델(matchGlyphKeymap)의 수식어 불일치 거부가
+  // onKeyDown에서 무개입(preventDefault 없음)으로 이어지는지 못박는다.
+  it('수식어 정확 일치: Ctrl+1 등록 후 Ctrl+Shift+1은 무개입이다(삽입·preventDefault 없음)', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: '1', ctrlKey: true, shiftKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // '★' 미삽입
+  });
+
+  // 보강(harness-tester): 쓰레기 항목 혼합 안전성 — EditorPrefsDialog가 keys를 trim만 하고 그대로 저장하므로
+  // 어떤 자유입력이 섞여 있어도 마운트 컴파일이 크래시 없이 쓰레기만 버리고 정상 항목은 동작해야 한다.
+  it('쓰레기 항목(ㅋㅋ/Shift+1/빈/1/Ctrl+)이 섞여 있어도 크래시 없이 정상 항목만 동작한다', async () => {
+    seedPrefs({
+      keymap: [
+        { keys: 'ㅋㅋ', glyph: '✕' }, { keys: 'Shift+1', glyph: '✕' }, { keys: '', glyph: '✕' },
+        { keys: '1', glyph: '✕' }, { keys: 'Ctrl+', glyph: '✕' }, { keys: 'Ctrl+2', glyph: '♠' },
+      ],
+    });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]); // 마운트(컴파일) 크래시 없음
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    // 쓰레기 항목이 가리키는 키들은 무개입(컴파일에서 이미 제외).
+    fireEvent(box, createEvent.keyDown(box, { key: '!', shiftKey: true, code: 'Digit1' }));
+    fireEvent(box, createEvent.keyDown(box, { key: '1' }));
+    expect(editorLines(container)).toEqual(['헤드', '본문']);
+    // 정상 항목(Ctrl+2)은 동작한다.
+    fireEvent(box, createEvent.keyDown(box, { key: '2', ctrlKey: true }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '♠본문']));
+  });
+
+  // 보강(harness-tester): 중복 keys 결정성 — 같은 combo 2항목이면 먼저 등록된 glyph 하나만 정확히 1회 삽입된다
+  // (matchGlyphKeymap 첫 매칭 반환 + onGlyphPick 1회 호출 — 이중 발화 없음).
+  it('같은 keys 2항목 등록 시 먼저 등록된 glyph 하나만 1회 삽입된다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '첫' }, { keys: 'ctrl+1', glyph: '둘' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    focusCaretAtLine(container, 1);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true }));
+
+    // '첫' 정확히 1개(이중 발화면 '첫첫'), '둘' 없음(등록 순서 우선).
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '첫본문']));
+  });
+
+  // 보강(harness-tester): 환경설정 반영 경로 — 마운트 이후 프리퍼런스 다이얼로그에서 keymap을 추가하고 '적용'하면
+  // onPrefsClose(applied) 게이트(setGlyphKeymap → useMemo 재컴파일)로 재마운트 없이 즉시 인터셉트가 동작해야 한다
+  // (phase 33 lineSpacing 동형 게이트).
+  it("환경설정에서 키보드 약물 등록 후 '적용'하면 즉시 인터셉트가 동작한다", async () => {
+    seedPrefs({ keymap: [] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+    focusCaretAtLine(container, 1);
+    fireEvent(box, createEvent.keyDown(box, { key: '3', ctrlKey: true })); // 등록 전 — 무개입
+    expect(editorLines(container)).toEqual(['헤드', '본문']);
+
+    // 도움말>환경설정 → 사용자 키보드 약물 탭에서 'Ctrl+3 → ◎' 추가 → 적용.
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'Ctrl+3' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '◎' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add'));
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    focusCaretAtLine(container, 1);
+    fireEvent(box, createEvent.keyDown(box, { key: '3', ctrlKey: true }));
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '◎본문'])); // 즉시 반영
+  });
+
+  it("환경설정에서 키보드 약물 등록 후 '취소'하면 인터셉트에 반영되지 않는다", async () => {
+    seedPrefs({ keymap: [] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const box = container.querySelector('.yh-editor');
+
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+    await userEvent.click(screen.getByTestId('prefs-tab-glyphKeymap'));
+    fireEvent.change(screen.getByTestId('pref-glyphKey-keys'), { target: { value: 'Ctrl+3' } });
+    fireEvent.change(screen.getByTestId('pref-glyphKey-glyph'), { target: { value: '◎' } });
+    fireEvent.click(screen.getByTestId('pref-glyphKey-add')); // 다이얼로그 draft에만 추가
+    fireEvent.click(screen.getByTestId('prefs-cancel')); // 취소 — 미영속·게이트 미발동
+
+    focusCaretAtLine(container, 1);
+    const ev = createEvent.keyDown(box, { key: '3', ctrlKey: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문']); // '◎' 미삽입
+  });
+
+  // 보강(harness-tester): 코얼레싱 경계 — 타이핑 버스트 직후의 keymap 삽입은 coalesce=false 경로라
+  // 타이핑 스냅샷에 병합되지 않고 독립 undo 한 단계여야 한다(시간창 안 고정으로 시간 경과 아님을 못박는다).
+  it('타이핑 직후 keymap 삽입은 코얼레싱에 병합되지 않는다 — Ctrl+Z 1회에 약물만 제거되고 타이핑은 보존된다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    vi.spyOn(Date, 'now').mockReturnValue(1000); // 코얼레싱 시간창(COALESCE_MS) 안에 고정
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '본문가';
+    fireEvent.input(box); // 타이핑 커밋(coalesce=true)
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문가']));
+
+    focusCaretAtLine(container, 1);
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true })); // keymap 삽입(coalesce=false)
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '★본문가']));
+
+    // 커밋 후 Editor remount — keydown 대상은 재조회한다(기존 '독립 undo' 테스트 관례).
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'z', ctrlKey: true }); // undo 1회 — 약물만 제거
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문가'])); // 타이핑 보존(전부 되돌아가면 병합 회귀)
+  });
+
+  // 보강(harness-tester): "(끝)" 마커 캐럿 — 캐럿이 마커 줄을 가리켜도 keymap 발화는 insertGlyphAtCaret 폴백
+  // 계약("(끝)" 불변, 마지막 본문 줄 끝 삽입)을 그대로 따른다(마커 뒤/안 텍스트 오염 없음).
+  it('캐럿이 "(끝)" 마커 줄일 때 keymap 발화는 마커를 오염시키지 않고 마지막 본문 줄 끝에 삽입한다', async () => {
+    seedPrefs({ keymap: [{ keys: 'Ctrl+1', glyph: '★' }] });
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]);
+    focusCaretAtLine(container, 2); // "(끝)" 줄
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: '1', ctrlKey: true }));
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '본문★', '(끝)'])); // 마커 불변·폴백 삽입
+  });
 });
 
 // Step 1(18-editor-tools-menu): 날짜 삽입(tools.insertDate) 결선 —
