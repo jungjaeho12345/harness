@@ -58,6 +58,7 @@ import {
 } from './editorHistory.js';
 import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
+import { compileGlyphKeymap, matchGlyphKeymap } from './editorGlyphKeymap.js';
 import { insertDateAtCaret } from './editorDate.js';
 import { applyDateFormat, kstIsoString } from './listFormat.js';
 import {
@@ -298,6 +299,10 @@ export function WriterPage() {
   );
   // query/대소문자 즉시 매치 수를 구하는 헬퍼(onQueryChange에서 activeIndex 초기화 판단용 — state 반영 전 동기 계산).
   const matchesFor = (q, caseSensitive) => findMatches(bodyText, q, { caseSensitive });
+
+  // 사용자 키보드약물 컴파일 캐시 — keydown마다 재파싱하지 않게 glyphKeymap 변경 시(마운트·onPrefsClose(applied))만 컴파일한다.
+  // compileGlyphKeymap이 예약 충돌·수식어 없는·빈 glyph 항목을 이미 걸러내 매칭 후보만 남긴다(step0).
+  const compiledKeymap = useMemo(() => compileGlyphKeymap(glyphKeymap), [glyphKeymap]);
 
   // 찾기/바꾸기 다이얼로그 열기 — 부모 findQuery/activeIndex를 함께 초기화한다.
   // (재개방 직후 다이얼로그 입력은 비어 있는데 부모에 이전 query/activeIndex가 남아 find-status가 잠깐 'N/M'을 보이는 불일치 방지.)
@@ -1004,6 +1009,16 @@ export function WriterPage() {
     if (isRedo(e)) {
       e.preventDefault();
       doRedo();
+      return;
+    }
+    // 사용자 키보드약물(환경설정 glyphKeymap) — 하드코딩 예약 단축키(위 조기 return들)에 안 걸린 키만 여기 도달한다.
+    // compiledKeymap은 예약 조합(RESERVED_COMBOS)·수식어 없는·빈 glyph 항목을 이미 제외(step0) → 매칭되면 그 약물을
+    // 기존 안전 경로(onGlyphPick → insertGlyphAtCaret → commitBody)로 캐럿에 삽입한다. DOM 직접 조작 없음.
+    // 라인삭제 바일아웃(아래 !ctrlD return)보다 먼저 봐야 Ctrl+1 같은 임의 조합이 삼켜지지 않는다.
+    const keymapGlyph = matchGlyphKeymap(compiledKeymap, e);
+    if (keymapGlyph) {
+      e.preventDefault(); // 브라우저 기본(Ctrl+숫자 등) 억제 + Editor 후속 처리(Enter) 건너뛰기.
+      onGlyphPick(keymapGlyph); // 내부 isMapping 가드·lastCaretRef 캐럿·insertGlyphAtCaret·commitBody·setPendingCaretLine.
       return;
     }
     const ctrlD = isDeleteLine(e);
