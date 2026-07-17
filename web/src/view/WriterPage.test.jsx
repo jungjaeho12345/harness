@@ -6065,4 +6065,58 @@ describe('WriterPage — 되돌리기/다시실행(editorHistory 결선)', () =>
     await clickEdit('되돌리기'); // 버스트가 한 단계 — 글자 단위('나다')로 멈추지 않는다
     await waitFor(() => expect(editorLines(container)).toEqual(['가', '나']));
   });
+
+  it('코얼레싱 경계 — 편집 op 직후 시간창 내 타이핑은 op 스냅샷을 교체하지 않는다(각자 독립 undo 단계)', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    // 모든 커밋을 같은 시각에 고정 — 시간창(COALESCE_MS)이 아니라 '직전 커밋도 타이핑'(wasTyping)이
+    // 코얼레싱 지속의 판정자임을 검증한다. 가드가 없으면 아래 타이핑이 op 스냅샷을 top 교체로 덮는다.
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    await upperLine(container, 0); // 편집 op(coalesce=false): ['ABC','def']
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = 'def가';
+    fireEvent.input(box); // 시간창 안 첫 타이핑 — 직전이 op라 push(교체 아님)여야 한다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def가']));
+
+    await clickEdit('되돌리기'); // 타이핑만 되돌아간다 — op 스냅샷('ABC')이 보존돼 있다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+    await clickEdit('되돌리기'); // op 자체도 별도 한 단계
+    await waitFor(() => expect(editorLines(container)).toEqual(['abc', 'def']));
+  });
+
+  it('파일>복구는 하나의 undo 단계다 — 되돌리기 한 번으로 복구 전 본문으로 돌아가고 다시실행으로 재적용된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container } = await openWith([textBlock('원본제목'), textBlock('원본본문')], { title: '원본제목' });
+    saveDraft('AKR1', { title: '초안제목', body: serialize([textBlock('초안제목'), textBlock('초안본문')]) }, 1000);
+
+    await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText('복구'));
+    await waitFor(() => expect(editorLines(container)).toEqual(['초안제목', '초안본문']));
+
+    await clickEdit('되돌리기'); // 복구(commitBody 경로)가 한 단계 — 복구 전 본문으로 복귀
+    await waitFor(() => expect(editorLines(container)).toEqual(['원본제목', '원본본문']));
+    await clickEdit('다시실행'); // 대칭 — 복구 상태 재적용
+    await waitFor(() => expect(editorLines(container)).toEqual(['초안제목', '초안본문']));
+  });
+
+  it('에디터 밖 입력(키워드 필드)의 Ctrl+Z/Ctrl+Shift+Z는 가로채지 않는다 — preventDefault 없음·본문 불변(네이티브 undo 보존)', async () => {
+    const { container } = await openWith([textBlock('abc'), textBlock('def')], { title: 'abc' });
+    await upperLine(container, 0); // undo 가능한 스냅샷을 만들어 둔다 — 오간섭 시 본문이 바뀌어 드러난다
+    await waitFor(() => expect(editorLines(container)).toEqual(['ABC', 'def']));
+
+    // 키 인터셉트는 에디터 컨테이너(contentEditable) 스코프다 — 다른 입력 필드에서는 버블돼도
+    // 가로채지 않아 필드 자체의 네이티브 undo가 살아 있어야 한다(전역 리스너 회귀 가드).
+    const keyword = screen.getByLabelText('키워드');
+    const undoEv = createEvent.keyDown(keyword, { key: 'z', ctrlKey: true });
+    const undoSpy = vi.spyOn(undoEv, 'preventDefault');
+    fireEvent(keyword, undoEv);
+    expect(undoSpy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['ABC', 'def']); // 본문 되돌리기도 실행되지 않는다
+
+    const redoEv = createEvent.keyDown(keyword, { key: 'z', ctrlKey: true, shiftKey: true });
+    const redoSpy = vi.spyOn(redoEv, 'preventDefault');
+    fireEvent(keyword, redoEv);
+    expect(redoSpy).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['ABC', 'def']);
+  });
 });
