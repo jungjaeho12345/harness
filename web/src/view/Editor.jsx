@@ -409,6 +409,7 @@ export function Editor({
   //    textLocked(읽기전용/매핑)면 무시한다.
   // ② refocusRef(wasFocused): 직전 편집 중이었다면 편집 div에 포커스/캐럿을 복원한다.
   //    없으면 Ctrl+D 라인 삭제 시 remount로 포커스가 빠져, 다음 Ctrl+D가 브라우저 기본동작(북마크)으로 샌다.
+  //    col이 있으면(하이라이트-only 클리어, 39-1) 줄 시작이 아니라 그 열에 복원한다 — 그 외엔 기존 줄-시작 그대로.
   useLayoutEffect(() => {
     const target = refocusRef.current;
     refocusRef.current = null; // 항상 소비(원본 동작)
@@ -419,6 +420,10 @@ export function Editor({
       return;
     }
     if (!target) return;
+    if (target.col != null) {
+      focusCaretAt(root, target.lineIndex, target.col); // 하이라이트-only 클리어 — 열-정확 복원(줄 시작 튐 방지)
+      return;
+    }
     focusLineStart(root, target.lineIndex); // 삭제 위치의 라인 시작에 캐럿 — 연속 Ctrl+D가 자연스럽게 이어진다.
   }, [renderTick, pendingCaretLine, textLocked]);
 
@@ -581,6 +586,12 @@ export function Editor({
           // 화이트리스트를 통과한 정렬만 렌더에 쓴다(step3와 방어 깊이 통일). 미정렬/무효면 속성·스타일 생략
           // → data-align={undefined}는 속성이 안 붙어 현행 DOM과 동일(회귀 안전).
           const align = isValidAlign(block.align) ? block.align : undefined;
+          // 맞춤법 하이라이트(39-1): 세그먼트는 highlightSnapRef 스냅샷에서만 읽는다(prop 직접 읽기 금지 —
+          // 파일 상단 CRITICAL). hl 세그먼트가 없는 줄은 {block.text} 순수 텍스트 노드 폴백(오늘과 동일 DOM).
+          // 비-hl 세그먼트는 bare 문자열(텍스트 노드), hl 세그먼트만 span. span은 색 미지정(줄 role 색 상속).
+          const hl = highlightSnapRef.current;
+          const segs = hl ? hl.map[textLine] : null;
+          const hlStyle = (hl && hl.style === 'underline') ? 'underline' : 'bold';
           return (
             <div
               key={`text-${i}`}
@@ -589,7 +600,15 @@ export function Editor({
               data-align={align}
               style={{ color: colorForRole(role), ...(align ? { textAlign: align } : null) }}
             >
-              {block.text}
+              {(segs && segs.length && segs.some((s) => s.hl))
+                ? segs.map((seg, k) => (seg.hl
+                  ? (
+                    <span key={k} className={`yh-editor__spell yh-editor__spell--${hlStyle}`} data-testid="spell-hl">
+                      {seg.text}
+                    </span>
+                  )
+                  : seg.text))
+                : block.text}
             </div>
           );
         }
