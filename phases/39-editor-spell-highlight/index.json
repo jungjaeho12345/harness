@@ -14,10 +14,10 @@
     {
       "step": 1,
       "name": "editor-spell-render",
-      "status": "error",
+      "status": "completed",
       "started_at": "2026-07-17T12:52:49+0900",
-      "error_message": "[3회 시도 후 실패] Step did not update status",
-      "failed_at": "2026-07-17T13:04:27+0900"
+      "summary": "Editor.jsx에 맞춤법 하이라이트 표시전용 렌더 결선 — 신규 props spellHighlights([{start,end}] blocksToText 절대 오프셋)·spellHighlightStyle('bold'|'underline'). 하이라이트는 highlightSnapRef 스냅샷에서만 렌더(prop 직접 읽기 금지)하고 변화는 highlightSig/lastHighlightSigRef 독립 시그니처로 renderTick remount로만 반영(텍스트/임베드/정렬 echo 판정 비오염). readCaret이 span-aware(Range 기반 offsetInLine, 반환에 col 추가)·readCaretForInsert 인라인 하강 col — span 안 Enter/마커 차단 판정 정확. '하이라이트-only 클리어 while focused'만 focusCaretAt으로 열-정확 캐럿 복원(그 외 structural은 기존 줄-시작 복원 불변). IME 조합 중 remount 없음. 빈 하이라이트면 순수 텍스트 노드 폴백(기존 DOM 바이트 동일 — 회귀 표면 0). yonhap.css에 yh-editor__spell--bold(700)/--underline 추가. Editor.test.jsx 스펠 테스트 12개(렌더/underline/빈DOM/echo/정렬/readCaret 2/Enter분할/열복원/IME 2/마커) — lint·build·test:web(1629) green. ※ 3차 시도가 6/9 항목까지 커밋 후 세션 종료 → 오케스트레이터가 잔여 3항목(useLayoutEffect col 소비·렌더 span·CSS) 완결. step2는 WriterPage에서 runSpellCheck→spellHighlights 세팅·commitBody/탭전환/checkOff 클리어·Editor prop 2개를 결선한다.",
+      "completed_at": "2026-07-21T08:31:00+0900"
     },
     {
       "step": 2,
