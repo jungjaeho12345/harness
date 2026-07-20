@@ -186,6 +186,11 @@ export function WriterPage() {
   const [showSpell, setShowSpell] = useState(false);
   const [spellIssues, setSpellIssues] = useState([]);
   const [spellStyle, setSpellStyle] = useState('bold');
+  // 본문 하이라이트 span(39-editor-spell-highlight step 2) — runSpellCheck가 세팅하는 [{start,end}]
+  // (blocksToText 절대 오프셋, 표시 전용 — Editor step1이 렌더). 다이얼로그용 spellIssues(+snippet)와 별개
+  // state이며 스타일은 spellStyle(prefs.errorStyle)을 그대로 재사용한다(단일 출처). 검사 시점 스냅샷이라
+  // 실편집(commitBody)·탭 전환·checkOff에서 비운다 — body/직렬화/히스토리 캡처는 절대 타지 않는다.
+  const [spellHighlights, setSpellHighlights] = useState([]);
   // 에디터 본문 우클릭 컨텍스트 메뉴 위치({x,y}) 또는 null(닫힘). ListPage 우클릭 패턴(좌표 상태 + 바깥/Esc 닫기).
   const [ctxMenu, setCtxMenu] = useState(null);
 
@@ -249,6 +254,8 @@ export function WriterPage() {
     // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
     setShowSpell(false);
     setSpellIssues([]);
+    // 본문 하이라이트 span도 같은 문서-로컬 좌표(step 2, 39) — 이월되면 다른 기사의 엉뚱한 텍스트를 칠한다.
+    setSpellHighlights([]);
     // 표 다이얼로그의 blockIndex/rows도 문서-로컬 좌표 — 이월되면 '적용'이 다른 기사의
     // blocks[N]을 덮어쓴다(리뷰 게이트 phase 31). 비모달이라 열린 채 전환 가능 — 함께 닫는다.
     setTableDialog(null);
@@ -343,6 +350,11 @@ export function WriterPage() {
   const commitBody = (nextBody, { coalesce = false } = {}) => {
     updateField('body', nextBody);
     updateField('title', bodyTitle(nextBody));
+    // 실편집(본문이 실제로 바뀜) 시 맞춤법 하이라이트 스냅샷 무효화(step 2, 39) — choke point라 타이핑뿐
+    // 아니라 Ctrl+D/undo·redo/삽입/변환 등 모든 편집 경로를 덮는다(undo·redo도 옛 오프셋 무효 → early-return 앞).
+    // blur 재색칠 등 무편집 커밋(nextBody===body)은 통과시켜 하이라이트를 보존한다. 표시-state 클리어 한 줄뿐 —
+    // 히스토리 캡처/updateField 경로는 불변.
+    if (spellHighlights.length && nextBody !== body) setSpellHighlights([]);
     if (applyingHistoryRef.current) return; // undo/redo 적용 커밋은 캡처하지 않음(루프 방지).
     const now = Date.now(); // 비결정 시각은 여기서만(순수 모델은 coalesce 불리언만 받음 — insertDate의 Date.now 패턴).
     const last = lastCommitRef.current;
@@ -544,6 +556,9 @@ export function WriterPage() {
     const raw = checkSpelling(bodyText, { groups, range });
     setSpellIssues(raw.map((i) => ({ ...i, snippet: bodyText.slice(i.start, i.end) })));
     setSpellStyle(prefs.errorStyle);
+    // 본문 하이라이트 span(step 2, 39) — 동일 이슈의 start/end만 표시 전용으로. scoped 검사는 raw에
+    // 그 범위 이슈만 담기므로 하이라이트도 자동으로 그 범위만. 스타일은 spellStyle(위) 재사용.
+    setSpellHighlights(raw.map((i) => ({ start: i.start, end: i.end })));
     setShowSpell(true);
   };
 
@@ -715,7 +730,7 @@ export function WriterPage() {
     if (id === 'spell.checkParagraph') { runSpellCheck('paragraph'); return; }
     if (id === 'spell.checkToCaret') { runSpellCheck('toCaret'); return; }
     if (id === 'spell.checkFromCaret') { runSpellCheck('fromCaret'); return; }
-    if (id === 'spell.checkOff') { setSpellIssues([]); setShowSpell(false); return; }
+    if (id === 'spell.checkOff') { setSpellIssues([]); setShowSpell(false); setSpellHighlights([]); return; }
     // 표 메뉴(table.*) — 표는 임베드라 매핑 가드 앞(임베드 삽입/삭제/변경은 매핑에서도 허용 — phase 18/19 정책,
     // tools.insertImage와 동형). 모든 표 연산은 임베드 블록만 바꾸고 텍스트 블록은 건드리지 않으므로
     // 본문-only 불변식이 자동 보존된다. 본문 반영은 전부 commitBody(serialize(...)) 단일 경로(제목 재동기화 — phase 28).
@@ -1348,6 +1363,10 @@ export function WriterPage() {
               // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
               onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
               pendingCaretLine={pendingCaretLine}
+              // 맞춤법 본문 하이라이트(step 2, 39) — 표시 전용 span + 스타일(spellStyle 재사용). 매핑에서도 무해
+              // (onTextChange 부재로 타이핑 클리어는 없지만 텍스트 편집 자체가 불가 — 탭 전환/재검사/checkOff로 클리어).
+              spellHighlights={spellHighlights}
+              spellHighlightStyle={spellStyle}
             />
           </div>
           {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿만 결선. overwrite/language는 기본값(placeholder) 유지. */}

@@ -22,7 +22,10 @@
     {
       "step": 2,
       "name": "writer-spell-highlight-wiring",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-21T08:24:36+0900",
+      "summary": "WriterPage.jsx 단일 모듈 결선 — spellHighlights 표시전용 state([{start,end}]) 신설: runSpellCheck가 raw 이슈 span으로 세팅(scoped 검사는 자동으로 그 범위만, 스타일은 spellStyle=prefs.errorStyle 재사용)하고 Editor에 spellHighlights/spellHighlightStyle prop으로 전달(step1 렌더). 클리어 3경로: ①commitBody choke point에서 nextBody!==body 실편집 시(타이핑·Ctrl+D·undo/redo·삽입 전부 커버, blur 무편집 커밋은 통과해 보존[low-1], applyingHistoryRef early-return 앞 배치, 히스토리 캡처/updateField 불변) ②탭 전환 리셋 블록(문서-로컬 좌표 이월 금지) ③spell.checkOff. WriterPage.test.jsx 신규 describe 9개(bold/underline/checkOff/타이핑 클리어/Ctrl+D 클리어/blur 보존/탭 전환/매핑 모드/markupVersion 무접촉) — lint·build·test:web(1638) 전부 통과, phase 30 다이얼로그 결선 불변.",
+      "completed_at": "2026-07-21T08:32:00+0900"
     }
   ],
   "created_at": "2026-07-17T12:44:36+0900"

@@ -5891,6 +5891,167 @@ describe('WriterPage — 맞춤법 검사(spell.*) 결선', () => {
   });
 });
 
+// Step 2(39-editor-spell-highlight): 규칙엔진 이슈를 본문 하이라이트로 결선 — runSpellCheck가 raw의
+// start/end span을 spellHighlights(표시 전용 state)로 세팅해 Editor(step1 렌더)에 prop으로 넘긴다.
+// 클리어 3경로: 실편집(commitBody, nextBody!==body — 타이핑/Ctrl+D 등 모든 편집)·탭 전환·checkOff.
+// blur 재색칠(무편집, nextBody===body)은 클리어를 통과해 하이라이트가 보존된다([low-1]).
+// 다이얼로그(spellIssues/spellStyle — phase 30 완료 계약)와 별개 state — 그쪽 결선은 불변.
+describe('WriterPage — 맞춤법 본문 하이라이트(spellHighlights) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R', title = '제목' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title, status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 맞춤법 prefs만 부분 저장 — phase 30 spell describe의 헬퍼와 동형(errorTypes 중첩 병합).
+  const saveSpellPrefs = (patch) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    spellcheck: {
+      ...loadEditorPrefs().spellcheck,
+      ...patch,
+      errorTypes: { ...loadEditorPrefs().spellcheck.errorTypes, ...(patch.errorTypes || {}) },
+    },
+  });
+
+  async function clickSpellMenu(label) {
+    await openTopMenu('맞춤법');
+    const menu = screen.getByTestId('menu-맞춤법');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  const hlSpans = (container) => Array.from(container.querySelectorAll('.yh-editor__spell'));
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  it("'통합 맞춤법 검사' → 오류 텍스트가 본문에 .yh-editor__spell--bold(기본)로 하이라이트되고 다이얼로그도 뜬다", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    expect(screen.getByTestId('spellcheck')).toBeInTheDocument(); // 다이얼로그(phase 30) 불변
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+    const span = hlSpans(container)[0];
+    expect(span.classList.contains('yh-editor__spell--bold')).toBe(true);
+    expect(span.textContent).toContain('먹었다');
+  });
+
+  it("errorStyle:'underline' prefs → 하이라이트가 underline 클래스로 렌더된다", async () => {
+    saveSpellPrefs({ errorStyle: 'underline', errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+    expect(hlSpans(container)[0].classList.contains('yh-editor__spell--underline')).toBe(true);
+  });
+
+  it("'통합 맞춤법 검사 안함' → 본문 하이라이트가 제거된다", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+    await clickSpellMenu('통합 맞춤법 검사 안함');
+    await waitFor(() => expect(hlSpans(container).length).toBe(0));
+  });
+
+  it('검사 후 본문 타이핑(onTextChange→commitBody) → 하이라이트가 제거되고 본문이 갱신된다', async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+
+    // 브라우저 입력 모사 — 오류 줄을 평문으로 교체 후 input(handleInput→onTextChange→commitBody).
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '먹었다 잘';
+    fireEvent.input(box);
+
+    await waitFor(() => expect(hlSpans(container).length).toBe(0)); // 검사 스냅샷 무효화
+    await waitFor(() => expect(editorLines(container)).toEqual(['제목', '먹었다 잘'])); // 본문 갱신
+  });
+
+  // onTextChange만 클리어했다면 남았을 stale 하이라이트를 잠근다 — commitBody가 모든 편집 경로를 덮는다.
+  it('검사 후 Ctrl+D 줄 삭제(비-onTextChange 편집 경로) → 하이라이트가 제거된다', async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다'), textBlock('셋째')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+
+    caretAtLine(container, 2); // 오류 줄이 아닌 '셋째' 줄 삭제도 좌표를 무효화한다
+    fireEvent.keyDown(container.querySelector('.yh-editor'), { key: 'd', ctrlKey: true });
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['제목', '먹었다 먹었다']));
+    expect(hlSpans(container).length).toBe(0);
+  });
+
+  // [low-1] 무편집 blur 재색칠(nextBody===body)은 클리어를 통과 — 포커스만 이탈해도 사라지지 않는다.
+  it('검사 후 편집 없이 blur → 하이라이트가 유지된다', async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('제목'), textBlock('먹었다 먹었다')]);
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+
+    fireEvent.blur(container.querySelector('.yh-editor')); // blur 재색칠 emit — 무편집(nextBody===body)
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1)); // 보존
+  });
+
+  it('탭 전환 → 새 탭에 하이라이트가 없고, 원래 탭으로 복귀해도 재표시되지 않는다(문서-로컬 좌표 이월 금지)', async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith([textBlock('가나'), textBlock('먹었다 먹었다')], { title: '가나' });
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    expect(hlSpans(container).length).toBe(0);
+
+    await userEvent.click(screen.getByRole('button', { name: '가나' }));
+    expect(hlSpans(container).length).toBe(0); // 재검사 필요(스냅샷 미보존)
+  });
+
+  it("매핑 모드에서 '통합 맞춤법 검사' → 본문 하이라이트가 표시된다(읽기전용 — 크래시 없음)", async () => {
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const { container } = await openWith(
+      [textBlock('제목'), textBlock('먹었다 먹었다'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('맞춤법');
+    const menu = screen.getByTestId('menu-맞춤법');
+    await userEvent.click(within(menu).getByText('통합 맞춤법 검사').closest('button'));
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+  });
+
+  // 핵심 가드 — 하이라이트는 표시 전용: 검사만으로 본문 직렬화/히스토리 캡처를 유발하지 않는다.
+  it('검사만 하면(편집 없음) 저장되는 markupVersion이 원본 그대로다(본문/undo 무접촉)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saveSpellPrefs({ errorTypes: { multiWord: true } });
+    const blocks = [textBlock('제목'), textBlock('먹었다 먹었다')];
+    const original = serialize(blocks);
+    const { container, model } = await openWith(blocks);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickSpellMenu('통합 맞춤법 검사');
+    await waitFor(() => expect(hlSpans(container).length).toBeGreaterThanOrEqual(1));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+});
+
 // Step 3(31-editor-table): 표 메뉴(table.*) 10종 결선 — step0 모델(tableModel) + step1 렌더(InlineEmbed) +
 // step2 다이얼로그(TableEditDialog) 조립. 셀 편집 UX는 다이얼로그(본문 표는 읽기 전용 렌더 — 더블클릭 진입),
 // 메뉴 연산의 대상 표는 캐럿 인접(findTargetTableIndex — 캐럿 없으면 마지막 표 폴백), 복사/잘라내기는 시스템
