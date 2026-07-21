@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "register-dialog",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-21T13:58:14+0900",
+      "completed_at": "2026-07-21T14:11:00+0900",
+      "summary": "PhotoPublishDialog 순수 컴포넌트 신규(이미지 임베드 라디오 선택+캡션 입력→onSubmit({src,caption}), 빈 상태 안내·재오픈 초기화·포커스 이전) + WriterPage 결선 — tools.publishPhoto MENU_ENABLED 활성화, 매핑 가드 앞 분기(fileInfo 동일 정책), 탭 전환 조정 블록에 닫기 추가(탭-로컬 이월 방지), 등록은 model.publishPhoto({src,caption,sourceArticleId:activeTab.articleId||''})만 호출(본문/캐럿/임베드 무변경, 실패는 alert). 회귀 가드 6곳을 tools.uiLanguage로 교체(toBeDisabled 유지). 테스트 18건 신규(다이얼로그 9·결선 9) — 웹 1704·백엔드 427 전체 통과, lint/build 클린"
     },
     {
       "step": 3,

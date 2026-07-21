@@ -20,6 +20,7 @@ import { TableEditDialog } from './TableEditDialog.jsx';
 import { MetaSelectDialog } from './MetaSelectDialog.jsx';
 import { metaFieldConfig } from './metaTaxonomy.js';
 import { FileInfoDialog } from './FileInfoDialog.jsx';
+import { PhotoPublishDialog } from './PhotoPublishDialog.jsx';
 import { MemoDialog } from './MemoDialog.jsx';
 import { loadMemo, saveMemo } from './memoStore.js';
 import { AbbrevManageDialog } from './AbbrevManageDialog.jsx';
@@ -104,7 +105,7 @@ const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — b
 const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -158,6 +159,9 @@ export function WriterPage() {
   const [openArticles, setOpenArticles] = useState([]);
   // 파일 정보 다이얼로그(도구>파일 정보) 보이기 — showGlyphInput과 동일한 표시 토글. 읽기전용이라 본문 무변경.
   const [showFileInfo, setShowFileInfo] = useState(false);
+  // 사진발행/DB등록 다이얼로그(도구>사진발행/DB등록) 보이기 — showFileInfo와 동일한 boolean 토글.
+  // imageEmbeds/sourceArticleId는 렌더 시점에 활성 탭(blocks/articleId)에서 파생한다(별도 state 없음 — 탭-로컬).
+  const [showPhotoPublish, setShowPhotoPublish] = useState(false);
   // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
   const [showMemo, setShowMemo] = useState(false);
   // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
@@ -272,6 +276,9 @@ export function WriterPage() {
     // 메타 선택 팝업의 value/onSubmit도 활성 탭-로컬 — 열린 채 전환하면 '적용'이 다른 탭의
     // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
     setMetaDialog(null);
+    // 등록 다이얼로그의 imageEmbeds/sourceArticleId는 활성 탭-로컬 — 열린 채 전환하면 이전 탭 이미지가
+    // 보이고 '등록'이 엉뚱한 기사 사진을 올린다(phase 29~32 문서-로컬 좌표 이월 계열). 함께 닫는다.
+    setShowPhotoPublish(false);
   }
 
   // 탭(문서)별 본문 히스토리 — 탭 id → editorHistory 상태. 세션-로컬(휘발, sessionStorage/tab.fields 미저장).
@@ -734,6 +741,9 @@ export function WriterPage() {
     if (id === 'tools.abbrManage') { setShowAbbrevManage(true); return; }
     // 기사이력비교 — 읽기전용(이력/스냅샷 조회 결과는 표시 state로만). 매핑 가드 앞(매핑에서도 열림, 파일 정보와 동일 정책).
     if (id === 'tools.historyCompare') { openHistoryCompare(); return; }
+    // 사진발행/DB등록 — 현재 본문 이미지 임베드를 읽어 캡션과 함께 사진DB에 등록(본문/캐럿/임베드 무변경).
+    // 매핑 가드 앞(본문 무관 읽기+외부 쓰기 → 매핑에서도 열림, tools.fileInfo와 동일 정책).
+    if (id === 'tools.publishPhoto') { setShowPhotoPublish(true); return; }
     // 맞춤법 검사(spell.*) — 읽기전용(본문/캐럿/임베드 불변 — 결과 다이얼로그 표시만). 매핑 가드 앞
     // (매핑에서도 동작 — 죽은 버튼 방지, 파일 정보/기사이력비교와 동일 정책). 해제(checkOff)는 결과 비움 + 닫기.
     if (id === 'spell.checkAll') { runSpellCheck('all'); return; }
@@ -1536,6 +1546,25 @@ export function WriterPage() {
         open={showFileInfo}
         stats={fileInfoStats}
         onClose={() => setShowFileInfo(false)}
+      />
+
+      {/* 사진발행/DB등록(도구>사진발행/DB등록) — 현재 본문의 이미지 임베드를 골라 캡션과 함께 model.publishPhoto로 등록.
+          본문/캐럿/임베드 무변경 읽기 액션(commitBody/serialize/insertEmbed/updateField 미호출) → 매핑에서도 안전(매핑 가드 앞 결선).
+          sourceArticleId는 best-effort 출처(미저장 신규면 '') — 등록을 막지 않는다. 탭 전환 시 닫힘(imageEmbeds 탭-로컬). */}
+      <PhotoPublishDialog
+        open={showPhotoPublish}
+        imageEmbeds={blocks.filter((b) => isEmbedBlock(b) && b.embedType === 'image').map((b) => ({ src: b.src, alt: b.alt ?? '' }))}
+        onSubmit={async ({ src, caption }) => {
+          let r;
+          try {
+            r = await model.publishPhoto({ src, caption, sourceArticleId: activeTab.articleId || '' });
+          } catch {
+            r = null; // 전송 실패(서버 다운/네트워크) — 아래 공통 실패 알림으로 합류(무피드백 방지, pasteImageAtCaret 패턴).
+          }
+          window.alert(r && r.ok ? '사진을 DB에 등록했습니다.' : '사진 등록에 실패했습니다.');
+          setShowPhotoPublish(false);
+        }}
+        onClose={() => setShowPhotoPublish(false)}
       />
 
       {/* 메모장(도구>메모장) — 기사와 무관한 전역 스크래치패드. controlled: 값은 memoText(부모 소유·마운트 lazy-init),
