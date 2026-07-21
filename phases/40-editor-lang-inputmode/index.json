@@ -25,7 +25,7 @@
       "status": "completed",
       "started_at": "2026-07-21T09:43:20+0900",
       "summary": "StatusBar.jsx — language prop 의미를 라벨 문자열→언어 코드로 변경(기본 'ko', languageLabel로 라벨 표시·미지원은 '한글' 폴백) + inputMode prop 신규(기본 'unicode'): ksc5601이면 euckrStats로 EUC-KR 근사 바이트 표시·비호환>0일 때만 sep+stat-incompat('비호환 N자') 병기, unicode는 현행 byteLength UTF-8 표시·DOM 불변(stat-incompat 미렌더 — 회귀 가드). 내부 state/effect 없는 순수 표시 유지, 테스트 9케이스(신규 4)로 계약 잠금, AC(lint/build/test:web 1672개) 전부 통과. 다음: step3이 WriterPage에서 language(코드)·inputMode를 prefs에서 주입한다(현재는 기본값 동작).",
-      "completed_at": "2026-07-21T09:47:10+0900"
+      "completed_at": "2026-07-21T09:47:58+0900"
     },
     {
       "step": 3,
