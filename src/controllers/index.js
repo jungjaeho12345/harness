@@ -10,6 +10,7 @@ import { createUserModel } from '../models/userModel.js';
 import { createArticleModel } from '../models/articleModel.js';
 import { createArticleHistoryModel } from '../models/articleHistoryModel.js';
 import { createReceiverConfigModel } from '../models/receiverConfigModel.js';
+import { createPhotoModel } from '../models/photoModel.js';
 
 import { createSessionService } from '../services/sessionService.js';
 import { createUserService } from '../services/userService.js';
@@ -19,6 +20,7 @@ import { createReceiverConfigService } from '../services/receiverConfigService.j
 import { createCollectionService } from '../services/collectionService.js';
 import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
+import { createPhotoService } from '../services/photoService.js';
 
 export function createControllers(db, {
   sessionService,
@@ -31,6 +33,7 @@ export function createControllers(db, {
   const articleModel = createArticleModel(db);
   const articleHistoryModel = createArticleHistoryModel(db);
   const receiverConfigModel = createReceiverConfigModel(db);
+  const photoModel = createPhotoModel(db);
 
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
   const session = sessionService ?? createSessionService();
@@ -43,6 +46,7 @@ export function createControllers(db, {
   const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });
   const mediaSearch = createMediaSearch({ fetchFn, env });
   const translate = createTranslate({ fetchFn, env });
+  const photoService = createPhotoService({ photoModel });
 
   // 인증/세션 — 로그인은 자격 검증(userService) → 세션 발급(sessionService) 오케스트레이션.
   const auth = {
@@ -99,5 +103,10 @@ export function createControllers(db, {
     pull: (sourceId) => collectionService.pull(sourceId),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection };
+  const photo = {
+    register: (dto, opts) => photoService.register(dto, opts),
+    search: (q) => photoService.search(q),
+  };
+
+  return { auth, user, article, media, translation, receiverConfig, collection, photo };
 }

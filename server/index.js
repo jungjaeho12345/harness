@@ -656,6 +656,28 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // --- 사진DB (세션 게이트 — 이미지/글기사 검색과 동형, 역할 게이트 없음) ---
+  // 등록은 append-only. 신원(registeredBy)은 세션에서만 도출한다(ADR-004) —
+  // body의 registeredBy는 컨트롤러에 넘기지 않는다. src 검증(invalid-src)은 photoService 책임.
+  app.post('/api/photos', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      const { src, caption, sourceArticleId } = req.body ?? {};
+      const r = controllers.photo.register({ src, caption, sourceArticleId }, { userId: me.userId });
+      if (!r.ok) return res.status(400).json(r); // invalid-src → 400
+      return res.json(r); // { ok, id }
+    } catch (e) { next(e); }
+  });
+
+  app.get('/api/photos/search', (req, res, next) => {
+    try {
+      const { me } = sessionOf(req);
+      if (!me) return res.status(401).json(UNAUTH);
+      return res.json({ ok: true, items: controllers.photo.search(req.query.q ?? '') });
+    } catch (e) { next(e); }
+  });
+
   // --- 수집 인제스트 (사용자 세션 라우트 아님) ---
   // body { sourceId, payload } → collection.receive. 미등록 sourceId는 거부(collectionService 판정).
   // 외부 노출은 부트스트랩의 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 좁힌다.

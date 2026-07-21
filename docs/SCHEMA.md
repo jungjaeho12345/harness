@@ -5,7 +5,7 @@
 ## 기술명세서
 - DB는 SQLite를 사용한다 (node:sqlite, 서버 기동 시 server/index.js가 생성한다).
 - DB 파일은 프로젝트 루트의 news.db이다.
-- 테이블은 User, Article, Contents, ReceiverConfig 4개이다.
+- 테이블은 User, Article, Contents, ReceiverConfig, Photo 5개이다.
 - 타입은 Article/Contents는 VARCHAR, User는 TEXT로 설정한다 (추가된 컬럼은 VARCHAR).
 - 스키마 변경은 기존 데이터를 삭제하지 않고 컬럼을 추가하는 방식(멱등 마이그레이션)으로만 적용한다.
 - DB에 있는 내용은 절대 삭제하지 않는다.
@@ -59,4 +59,16 @@ ContentsVO에 대한 명세서
 - type은 'FTP' 또는 'API'.
 - active는 'Y'/'N', 기본값 'Y'. 비활성 설정은 등록 거부 대상이 된다.
 - 행 삭제(remove)는 설정 행만 지운다 — 이미 수집된 Article/Contents는 절대 건드리지 않는다(DB 비파괴 원칙).
+- 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.
+
+## Photo Table
+사진DB(도구>사진발행/DB등록)에 대한 명세서. 세션 로그인 사용자 전용(역할 게이트 없음), append-only.
+# property
+- id(INTEGER PK, ROWID alias, 자동 증가), 이미지참조(src), 캡션(caption), 출처기사아이디(sourceArticleId), 등록자(registeredBy), 등록시간(createdAt) 컬럼을 가진다.
+- id는 INTEGER PRIMARY KEY (SQLite ROWID alias) — 자동 증가. 나머지 컬럼은 VARCHAR.
+- src는 업로드 상대경로(/uploads/...) 또는 https:// URL만 허용한다 — 등록 시 서버가 sanitizeFileRef(첨부/자료 파일과 같은 단일 출처)로 검증하고, 그 외(javascript:/data:/http:/프로토콜상대/.. traversal 등)는 invalid-src로 거부한다.
+- caption은 검색 대상 텍스트다 — GET /api/photos/search가 캡션 부분일치(LIKE)로 조회한다(최신 등록 우선, id DESC). 재임베드 시 이미지 alt로 쓰인다.
+- sourceArticleId는 등록 시점 편집 중이던 기사아이디다(미저장 신규 기사면 빈 문자열 — best-effort 출처 기록).
+- registeredBy는 검증된 세션의 userId로만 채운다(ADR-004 — 클라이언트가 보낸 값은 신뢰하지 않는다). createdAt는 ISO-8601 UTC 문자열로 서버가 stamp한다.
+- 행 삭제/수정 없음(append-only) — 사진 삭제는 범위 밖(DB 비파괴 원칙).
 - 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.
