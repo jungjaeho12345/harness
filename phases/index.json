@@ -218,6 +218,11 @@
       "dir": "39-editor-spell-highlight",
       "status": "completed",
       "completed_at": "2026-07-21T08:32:55+0900"
+    },
+    {
+      "dir": "40-editor-lang-inputmode",
+      "status": "completed",
+      "completed_at": "2026-07-21T10:00:55+0900"
     }
   ]
 }

@@ -313,6 +313,7 @@ export function Editor({
   spellcheck = false,
   spellHighlights = [], // [{ start, end }] — blocksToText 절대 오프셋 span 목록(맞춤법 하이라이트 표시 대상)
   spellHighlightStyle = 'bold', // 'bold' | 'underline' — 오류 표현(news.md 맞춤법 설정). 둘 다 표시 전용(콜백 미유발)
+  lang = 'ko', // 편집 div lang 속성(표시 전용 — spellcheck prop 동형, 네이티브 사전 언어 힌트). 유효 코드는 부모가 보장.
   readOnly = false,
   textEditable = true,
 }) {
@@ -557,7 +558,7 @@ export function Editor({
       contentEditable={!textLocked}
       suppressContentEditableWarning
       spellCheck={spellcheck}
-      lang="ko"
+      lang={lang}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       onCompositionStart={handleCompositionStart}

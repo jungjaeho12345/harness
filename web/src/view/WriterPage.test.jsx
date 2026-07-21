@@ -1836,6 +1836,102 @@ describe('WriterPage — 편집>줄간격(editor-canvas line-height 변수) 적�
   });
 });
 
+// Step 3(40-editor-lang-inputmode): 편집>언어(edit.language)·입력모드(edit.inputMode)를 상태표시줄(step2)과
+// Editor 편집 div lang 속성에 결선(columnLimit/lineSpacing 동형 게이트 — 마운트 + onPrefsClose(applied), 취소 불변).
+// StatusBar엔 raw(폴백·정규화는 StatusBar 내부), Editor lang엔 normalizeLanguage 결과(HTML엔 유효 코드만).
+describe('WriterPage — 편집>언어·입력모드(상태표시줄·Editor lang) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 편집 탭의 language/inputMode만 부분 저장(다른 카테고리는 기본값 유지) — columnLimit 저장 헬퍼와 동형.
+  const saveEdit = (patch) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    edit: { ...loadEditorPrefs().edit, ...patch },
+  });
+
+  async function openPrefsViaMenu() {
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  // 본문(markupVersion)을 가진 기사로 편집 진입 — 상태표시줄 바이트 검증용 한글 본문.
+  async function openWith(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '한글', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const editorLang = () => screen.getByRole('textbox', { name: '본문' }).getAttribute('lang');
+
+  it("미저장(기본)이면 상태표시줄 언어 '한글'(ko), 편집 div lang='ko'다", () => {
+    setup({ identity: { role: 'R' } });
+    expect(screen.getByTestId('stat-language')).toHaveTextContent('한글');
+    expect(editorLang()).toBe('ko');
+  });
+
+  it("language='en' 저장 상태로 렌더하면 언어 '영어', 편집 div lang='en'이다", () => {
+    saveEdit({ language: 'en' });
+    setup({ identity: { role: 'R' } });
+    expect(screen.getByTestId('stat-language')).toHaveTextContent('영어');
+    expect(editorLang()).toBe('en');
+  });
+
+  it("미지원 language='xx' 저장이면 언어 '한글' 폴백, 편집 div lang='ko'(normalizeLanguage)다", () => {
+    saveEdit({ language: 'xx' });
+    setup({ identity: { role: 'R' } });
+    expect(screen.getByTestId('stat-language')).toHaveTextContent('한글');
+    expect(editorLang()).toBe('ko');
+  });
+
+  it("inputMode='ksc5601' 저장이면 stat-bytes가 EUC-KR 근사값('한글'=4B), 기본(unicode)은 UTF-8(6B)이다", async () => {
+    saveEdit({ inputMode: 'ksc5601' });
+    await openWith([textBlock('한글')]);
+    expect(screen.getByTestId('stat-bytes')).toHaveTextContent('4B');
+  });
+
+  it('기본(unicode) 렌더는 UTF-8 바이트를 표시한다(현행 불변)', async () => {
+    await openWith([textBlock('한글')]);
+    expect(screen.getByTestId('stat-bytes')).toHaveTextContent('6B');
+  });
+
+  it("편집 탭에서 언어 'en'·입력모드 'ksc5601'을 골라 '적용'하면 라벨·lang·바이트가 라이브 반영된다", async () => {
+    await openWith([textBlock('한글')]);
+    expect(screen.getByTestId('stat-language')).toHaveTextContent('한글');
+    expect(screen.getByTestId('stat-bytes')).toHaveTextContent('6B'); // 적용 전 UTF-8
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-language'), 'en');
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-inputMode'), 'ksc5601');
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+
+    await waitFor(() => expect(loadEditorPrefs().edit.language).toBe('en'));
+    await waitFor(() => expect(screen.getByTestId('stat-language')).toHaveTextContent('영어'));
+    expect(editorLang()).toBe('en');
+    expect(screen.getByTestId('stat-bytes')).toHaveTextContent('4B'); // EUC-KR 근사
+  });
+
+  it("'취소' 시 언어·입력모드가 바뀌지 않는다(columnLimit 게이트와 동일 — 적용 시에만 갱신)", async () => {
+    await openWith([textBlock('한글')]);
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-language'), 'en');
+    await userEvent.selectOptions(screen.getByTestId('pref-edit-inputMode'), 'ksc5601');
+    fireEvent.click(screen.getByTestId('prefs-cancel'));
+
+    expect(loadEditorPrefs().edit.language).toBe('ko'); // 저장 불변
+    expect(loadEditorPrefs().edit.inputMode).toBe('unicode'); // 저장 불변
+    expect(screen.getByTestId('stat-language')).toHaveTextContent('한글'); // 라벨 불변
+    expect(editorLang()).toBe('ko'); // lang 불변
+    expect(screen.getByTestId('stat-bytes')).toHaveTextContent('6B'); // UTF-8 불변
+  });
+});
+
 // Step 1(13-editor-autosave): 자동저장 타이머(간격마다 활성 탭 초안 스냅샷) + 파일>복구 + 송고/저장 후 초안 무효화.
 // editorPrefs(localStorage 자동저장 설정) + editorDraft(localStorage 초안)를 쓰므로 localStorage.clear()로 격리한다.
 describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
