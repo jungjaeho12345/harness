@@ -6879,3 +6879,99 @@ describe('WriterPage — 사진발행/DB등록(tools.publishPhoto) 결선', () =
     await waitFor(() => expect(screen.queryByTestId('photo-publish')).toBeNull());
   });
 });
+
+// Step 3(41-photo-publish-db): 이미지 탭 검색 소스 토글(Google | 사진DB) — 사진DB는 model.searchPhotos로
+// 등록된 사진을 캡션 검색하고, 픽은 기존 insertEmbed→makeImageEmbed 경로로 표준 image 임베드를 삽입한다
+// (재임베드 루프 — SearchPanel/InlineEmbed 무변경, 소스 토글은 이미지 탭 내부 additive·5번째 탭 아님).
+describe('WriterPage — 이미지 검색 소스(Google | 사진DB) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const PHOTO = {
+    id: 1, src: '/uploads/p1.png', caption: '현장 사진',
+    sourceArticleId: 'AKR9', registeredBy: 'kim', createdAt: '2026-07-21T00:00:00.000Z',
+  };
+
+  async function openWith(blocks, { photos = [PHOTO], mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }], photos },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 이미지 탭 열기 → 사진DB 소스 선택 → 검색까지의 공용 플로우.
+  async function searchPhotoDb(q) {
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.click(screen.getByRole('button', { name: '사진DB' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), q);
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+  }
+
+  it('이미지 탭에 Google/사진DB 소스 토글이 있고 기본은 Google이다', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    const group = screen.getByRole('group', { name: '이미지 검색 소스' });
+    const google = within(group).getByRole('button', { name: 'Google' });
+    const photoDb = within(group).getByRole('button', { name: '사진DB' });
+    expect(google.className).toContain('yh-tab--active');
+    expect(photoDb.className).not.toContain('yh-tab--active');
+  });
+
+  it('기본(Google) 검색은 searchMedia만 부르고 searchPhotos는 부르지 않는다(기존 이미지 검색 회귀 가드)', async () => {
+    const { model } = await openWith([textBlock('헤드')]);
+    const media = vi.spyOn(model, 'searchMedia');
+    const photos = vi.spyOn(model, 'searchPhotos');
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), '고양이');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(media).toHaveBeenCalledWith('고양이', 'image'));
+    expect(photos).not.toHaveBeenCalled();
+  });
+
+  it("'사진DB' 선택+검색 → model.searchPhotos가 호출되고 결과 썸네일(item.src)이 렌더된다", async () => {
+    const { model, container } = await openWith([textBlock('헤드')]);
+    const spy = vi.spyOn(model, 'searchPhotos');
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('현장'));
+    // SearchPanel 이미지 브랜치가 item.src로 썸네일을 렌더한다(공용 컴포넌트 무변경).
+    await waitFor(() => {
+      const img = container.querySelector('[data-testid="meta-image"] .yh-media-result img');
+      expect(img).toBeTruthy();
+      expect(img.getAttribute('src')).toBe('/uploads/p1.png');
+    });
+  });
+
+  it('사진 결과 픽 → 본문에 표준 image 임베드가 삽입된다(src=사진 src·alt=caption — 기존 insertEmbed 경로)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model, container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(container.querySelector('[data-testid="meta-image"] .yh-media-result')).toBeTruthy());
+    await userEvent.click(container.querySelector('[data-testid="meta-image"] .yh-media-result'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    // 보류 저장 → PUT 본문 blocks에 image 임베드(src=사진 src·alt=caption)가 추가돼 있다.
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    const embed = blocks.find((b) => b.type === 'embed' && b.embedType === 'image');
+    expect(embed).toBeTruthy();
+    expect(embed.src).toBe('/uploads/p1.png');
+    expect(embed.alt).toBe('현장 사진');
+  });
+
+  it('매핑 탭에서도 사진DB 픽이 임베드를 삽입한다(기존 이미지 픽과 동형 — 임베드 삽입은 매핑 허용)', async () => {
+    const { container } = await openWith(
+      [textBlock('헤드'), textBlock('본문')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(container.querySelector('[data-testid="meta-image"] .yh-media-result')).toBeTruthy());
+    await userEvent.click(container.querySelector('[data-testid="meta-image"] .yh-media-result'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+});

@@ -125,6 +125,9 @@ export function WriterPage() {
   const search = useSearchController();
 
   const [metaTab, setMetaTab] = useState('common');
+  // 이미지 탭 검색 소스 — 'google'(외부 프록시) | 'photoDb'(내부 사진DB 캡션 검색 — 41-photo-publish-db).
+  // 탭-로컬이 아니다(검색 결과 자체가 컨트롤러 레벨이라 탭 전환 이월이 무해 — 조정 블록에 넣지 않음).
+  const [imageSource, setImageSource] = useState('google');
   const [spell, setSpell] = useState(false);
 
   // 에디터 크롬(메뉴바·툴바·상태표시줄) — Step 3 배치.
@@ -1436,12 +1439,41 @@ export function WriterPage() {
               <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} onOpenMeta={setMetaDialog} />
             )}
             {metaTab === 'image' && (
-              <SearchPanel
-                kind="image"
-                results={search.imageResults}
-                onSearch={search.searchImages}
-                onPick={(item) => insertEmbed(makeImageEmbed(item.src ?? item.link ?? item.url ?? '', { alt: item.title ?? '' }))}
-              />
+              <>
+                {/* 이미지 검색 소스 토글 — Google(외부 프록시) / 사진DB(내부 등록 사진). 이미지 탭 내부 additive UI(5번째 탭 아님). */}
+                <div className="yh-search-source" role="group" aria-label="이미지 검색 소스">
+                  <button
+                    type="button"
+                    className={`yh-tab ${imageSource === 'google' ? 'yh-tab--active' : ''}`}
+                    onClick={() => setImageSource('google')}
+                  >
+                    Google
+                  </button>
+                  <button
+                    type="button"
+                    className={`yh-tab ${imageSource === 'photoDb' ? 'yh-tab--active' : ''}`}
+                    onClick={() => setImageSource('photoDb')}
+                  >
+                    사진DB
+                  </button>
+                </div>
+                {imageSource === 'google' ? (
+                  <SearchPanel
+                    kind="image"
+                    results={search.imageResults}
+                    onSearch={search.searchImages}
+                    onPick={(item) => insertEmbed(makeImageEmbed(item.src ?? item.link ?? item.url ?? '', { alt: item.title ?? '' }))}
+                  />
+                ) : (
+                  // 재임베드 — 등록 사진을 표준 image 임베드로 삽입(캡션→alt, 기존 insertEmbed 안전 경로 재사용).
+                  <SearchPanel
+                    kind="image"
+                    results={search.photoResults}
+                    onSearch={search.searchPhotos}
+                    onPick={(item) => insertEmbed(makeImageEmbed(item.src ?? '', { alt: item.caption ?? '' }))}
+                  />
+                )}
+              </>
             )}
             {metaTab === 'video' && (
               <SearchPanel

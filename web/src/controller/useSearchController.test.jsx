@@ -10,6 +10,7 @@ function setup() {
       { id: 'i1', type: 'image' }, { id: 'v1', type: 'video' },
     ],
     articles: [{ articleId: 'AKR1', title: '경제 기사', status: 'RDS' }],
+    photos: [{ id: 1, src: '/uploads/p1.png', caption: '현장 사진' }],
   });
   const spyMedia = vi.spyOn(model, 'searchMedia');
   const wrapper = ({ children }) => (
@@ -41,5 +42,14 @@ describe('useSearchController', () => {
     await act(async () => { await result.current.searchArticles('경제'); });
     expect(result.current.articleResults).toHaveLength(1);
     expect(result.current.articleResults[0].articleId).toBe('AKR1');
+  });
+
+  it('searchPhotos queries the photo DB by caption and stores photoResults', async () => {
+    const { result, model } = setup();
+    const spy = vi.spyOn(model, 'searchPhotos');
+    await act(async () => { await result.current.searchPhotos('현장'); });
+    expect(spy).toHaveBeenCalledWith('현장');
+    expect(result.current.photoResults).toHaveLength(1);
+    expect(result.current.photoResults[0].src).toBe('/uploads/p1.png');
   });
 });

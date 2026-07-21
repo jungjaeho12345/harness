@@ -1506,6 +1506,14 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 이미지 검색 소스 토글(Google | 사진DB) — 이미지 탭 내부 가로 배치. */
+.yh-search-source {
+  display: flex;
+  gap: var(--yh-sp-xs);
+  margin-bottom: var(--yh-sp-sm);
+  border-bottom: 1px solid var(--yh-gray-line);
+}
+
 /* 검색 입력 + 버튼 한 줄 정렬(이미지/영상/글기사 공통). */
 .yh-search-bar {
   display: flex;
