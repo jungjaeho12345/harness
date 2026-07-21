@@ -17,7 +17,7 @@
       "status": "completed",
       "started_at": "2026-07-21T09:39:09+0900",
       "summary": "신규 web/src/view/editorLanguage.js — LANGUAGE_LABELS 9종(ko한글/en영어/ja일어/zh중국어/es스페인/fr프랑스/ar아랍어/vi베트남/ru러시아어, news.md L196 순서·표기, Object.freeze) 단일 출처 + languageLabel/normalizeLanguage(미지원·undefined·대문자 → 'ko'/'한글' 폴백, LANGUAGE_LABELS에서 파생) zero-dep 순수 모듈, vitest 8케이스로 계약 잠금, AC(lint/build/test:web 1668개) 전부 통과",
-      "completed_at": "2026-07-21T09:42:17+0900"
+      "completed_at": "2026-07-21T09:43:20+0900"
     },
     {
       "step": 2,
