@@ -8,7 +8,8 @@
       "name": "euckr-byte-model",
       "status": "completed",
       "started_at": "2026-07-21T09:34:14+0900",
-      "summary": "신규 web/src/view/editorEncoding.js — export 2개(normalizeInputMode: 'ksc5601' 외 전부 'unicode' 폴백, euckrStats: 코드포인트 순회로 ASCII=1B·EUC-KR 근사 10개 블록 범위=2B·비호환=0B+incompatible 카운트) zero-dep 순수 모듈, vitest 테스트 22케이스(editorEncoding.test.js)로 계약 잠금, AC(lint/build/test:web 1660개) 전부 통과"
+      "summary": "신규 web/src/view/editorEncoding.js — export 2개(normalizeInputMode: 'ksc5601' 외 전부 'unicode' 폴백, euckrStats: 코드포인트 순회로 ASCII=1B·EUC-KR 근사 10개 블록 범위=2B·비호환=0B+incompatible 카운트) zero-dep 순수 모듈, vitest 테스트 22케이스(editorEncoding.test.js)로 계약 잠금, AC(lint/build/test:web 1660개) 전부 통과",
+      "completed_at": "2026-07-21T09:39:08+0900"
     },
     {
       "step": 1,
