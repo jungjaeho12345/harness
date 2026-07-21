@@ -6,7 +6,7 @@ import {
   render, screen, fireEvent, createEvent, waitFor,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Editor } from './Editor.jsx';
+import { Editor, readCaret } from './Editor.jsx';
 import { textBlock, embedBlock } from './editorContent.js';
 import { COLORS } from './editorColoring.js';
 
@@ -18,6 +18,16 @@ function caretAtLine(container, lineIndex, toEnd = true) {
   const range = document.createRange();
   range.selectNodeContents(lineEls[lineIndex]);
   range.collapse(!toEnd);
+  sel.addRange(range);
+}
+
+// 캐럿을 지정 노드/오프셋의 collapsed selection으로 둔다(하이라이트 span-aware 캐럿 테스트용).
+function setCaret(node, offset) {
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  const range = document.createRange();
+  range.setStart(node, offset);
+  range.collapse(true);
   sel.addRange(range);
 }
 
@@ -658,5 +668,269 @@ describe('Editor — 보기 정렬(data-align/text-align 렌더·라운드트립
     await waitFor(() => {
       expect(container.querySelector('.yh-editor')).toBe(before); // 동일 노드 → remount 없음
     });
+  });
+});
+
+// 39-1: 맞춤법 하이라이트 표시전용 렌더 — 세그먼트는 내부 스냅샷(highlightSnapRef)에서만 읽고
+// 변화는 remount로만 반영한다. 캐럿/echo/IME 기존 불변식을 깨지 않는 것이 계약(적대적 검증).
+describe('Editor — 맞춤법 하이라이트 렌더(spellHighlights)', () => {
+  it('하이라이트 구간을 굵게 span으로 감싸고 줄 텍스트는 원문과 동일하다(비-hl 세그먼트는 bare 텍스트 노드)', () => {
+    // '제목\n본문AB'에서 절대 오프셋 5..7 = 둘째 줄 'AB'.
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('제목'), textBlock('본문AB')]}
+        onTextChange={() => {}}
+        spellHighlights={[{ start: 5, end: 7 }]}
+        spellHighlightStyle="bold"
+      />,
+    );
+    const spans = container.querySelectorAll('.yh-editor__spell');
+    expect(spans).toHaveLength(1);
+    expect(spans[0].textContent).toBe('AB');
+    expect(spans[0].classList.contains('yh-editor__spell--bold')).toBe(true);
+    const lines = container.querySelectorAll('.yh-editor__line');
+    expect(lines[1].textContent).toBe('본문AB'); // 세그먼트를 이어붙이면 원문 그대로
+    expect(lines[1].childNodes[0].nodeType).toBe(3); // 비-hl 앞 세그먼트는 bare 텍스트 노드(span 아님)
+    expect(lines[0].textContent).toBe('제목');
+    expect(lines[0].childNodes).toHaveLength(1); // 하이라이트 없는 줄은 단일 텍스트 노드(오늘과 동일)
+  });
+
+  it("spellHighlightStyle='underline'이면 underline 클래스로 렌더한다", () => {
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('제목오탈')]}
+        onTextChange={() => {}}
+        spellHighlights={[{ start: 2, end: 4 }]}
+        spellHighlightStyle="underline"
+      />,
+    );
+    const span = container.querySelector('.yh-editor__spell');
+    expect(span.classList.contains('yh-editor__spell--underline')).toBe(true);
+    expect(span.classList.contains('yh-editor__spell--bold')).toBe(false);
+    expect(span.textContent).toBe('오탈');
+  });
+
+  it('spellHighlights가 비면 span 0개 + 각 텍스트 줄은 단일 텍스트 노드다(미사용 DOM 동일성 — 회귀 가드)', () => {
+    const { container } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문')]} onTextChange={() => {}} spellHighlights={[]} />,
+    );
+    expect(container.querySelectorAll('.yh-editor__spell')).toHaveLength(0);
+    for (const line of container.querySelectorAll('.yh-editor__line')) {
+      expect(line.childNodes).toHaveLength(1);
+      expect(line.firstChild.nodeType).toBe(3);
+    }
+  });
+
+  it('하이라이트가 있어도 타이핑 echo는 remount하지 않고 onTextChange가 span 투과 텍스트로 발화한다', async () => {
+    const onTextChange = vi.fn();
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('제목'), textBlock('본문AB')]} onTextChange={onTextChange} spellHighlights={[{ start: 5, end: 7 }]} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    // span이 있는 줄 뒤에 글자가 추가된 타이핑 모사(브라우저 DOM 변형).
+    container.querySelectorAll('.yh-editor__line')[1].appendChild(document.createTextNode('C'));
+    fireEvent.input(before);
+    // span 투과 추출 — 정확한 텍스트로 emit(하이라이트가 텍스트 추출을 오염시키지 않음).
+    expect(onTextChange).toHaveBeenCalledWith('제목\n본문ABC', [
+      { type: 'text', text: '제목' },
+      { type: 'text', text: '본문ABC' },
+    ]);
+    // 부모 echo(같은 텍스트 + 같은 내용의 하이라이트 새 배열) — remount 없음(캐럿/입력 보존).
+    rerender(
+      <Editor blocks={[textBlock('제목'), textBlock('본문ABC')]} onTextChange={onTextChange} spellHighlights={[{ start: 5, end: 7 }]} />,
+    );
+    await waitFor(() => expect(container.querySelector('.yh-editor')).toBe(before));
+    expect(container.querySelectorAll('.yh-editor__line')[1].textContent).toBe('본문ABC'); // DOM 입력 보존
+  });
+
+  it('정렬 줄(center/right)에 하이라이트가 걸려도 data-align/text-align/role 색이 보존된다', () => {
+    // '제목\n가운데\n오른쪽' — 가운(3..5)·오른(7..9) 하이라이트.
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('제목'), textBlock('가운데', 'center'), textBlock('오른쪽', 'right')]}
+        onTextChange={() => {}}
+        spellHighlights={[{ start: 3, end: 5 }, { start: 7, end: 9 }]}
+      />,
+    );
+    const lines = container.querySelectorAll('.yh-editor__line');
+    expect(lines[1].getAttribute('data-align')).toBe('center');
+    expect(lines[1].style.textAlign).toBe('center');
+    expect(lines[1]).toHaveStyle({ color: COLORS.subtitle }); // role 색 보존
+    expect(lines[1].querySelector('.yh-editor__spell').textContent).toBe('가운');
+    expect(lines[1].querySelector('.yh-editor__spell').style.color).toBe(''); // span은 색 미지정(줄 색 상속)
+    expect(lines[1].textContent).toBe('가운데');
+    expect(lines[2].getAttribute('data-align')).toBe('right');
+    expect(lines[2].style.textAlign).toBe('right');
+    expect(lines[2].querySelector('.yh-editor__spell').textContent).toBe('오른');
+    expect(lines[2].textContent).toBe('오른쪽');
+  });
+});
+
+// 39-1: span-aware readCaret — offsetInLine은 "줄 시작부터 캐럿까지 document-order로 앞서는
+// 모든 텍스트 길이"(하이라이트 span 내부 포함). 반환에 col(줄 내 열)이 추가된다.
+describe('Editor — span-aware readCaret(col)', () => {
+  // 둘째 줄 'ABCDEF'가 [텍스트 'AB', <span>CD</span>, 텍스트 'EF']로 렌더되는 하이라이트 구성.
+  function renderSpanLine() {
+    const utils = render(
+      <Editor blocks={[textBlock('XY'), textBlock('ABCDEF')]} onTextChange={() => {}} spellHighlights={[{ start: 5, end: 7 }]} />,
+    );
+    const root = utils.container.querySelector('.yh-editor');
+    const line = utils.container.querySelectorAll('.yh-editor__line')[1];
+    return { root, line };
+  }
+
+  it('(a) anchor가 span 뒤 텍스트 노드면 col에 앞 span 길이가 포함된다', () => {
+    const { root, line } = renderSpanLine();
+    expect(Array.from(line.childNodes).map((n) => n.textContent)).toEqual(['AB', 'CD', 'EF']);
+    setCaret(line.childNodes[2], 1); // 'EF' offset 1 → col = 2('AB') + 2('CD') + 1 = 5
+    expect(readCaret(root)).toEqual({ lineIndex: 1, offset: 8, col: 5 }); // offset = 'XY\n'(3) + 5
+  });
+
+  it('(b) anchor가 span 내부 텍스트 노드면 col이 정확하다', () => {
+    const { root, line } = renderSpanLine();
+    setCaret(line.childNodes[1].firstChild, 1); // span 'CD' offset 1 → col = 2('AB') + 1 = 3
+    expect(readCaret(root)).toEqual({ lineIndex: 1, offset: 6, col: 3 });
+  });
+
+  it('단일 텍스트 노드 줄에서는 기존값 불변이다(하위호환)', () => {
+    const { container } = render(
+      <Editor blocks={[textBlock('XY'), textBlock('ABCDEF')]} onTextChange={() => {}} />,
+    );
+    const root = container.querySelector('.yh-editor');
+    const line = container.querySelectorAll('.yh-editor__line')[1];
+    expect(line.childNodes).toHaveLength(1);
+    setCaret(line.firstChild, 2);
+    expect(readCaret(root)).toEqual({ lineIndex: 1, offset: 5, col: 2 });
+  });
+});
+
+// 39-1: span-aware readCaretForInsert — 하이라이트 span 안 캐럿에서 Enter 분할 위치가 정확해야 한다.
+describe('Editor — span-aware readCaretForInsert(하이라이트 span 안 Enter)', () => {
+  it('span 안 캐럿에서 Enter가 캐럿 위치에서 정확히 분할한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('ABCDEF')]} onTextChange={onTextChange} spellHighlights={[{ start: 2, end: 4 }]} />,
+    );
+    const line = container.querySelector('.yh-editor__line');
+    setCaret(line.childNodes[1].firstChild, 1); // span 'CD' 안 'C' 뒤(전체 col 3)
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Enter' });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+    expect(prevent).toHaveBeenCalled();
+    // 구버전 walkBlock은 span 내부 캐럿을 못 봐(caretLine=null) 마지막 줄 끝 폴백으로 오분할된다.
+    expect(onTextChange).toHaveBeenCalledWith('ABC\nDEF', [
+      { type: 'text', text: 'ABC' },
+      { type: 'text', text: 'DEF' },
+    ]);
+  });
+});
+
+// 39-1: 하이라이트-only 클리어(while focused) — remount 후 캐럿을 줄 시작이 아닌 원래 열(col)로 복원.
+describe('Editor — 하이라이트 클리어의 열-정확 캐럿 복원(focusCaretAt)', () => {
+  it('포커스 중 하이라이트 클리어 → remount + 캐럿이 원래 col로 복원되고 span이 사라진다', async () => {
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('ABCDEF')]} onTextChange={() => {}} spellHighlights={[{ start: 2, end: 4 }]} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    // 편집 중(포커스 보유) 상태 모사 — 현재 DOM의 편집 div를 activeElement로.
+    Object.defineProperty(document, 'activeElement', {
+      configurable: true, get: () => container.querySelector('.yh-editor'),
+    });
+    try {
+      const line = container.querySelector('.yh-editor__line');
+      setCaret(line.childNodes[2], 1); // span 뒤 'EF' offset 1 → col 5
+      rerender(<Editor blocks={[textBlock('ABCDEF')]} onTextChange={() => {}} spellHighlights={[]} />);
+      await waitFor(() => {
+        expect(container.querySelectorAll('.yh-editor__spell')).toHaveLength(0); // span 사라짐
+        expect(container.querySelector('.yh-editor')).not.toBe(before); // remount(renderTick 증가)
+        const newLine = container.querySelector('.yh-editor__line');
+        const sel = window.getSelection();
+        expect(sel.anchorNode).toBe(newLine.firstChild); // 클리어 후 단일 텍스트 노드
+        expect(sel.anchorOffset).toBe(5); // 줄 시작(0)이 아니라 col 5
+      });
+    } finally {
+      delete document.activeElement;
+    }
+  });
+});
+
+// 39-1 [high-2]: 하이라이트 존재 상태에서 첫 입력이 한글 조합 — 조합 중 remount/클리어 금지·글자 무손실·
+// compositionend 이후 클리어-remount에서 열-정확 복원(news.md L168·L176 계열).
+describe('Editor — 하이라이트 + IME 조합(조합 중 클리어-remount 금지)', () => {
+  async function runComposition({ caretOffsetInSpan, mutate, emitted, caretAfter, colAfter }) {
+    const onTextChange = vi.fn();
+    const { container, rerender } = render(
+      <Editor blocks={[textBlock('ABCDEF')]} onTextChange={onTextChange} spellHighlights={[{ start: 2, end: 4 }]} />,
+    );
+    const before = container.querySelector('.yh-editor');
+    Object.defineProperty(document, 'activeElement', {
+      configurable: true, get: () => container.querySelector('.yh-editor'),
+    });
+    try {
+      const cdText = container.querySelector('.yh-editor__spell').firstChild; // span 안 'CD'
+      setCaret(cdText, caretOffsetInSpan);
+      fireEvent.compositionStart(before);
+      mutate(cdText); // 브라우저가 조합 글자를 캐럿 위치(span 텍스트 노드)에 삽입한 상황 모사
+      fireEvent.input(before);
+      // 조합 중 — emit 금지 + remount 없음(renderTick 불변 = 동일 노드) + 하이라이트 클리어 없음.
+      expect(onTextChange).not.toHaveBeenCalled();
+      expect(container.querySelector('.yh-editor')).toBe(before);
+      expect(container.querySelector('.yh-editor__spell')).not.toBeNull();
+      fireEvent.compositionEnd(before);
+      // 조합 완료 — 정확한 텍스트로 emit(무손실·무중복).
+      expect(onTextChange).toHaveBeenCalledWith(emitted, [{ type: 'text', text: emitted }]);
+      // 조합 후 캐럿(조합 글자 뒤) 모사 후, step2 클리어(같은 텍스트 echo + 빈 하이라이트).
+      setCaret(cdText, caretAfter);
+      rerender(<Editor blocks={[textBlock(emitted)]} onTextChange={onTextChange} spellHighlights={[]} />);
+      await waitFor(() => {
+        expect(container.querySelectorAll('.yh-editor__spell')).toHaveLength(0);
+        const newLine = container.querySelector('.yh-editor__line');
+        expect(newLine.textContent).toBe(emitted); // 조합 글자 무손실·무중복
+        const sel = window.getSelection();
+        expect(sel.anchorNode).toBe(newLine.firstChild);
+        expect(sel.anchorOffset).toBe(colAfter); // 열-정확(줄 시작으로 튀지 않음)
+      });
+    } finally {
+      delete document.activeElement;
+    }
+  }
+
+  it('캐럿이 span 경계(끝)일 때 — 조합 중 remount 없음·완료 후 열-정확 클리어', async () => {
+    await runComposition({
+      caretOffsetInSpan: 2, // 'CD' 끝(span 경계)
+      mutate: (t) => { t.textContent = 'CD가'; },
+      emitted: 'ABCD가EF',
+      caretAfter: 3, // 'CD가'의 '가' 뒤
+      colAfter: 5, // 'AB'(2) + 3
+    });
+  });
+
+  it('캐럿이 span 내부일 때 — 조합 중 remount 없음·완료 후 열-정확 클리어', async () => {
+    await runComposition({
+      caretOffsetInSpan: 1, // 'CD' 안 'C' 뒤
+      mutate: (t) => { t.textContent = 'C가D'; },
+      emitted: 'ABC가DEF',
+      caretAfter: 2, // 'C가D'의 '가' 뒤
+      colAfter: 4, // 'AB'(2) + 2
+    });
+  });
+});
+
+// 39-1: "(끝)" 마커 차단 판정 — span-aware offset 덕분에 하이라이트가 있어도 오탐/미탐이 없어야 한다.
+describe('Editor — 하이라이트 + "(끝)" 마커 차단 판정(span-aware offset)', () => {
+  it('span 뒤 마커 영역 캐럿은 차단(미탐 없음), span 안 마커 앞 캐럿은 허용(오탐 없음)', () => {
+    // 한 줄 '본문(끝)' — 마커는 offset 2부터, '본문'(0..2)이 span으로 감싸인다.
+    const { container } = render(
+      <Editor blocks={[textBlock('본문(끝)')]} onTextChange={() => {}} spellHighlights={[{ start: 0, end: 2 }]} />,
+    );
+    const box = screen.getByRole('textbox', { name: '본문' });
+    const line = container.querySelector('.yh-editor__line');
+    // 마커 텍스트 노드('(끝)') offset 1 → 실제 offset 3(≥2) — 앞 span 길이를 빼먹으면 1(<2)로 미탐.
+    setCaret(line.childNodes[1], 1);
+    expect(fireWithPreventSpy(box, 'keyDown', { key: 'a' })).toHaveBeenCalled();
+    // span 안('본문') offset 1 → 실제 offset 1(<2) — 허용.
+    setCaret(line.childNodes[0].firstChild, 1);
+    expect(fireWithPreventSpy(box, 'keyDown', { key: 'a' })).not.toHaveBeenCalled();
   });
 });

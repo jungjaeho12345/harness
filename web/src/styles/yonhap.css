@@ -516,6 +516,10 @@ a { color: var(--yh-blue); }
 
 .yh-editor__line { min-height: calc(var(--yh-editor-line-height, 1.8) * 1em); white-space: pre-wrap; }
 
+/* 맞춤법 하이라이트(39-1) — 오류 표현 굵게/밑줄. 색은 지정하지 않는다(줄 role 색 상속). */
+.yh-editor__spell--bold { font-weight: 700; }
+.yh-editor__spell--underline { text-decoration: underline; }
+
 /* 에디터 상태표시줄 — 워드수·Byte·단락/행/열·삽입/수정·언어. 신문형 밀도(좁은 행간·작은 글씨). */
 .yh-editor-statusbar {
   display: flex;

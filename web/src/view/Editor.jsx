@@ -7,11 +7,14 @@
 // "맘대로 써지고", 브라우저가 직접 바꾼 DOM을 React가 재조정하다 removeChild로 크래시(화면 하얘짐)한다.
 // → 타이핑 중에는 React가 편집 영역을 다시 그리지 않는다(내부 snapshot 고정). 외부/구조 변경(로드·Ctrl+D·
 //   임베드 추가/삭제·Alt+Y·포커스 이탈 재색칠)일 때만 snapshot을 갱신하고 편집 div를 깨끗이 remount한다.
+// 맞춤법 하이라이트(39-1): spellHighlights(blocksToText 절대 오프셋 span)를 표시전용으로 렌더한다 —
+//   세그먼트는 highlightSnapRef 스냅샷에서만 읽고(prop 직접 읽기 금지), 변화는 renderTick remount로만 반영한다.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock, isValidAlign, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
 import { isInputBlocked, insertTextIntoBlocks } from './editorNewline.js';
+import { buildLineHighlights } from './editorSpellHighlight.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
 
 // contentEditable에서 입력된 본문 텍스트를 라인 div 기준으로 재구성한다(임베드 figure는 제외).
@@ -110,8 +113,20 @@ function alignSig(blocks) {
   return JSON.stringify((Array.isArray(blocks) ? blocks : []).filter(isTextBlock).map((b) => b.align || ''));
 }
 
-// 현재 selection 캐럿을 { lineIndex, offset }으로 읽는다 — lineIndex는 라인 div(=텍스트 블록) 순서,
-// offset은 readEditorText(=blocksToText) 기준 텍스트 오프셋. selection이 없거나 에디터 밖이면 null(차단/삭제 판정에서 허용 기본값).
+// 맞춤법 하이라이트 서명 — 하이라이트 유무/내용/스타일 변화 판정 전용(텍스트·임베드·정렬 echo 판정과 독립 —
+// 표시 신호가 echo 판정을 오염시키면 타이핑마다 헛 remount가 난다: phase 35 alignSig 계열 회귀).
+// 스타일(bold↔underline) 변경도 remount가 필요하므로 시그니처에 포함한다.
+function highlightSig(spans, style) {
+  return JSON.stringify({ s: spans || [], st: style });
+}
+
+// 현재 selection 캐럿을 { lineIndex, offset, col }으로 읽는다 — lineIndex는 라인 div(=텍스트 블록) 순서,
+// offset은 readEditorText(=blocksToText) 기준 텍스트 오프셋, col은 줄 내 열(=offsetInLine).
+// selection이 없거나 에디터 밖이면 null(차단/삭제 판정에서 허용 기본값).
+// offsetInLine 계약(39-1): 줄 요소 시작부터 캐럿 지점 (anchorNode, anchorOffset)까지 document-order로
+// 앞서는 모든 텍스트의 길이(하이라이트 span 내부 텍스트 포함). 하이라이트 span이 생기면 줄이
+// [텍스트, <span>, 텍스트, …]가 되므로, anchorOffset만 보는 좁은 규칙은 앞 span 길이를 누락해 col이 과소 계산된다.
+// 단일 텍스트 노드 줄에선 range.toString().length === anchorOffset이라 기존과 동일(하위호환).
 export function readCaret(root) {
   const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
   if (!root || !sel || sel.rangeCount === 0) return null;
@@ -124,10 +139,18 @@ export function readCaret(root) {
   }
   const lineIndex = lineEls.indexOf(lineEl);
   if (lineIndex === -1) return null;
-  const offsetInLine = node.nodeType === 3 ? sel.anchorOffset : 0;
+  let offsetInLine;
+  if (typeof document !== 'undefined' && document.createRange) {
+    const r = document.createRange();
+    r.selectNodeContents(lineEl); // 줄 내용 시작
+    r.setEnd(node, sel.anchorOffset); // 캐럿 지점까지(요소 anchor면 그 자식 경계까지)
+    offsetInLine = r.toString().length; // 앞선 전체 텍스트 길이(span 내부 포함)
+  } else {
+    offsetInLine = node.nodeType === 3 ? sel.anchorOffset : 0; // Range 미지원 폴백(기존 좁은 규칙)
+  }
   let offset = 0;
   for (let i = 0; i < lineIndex; i += 1) offset += (lineEls[i].textContent ?? '').length + 1; // +1 개행
-  return { lineIndex, offset: offset + offsetInLine };
+  return { lineIndex, offset: offset + offsetInLine, col: offsetInLine };
 }
 
 // emitInsert(Enter·여러 줄 붙여넣기) 전용 캐럿 — readEditorBlocks/elementToLines와 "같은 줄 기준"으로
@@ -167,8 +190,25 @@ function readCaretForInsert(root) {
         } else if (BLOCK_TAGS.has(child.tagName) || (child.classList && child.classList.contains('yh-editor__line'))) {
           if (dirty) pushLine();
           walkBlock(child);
-        } else { // 인라인
+        } else { // 인라인 — 요소 자신이 anchor면 기존대로, 내부 텍스트 노드에 캐럿(A)이 있으면
+          // 앞선 텍스트 길이를 누적해 col을 잡는다(하이라이트 span 안 Enter — span 없을 땐 결과 불변).
           if (child === A && caretLine === null) { caretLine = out.length; caretCol = cur.length; }
+          if (caretLine === null && child.contains && child.contains(A)) {
+            let acc = cur.length;
+            const seek = (el2) => {
+              for (const sub of el2.childNodes) {
+                if (sub === A) {
+                  caretLine = out.length;
+                  caretCol = sub.nodeType === 3 ? acc + Math.min(AO, (sub.textContent ?? '').length) : acc;
+                  return true;
+                }
+                if (sub.nodeType === 3) acc += (sub.textContent ?? '').length;
+                else if (sub.nodeType === 1 && seek(sub)) return true;
+              }
+              return false;
+            };
+            seek(child);
+          }
           cur += child.textContent ?? ''; dirty = true;
         }
       }
@@ -234,6 +274,30 @@ function focusLineStart(root, lineIndex) {
   sel.addRange(range);
 }
 
+// 편집 div에 focus 후 지정 텍스트-줄(clamp)의 col 위치에 collapsed 캐럿을 둔다(focusLineStart의 형제).
+// 39-1: 하이라이트-only 클리어 remount 전용 — 클리어 직후 그 줄은 항상 하이라이트가 비어 단일 텍스트 노드라
+// firstChild(텍스트 노드) 가정이 성립한다(span이 남는 SET-while-focused에서는 호출되지 않는다).
+// 줄이 비어 텍스트 노드가 없으면 줄 시작으로 폴백.
+function focusCaretAt(root, lineIndex, col) {
+  if (!root) return;
+  root.focus();
+  const lineEls = root.querySelectorAll('.yh-editor__line');
+  if (!lineEls.length) return;
+  const idx = Math.max(0, Math.min(lineIndex, lineEls.length - 1));
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!sel || typeof document === 'undefined' || !document.createRange) return;
+  const range = document.createRange();
+  const tn = lineEls[idx].firstChild;
+  if (tn && tn.nodeType === 3) {
+    range.setStart(tn, Math.max(0, Math.min(col, tn.length)));
+  } else {
+    range.selectNodeContents(lineEls[idx]); // 빈 줄 폴백 — 줄 시작
+  }
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 // readOnly: 완전 읽기전용(텍스트 비편집 + 임베드 × 버튼 숨김 — 상세보기 등).
 // textEditable: 본문 텍스트 편집 가능 여부. false면 본문 텍스트 타이핑이 body에 반영되지 않는다.
 //   단 임베드 × 삭제 버튼은 그대로 노출된다(매핑 모드 — 텍스트 비편집 + 임베드 추가/삭제 허용).
@@ -247,6 +311,8 @@ export function Editor({
   onCaretChange,
   pendingCaretLine = null,
   spellcheck = false,
+  spellHighlights = [], // [{ start, end }] — blocksToText 절대 오프셋 span 목록(맞춤법 하이라이트 표시 대상)
+  spellHighlightStyle = 'bold', // 'bold' | 'underline' — 오류 표현(news.md 맞춤법 설정). 둘 다 표시 전용(콜백 미유발)
   readOnly = false,
   textEditable = true,
 }) {
@@ -268,6 +334,20 @@ export function Editor({
   const lastEmittedRef = useRef(blocksToText(blocks));
   const lastAlignRef = useRef(alignSig(blocks));
   const forceRecolorRef = useRef(false);
+  // highlightSnapRef: 실제로 DOM에 그려진 맞춤법 하이라이트 스냅샷({ map: 줄 인덱스→세그먼트, style }) 또는 null.
+  // 렌더는 이 ref만 읽는다 — spellHighlights prop을 직접 읽으면 타이핑 중 부모 재렌더가 편집 div 자식(span)을
+  // 브라우저 변형 DOM과 child-diff해 removeChild 크래시/캐럿 소실(파일 상단 CRITICAL). 하이라이트가 없으면 null
+  // → 렌더는 순수 텍스트 노드 폴백(오늘과 동일 DOM — 기존 캐럿/echo/IME 불변식 보존, 회귀 표면 0).
+  // 계산은 최초 마운트 1회 + structural remount 시에만(렌더/타이핑마다 buildLineHighlights 재계산 금지).
+  const highlightSnapRef = useRef(undefined);
+  if (highlightSnapRef.current === undefined) {
+    highlightSnapRef.current = (spellHighlights && spellHighlights.length)
+      ? { map: buildLineHighlights(blocksToText(blocks), spellHighlights), style: spellHighlightStyle }
+      : null;
+  }
+  // lastHighlightSigRef: 마지막으로 렌더된 하이라이트 서명 — 하이라이트 변화 판정 전용.
+  // 하이라이트 유무/내용은 lastEmittedRef(텍스트)·embedSig·alignSig에 절대 영향 주지 않는다.
+  const lastHighlightSigRef = useRef(highlightSig(spellHighlights, spellHighlightStyle));
   // rootRef: 편집 div DOM 참조(remount 후 포커스/캐럿 복원용). refocusRef: 복원 대상 { lineIndex } 또는 null.
   const rootRef = useRef(null);
   const refocusRef = useRef(null);
@@ -275,35 +355,53 @@ export function Editor({
   const nextCaretLineRef = useRef(null);
   const [renderTick, setRenderTick] = useState(0);
 
-  // blocks(prop)가 바뀌면 "타이핑 echo"인지 "외부/구조 변경"인지 판정한다.
-  // echo(텍스트·임베드 동일)면 무시(편집 div를 다시 그리지 않음 → 캐럿 보존). 그 외엔 snapshot 갱신 + remount.
+  // blocks(prop)/하이라이트가 바뀌면 "타이핑 echo"인지 "외부/구조 변경"인지 판정한다.
+  // echo(텍스트·임베드·정렬·하이라이트 동일)면 무시(편집 div를 다시 그리지 않음 → 캐럿 보존). 그 외엔 snapshot 갱신 + remount.
+  // 하이라이트 변화도 remount로만 반영한다(bare prop 재조정 금지 — 브라우저 변형 DOM과의 child-diff 회피).
   useEffect(() => {
     const incomingText = blocksToText(blocks);
-    const structural = forceRecolorRef.current
-      || incomingText !== lastEmittedRef.current
-      || embedSig(blocks) !== embedSig(snapRef.current)
-      || alignSig(blocks) !== lastAlignRef.current;
+    const textChanged = incomingText !== lastEmittedRef.current;
+    const embedChanged = embedSig(blocks) !== embedSig(snapRef.current);
+    const alignChanged = alignSig(blocks) !== lastAlignRef.current;
+    const hlSig = highlightSig(spellHighlights, spellHighlightStyle);
+    const hlChanged = hlSig !== lastHighlightSigRef.current;
+    const structural = forceRecolorRef.current || textChanged || embedChanged || alignChanged || hlChanged;
     if (!structural) { nextCaretLineRef.current = null; return; }
     // remount(아래 setRenderTick)로 편집 div가 새로 그려지면 포커스/캐럿이 빠진다.
     // Enter 분할/여러 줄 붙여넣기는 새 줄 위치를 nextCaretLineRef로 명시한다(이 경로는 항상 편집 중).
     // 그 외 구조 변경은 직전 편집 중(에디터 포커스 보유)이었다면 현재 캐럿 라인을 복원 대상으로 기록한다.
     // 포커스가 에디터 밖(blur 재색칠·외부 로드·검색 임베드 삽입)이면 복원하지 않는다(포커스 가로채기 금지).
+    // 열(col) 복원은 "하이라이트-only 클리어 while focused"에만 한다 — 타이핑-echo 클리어 remount가
+    // 줄 시작으로 튀지 않게. 신규 하이라이트가 비지 않는 SET-while-focused는 제외해(hlOnlyClear 조건)
+    // focusCaretAt이 항상 "클리어 후 단일 텍스트 노드 줄"에서만 호출되게 한다.
+    // 하이라이트 외 structural(Ctrl+D/Enter/로드)은 기존 줄-시작 복원 그대로(계약 불변).
+    const hlOnlyClear = hlChanged && !textChanged && !embedChanged && !alignChanged
+      && !(spellHighlights && spellHighlights.length);
     const focusedRoot = rootRef.current;
     const wasFocused = !!focusedRoot && typeof document !== 'undefined' && document.activeElement === focusedRoot;
     const override = nextCaretLineRef.current;
     nextCaretLineRef.current = null;
     if (override != null) {
       refocusRef.current = { lineIndex: override };
+    } else if (wasFocused && hlOnlyClear) {
+      const c = readCaret(focusedRoot); // span-aware — 앞 span 길이 포함 col
+      refocusRef.current = c ? { lineIndex: c.lineIndex, col: c.col } : { lineIndex: 0 };
+    } else if (wasFocused) {
+      const c = readCaret(focusedRoot);
+      refocusRef.current = { lineIndex: c ? c.lineIndex : 0 };
     } else {
-      const caretNow = wasFocused ? readCaret(focusedRoot) : null;
-      refocusRef.current = wasFocused ? { lineIndex: caretNow ? caretNow.lineIndex : 0 } : null;
+      refocusRef.current = null;
     }
     snapRef.current = blocks;
     lastEmittedRef.current = incomingText;
     lastAlignRef.current = alignSig(blocks);
     forceRecolorRef.current = false;
+    highlightSnapRef.current = (spellHighlights && spellHighlights.length)
+      ? { map: buildLineHighlights(incomingText, spellHighlights), style: spellHighlightStyle }
+      : null;
+    lastHighlightSigRef.current = hlSig;
     setRenderTick((t) => t + 1);
-  }, [blocks]);
+  }, [blocks, spellHighlights, spellHighlightStyle]);
 
   // remount(renderTick 증가)/지정 줄 포커스(pendingCaretLine) 복원 — 단일 경로.
   // ① pendingCaretLine: Step 3에서 body 변경(remount)과 같은 렌더에 함께 온다. number면 wasFocused 복원보다
@@ -311,6 +409,7 @@ export function Editor({
   //    textLocked(읽기전용/매핑)면 무시한다.
   // ② refocusRef(wasFocused): 직전 편집 중이었다면 편집 div에 포커스/캐럿을 복원한다.
   //    없으면 Ctrl+D 라인 삭제 시 remount로 포커스가 빠져, 다음 Ctrl+D가 브라우저 기본동작(북마크)으로 샌다.
+  //    col이 있으면(하이라이트-only 클리어, 39-1) 줄 시작이 아니라 그 열에 복원한다 — 그 외엔 기존 줄-시작 그대로.
   useLayoutEffect(() => {
     const target = refocusRef.current;
     refocusRef.current = null; // 항상 소비(원본 동작)
@@ -321,6 +420,10 @@ export function Editor({
       return;
     }
     if (!target) return;
+    if (target.col != null) {
+      focusCaretAt(root, target.lineIndex, target.col); // 하이라이트-only 클리어 — 열-정확 복원(줄 시작 튐 방지)
+      return;
+    }
     focusLineStart(root, target.lineIndex); // 삭제 위치의 라인 시작에 캐럿 — 연속 Ctrl+D가 자연스럽게 이어진다.
   }, [renderTick, pendingCaretLine, textLocked]);
 
@@ -483,6 +586,12 @@ export function Editor({
           // 화이트리스트를 통과한 정렬만 렌더에 쓴다(step3와 방어 깊이 통일). 미정렬/무효면 속성·스타일 생략
           // → data-align={undefined}는 속성이 안 붙어 현행 DOM과 동일(회귀 안전).
           const align = isValidAlign(block.align) ? block.align : undefined;
+          // 맞춤법 하이라이트(39-1): 세그먼트는 highlightSnapRef 스냅샷에서만 읽는다(prop 직접 읽기 금지 —
+          // 파일 상단 CRITICAL). hl 세그먼트가 없는 줄은 {block.text} 순수 텍스트 노드 폴백(오늘과 동일 DOM).
+          // 비-hl 세그먼트는 bare 문자열(텍스트 노드), hl 세그먼트만 span. span은 색 미지정(줄 role 색 상속).
+          const hl = highlightSnapRef.current;
+          const segs = hl ? hl.map[textLine] : null;
+          const hlStyle = (hl && hl.style === 'underline') ? 'underline' : 'bold';
           return (
             <div
               key={`text-${i}`}
@@ -491,7 +600,15 @@ export function Editor({
               data-align={align}
               style={{ color: colorForRole(role), ...(align ? { textAlign: align } : null) }}
             >
-              {block.text}
+              {(segs && segs.length && segs.some((s) => s.hl))
+                ? segs.map((seg, k) => (seg.hl
+                  ? (
+                    <span key={k} className={`yh-editor__spell yh-editor__spell--${hlStyle}`} data-testid="spell-hl">
+                      {seg.text}
+                    </span>
+                  )
+                  : seg.text))
+                : block.text}
             </div>
           );
         }
