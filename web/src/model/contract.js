@@ -13,6 +13,9 @@ export const MODEL_KEYS = Object.freeze([
   'getArticle',
   'searchArticles',
   'searchMedia',
+  // 사진발행/DB등록(phase 41) — 등록 POST /api/photos · 캡션 검색 GET /api/photos/search와 1:1.
+  'publishPhoto',
+  'searchPhotos',
   'applyAction',
   'saveArticle',
   'lockArticle',

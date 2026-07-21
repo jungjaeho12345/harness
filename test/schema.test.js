@@ -285,8 +285,51 @@ test('backfillEmptyDepartments: 멱등 — 두 번째 호출은 보정할 행이
 test('createSchema: FK 제약을 선언하지 않는다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
-  for (const t of ['Article', 'ArticleHistory', 'Contents', 'ReceiverConfig', 'User']) {
+  for (const t of ['Article', 'ArticleHistory', 'Contents', 'Photo', 'ReceiverConfig', 'User']) {
     const fks = db.prepare(`PRAGMA foreign_key_list(${t})`).all();
     assert.equal(fks.length, 0, `${t}에 FK가 없어야 함`);
   }
+});
+
+test('createSchema: Photo 테이블과 컬럼을 생성한다 (사진DB — additive 신규)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('Photo'), 'Photo 테이블이 있어야 함');
+  const cols = columns(db, 'Photo');
+  for (const c of ['id', 'src', 'caption', 'sourceArticleId', 'registeredBy', 'createdAt']) {
+    assert.ok(cols.includes(c), `Photo.${c}`);
+  }
+});
+
+test('createSchema: Photo.id는 INTEGER PRIMARY KEY (ROWID alias 자동증가)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const idCol = db.prepare('PRAGMA table_info(Photo)').all().find((c) => c.name === 'id');
+  assert.equal(idCol.pk, 1, 'id가 PK여야 함');
+  assert.equal(idCol.type, 'INTEGER', 'id 타입은 INTEGER여야 함');
+  db.prepare("INSERT INTO Photo (src, caption) VALUES ('/uploads/a.png', '캡션1')").run();
+  db.prepare("INSERT INTO Photo (src, caption) VALUES ('/uploads/b.png', '캡션2')").run();
+  const ids = db.prepare('SELECT id FROM Photo ORDER BY id').all().map((r) => r.id);
+  assert.deepEqual(ids, [1, 2], 'id가 자동 증가해야 함');
+});
+
+test('createSchema: Photo가 없는 구버전 DB에 additive로 생기고 기존 행이 보존된다', () => {
+  const db = new DatabaseSync(':memory:');
+  // 구버전: Photo 테이블 없이 다른 테이블 + 기존 행만 있는 DB.
+  db.exec('CREATE TABLE Contents (articleId VARCHAR PRIMARY KEY, title VARCHAR)');
+  db.prepare("INSERT INTO Contents (articleId, title) VALUES ('a1', '옛 기사')").run();
+
+  createSchema(db);
+
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('Photo'), 'Photo 테이블이 additive로 생겨야 함');
+  const row = db.prepare("SELECT * FROM Contents WHERE articleId='a1'").get();
+  assert.equal(row.title, '옛 기사', '기존 행은 보존되어야 함 (비파괴)');
 });

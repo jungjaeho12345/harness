@@ -1417,10 +1417,10 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('되돌리기·다시실행은 활성이고, 미결선 항목(사진발행/DB등록)은 여전히 비활성이다', async () => {
+  it('되돌리기·다시실행은 활성이고, 미결선 항목(UI 언어 설정)은 여전히 비활성이다', async () => {
     // 되돌리기/다시실행(edit.undo/redo)도 37-editor-undo-redo에서 결선돼 활성이 됐으므로(찾기/바꾸기=14,
-    // 파일 메뉴=34, 클립보드 5종=36과 동일 계보), 미결선 예시는 도구 '사진발행/DB등록'(tools.publishPhoto —
-    // 백엔드/DB 필요, out-of-scope)으로 검증한다.
+    // 파일 메뉴=34, 클립보드 5종=36과 동일 계보), 미결선 예시는 도구 'UI 언어 설정'(tools.uiLanguage —
+    // 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성, 남은 미결선으로 교체)으로 검증한다.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await openTopMenu('편집');
@@ -1428,7 +1428,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
     expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
     await openTopMenu('도구');
-    expect(within(screen.getByTestId('menu-도구')).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -2577,16 +2577,16 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("다시실행·되돌리기는 활성이고, 미결선 항목(사진발행/DB등록)은 여전히 비활성이다(회귀)", async () => {
+  it("다시실행·되돌리기는 활성이고, 미결선 항목(UI 언어 설정)은 여전히 비활성이다(회귀)", async () => {
     // 다시실행/되돌리기(edit.redo/undo)가 37-editor-undo-redo에서 결선돼 활성 — 미결선 예시를
-    // 도구 '사진발행/DB등록'(tools.publishPhoto — 백엔드/DB 필요, out-of-scope)으로 교체.
+    // 도구 'UI 언어 설정'(tools.uiLanguage — 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성)으로 교체.
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
     expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
     expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
     await openTopMenu('도구');
-    expect(within(screen.getByTestId('menu-도구')).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
@@ -3924,13 +3924,13 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
 
-  it('다른 비결선 도구 항목(tools.publishPhoto)은 여전히 비활성이다(회귀 없음)', async () => {
+  it('다른 비결선 도구 항목(tools.uiLanguage)은 여전히 비활성이다(회귀 없음)', async () => {
     // 회귀 가드 — 날짜 삽입 결선이 무관한 도구 항목을 켜지 않았는지 확인한다.
-    // (약어변환/약어관리는 23-editor-abbrev step1에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 사진발행/DB등록으로 가드한다.)
+    // (사진발행/DB등록은 41-photo-publish-db step2에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 UI 언어 설정으로 가드한다.)
     await openWith([textBlock('헤드')]);
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 });
 
@@ -3986,8 +3986,8 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     expect(within(menu).getByText('오디오 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('로컬영상 삽입').closest('button')).toBeEnabled();
-    // 비결선 도구 항목은 여전히 비활성(회귀 가드).
-    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    // 비결선 도구 항목은 여전히 비활성(회귀 가드 — 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성, UI 언어 설정으로 교체).
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
   it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
@@ -4647,12 +4647,11 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
     expect(within(menu).getByText('간체↔번체 변환').closest('button')).toBeEnabled();
   });
 
-  it('다른 비결선 도구 항목(사진발행/UI언어)은 여전히 비활성이다(회귀 없음)', async () => {
-    // (기사이력비교는 25-article-history-compare step2에서 의도적으로 결선되어 이제 활성 — 가드 대상에서 제외.)
+  it('다른 비결선 도구 항목(UI 언어 설정)은 여전히 비활성이다(회귀 없음)', async () => {
+    // (기사이력비교=25 step2·사진발행/DB등록=41 step2에서 의도적으로 결선되어 이제 활성 — 가드 대상에서 제외.)
     await openWith([textBlock('헤드')]);
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
     expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
@@ -4808,11 +4807,12 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
     expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
   });
 
-  it('비결선 도구 항목(tools.publishPhoto)은 여전히 비활성이다(회귀 가드)', async () => {
+  it('비결선 도구 항목(tools.uiLanguage)은 여전히 비활성이다(회귀 가드)', async () => {
+    // 사진발행/DB등록(tools.publishPhoto)은 41-photo-publish-db step2에서 결선돼 활성 — 남은 미결선(UI 언어 설정)으로 교체.
     await openWith([textBlock('헤드')], { histories: HISTORIES });
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
   });
 
   it("클릭 시 HistoryCompareDialog(history-compare, role=dialog '기사 이력 비교')가 열린다", async () => {
@@ -6710,5 +6710,268 @@ describe('WriterPage — 되돌리기/다시실행(editorHistory 결선)', () =>
     fireEvent(keyword, redoEv);
     expect(redoSpy).not.toHaveBeenCalled();
     expect(editorLines(container)).toEqual(['ABC', 'def']);
+  });
+});
+
+// Step 2(41-photo-publish-db): 도구>사진발행/DB등록(tools.publishPhoto) 결선 — PhotoPublishDialog를 열어
+// 현재 본문의 이미지 임베드를 골라 캡션과 함께 model.publishPhoto({src,caption,sourceArticleId})로 등록한다.
+// 등록은 본문/캐럿/임베드 무변경(읽기 액션 — commitBody/serialize/insertEmbed 미호출) — 매핑 가드 앞 결선
+// (매핑에서도 열림, tools.fileInfo와 동일 정책). 탭 전환 시 닫힘(imageEmbeds/sourceArticleId 탭-로컬).
+describe('WriterPage — 사진발행/DB등록(tools.publishPhoto) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 도구 메뉴를 열고 '사진발행/DB등록'을 클릭한다(파일 정보/기사이력비교 결선과 동일 패턴).
+  async function clickPublishPhoto() {
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('사진발행/DB등록').closest('button'));
+  }
+
+  it("도구 메뉴 '사진발행/DB등록'(tools.publishPhoto)이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeEnabled();
+  });
+
+  it('클릭 시 PhotoPublishDialog가 열리고, 본문의 이미지 임베드만 목록에 나타난다(영상/표 제외)', async () => {
+    await openWith([
+      textBlock('헤드'),
+      embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' }),
+      embedBlock({ embedType: 'video', src: 'https://youtube.com/watch?v=x' }),
+      textBlock('본문'),
+      embedBlock({ embedType: 'image', src: '/uploads/b.png', alt: '사진B' }),
+    ]);
+    await clickPublishPhoto();
+
+    const dialog = screen.getByTestId('photo-publish');
+    expect(screen.getByRole('dialog', { name: '사진발행/DB등록' })).toBeInTheDocument();
+    const thumbs = within(dialog).getAllByRole('img');
+    expect(thumbs).toHaveLength(2);
+    expect(thumbs[0]).toHaveAttribute('src', '/uploads/a.png');
+    expect(thumbs[1]).toHaveAttribute('src', '/uploads/b.png');
+  });
+
+  it('이미지 선택+캡션 입력+등록 → model.publishPhoto가 {src, caption, sourceArticleId=현재 기사아이디}로 호출되고 다이얼로그가 닫힌다', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openWith([
+      textBlock('헤드'),
+      embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' }),
+      embedBlock({ embedType: 'image', src: '/uploads/b.png', alt: '사진B' }),
+      textBlock('본문'),
+    ]);
+    const publish = vi.spyOn(model, 'publishPhoto');
+
+    await clickPublishPhoto();
+    await userEvent.click(screen.getByTestId('photo-publish-choice-1'));
+    fireEvent.change(screen.getByTestId('photo-publish-caption'), { target: { value: '현장 사진' } });
+    await userEvent.click(screen.getByTestId('photo-publish-submit'));
+
+    await waitFor(() => expect(publish).toHaveBeenCalledWith({
+      src: '/uploads/b.png', caption: '현장 사진', sourceArticleId: 'AKR1',
+    }));
+    await waitFor(() => expect(screen.queryByTestId('photo-publish')).toBeNull());
+    expect(alert).toHaveBeenCalledWith('사진을 DB에 등록했습니다.');
+    // 등록→검색 루프(fakeModel in-memory 스토어) — 등록된 캡션으로 검색되면 실제로 등록된 것.
+    const found = await model.searchPhotos('현장');
+    expect(found.items).toHaveLength(1);
+    expect(found.items[0].src).toBe('/uploads/b.png');
+    expect(found.items[0].sourceArticleId).toBe('AKR1');
+  });
+
+  it('등록은 본문을 바꾸지 않는다(읽기 액션) — 등록 후 보류 저장 시 원본 markupVersion이 그대로 PUT된다', async () => {
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const blocks = [
+      textBlock('헤드'),
+      embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' }),
+      textBlock('본문'),
+    ];
+    const original = serialize(blocks);
+    const { model } = await openWith(blocks);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickPublishPhoto();
+    fireEvent.change(screen.getByTestId('photo-publish-caption'), { target: { value: '캡션' } });
+    await userEvent.click(screen.getByTestId('photo-publish-submit'));
+    await waitFor(() => expect(screen.queryByTestId('photo-publish')).toBeNull());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it("매핑 탭에서도 '사진발행/DB등록'이 활성이고 다이얼로그가 열린다(매핑 가드 앞 — tools.fileInfo와 동일 정책)", async () => {
+    await openWith(
+      [textBlock('헤드'), embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' })],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('사진발행/DB등록').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('사진발행/DB등록').closest('button'));
+    expect(screen.getByTestId('photo-publish')).toBeInTheDocument();
+  });
+
+  it('신규(미저장) 탭에서는 sourceArticleId가 빈 문자열로 등록된다(best-effort 출처 — 등록을 막지 않음)', async () => {
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    // 신규 작성 탭(pendingEdit 없음 — articleId 미생성) — 도구>그림 삽입(URL 직접 임베드,
+    // 검색패널과 동일 insertEmbed 경로)으로 본문에 이미지 임베드를 만든 뒤 등록한다.
+    const { model } = setup({ identity: { role: 'R' } });
+    const publish = vi.spyOn(model, 'publishPhoto');
+    await openTopMenu('도구');
+    await userEvent.click(within(screen.getByTestId('menu-도구')).getByText('그림 삽입').closest('button'));
+    fireEvent.change(screen.getByTestId('url-embed-input'), { target: { value: 'https://img.example.com/a.png' } });
+    await userEvent.click(screen.getByTestId('url-embed-submit'));
+
+    await clickPublishPhoto();
+    fireEvent.change(screen.getByTestId('photo-publish-caption'), { target: { value: '신규 캡션' } });
+    await userEvent.click(screen.getByTestId('photo-publish-submit'));
+
+    await waitFor(() => expect(publish).toHaveBeenCalledWith({
+      src: 'https://img.example.com/a.png', caption: '신규 캡션', sourceArticleId: '',
+    }));
+  });
+
+  it('본문에 이미지 임베드가 없으면 빈 상태 안내가 뜨고 등록 버튼이 비활성이다(등록 불가 UX)', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await clickPublishPhoto();
+    expect(screen.getByTestId('photo-publish-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-publish-submit')).toBeDisabled();
+  });
+
+  it('등록 실패(!ok — 예: invalid-src)면 실패 alert만 안내하고 본문/다이얼로그 상태를 오염시키지 않는다', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openWith([
+      textBlock('헤드'),
+      embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' }),
+    ]);
+    vi.spyOn(model, 'publishPhoto').mockResolvedValue({ ok: false, reason: 'invalid-src' });
+
+    await clickPublishPhoto();
+    await userEvent.click(screen.getByTestId('photo-publish-submit'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('사진 등록에 실패했습니다.'));
+    await waitFor(() => expect(screen.queryByTestId('photo-publish')).toBeNull());
+  });
+
+  it('열린 채 탭을 전환하면 다이얼로그가 닫힌다(imageEmbeds/sourceArticleId 탭-로컬 — 이전 탭 이미지 이월 방지)', async () => {
+    await openWith([
+      textBlock('헤드'),
+      embedBlock({ embedType: 'image', src: '/uploads/a.png', alt: '사진A' }),
+    ]);
+    await clickPublishPhoto();
+    expect(screen.getByTestId('photo-publish')).toBeInTheDocument();
+
+    // ＋ 버튼으로 새 작성 탭 추가 → 활성 탭 전환 → 조정 블록이 다이얼로그를 닫는다.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('photo-publish')).toBeNull());
+  });
+});
+
+// Step 3(41-photo-publish-db): 이미지 탭 검색 소스 토글(Google | 사진DB) — 사진DB는 model.searchPhotos로
+// 등록된 사진을 캡션 검색하고, 픽은 기존 insertEmbed→makeImageEmbed 경로로 표준 image 임베드를 삽입한다
+// (재임베드 루프 — SearchPanel/InlineEmbed 무변경, 소스 토글은 이미지 탭 내부 additive·5번째 탭 아님).
+describe('WriterPage — 이미지 검색 소스(Google | 사진DB) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const PHOTO = {
+    id: 1, src: '/uploads/p1.png', caption: '현장 사진',
+    sourceArticleId: 'AKR9', registeredBy: 'kim', createdAt: '2026-07-21T00:00:00.000Z',
+  };
+
+  async function openWith(blocks, { photos = [PHOTO], mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }], photos },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 이미지 탭 열기 → 사진DB 소스 선택 → 검색까지의 공용 플로우.
+  async function searchPhotoDb(q) {
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.click(screen.getByRole('button', { name: '사진DB' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), q);
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+  }
+
+  it('이미지 탭에 Google/사진DB 소스 토글이 있고 기본은 Google이다', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')]);
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    const group = screen.getByRole('group', { name: '이미지 검색 소스' });
+    const google = within(group).getByRole('button', { name: 'Google' });
+    const photoDb = within(group).getByRole('button', { name: '사진DB' });
+    expect(google.className).toContain('yh-tab--active');
+    expect(photoDb.className).not.toContain('yh-tab--active');
+  });
+
+  it('기본(Google) 검색은 searchMedia만 부르고 searchPhotos는 부르지 않는다(기존 이미지 검색 회귀 가드)', async () => {
+    const { model } = await openWith([textBlock('헤드')]);
+    const media = vi.spyOn(model, 'searchMedia');
+    const photos = vi.spyOn(model, 'searchPhotos');
+    await userEvent.click(screen.getByRole('button', { name: '이미지' }));
+    await userEvent.type(screen.getByLabelText('image 검색어'), '고양이');
+    await userEvent.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(media).toHaveBeenCalledWith('고양이', 'image'));
+    expect(photos).not.toHaveBeenCalled();
+  });
+
+  it("'사진DB' 선택+검색 → model.searchPhotos가 호출되고 결과 썸네일(item.src)이 렌더된다", async () => {
+    const { model, container } = await openWith([textBlock('헤드')]);
+    const spy = vi.spyOn(model, 'searchPhotos');
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('현장'));
+    // SearchPanel 이미지 브랜치가 item.src로 썸네일을 렌더한다(공용 컴포넌트 무변경).
+    await waitFor(() => {
+      const img = container.querySelector('[data-testid="meta-image"] .yh-media-result img');
+      expect(img).toBeTruthy();
+      expect(img.getAttribute('src')).toBe('/uploads/p1.png');
+    });
+  });
+
+  it('사진 결과 픽 → 본문에 표준 image 임베드가 삽입된다(src=사진 src·alt=caption — 기존 insertEmbed 경로)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { model, container } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(container.querySelector('[data-testid="meta-image"] .yh-media-result')).toBeTruthy());
+    await userEvent.click(container.querySelector('[data-testid="meta-image"] .yh-media-result'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    // 보류 저장 → PUT 본문 blocks에 image 임베드(src=사진 src·alt=caption)가 추가돼 있다.
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const blocks = deserialize(save.mock.calls[0][0].markupVersion);
+    const embed = blocks.find((b) => b.type === 'embed' && b.embedType === 'image');
+    expect(embed).toBeTruthy();
+    expect(embed.src).toBe('/uploads/p1.png');
+    expect(embed.alt).toBe('현장 사진');
+  });
+
+  it('매핑 탭에서도 사진DB 픽이 임베드를 삽입한다(기존 이미지 픽과 동형 — 임베드 삽입은 매핑 허용)', async () => {
+    const { container } = await openWith(
+      [textBlock('헤드'), textBlock('본문')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await searchPhotoDb('현장');
+    await waitFor(() => expect(container.querySelector('[data-testid="meta-image"] .yh-media-result')).toBeTruthy());
+    await userEvent.click(container.querySelector('[data-testid="meta-image"] .yh-media-result'));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
   });
 });

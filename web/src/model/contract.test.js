@@ -3,9 +3,9 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 26 contract methods', () => {
+  it('is frozen and lists the 28 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(26);
+    expect(MODEL_KEYS).toHaveLength(28);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
@@ -28,6 +28,12 @@ describe('MODEL_KEYS', () => {
 
   it('includes the log-viewer keys (subscribeLogs, getLogsDigest)', () => {
     for (const key of ['subscribeLogs', 'getLogsDigest']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
+  });
+
+  it('includes the photo-db keys (publishPhoto, searchPhotos)', () => {
+    for (const key of ['publishPhoto', 'searchPhotos']) {
       expect(MODEL_KEYS).toContain(key);
     }
   });
@@ -159,6 +165,43 @@ describe('createFakeModel', () => {
     const src = (await fake.getArticle('AKR1')).article;
     expect(src.title).toBe('원본');
     expect(src.status).toBe('DPS');
+  });
+
+  it('publishPhoto→searchPhotos round-trips a caption search with registeredBy stamped from the session', async () => {
+    const fake = createFakeModel({ users: [{ userId: 'kim', password: 'pw', name: '김기자', role: 'R' }] });
+    await fake.login('kim', 'pw');
+
+    const r = await fake.publishPhoto({ src: '/uploads/a.png', caption: '현장 사진', sourceArticleId: 'AKR1' });
+    expect(r.ok).toBe(true);
+    expect(r.id).toBeTruthy();
+
+    const s = await fake.searchPhotos('현장');
+    expect(s.ok).toBe(true);
+    expect(s.items).toHaveLength(1);
+    expect(s.items[0]).toMatchObject({
+      id: r.id,
+      src: '/uploads/a.png',
+      caption: '현장 사진',
+      sourceArticleId: 'AKR1',
+      registeredBy: 'kim', // 세션 사용자로 stamp(서버 동형)
+    });
+    expect(s.items[0].createdAt).toBeTruthy();
+
+    // 캡션 불일치는 빈 결과, 반환 items는 복사본이라 고쳐도 스토어는 불변.
+    expect((await fake.searchPhotos('없는캡션')).items).toEqual([]);
+    s.items[0].caption = 'tampered';
+    expect((await fake.searchPhotos('현장')).items[0].caption).toBe('현장 사진');
+  });
+
+  it('publishPhoto ignores a client-sent registeredBy and stamps the session user (trust boundary)', async () => {
+    const fake = createFakeModel({ users: [{ userId: 'kim', password: 'pw' }] });
+    await fake.login('kim', 'pw');
+
+    const r = await fake.publishPhoto({ src: '/x.png', caption: '캡션', registeredBy: 'attacker' });
+    expect(r.ok).toBe(true);
+
+    const { items } = await fake.searchPhotos('캡션');
+    expect(items[0].registeredBy).toBe('kim');
   });
 
   it('translate returns translated text and is graceful when seeded without one', async () => {

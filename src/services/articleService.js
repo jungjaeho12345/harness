@@ -4,6 +4,7 @@
 
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
+import { sanitizeFileRef } from './fileRef.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -53,25 +54,8 @@ function isStale(lockedAt) {
   return (Date.now() - t) > LOCK_TTL_MS;
 }
 
-// 첨부/자료 파일 참조 스킴 방어 — /uploads 상대경로 또는 https:// 만 허용(저장 시점 심화 방어, ADR-004).
-// 위험 스킴(javascript:/data:/http:/프로토콜상대//·제어문자·백슬래시 우회)은 빈 문자열로 무력화.
-// clipboardEmbed.isAllowedHref(web)와 동일한 거부 기반 정규화 — 단, 상대경로는 /uploads 접두만 허용(서버 심화방어).
-// (web 번들은 서버가 import할 수 없어 규칙을 순수 헬퍼로 재현한다.)
-function sanitizeFileRef(value) {
-  const s = String(value);
-  if (s === '') return ''; // 빈값 = 정상 클리어(× 버튼) — 통과
-  // 제어문자·공백(U+0000~U+0020) 포함 시 거부 — 브라우저가 제거·정규화해 스킴이 되살아나는 은닉 차단.
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x20]/.test(s)) return '';
-  if (s.includes('\\')) return ''; // 백슬래시(브라우저가 '/'로 정규화) 거부
-  if (s.startsWith('//')) return ''; // 프로토콜상대(//host) 거부
-  if (/^https:\/\//i.test(s)) return s; // https://(authority 포함)만 허용
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return ''; // 그 외 스킴(javascript:/data:/http: 등) 전부 거부
-  if (!s.startsWith('/uploads/')) return ''; // 상대경로는 업로드 위치(/uploads/)만 신뢰
-  if (/(^|\/)\.\.(\/|$)/.test(s)) return ''; // '..' 세그먼트 — 접두 검사를 우회하는 traversal 거부
-  return s;
-}
-
+// 첨부/자료 파일 참조 스킴 방어 규칙은 fileRef.js(sanitizeFileRef)가 단일 출처다 —
+// 사진DB src(photoService)와 공유한다(재현 금지 — 발산하면 우회 벡터).
 // present인 파일참조 필드만 sanitizeFileRef로 대체한다.
 // 미전달(undefined) 필드는 절대 추가·변경하지 않는다 — 모델의 present-only SET과 함께 DB 비파괴 보장.
 const FILE_REF_FIELDS = ['attachmentFile', 'referenceFile'];

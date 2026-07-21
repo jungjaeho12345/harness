@@ -413,6 +413,39 @@ describe('createHttpModel', () => {
     expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-q`);
   });
 
+  it('publishPhoto POSTs /api/photos with the payload body and never role/registeredBy (ADR-004)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, id: 7 }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.publishPhoto({ src: '/uploads/a.png', caption: '현장', sourceArticleId: 'AKR1' });
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/photos`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    const body = JSON.parse(init.body);
+    // 호출자가 구성한 payload 그대로 — 신원/역할은 어떤 형태로도 싣지 않는다(서버 세션 도출).
+    expect(body).toEqual({ src: '/uploads/a.png', caption: '현장', sourceArticleId: 'AKR1' });
+    expect(body.role).toBeUndefined();
+    expect(body.registeredBy).toBeUndefined();
+    // 응답 { ok, id } 그대로 반환(step0 라우트와 1:1).
+    expect(r).toEqual({ ok: true, id: 7 });
+  });
+
+  it('searchPhotos GETs /api/photos/search?q= with the encoded query and returns { ok, items }', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ id: 1, caption: '토픽' }] }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.searchPhotos('토픽');
+    const [url, init] = callAt(0);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/api/photos/search');
+    expect(parsed.searchParams.get('q')).toBe('토픽'); // URLSearchParams 인코딩을 거쳐 전송된다.
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    expect(r).toEqual({ ok: true, items: [{ id: 1, caption: '토픽' }] });
+  });
+
   it('getLogsDigest GETs /api/logs/digest with no body and returns { ok, items } (never role)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ seq: 1, level: 'INFO' }] }));
     const model = createHttpModel({ base: BASE });

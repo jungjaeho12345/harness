@@ -1221,6 +1221,68 @@ a { color: var(--yh-blue); }
   gap: var(--yh-sp-sm);
 }
 
+/* 사진발행/DB등록(도구>사진발행/DB등록) 다이얼로그 — 본문 이미지 선택 + 캡션 입력 폼(파일정보와 동일 계열). */
+.yh-photo-publish {
+  width: 26rem;
+}
+.yh-photo-publish__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yh-sp-sm);
+  margin: 0 0 var(--yh-sp-md);
+  padding: 0;
+  list-style: none;
+}
+.yh-photo-publish__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-xs);
+  padding: var(--yh-sp-xs);
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+}
+.yh-photo-publish__choice.is-selected {
+  border-color: var(--yh-blue);
+  background: var(--yh-blue-light);
+}
+.yh-photo-publish__thumb {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  display: block;
+}
+.yh-photo-publish__empty {
+  margin: 0 0 var(--yh-sp-md);
+  font-size: 0.85rem;
+  color: var(--yh-gray-mid);
+}
+.yh-photo-publish__field {
+  display: flex;
+  align-items: center;
+  gap: var(--yh-sp-sm);
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-photo-publish__field label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--yh-blue);
+  letter-spacing: 0.08em;
+}
+.yh-photo-publish__field input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--yh-sp-sm) var(--yh-sp-md);
+  font-size: 0.9rem;
+  border: 1px solid var(--yh-gray-line);
+  border-radius: var(--yh-radius-sm);
+}
+.yh-photo-publish__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
 /* 기사 이력 비교(도구>기사이력비교) 다이얼로그 — 스냅샷 라인 diff 읽기전용 표시 패널(파일정보와 동일 계열). */
 .yh-history-compare {
   width: 40rem;
@@ -1442,6 +1504,14 @@ a { color: var(--yh-blue); }
   display: flex;
   align-items: center;
   gap: var(--yh-sp-sm);
+}
+
+/* 이미지 검색 소스 토글(Google | 사진DB) — 이미지 탭 내부 가로 배치. */
+.yh-search-source {
+  display: flex;
+  gap: var(--yh-sp-xs);
+  margin-bottom: var(--yh-sp-sm);
+  border-bottom: 1px solid var(--yh-gray-line);
 }
 
 /* 검색 입력 + 버튼 한 줄 정렬(이미지/영상/글기사 공통). */
