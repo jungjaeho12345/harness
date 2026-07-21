@@ -7,7 +7,7 @@
       "name": "photo-backend",
       "status": "completed",
       "started_at": "2026-07-21T13:41:58+0900",
-      "completed_at": "2026-07-21T13:50:30+0900",
+      "completed_at": "2026-07-21T13:52:01+0900",
       "summary": "Photo 테이블 additive 추가(id/src/caption/sourceArticleId/registeredBy/createdAt) + photoModel(present-only insert·searchByCaption LIKE id DESC, append-only) + photoService(sanitizeFileRef를 fileRef.js 순수 모듈로 추출해 단일 출처 재사용, invalid-src 거부, registeredBy는 세션 userId로만 stamp) + POST /api/photos·GET /api/photos/search 세션 게이트 라우트 + SCHEMA.md Photo 섹션. 테스트 21건 신규 — 백엔드 427·웹 1681 전체 통과, lint/build 클린"
     },
     {
