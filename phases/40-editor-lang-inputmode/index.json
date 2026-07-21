@@ -1,0 +1,30 @@
+{
+  "project": "기사 작성기",
+  "phase": "40-editor-lang-inputmode",
+  "note": "환경설정 편집 탭 '언어(9종)·입력모드(KSC-5601/Unicode)' 설정값(phase 16에서 저장만 구현·effect defer)의 실동작 결선 — 설정 effect 로드맵 3/3(잔여 공용약어·기업코드변환은 aux-tools 계열로 이 phase 범위 밖·DEFER 유지). 언어=① 상태표시줄 '언어' 표시를 prefs.language 라벨로 갱신(현재 placeholder '한국어' 고정) ② Editor 편집 div의 lang 속성을 언어 코드로 주입(현재 lang=\"ko\" 하드코딩 — Alt+Y 네이티브 맞춤법 사전이 문서 언어를 따르게, 기본 ko). 표시/속성 전용. 입력모드=상태표시줄 Byte 계산·표시 전환(Unicode=현행 UTF-8 byteLength, KSC-5601=EUC-KR 근사 byte + 인코딩 비호환 문자 개수 병기) — 표시 전용, 입력 차단/키 인터셉트 절대 금지. client 전용·server/DB/스키마 미변경·prefs shape/기본값 불변(레거시 호환)·파일정보 UTF-8바이트 표시 불변. ⚠ Editor는 캐럿/echo/IME 불변식 극민감(phase 39 위험등록부) — 이 phase의 Editor 변경은 lang 속성 prop화(표시 전용·spellcheck prop 동형) 뿐, 어떤 로직도 추가 금지.",
+  "steps": [
+    {
+      "step": 0,
+      "name": "euckr-byte-model",
+      "status": "completed",
+      "started_at": "2026-07-21T09:34:14+0900",
+      "summary": "신규 web/src/view/editorEncoding.js — export 2개(normalizeInputMode: 'ksc5601' 외 전부 'unicode' 폴백, euckrStats: 코드포인트 순회로 ASCII=1B·EUC-KR 근사 10개 블록 범위=2B·비호환=0B+incompatible 카운트) zero-dep 순수 모듈, vitest 테스트 22케이스(editorEncoding.test.js)로 계약 잠금, AC(lint/build/test:web 1660개) 전부 통과"
+    },
+    {
+      "step": 1,
+      "name": "language-label-model",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "statusbar-lang-bytes",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "writer-editor-wiring",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-21T09:34:14+0900"
+}
