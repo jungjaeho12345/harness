@@ -111,6 +111,17 @@ describe('Editor', () => {
     await userEvent.keyboard('a');
     expect(onKeyDown).toHaveBeenCalled();
   });
+
+  // Step 3(40-editor-lang-inputmode): lang 속성 prop화(표시 전용 — spellcheck prop 동형).
+  it('lang prop 미지정이면 편집 div lang 속성은 기본 "ko"다', () => {
+    render(<Editor blocks={[textBlock('x')]} />);
+    expect(screen.getByRole('textbox', { name: '본문' }).getAttribute('lang')).toBe('ko');
+  });
+
+  it('lang="en"이면 편집 div lang 속성이 "en"으로 주입된다', () => {
+    render(<Editor blocks={[textBlock('x')]} lang="en" />);
+    expect(screen.getByRole('textbox', { name: '본문' }).getAttribute('lang')).toBe('en');
+  });
 });
 
 // 타이핑 중 재렌더로 캐럿이 초기화되지 않도록(uncontrolled 편집) — 회귀 방지.
