@@ -226,7 +226,8 @@
     },
     {
       "dir": "41-photo-publish-db",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-21T14:19:42+0900"
     }
   ]
 }

@@ -35,5 +35,6 @@
       "summary": "이미지 탭에 검색 소스 토글(Google | 사진DB) additive 추가 — useSearchController에 photoResults+searchPhotos(model.searchPhotos→상태 세팅, searchImages 형제) 노출, 사진DB 브랜치는 SearchPanel에 results/onSearch/onPick만 교체 주입(공용 컴포넌트·InlineEmbed·Editor 무변경)하고 픽은 insertEmbed(makeImageEmbed(item.src,{alt:item.caption})) 기존 안전 경로로 표준 image 임베드 재임베드(매핑 동작 동형·Google 브랜치 무변경). .yh-search-source 최소 CSS. 테스트 6건 신규(컨트롤러 1·결선 5 — 토글 기본 Google·searchPhotos 호출/썸네일·픽 blocks src/alt·Google 회귀·매핑) — 웹 1710·백엔드 427 전체 통과, lint/build 클린"
     }
   ],
-  "created_at": "2026-07-21T13:41:58+0900"
+  "created_at": "2026-07-21T13:41:58+0900",
+  "completed_at": "2026-07-21T14:19:42+0900"
 }
