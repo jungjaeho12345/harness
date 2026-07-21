@@ -33,7 +33,7 @@
       "status": "completed",
       "started_at": "2026-07-21T09:47:59+0900",
       "summary": "WriterPage에 edit.language/inputMode state를 columnLimit/lineSpacing 동일 게이트(마운트 loadEditorPrefs + onPrefsClose(applied) 재동기화, 취소 시 불변)로 추가 — StatusBar엔 raw 코드/모드 주입(폴백·정규화는 StatusBar 소유), Editor엔 lang={normalizeLanguage(language)} 주입. Editor.jsx는 lang prop화(기본 'ko', lang=\"ko\"→lang={lang}) 두 곳만 변경(로직 무변경). 테스트 9케이스 추가(WriterPage 결선 7 — 기본/저장/미지원 폴백/EUC-KR 바이트/적용 라이브 반영/취소 불변, Editor lang prop 2), AC(lint/build/test:web 1681개) 전부 통과.",
-      "completed_at": "2026-07-21T10:01:30+0900"
+      "completed_at": "2026-07-21T10:00:54+0900"
     }
   ],
   "created_at": "2026-07-21T09:34:14+0900"
