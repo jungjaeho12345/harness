@@ -14,6 +14,8 @@ export function createFakeModel(seed = {}) {
   const articles = [...(seed.articles ?? [])];
   const receiverConfigs = [...(seed.receiverConfigs ?? [])];
   const mediaItems = [...(seed.mediaItems ?? [])];
+  // 사진DB(phase 41) — 등록→검색 루프를 네트워크 없이 재현하는 in-memory 스토어.
+  const photos = [...(seed.photos ?? [])];
   // articleId -> 이력 배열(최신순). 컨트롤러 테스트가 seed로 주입한다.
   const histories = { ...(seed.histories ?? {}) };
   // articleId -> 번역문(seed). 없으면 원문 모사로 graceful 폴백.
@@ -81,6 +83,26 @@ export function createFakeModel(seed = {}) {
     searchMedia(query, type) {
       const items = mediaItems.filter((m) => !type || m.type === type);
       return { ok: true, items: items.map((m) => ({ ...m })), error: false };
+    },
+    // 사진 등록 — registeredBy는 현재 세션 사용자로만 stamp한다(서버 동형 — payload 값 신뢰 안 함, ADR-004).
+    publishPhoto(payload = {}) {
+      const { src, caption, sourceArticleId } = payload;
+      const id = seq++;
+      photos.push({
+        id,
+        src,
+        caption: caption ?? '',
+        sourceArticleId: sourceArticleId ?? '',
+        registeredBy: session?.user?.userId ?? null,
+        createdAt: new Date().toISOString(),
+      });
+      return { ok: true, id };
+    },
+    // 사진DB 캡션 부분일치 검색 — searchArticles와 동형(복사본 반환 — 원본 불변).
+    searchPhotos(q = '') {
+      const needle = String(q);
+      const items = photos.filter((p) => (p.caption ?? '').includes(needle));
+      return { ok: true, items: items.map((p) => ({ ...p })) };
     },
     applyAction(articleId, action) {
       const a = findArticle(articleId);

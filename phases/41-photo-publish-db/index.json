@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "model-contract",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-21T13:52:02+0900",
+      "completed_at": "2026-07-21T13:56:57+0900",
+      "summary": "Model 계약 3면(contract/httpModel/fakeModel)에 publishPhoto·searchPhotos 동시 추가 — MODEL_KEYS 26→28, httpModel은 POST /api/photos({ok,id})·GET /api/photos/search?q=({ok,items})와 1:1 배선(role/registeredBy 미탑재, ADR-004), fakeModel은 in-memory photos 스토어로 등록→캡션검색 루프 재현(registeredBy는 세션 userId로만 stamp·payload 값 무시·복사본 반환). 테스트 5건 신규(계약 키·httpModel 배선 2·fake 루프 2) — 웹 1686·백엔드 427 전체 통과, lint/build 클린"
     },
     {
       "step": 2,

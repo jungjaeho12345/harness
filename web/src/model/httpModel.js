@@ -142,6 +142,14 @@ export function createHttpModel({ base = '' } = {}) {
     searchMedia(query, type) {
       return request('/api/media/search', { query: { q: query, type } });
     },
+    // 사진 등록 — role/registeredBy를 싣지 않는다(서버가 세션에서 도출, ADR-004). 응답 { ok, id }.
+    publishPhoto(payload = {}) {
+      return request('/api/photos', { method: 'POST', body: payload });
+    },
+    // 사진DB 캡션 검색 — 응답 { ok, items } 그대로 반환.
+    searchPhotos(q) {
+      return request('/api/photos/search', { query: { q } });
+    },
     // role은 서버 세션에서 도출 — body로 보내지 않는다(ADR-004).
     applyAction(articleId, action) {
       return request(`/api/articles/${encodeURIComponent(articleId)}/action`, {
