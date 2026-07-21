@@ -221,7 +221,8 @@
     },
     {
       "dir": "40-editor-lang-inputmode",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-21T10:00:55+0900"
     }
   ]
 }
