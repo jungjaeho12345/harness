@@ -23,7 +23,8 @@
     {
       "step": 3,
       "name": "writer-wiring",
-      "status": "pending"
+      "status": "completed",
+      "summary": "WriterPage.jsx에 tools.uiLanguage 결선 — MENU_ENABLED append + onMenuSelect 분기(매핑 가드 앞, 크롬 설정 본문 무관)로 UiLanguageDialog 오픈. uiLanguage state는 columnLimit/language와 동형 게이트(마운트 lazy-init loadEditorPrefs().ui.language + 마운트 effect 복원 + onPrefsClose 패리티), t=useMemo(createTranslator(uiLanguage))를 EditorMenuBar·UiLanguageDialog에 동일 인스턴스 주입(실시간 반영). onSelectUiLanguage는 UI_LANGUAGES 방어 후 saveEditorPrefs(setEditorPref(...,'ui',{language})) 동기 localStorage 영속(본문 무변경 — commitBody/serialize/updateField 미호출). 탭 전환 조정 블록에 setShowUiLanguage(false) 추가. 회귀 가드 6곳(L1431·2589·3933·3990·4655·4815)을 toBeEnabled로 전환 + 제목/주석 '전 항목 활성' 재작성(grep toBeDisabled×UI언어 0건). 신규 테스트 8(활성·오픈·ko불변·en영속+메뉴바반영·재마운트유지·탭전환닫힘·매핑열림·본문무변경). web 394·backend 427 회귀 없음, lint·build 클린. 도구 15항목 전 결선 완결."
     }
   ],
   "created_at": "2026-07-22T18:32:14+0900"

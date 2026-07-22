@@ -40,7 +40,9 @@ import {
 } from './editorSelect.js';
 import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
 import { sortDocument, sortParagraph, deleteWordAt } from './editorEditOps.js';
-import { loadEditorPrefs, normalizeLineSpacing } from './editorPrefs.js';
+import { loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing } from './editorPrefs.js';
+import { UiLanguageDialog } from './UiLanguageDialog.jsx';
+import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
@@ -105,7 +107,7 @@ const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — b
 const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'tools.uiLanguage', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -167,6 +169,8 @@ export function WriterPage() {
   const [showPhotoPublish, setShowPhotoPublish] = useState(false);
   // 메모장 다이얼로그(도구>메모장) 보이기 — showFileInfo와 동일한 표시 토글. 기사와 무관한 전역 스크래치패드.
   const [showMemo, setShowMemo] = useState(false);
+  // UI 언어 설정 다이얼로그(도구>UI 언어 설정) 보이기 — showMemo와 동일한 boolean 토글. 크롬 설정이라 본문 무관(매핑에서도 안전).
+  const [showUiLanguage, setShowUiLanguage] = useState(false);
   // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
   // 세션 내 진실 소스: 입력은 setMemoText만(in-memory), 영속은 '저장'에서 saveMemo만. 탭/articleId 비종속(전역 1개).
   const [memoText, setMemoText] = useState(() => loadMemo());
@@ -223,6 +227,14 @@ export function WriterPage() {
   // 모달 적용(onPrefsClose(true)) 시 저장값으로 갱신한다(취소 시 불필요 — editorBg와 동일 게이트).
   const [autosaveCfg, setAutosaveCfg] = useState(() => loadEditorPrefs().autosave);
 
+  // UI 언어(ui.language ko/en) — 에디터 크롬 표시 언어(문서/입력 언어 edit.language 9종과 별개 카테고리).
+  // columnLimit/language(문서언어)/autosaveCfg와 완전히 동형 게이트: 마운트 lazy-init + 마운트 effect 복원 + onPrefsClose(applied) 패리티.
+  // 영속은 동기 localStorage(saveEditorPrefs) — 새로고침/재로그인(같은 브라우저)에 자동 유지(서버/DB 불필요).
+  const [uiLanguage, setUiLanguage] = useState(() => loadEditorPrefs().ui.language);
+  // 번역기(ko/en) — 메뉴바(EditorMenuBar)·UI 언어 다이얼로그(UiLanguageDialog)에 동일 인스턴스로 주입해
+  // uiLanguage 전환 시 양쪽이 함께 갱신된다(일관 반영). uiLanguage 변경 시에만 재생성.
+  const t = useMemo(() => createTranslator(uiLanguage), [uiLanguage]);
+
   // 마운트 시 저장된 색을 적용한다(새로고침 후에도 반영). 텍스트색은 setEditorColors, 바탕색은 editorBg로.
   useEffect(() => {
     const c = loadEditorPrefs().colors;
@@ -232,6 +244,7 @@ export function WriterPage() {
     setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 새로고침 후에도 줄간격 반영.
     setLanguage(loadEditorPrefs().edit.language); // 새로고침 후에도 언어 반영.
     setInputMode(loadEditorPrefs().edit.inputMode); // 새로고침 후에도 입력모드 반영.
+    setUiLanguage(loadEditorPrefs().ui.language); // 새로고침/재접속 후에도 UI 언어 반영(다른 prefs와 동일 게이트).
   }, []);
 
   // 모달 닫힘 — applied=true(적용)면 바탕색을 저장값으로 갱신(모달이 이미 setEditorColors 호출 → 자연 재렌더로 텍스트색 반영).
@@ -246,6 +259,7 @@ export function WriterPage() {
       setInputMode(loadEditorPrefs().edit.inputMode); // 입력모드 변경 반영 — 취소 시 불변(동일 게이트).
       setGlyphFavorites(loadEditorPrefs().glyphFavorites.items); // 환경설정에서 등록한 자주쓰는 약물을 약물바/약물입력 다이얼로그에 즉시 반영.
       setGlyphKeymap(loadEditorPrefs().glyphKeymap.items); // 사용자 키보드 약물(참조 표시)도 동일 게이트로 즉시 반영.
+      setUiLanguage(loadEditorPrefs().ui.language); // UI 언어도 동일 게이트로 반영 — 취소 시 불변(다른 prefs와 동형 패리티).
     }
     setShowPrefs(false);
   };
@@ -282,6 +296,8 @@ export function WriterPage() {
     // 등록 다이얼로그의 imageEmbeds/sourceArticleId는 활성 탭-로컬 — 열린 채 전환하면 이전 탭 이미지가
     // 보이고 '등록'이 엉뚱한 기사 사진을 올린다(phase 29~32 문서-로컬 좌표 이월 계열). 함께 닫는다.
     setShowPhotoPublish(false);
+    // UI 언어 다이얼로그는 비모달 — uiLanguage는 전역이라 좌표 stale은 없지만, 열린 채 이월되는 혼란을 막으려 함께 닫는다.
+    setShowUiLanguage(false);
   }
 
   // 탭(문서)별 본문 히스토리 — 탭 id → editorHistory 상태. 세션-로컬(휘발, sessionStorage/tab.fields 미저장).
@@ -477,6 +493,15 @@ export function WriterPage() {
   };
   const removeAbbrev = (index) => {
     setAbbrevs((list) => saveAbbrevs(list.filter((_, i) => i !== index)));
+  };
+
+  // 도구>UI 언어 설정 선택 — 허용값(ko/en)만 받아 editorPrefs(ui.language)에 동기 localStorage 영속하고 즉시 리렌더한다.
+  // 동기 저장이라 await/activeTabRef 재파생 불필요(본문 무관 — commitBody/serialize/updateField 미호출). setUiLanguage가
+  // t(번역기)를 재생성해 메뉴바·다이얼로그가 함께 새 언어로 갱신된다. glyphFavorites/약어 CRUD와 동일한 store 단일 경로.
+  const onSelectUiLanguage = (lang) => {
+    if (!UI_LANGUAGES.includes(lang)) return; // 방어 — 허용값만(다이얼로그도 ko/en만 노출하지만 이중 방어).
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'ui', { language: lang })); // 동기 영속(새로고침/재접속 유지).
+    setUiLanguage(lang); // 즉시 리렌더 — 메뉴바(t)+다이얼로그(t) 실시간 반영.
   };
 
   // 도구>약어변환 — 등록 약어(abbrevs 세션 state)를 본문 텍스트 블록에서 확장(임베드·"(끝)" 불변). 매핑 가드 뒤에서만 호출.
@@ -747,6 +772,9 @@ export function WriterPage() {
     // 사진발행/DB등록 — 현재 본문 이미지 임베드를 읽어 캡션과 함께 사진DB에 등록(본문/캐럿/임베드 무변경).
     // 매핑 가드 앞(본문 무관 읽기+외부 쓰기 → 매핑에서도 열림, tools.fileInfo와 동일 정책).
     if (id === 'tools.publishPhoto') { setShowPhotoPublish(true); return; }
+    // UI 언어 설정 — 에디터 크롬(메뉴바/다이얼로그) 표시 언어. 크롬 설정이라 본문/캐럿/임베드 무관 →
+    // 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — help.preferences/tools.fileInfo/tools.memo와 동일 정책).
+    if (id === 'tools.uiLanguage') { setShowUiLanguage(true); return; }
     // 맞춤법 검사(spell.*) — 읽기전용(본문/캐럿/임베드 불변 — 결과 다이얼로그 표시만). 매핑 가드 앞
     // (매핑에서도 동작 — 죽은 버튼 방지, 파일 정보/기사이력비교와 동일 정책). 해제(checkOff)는 결과 비움 + 닫기.
     if (id === 'spell.checkAll') { runSpellCheck('all'); return; }
@@ -1342,7 +1370,7 @@ export function WriterPage() {
         <section className="yh-writer__editor">
           {/* 메뉴바/툴바는 기본 숨김 — 우클릭 컨텍스트 메뉴 '메뉴바/툴바 보이기'(ctx.showMenuBar/ctx.showToolBar)로만 토글한다(news.md L173).
               구 전용 토글 버튼(yh-editor-chrome-bar)은 제거됨. */}
-          {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} />}
+          {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} t={t} />}
           {showToolBar && <EditorToolBar />}
           {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
               본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
@@ -1607,6 +1635,17 @@ export function WriterPage() {
         onChange={setMemoText}
         onSave={() => saveMemo(memoText)}
         onClose={() => setShowMemo(false)}
+      />
+
+      {/* UI 언어 설정(도구>UI 언어 설정) — controlled: 현재 언어는 uiLanguage(부모 소유·마운트 lazy-init),
+          선택은 onSelectUiLanguage가 editorPrefs(ui.language)에 동기 영속. 번역기 t는 메뉴바와 동일 인스턴스라
+          언어 전환이 양쪽에 일관 반영된다. 크롬 설정이라 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선). */}
+      <UiLanguageDialog
+        open={showUiLanguage}
+        value={uiLanguage}
+        t={t}
+        onSelect={onSelectUiLanguage}
+        onClose={() => setShowUiLanguage(false)}
       />
 
       {/* 약어 관리(도구>약어관리) — controlled: 커밋 목록은 abbrevs(부모 소유·마운트 lazy-init), onAdd/onRemove가 즉시
