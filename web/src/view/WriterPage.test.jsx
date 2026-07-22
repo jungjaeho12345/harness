@@ -7094,4 +7094,24 @@ describe('WriterPage — UI 언어 설정(tools.uiLanguage) 결선', () => {
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
+
+  it('en→ko 되돌림 왕복 — ko 재선택 시 editorPrefs가 ko로 영속되고 메뉴바 라벨이 한국어 원문으로 복귀한다(ko 불변식 강화)', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickUiLanguage();
+
+    // en으로 전환 → 메뉴바 영문·영속 en.
+    await userEvent.click(screen.getByTestId('ui-language-option-en'));
+    expect(loadEditorPrefs().ui.language).toBe('en');
+    expect(screen.getByRole('menuitem', { name: 'Tools' })).toBeInTheDocument();
+
+    // 다이얼로그는 열린 채라 ko 옵션을 바로 재선택 → 동기 영속 ko + 즉시 리렌더.
+    await userEvent.click(screen.getByTestId('ui-language-option-ko'));
+    expect(loadEditorPrefs().ui.language).toBe('ko'); // ko 재선택도 영속(en 전용이 아님)
+    // 메뉴바 상단 버튼이 한국어 원문으로 복귀(도구/파일), 영문 라벨은 사라진다.
+    expect(screen.getByRole('menuitem', { name: '도구' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '파일' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Tools' })).toBeNull();
+    // 열린 다이얼로그의 닫기 라벨도 같은 번역기로 한국어 복귀(닫기).
+    expect(screen.getByTestId('ui-language-close')).toHaveTextContent('닫기');
+  });
 });
