@@ -11,7 +11,8 @@
     {
       "step": 1,
       "name": "language-dialog",
-      "status": "pending"
+      "status": "completed",
+      "summary": "web/src/view/UiLanguageDialog.jsx 신규 — 순수 controlled 다이얼로그(open/value/t/onSelect/onClose props, 내부 state·localStorage 없음). role=dialog·testid ui-language-dialog·className yh-editor-dialog yh-editor-ui-language, ko/en 라디오(선택 즉시 onSelect(lang)), 닫기 버튼·Esc→onClose, useFocusOnOpen은 비-변이 '닫기' 버튼에 부착. 자기 라벨은 t로 렌더(ui.dialog.title/ko/en·common.close), t 미주입 시 (k,f)=>f??k 폴백으로 ko 원문. 신규 테스트 12 통과, 전체 web 1738·backend 427 회귀 없음, lint·build 클린. WriterPage 미접촉(결선은 step3)."
     },
     {
       "step": 2,
