@@ -155,6 +155,51 @@ describe('editorPrefs — editor preference store', () => {
     }
   });
 
+  // --- ui 카테고리 (UI 언어 ko/en) — edit.language(문서 언어 9종)와 별개의 additive 신규 키 ---
+
+  it('returns ui.language default "ko" when nothing is saved', () => {
+    const { ui } = loadEditorPrefs();
+    expect(ui).toEqual(DEFAULT_EDITOR_PREFS.ui);
+    expect(ui.language).toBe('ko');
+  });
+
+  it('ui.language save → load round-trips to "en"', () => {
+    const next = setEditorPref(loadEditorPrefs(), 'ui', { language: 'en' });
+    saveEditorPrefs(next);
+    const loaded = loadEditorPrefs();
+    expect(loaded.ui.language).toBe('en');
+  });
+
+  it('ui category is separate from edit.language (문서 언어) — patching ui does not touch edit', () => {
+    const next = setEditorPref(loadEditorPrefs(), 'ui', { language: 'en' });
+    saveEditorPrefs(next);
+    const loaded = loadEditorPrefs();
+    expect(loaded.ui.language).toBe('en');
+    expect(loaded.edit.language).toBe('ko'); // 문서 언어는 불변
+  });
+
+  it('merges a partial ui save onto defaults and preserves other categories', () => {
+    localStorage.setItem('yh.editorPrefs', JSON.stringify({ ui: { language: 'en' } }));
+    const prefs = loadEditorPrefs();
+    expect(prefs.ui.language).toBe('en'); // 저장값 적용
+    expect(prefs.colors).toEqual(DEFAULT_EDITOR_PREFS.colors); // 저장 안 한 카테고리도 기본값
+    expect(prefs.edit).toEqual(DEFAULT_EDITOR_PREFS.edit); // edit 카테고리 불변
+  });
+
+  it('is graceful for ui category when localStorage is unavailable', () => {
+    const original = globalThis.localStorage;
+    try {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        get() { throw new Error('localStorage blocked'); },
+      });
+      expect(() => loadEditorPrefs()).not.toThrow();
+      expect(loadEditorPrefs().ui).toEqual(DEFAULT_EDITOR_PREFS.ui);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: original });
+    }
+  });
+
   // --- 회귀: setEditorPref 합성 보존 (한 카테고리 패치가 다른 카테고리를 잃지 않는다) ---
 
   it('setEditorPref preserves all other categories on a save → load round-trip (synthesis preservation)', () => {

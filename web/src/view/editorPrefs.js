@@ -29,6 +29,8 @@ export const DEFAULT_EDITOR_PREFS = Object.freeze({
   },
   glyphFavorites: { items: [] }, // 자주쓰는 약물: items string[]
   glyphKeymap: { items: [] }, // 사용자 키보드 약물: items { keys, glyph }[]
+  // UI 언어(ko/en): 에디터 크롬 표시 언어. 문서/입력 언어(edit.language 9종)와 별개 카테고리다.
+  ui: { language: 'ko' },
   dateFormat: 'YYYY-MM-DD HH:mm',
 });
 
@@ -66,6 +68,7 @@ export function loadEditorPrefs() {
     spellcheck: { ...DEFAULT_EDITOR_PREFS.spellcheck, ...(saved.spellcheck || {}) },
     glyphFavorites: { ...DEFAULT_EDITOR_PREFS.glyphFavorites, ...(saved.glyphFavorites || {}) },
     glyphKeymap: { ...DEFAULT_EDITOR_PREFS.glyphKeymap, ...(saved.glyphKeymap || {}) },
+    ui: { ...DEFAULT_EDITOR_PREFS.ui, ...(saved.ui || {}) },
     dateFormat: typeof saved.dateFormat === 'string' ? saved.dateFormat : DEFAULT_EDITOR_PREFS.dateFormat,
   };
 }

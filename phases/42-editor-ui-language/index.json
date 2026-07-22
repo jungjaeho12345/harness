@@ -1,0 +1,31 @@
+{
+  "project": "기사 작성기",
+  "phase": "42-editor-ui-language",
+  "steps": [
+    {
+      "step": 0,
+      "name": "i18n-catalog",
+      "status": "completed",
+      "summary": "web/src/view/i18n.js 신규(UI_LANGUAGES ko/en, MESSAGES.ko는 EDITOR_MENUS 라벨과 바이트 동일·freeze, createTranslator 폴백 사슬 table→fallback→ko→key); editorPrefs.js에 ui:{language:'ko'} 카테고리 additive 추가(loadEditorPrefs 한 단계 병합); i18n.test.js 11 + editorPrefs ui 테스트 5 신규, 전체 회귀 없음."
+    },
+    {
+      "step": 1,
+      "name": "language-dialog",
+      "status": "completed",
+      "summary": "web/src/view/UiLanguageDialog.jsx 신규 — 순수 controlled 다이얼로그(open/value/t/onSelect/onClose props, 내부 state·localStorage 없음). role=dialog·testid ui-language-dialog·className yh-editor-dialog yh-editor-ui-language, ko/en 라디오(선택 즉시 onSelect(lang)), 닫기 버튼·Esc→onClose, useFocusOnOpen은 비-변이 '닫기' 버튼에 부착. 자기 라벨은 t로 렌더(ui.dialog.title/ko/en·common.close), t 미주입 시 (k,f)=>f??k 폴백으로 ko 원문. 신규 테스트 12 통과, 전체 web 1738·backend 427 회귀 없음, lint·build 클린. WriterPage 미접촉(결선은 step3)."
+    },
+    {
+      "step": 2,
+      "name": "menubar-i18n",
+      "status": "completed",
+      "summary": "EditorMenuBar.jsx에 선택적 t prop 추가 — 미전달 시 tr=(k,f)=>f 항등 폴백으로 원문 label 반환(ko 바이트 동일 불변). 상단 버튼 {menu.label}→{tr(menu.id,menu.label)}, 항목 {item.label}→{tr(item.id,item.label)}로 치환. data-testid=menu-${menu.label}(원문)·aria·shortcut은 언어 무관 불변. EDITOR_MENUS 데이터 미변경. 신규 테스트 6(ko 회귀·en 라벨·en testid 원문·shortcut 불변·en enabledIds 결선), 전체 web 1744·backend 427 회귀 없음, lint·build 클린. WriterPage 미접촉(결선은 step3)."
+    },
+    {
+      "step": 3,
+      "name": "writer-wiring",
+      "status": "completed",
+      "summary": "WriterPage.jsx에 tools.uiLanguage 결선 — MENU_ENABLED append + onMenuSelect 분기(매핑 가드 앞, 크롬 설정 본문 무관)로 UiLanguageDialog 오픈. uiLanguage state는 columnLimit/language와 동형 게이트(마운트 lazy-init loadEditorPrefs().ui.language + 마운트 effect 복원 + onPrefsClose 패리티), t=useMemo(createTranslator(uiLanguage))를 EditorMenuBar·UiLanguageDialog에 동일 인스턴스 주입(실시간 반영). onSelectUiLanguage는 UI_LANGUAGES 방어 후 saveEditorPrefs(setEditorPref(...,'ui',{language})) 동기 localStorage 영속(본문 무변경 — commitBody/serialize/updateField 미호출). 탭 전환 조정 블록에 setShowUiLanguage(false) 추가. 회귀 가드 6곳(L1431·2589·3933·3990·4655·4815)을 toBeEnabled로 전환 + 제목/주석 '전 항목 활성' 재작성(grep toBeDisabled×UI언어 0건). 신규 테스트 8(활성·오픈·ko불변·en영속+메뉴바반영·재마운트유지·탭전환닫힘·매핑열림·본문무변경). web 394·backend 427 회귀 없음, lint·build 클린. 도구 15항목 전 결선 완결."
+    }
+  ],
+  "created_at": "2026-07-22T18:32:14+0900"
+}

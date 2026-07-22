@@ -10,7 +10,7 @@ import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 import { loadMemo } from './memoStore.js';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
-import { loadEditorPrefs, saveEditorPrefs, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import { loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
 import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
 
@@ -1417,10 +1417,10 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     await waitFor(() => expect(editorLines(container)).toEqual(['헤드', '(계속)', '본문']));
   });
 
-  it('되돌리기·다시실행은 활성이고, 미결선 항목(UI 언어 설정)은 여전히 비활성이다', async () => {
-    // 되돌리기/다시실행(edit.undo/redo)도 37-editor-undo-redo에서 결선돼 활성이 됐으므로(찾기/바꾸기=14,
-    // 파일 메뉴=34, 클립보드 5종=36과 동일 계보), 미결선 예시는 도구 'UI 언어 설정'(tools.uiLanguage —
-    // 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성, 남은 미결선으로 교체)으로 검증한다.
+  it('되돌리기·다시실행이 활성이고, 도구 UI 언어 설정(tools.uiLanguage)도 결선돼 활성이다', async () => {
+    // 되돌리기/다시실행(edit.undo/redo)은 37-editor-undo-redo에서 결선돼 활성이고(찾기/바꾸기=14,
+    // 파일 메뉴=34, 클립보드 5종=36과 동일 계보), 도구 'UI 언어 설정'(tools.uiLanguage)도
+    // 42-editor-ui-language step3에서 결선돼 활성이다(도구 15항목 전부 결선 — 미결선 항목 없음).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     // 드롭다운으로 스코프(툴바에도 같은 라벨 버튼이 있어 메뉴 항목만 본다).
     await openTopMenu('편집');
@@ -1428,7 +1428,7 @@ describe('WriterPage — 텍스트 변환/마커 결선(EditorMenuBar·Ctrl+Y)',
     expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
     expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
     await openTopMenu('도구');
-    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 
   it('Ctrl+D 라인 삭제는 회귀 없이 동작한다(Ctrl+Y 분기 추가 무영향)', async () => {
@@ -2577,16 +2577,16 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
     expect(within(menu).getByText('전체 선택').closest('button')).toBeEnabled();
   });
 
-  it("다시실행·되돌리기는 활성이고, 미결선 항목(UI 언어 설정)은 여전히 비활성이다(회귀)", async () => {
-    // 다시실행/되돌리기(edit.redo/undo)가 37-editor-undo-redo에서 결선돼 활성 — 미결선 예시를
-    // 도구 'UI 언어 설정'(tools.uiLanguage — 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성)으로 교체.
+  it("다시실행·되돌리기가 활성이고, 도구 UI 언어 설정(tools.uiLanguage)도 결선돼 활성이다(회귀)", async () => {
+    // 다시실행/되돌리기(edit.redo/undo)는 37-editor-undo-redo에서 결선돼 활성이고, 도구
+    // 'UI 언어 설정'(tools.uiLanguage)도 42-editor-ui-language step3에서 결선돼 활성이다(도구 전 항목 활성).
     await openWith([textBlock('헤드'), textBlock('본문')]);
     await openTopMenu('편집');
     const menu = screen.getByTestId('menu-편집');
     expect(within(menu).getByText('다시실행').closest('button')).toBeEnabled();
     expect(within(menu).getByText('되돌리기').closest('button')).toBeEnabled();
     await openTopMenu('도구');
-    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    expect(within(screen.getByTestId('menu-도구')).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 
   // 다이얼로그에서 찾을 내용 입력 → 직렬화 본문 검증을 위해 updateField 경유 body를 saveArticle dto로 확인한다.
@@ -3924,13 +3924,13 @@ describe('WriterPage — 날짜 삽입(tools.insertDate) 결선', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
 
-  it('다른 비결선 도구 항목(tools.uiLanguage)은 여전히 비활성이다(회귀 없음)', async () => {
-    // 회귀 가드 — 날짜 삽입 결선이 무관한 도구 항목을 켜지 않았는지 확인한다.
-    // (사진발행/DB등록은 41-photo-publish-db step2에서 의도적으로 결선되어 이제 활성이므로, 아직 미결선인 UI 언어 설정으로 가드한다.)
+  it('도구 UI 언어 설정(tools.uiLanguage)이 결선돼 활성이다(회귀 없음)', async () => {
+    // 회귀 가드 — 도구 'UI 언어 설정'은 42-editor-ui-language step3에서 결선돼 활성이다
+    // (도구 15항목 전부 결선 — 미결선 항목 없음). 날짜 삽입 결선이 이를 훼손하지 않았는지 확인한다.
     await openWith([textBlock('헤드')]);
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 });
 
@@ -3976,7 +3976,7 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     await userEvent.click(screen.getByTestId('url-embed-submit'));
   }
 
-  it("도구 '그림 삽입'/'유튜브 영상 삽입'/'오디오 삽입'/'링크 삽입'/'로컬영상 삽입'은 활성, 비결선은 비활성이다(MENU_ENABLED)", async () => {
+  it("도구 '그림 삽입'/'유튜브 영상 삽입'/'오디오 삽입'/'링크 삽입'/'로컬영상 삽입'이 활성이고 UI 언어 설정도 활성이다(MENU_ENABLED)", async () => {
     await openWith([textBlock('헤드')]);
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
@@ -3986,8 +3986,8 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     expect(within(menu).getByText('오디오 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('링크 삽입').closest('button')).toBeEnabled();
     expect(within(menu).getByText('로컬영상 삽입').closest('button')).toBeEnabled();
-    // 비결선 도구 항목은 여전히 비활성(회귀 가드 — 사진발행/DB등록은 41-photo-publish-db step2에서 결선돼 활성, UI 언어 설정으로 교체).
-    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    // 도구 'UI 언어 설정'도 42-editor-ui-language step3에서 결선돼 활성(도구 15항목 전부 결선 — 미결선 항목 없음).
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 
   it("'그림 삽입' 클릭 시 URL 다이얼로그가 열리고, URL 제출 시 캐럿 줄 뒤에 image 임베드가 생긴다", async () => {
@@ -4647,12 +4647,12 @@ describe('WriterPage — 간체↔번체 변환(tools.simpTradConvert) 결선', 
     expect(within(menu).getByText('간체↔번체 변환').closest('button')).toBeEnabled();
   });
 
-  it('다른 비결선 도구 항목(UI 언어 설정)은 여전히 비활성이다(회귀 없음)', async () => {
-    // (기사이력비교=25 step2·사진발행/DB등록=41 step2에서 의도적으로 결선되어 이제 활성 — 가드 대상에서 제외.)
+  it('도구 UI 언어 설정(tools.uiLanguage)이 결선돼 활성이다(회귀 없음)', async () => {
+    // UI 언어 설정은 42-editor-ui-language step3에서 결선돼 활성 — 도구 15항목이 전부 결선되어 미결선 항목이 없다.
     await openWith([textBlock('헤드')]);
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 
   it("'간체↔번체 변환' 클릭 시 SimpTradConvertDialog(simptrad-convert, role=dialog '간체/번체 변환')가 열린다", async () => {
@@ -4807,12 +4807,12 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
     expect(within(menu).getByText('기사이력비교').closest('button')).toBeEnabled();
   });
 
-  it('비결선 도구 항목(tools.uiLanguage)은 여전히 비활성이다(회귀 가드)', async () => {
-    // 사진발행/DB등록(tools.publishPhoto)은 41-photo-publish-db step2에서 결선돼 활성 — 남은 미결선(UI 언어 설정)으로 교체.
+  it('도구 UI 언어 설정(tools.uiLanguage)이 결선돼 활성이다(회귀 가드)', async () => {
+    // UI 언어 설정(tools.uiLanguage)은 42-editor-ui-language step3에서 결선돼 활성 — 도구 전 항목 결선 완결.
     await openWith([textBlock('헤드')], { histories: HISTORIES });
     await openTopMenu('도구');
     const menu = screen.getByTestId('menu-도구');
-    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeDisabled();
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
   });
 
   it("클릭 시 HistoryCompareDialog(history-compare, role=dialog '기사 이력 비교')가 열린다", async () => {
@@ -6973,5 +6973,145 @@ describe('WriterPage — 이미지 검색 소스(Google | 사진DB) 결선', () 
     await waitFor(() => expect(container.querySelector('[data-testid="meta-image"] .yh-media-result')).toBeTruthy());
     await userEvent.click(container.querySelector('[data-testid="meta-image"] .yh-media-result'));
     await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+  });
+});
+
+// Step 3(42-editor-ui-language): 도구>UI 언어 설정(tools.uiLanguage) 결선 — 메뉴 클릭 시 controlled
+// UiLanguageDialog를 열고(매핑 가드 앞 — 크롬 설정이라 본문 무관), 선택은 editorPrefs(ui.language)에 동기
+// localStorage 영속하며, 선택 언어를 메뉴바(t)와 다이얼로그(t)에 동일 번역기로 실시간 반영한다.
+// 기본값 ko는 메뉴바 라벨이 한국어 원문(바이트 동일 불변식). 본문/캐럿/임베드 무변경(saveArticle markupVersion 불변).
+describe('WriterPage — UI 언어 설정(tools.uiLanguage) 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { localStorage.clear(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 메뉴바만 켜는 헬퍼(상단 메뉴는 열지 않는다) — 언어 전환 후 상단 버튼 라벨을 검증할 때 쓴다
+  // (openTopMenu는 항목명으로 클릭하므로 en 전환 후엔 라벨이 바뀌어 부적합).
+  async function showMenuBar() {
+    if (!screen.queryByTestId('menubar')) {
+      fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+      const ctx = await screen.findByTestId('editor-context-menu');
+      await userEvent.click(within(ctx).getByText('메뉴바 보이기').closest('button'));
+      await waitFor(() => expect(screen.getByTestId('menubar')).toBeInTheDocument());
+    }
+  }
+
+  // 도구 메뉴를 열고 'UI 언어 설정'을 클릭한다(메모장/파일 정보 결선과 동일 패턴).
+  async function clickUiLanguage() {
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    await userEvent.click(within(menu).getByText('UI 언어 설정').closest('button'));
+  }
+
+  it("도구 메뉴 'UI 언어 설정'(tools.uiLanguage)이 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
+  });
+
+  it("'UI 언어 설정' 클릭 시 UiLanguageDialog(ui-language-dialog, role=dialog)가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickUiLanguage();
+    expect(screen.getByTestId('ui-language-dialog')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('기본값 ko — 메뉴바 라벨이 한국어 원문이고 loadEditorPrefs().ui.language가 ko이다(바이트 동일 불변식)', async () => {
+    await openWith([textBlock('헤드')]);
+    await showMenuBar();
+    // 상단 메뉴 버튼이 한국어 원문 그대로다.
+    expect(screen.getByRole('menuitem', { name: '도구' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '파일' })).toBeInTheDocument();
+    expect(loadEditorPrefs().ui.language).toBe('ko');
+  });
+
+  it("en 선택 시 editorPrefs에 영속되고(loadEditorPrefs().ui.language==='en') 메뉴바 라벨이 영문으로 실시간 갱신된다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickUiLanguage();
+    // 다이얼로그에서 en 선택 → 동기 localStorage 영속 + 즉시 리렌더.
+    await userEvent.click(screen.getByTestId('ui-language-option-en'));
+    expect(loadEditorPrefs().ui.language).toBe('en');
+    // 같은 렌더에서 t 재생성 → 메뉴바 상단 버튼 라벨이 영문으로 갱신(도구→Tools, 파일→File).
+    expect(screen.getByRole('menuitem', { name: 'Tools' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'File' })).toBeInTheDocument();
+    // 열린 다이얼로그의 닫기 라벨도 같은 번역기로 영문 반영(Close).
+    expect(screen.getByTestId('ui-language-close')).toHaveTextContent('Close');
+  });
+
+  it('재마운트 시 저장된 en이 복원돼 메뉴바가 영문으로 뜬다(마운트 lazy-init + effect 복원)', async () => {
+    // 마운트 전에 en을 심어두면 uiLanguage 초기화(useState + 마운트 effect)가 이를 복원해야 한다(새로고침/재접속 지속).
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'ui', { language: 'en' }));
+    await openWith([textBlock('헤드')]);
+    await showMenuBar();
+    expect(screen.getByRole('menuitem', { name: 'Tools' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'File' })).toBeInTheDocument();
+  });
+
+  it('열린 채 탭을 전환하면 UI 언어 다이얼로그가 닫힌다(비모달 이월 방지 — 조정 블록 setShowUiLanguage(false))', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickUiLanguage();
+    expect(screen.getByTestId('ui-language-dialog')).toBeInTheDocument();
+    // ＋ 버튼으로 새 작성 탭 추가 → 활성 탭 전환 → 조정 블록이 다이얼로그를 닫는다.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('ui-language-dialog')).toBeNull());
+  });
+
+  it("매핑 탭에서도 'UI 언어 설정'이 활성이고 다이얼로그가 열린다(크롬 설정 — 매핑 가드 앞, 죽은 버튼 아님)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('도구');
+    const menu = screen.getByTestId('menu-도구');
+    expect(within(menu).getByText('UI 언어 설정').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('UI 언어 설정').closest('button'));
+    expect(screen.getByTestId('ui-language-dialog')).toBeInTheDocument();
+  });
+
+  it('본문 무변경 — UI 언어를 열고 en 선택/닫기 해도 본문(saveArticle markupVersion)이 그대로 PUT된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('헤드'), textBlock('본문')]);
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await clickUiLanguage();
+    await userEvent.click(screen.getByTestId('ui-language-option-en'));
+    await userEvent.click(screen.getByTestId('ui-language-close'));
+
+    // 저장 시 원본 body가 그대로 PUT된다(commitBody/serialize/updateField('body',…) 미호출 → 본문 무변경).
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original);
+  });
+
+  it('en→ko 되돌림 왕복 — ko 재선택 시 editorPrefs가 ko로 영속되고 메뉴바 라벨이 한국어 원문으로 복귀한다(ko 불변식 강화)', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickUiLanguage();
+
+    // en으로 전환 → 메뉴바 영문·영속 en.
+    await userEvent.click(screen.getByTestId('ui-language-option-en'));
+    expect(loadEditorPrefs().ui.language).toBe('en');
+    expect(screen.getByRole('menuitem', { name: 'Tools' })).toBeInTheDocument();
+
+    // 다이얼로그는 열린 채라 ko 옵션을 바로 재선택 → 동기 영속 ko + 즉시 리렌더.
+    await userEvent.click(screen.getByTestId('ui-language-option-ko'));
+    expect(loadEditorPrefs().ui.language).toBe('ko'); // ko 재선택도 영속(en 전용이 아님)
+    // 메뉴바 상단 버튼이 한국어 원문으로 복귀(도구/파일), 영문 라벨은 사라진다.
+    expect(screen.getByRole('menuitem', { name: '도구' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '파일' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Tools' })).toBeNull();
+    // 열린 다이얼로그의 닫기 라벨도 같은 번역기로 한국어 복귀(닫기).
+    expect(screen.getByTestId('ui-language-close')).toHaveTextContent('닫기');
   });
 });
