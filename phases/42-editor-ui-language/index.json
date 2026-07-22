@@ -1,0 +1,27 @@
+{
+  "project": "기사 작성기",
+  "phase": "42-editor-ui-language",
+  "steps": [
+    {
+      "step": 0,
+      "name": "i18n-catalog",
+      "status": "pending"
+    },
+    {
+      "step": 1,
+      "name": "language-dialog",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "menubar-i18n",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "writer-wiring",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-22T18:32:14+0900"
+}

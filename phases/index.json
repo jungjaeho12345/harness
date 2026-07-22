@@ -228,6 +228,10 @@
       "dir": "41-photo-publish-db",
       "status": "completed",
       "completed_at": "2026-07-21T14:19:42+0900"
+    },
+    {
+      "dir": "42-editor-ui-language",
+      "status": "pending"
     }
   ]
 }
