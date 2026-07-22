@@ -231,7 +231,8 @@
     },
     {
       "dir": "42-editor-ui-language",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-07-22T20:57:37+0900"
     }
   ]
 }
