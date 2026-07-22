@@ -17,7 +17,8 @@
     {
       "step": 2,
       "name": "menubar-i18n",
-      "status": "pending"
+      "status": "completed",
+      "summary": "EditorMenuBar.jsx에 선택적 t prop 추가 — 미전달 시 tr=(k,f)=>f 항등 폴백으로 원문 label 반환(ko 바이트 동일 불변). 상단 버튼 {menu.label}→{tr(menu.id,menu.label)}, 항목 {item.label}→{tr(item.id,item.label)}로 치환. data-testid=menu-${menu.label}(원문)·aria·shortcut은 언어 무관 불변. EDITOR_MENUS 데이터 미변경. 신규 테스트 6(ko 회귀·en 라벨·en testid 원문·shortcut 불변·en enabledIds 결선), 전체 web 1744·backend 427 회귀 없음, lint·build 클린. WriterPage 미접촉(결선은 step3)."
     },
     {
       "step": 3,

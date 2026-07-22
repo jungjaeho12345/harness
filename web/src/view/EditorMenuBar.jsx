@@ -111,9 +111,14 @@ export const EDITOR_MENUS = Object.freeze([
   },
 ]);
 
-export function EditorMenuBar({ onSelect, enabledIds }) {
+// t는 선택적 번역기 (key, fallback?) => string. Step 2(42-editor-ui-language)에서 라벨 국제화용으로 주입된다.
+// 미전달/ko일 때는 fallback(=원문 label)을 그대로 반환 → 기존 호출부·테스트가 바이트 동일로 통과(phase 8 하위호환).
+export function EditorMenuBar({ onSelect, enabledIds, t }) {
   const [openId, setOpenId] = useState(null);
   const ref = useRef(null);
+
+  // t 미전달 시 항등 폴백 — fallback(원문 라벨)을 그대로 반환한다. 표시 텍스트만 번역, testid/aria 키는 원문 불변.
+  const tr = t || ((k, f) => f);
 
   // 활성 항목 id 집합 — 배열/Set 모두 허용. 미전달(undefined)이면 빈 집합 → 전 항목 비활성(phase 8 하위호환).
   const enabledSet = enabledIds instanceof Set ? enabledIds : new Set(enabledIds || []);
@@ -149,9 +154,10 @@ export function EditorMenuBar({ onSelect, enabledIds }) {
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setOpenId((cur) => (cur === menu.id ? null : menu.id))}
             >
-              {menu.label}
+              {tr(menu.id, menu.label)}
             </button>
             {open && (
+              // data-testid는 원문 label 기준 안정 키(예: menu-도구) — 언어 전환에도 불변. 표시 텍스트만 번역한다.
               <ul className="yh-editor-menubar__dropdown" role="menu" data-testid={`menu-${menu.label}`}>
                 {menu.items.map((item) => (
                   <li key={item.id} role="none">
@@ -172,7 +178,8 @@ export function EditorMenuBar({ onSelect, enabledIds }) {
                         setOpenId(null);
                       }}
                     >
-                      <span className="yh-editor-menubar__label">{item.label}</span>
+                      <span className="yh-editor-menubar__label">{tr(item.id, item.label)}</span>
+                      {/* shortcut(키 표기)은 언어 무관 — 번역하지 않고 그대로 표시한다. */}
                       {item.shortcut && (
                         <span className="yh-editor-menubar__shortcut" aria-hidden="true">{item.shortcut}</span>
                       )}

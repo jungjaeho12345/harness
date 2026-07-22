@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorMenuBar, EDITOR_MENUS } from './EditorMenuBar.jsx';
+import { createTranslator } from './i18n.js';
 
 describe('EDITOR_MENUS — 메뉴 config (news.md 기사 상단 메뉴바)', () => {
   it('7개 상단 메뉴를 순서대로 정의한다', () => {
@@ -171,6 +172,77 @@ describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
     expect(screen.getByText('환경설정').closest('button')).toBeEnabled();
     await userEvent.click(screen.getByText('환경설정'));
     expect(onSelect).toHaveBeenCalledWith('help.preferences');
+  });
+});
+
+// Step 2(42-editor-ui-language): 상단 메뉴바 라벨을 번역기 t로 렌더한다.
+// ko 불변식: t 미전달/ko일 때 원문 라벨 그대로. testid/구조 키는 언어 무관 불변(원문 유지).
+describe('EditorMenuBar — i18n 라벨(t prop, ko 불변식·en 번역)', () => {
+  it('t 미전달 시 모든 메뉴/항목 라벨이 원문(ko)과 바이트 동일이다', async () => {
+    render(<EditorMenuBar />);
+    // 상단 7개 메뉴
+    for (const label of ['파일', '편집', '보기', '맞춤법', '표', '도구', '도움말']) {
+      expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
+    }
+    // 도구 항목 라벨(원문)
+    await userEvent.click(screen.getByRole('menuitem', { name: '도구' }));
+    expect(screen.getByTestId('menu-도구')).toBeInTheDocument();
+    expect(screen.getByText('UI 언어 설정')).toBeInTheDocument();
+    expect(screen.getByText('약어변환')).toBeInTheDocument();
+  });
+
+  it("createTranslator('ko') 전달 시에도 라벨이 원문과 동일하다", async () => {
+    render(<EditorMenuBar t={createTranslator('ko')} />);
+    for (const label of ['파일', '편집', '보기', '맞춤법', '표', '도구', '도움말']) {
+      expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
+    }
+    await userEvent.click(screen.getByRole('menuitem', { name: '파일' }));
+    expect(screen.getByText('새문서')).toBeInTheDocument();
+  });
+
+  it("createTranslator('en') 전달 시 상단 메뉴 라벨이 영문으로 렌더된다", () => {
+    render(<EditorMenuBar t={createTranslator('en')} />);
+    for (const name of ['File', 'Edit', 'View', 'Spelling', 'Table', 'Tools', 'Help']) {
+      expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
+    }
+    // 원문 한글 라벨은 더 이상 노출되지 않는다.
+    expect(screen.queryByRole('menuitem', { name: '도구' })).toBeNull();
+  });
+
+  it("en에서도 data-testid는 원문 키(menu-도구)로 드롭다운을 조회할 수 있다", async () => {
+    render(<EditorMenuBar t={createTranslator('en')} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Tools' }));
+    // 표시 텍스트는 영문이지만 testid는 원문 label 기준으로 불변.
+    expect(screen.getByTestId('menu-도구')).toBeInTheDocument();
+    expect(screen.getByText('UI Language')).toBeInTheDocument();
+    expect(screen.getByText('Convert Abbreviation')).toBeInTheDocument();
+    // 한글 항목 라벨은 노출되지 않는다.
+    expect(screen.queryByText('UI 언어 설정')).toBeNull();
+  });
+
+  it('en에서 shortcut(키 표기)은 번역하지 않고 그대로 표시한다', async () => {
+    render(<EditorMenuBar t={createTranslator('en')} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    // 라벨은 영문, shortcut은 언어 무관.
+    expect(screen.getByText('Insert (End)')).toBeInTheDocument();
+    expect(screen.getByText('Alt+Y')).toBeInTheDocument();
+    expect(screen.getByText('Ctrl+Y')).toBeInTheDocument();
+  });
+
+  it('en에서도 enabledIds 결선(id 기반)은 그대로 동작한다', async () => {
+    const onSelect = vi.fn();
+    render(
+      <EditorMenuBar
+        t={createTranslator('en')}
+        onSelect={onSelect}
+        enabledIds={['tools.uiLanguage']}
+      />,
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Tools' }));
+    const item = screen.getByText('UI Language').closest('button');
+    expect(item).toBeEnabled();
+    await userEvent.click(item);
+    expect(onSelect).toHaveBeenCalledWith('tools.uiLanguage');
   });
 });
 
