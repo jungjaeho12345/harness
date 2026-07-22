@@ -5,7 +5,8 @@
     {
       "step": 0,
       "name": "i18n-catalog",
-      "status": "pending"
+      "status": "completed",
+      "summary": "web/src/view/i18n.js 신규(UI_LANGUAGES ko/en, MESSAGES.ko는 EDITOR_MENUS 라벨과 바이트 동일·freeze, createTranslator 폴백 사슬 table→fallback→ko→key); editorPrefs.js에 ui:{language:'ko'} 카테고리 additive 추가(loadEditorPrefs 한 단계 병합); i18n.test.js 11 + editorPrefs ui 테스트 5 신규, 전체 회귀 없음."
     },
     {
       "step": 1,
