@@ -614,3 +614,59 @@ describe('useWriteController', () => {
     expect(r.items[0].articleId).toBe('AKR1');
   });
 });
+
+// phase43 step4 — save/submit 선택적 bodyOverride(자동 기업코드 변환이 변환 본문을 명시 전달하는 통로).
+// 미전달 시 기존 동작(tab.fields.body) 그대로(하위호환). 프로덕션 news.db 미바인딩(in-memory fake만).
+describe('useWriteController — save/submit bodyOverride (phase43)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  it('save(bodyOverride) — 오버라이드 본문을 markupVersion으로 싣는다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    await act(async () => { await result.current.save('삼성전자(005930)'); });
+    expect(save.mock.calls[0][0].markupVersion).toBe('삼성전자(005930)');
+  });
+
+  it('save() — 인자 없음이면 tab.fields.body를 markupVersion으로 싣는다(하위호환)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('body', '원본본문'); });
+
+    await act(async () => { await result.current.save(); });
+    expect(save.mock.calls[0][0].markupVersion).toBe('원본본문');
+  });
+
+  it('submit(action, bodyOverride) — 편집 경로에서 오버라이드 본문으로 PUT한다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    await act(async () => { await result.current.submit('hold', '카카오(035720)'); });
+    expect(save.mock.calls[0][0].markupVersion).toBe('카카오(035720)');
+  });
+
+  it('submit(action, bodyOverride) — 신규(create) 경로에서도 오버라이드 본문으로 저장한다', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '제목'); });
+    act(() => { result.current.updateField('body', '삼성전자'); });
+
+    await act(async () => { await result.current.submit('send', '삼성전자(005930)'); });
+    expect(save).toHaveBeenCalled();
+    expect(save.mock.calls[0][0].markupVersion).toBe('삼성전자(005930)');
+    expect(save.mock.calls[0][2]).toBe('send'); // 신규는 action도 함께 전달(기존 계약)
+  });
+
+  it('submit(action) — 오버라이드 없으면 기존대로 tab.fields.body를 싣는다(하위호환)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('body', '변환안된본문'); });
+
+    await act(async () => { await result.current.submit('hold'); });
+    expect(save.mock.calls[0][0].markupVersion).toBe('변환안된본문');
+  });
+});
