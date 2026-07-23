@@ -2771,7 +2771,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
 // editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
-// aux-tools 의존(기업코드변환)은 여전히 비활성 placeholder. 텍스트 붙여넣기는 36-editor-edit-clipboard에서 결선. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
+// 기업코드변환(ctx.companyCode)은 phase43에서 결선 — 비매핑에서 활성, 매핑에서 비활성. 텍스트 붙여넣기는 36-editor-edit-clipboard에서 결선. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
 describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -2864,14 +2864,63 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환)만 비활성으로 보인다(약물입력=phase17·원본 붙여넣기=Alt+V·텍스트 붙여넣기=phase36 결선됨)', async () => {
+  it('기업코드변환(ctx.companyCode)은 비매핑(편집)에서 활성이다(phase43 결선)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('기업코드변환')).toBeEnabled();
+  });
 
-    for (const label of ['기업코드변환']) {
-      expect(ctxItem(label)).toBeDisabled();
-    }
+  it('기업코드변환(ctx.companyCode)은 매핑에서 비활성이다(본문-only 불변식)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('기업코드변환')).toBeDisabled();
+  });
+
+  it('우클릭 기업코드변환 클릭 시 본문 종목명이 "종목명(코드)"로 태깅되고 저장 markupVersion에 반영된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('삼성전자'), textBlock('본문'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    await userEvent.click(ctxItem('기업코드변환'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 종목명만 태깅, 임베드 없는 텍스트/"(끝)" 불변.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('삼성전자(005930)\n본문\n(끝)');
+  });
+
+  it('Ctrl+B로 본문 종목명이 태깅되고, 재실행은 멱등이다(이중 감쌈 없음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('카카오'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const editor = container.querySelector('.yh-editor');
+
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true });
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true }); // 재실행 — 엔진 lookahead로 no-op(이중 감쌈 방지)
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('카카오(035720)\n(끝)');
+  });
+
+  it('매핑 모드: Ctrl+B가 본문을 바꾸지 않는다(본문-only 불변식 — onKeyDown 미부착 + 핸들러 가드 이중 방어)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('삼성전자'), textBlock('(끝)')]);
+    const { container, model } = await openWith(
+      [textBlock('삼성전자'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+    const editor = container.querySelector('.yh-editor');
+    if (editor) fireEvent.keyDown(editor, { key: 'b', ctrlKey: true });
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로 PUT
   });
 
   it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·원본·텍스트 붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
@@ -2879,7 +2928,7 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '텍스트 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '텍스트 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '기업코드변환', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
@@ -7113,5 +7162,113 @@ describe('WriterPage — UI 언어 설정(tools.uiLanguage) 결선', () => {
     expect(screen.queryByRole('menuitem', { name: 'Tools' })).toBeNull();
     // 열린 다이얼로그의 닫기 라벨도 같은 번역기로 한국어 복귀(닫기).
     expect(screen.getByTestId('ui-language-close')).toHaveTextContent('닫기');
+  });
+});
+
+// phase43 step5 — 자동 기업코드 변환(edit.companyCode='auto'): 명시 저장·송고/보류 직전에만 본문을 태깅한다.
+// 자동저장 타이머·타이핑 커밋에는 적용하지 않는다(사용자 모르게 본문 변경 금지). 변환 본문은 오버라이드로 영속(stale 회피).
+describe('WriterPage — 자동 기업코드 변환(edit.companyCode=auto)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const setCompanyCode = (mode) => saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', { companyCode: mode }));
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  async function openEditTab({ articleId = 'AKR1', status = 'RDS', role = 'R', blocks } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId, title: '제목', status }, mode: 'edit' },
+      seed: { articles: [{ articleId, status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  it('auto + 파일>저장(기존 기사): 종목명이 태깅되어 PUT되고 화면에도 반영된다', async () => {
+    setCompanyCode('auto');
+    const { model, container } = await openEditTab({ blocks: [textBlock('삼성전자'), textBlock('본문')] });
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(blocksToText(deserialize(dto.markupVersion))).toBe('삼성전자(005930)\n본문'); // 오버라이드로 변환 본문 영속
+    await waitFor(() => expect(editorLines(container)).toEqual(['삼성전자(005930)', '본문'])); // 화면(commitBody) 반영
+  });
+
+  it('manual + 파일>저장: 본문이 변환되지 않는다(기본 manual)', async () => {
+    setCompanyCode('manual');
+    const { model, container } = await openEditTab({ blocks: [textBlock('삼성전자'), textBlock('본문')] });
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(blocksToText(deserialize(dto.markupVersion))).toBe('삼성전자\n본문'); // 미변환
+    expect(editorLines(container)).toEqual(['삼성전자', '본문']);
+  });
+
+  it('auto + 송고: 송고 직전 본문이 태깅되어 전이 저장된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    setCompanyCode('auto');
+    const { model } = await openEditTab({ blocks: [textBlock('삼성전자'), textBlock('본문'), textBlock('(끝)')] });
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('삼성전자(005930)\n본문\n(끝)');
+  });
+
+  it('auto 멱등: 이미 태깅된 본문을 다시 저장해도 이중 감쌈이 없다', async () => {
+    setCompanyCode('auto');
+    const { model } = await openEditTab({ blocks: [textBlock('삼성전자(005930)'), textBlock('본문')] });
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickFileItem('저장');
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(blocksToText(deserialize(dto.markupVersion))).toBe('삼성전자(005930)\n본문'); // 이중 감쌈 없음
+  });
+
+  it('auto라도 타이핑(onTextChange)만으로는 본문이 변환되지 않는다(저장/송고 전까지)', async () => {
+    setCompanyCode('auto');
+    const { container } = await openEditTab({ blocks: [textBlock('본문')] });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '삼성전자';
+    fireEvent.input(editor);
+    // 타이핑 커밋만으로는 변환 없음(화면에 코드 미노출).
+    expect(editorLines(container).join('\n')).not.toContain('(005930)');
+  });
+
+  it('auto + 매핑 저장: 본문이 변환되지 않는다(본문-only 불변식)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    setCompanyCode('auto');
+    const original = serialize([textBlock('삼성전자'), textBlock('(끝)')]);
+    const { model } = setup({
+      identity: { role: 'D' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '삼성전자', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR9', status: 'DPS', lockYN: 'Y', markupVersion: original }] },
+    });
+    await waitFor(() => expect(document.querySelector('.yh-editor__line')).toBeTruthy());
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('저장'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로(매핑=변환 없음)
   });
 });

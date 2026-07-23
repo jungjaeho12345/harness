@@ -240,6 +240,7 @@ describe('editorGlyphKeymap — 예약 핸들러 느슨 변형 제외(죽은 항
   it.each([
     ['Ctrl+Shift+F'], // isFindReplace가 shift 무시하고 삼킴
     ['Ctrl+Shift+Y'], // isInsertContinueMarker가 shift 무시하고 삼킴
+    ['Ctrl+Shift+B'], // isCompanyCode가 shift 무시하고 삼킴(기업코드변환)
     ['Alt+Shift+Y'], // isInsertEndMarker가 shift 무시하고 삼킴
     ['Alt+Shift+O'], // isGlyphInput이 shift 무시하고 삼킴
     ['Alt+Shift+V'], // isPasteOriginal이 shift 무시하고 삼킴
@@ -253,6 +254,7 @@ describe('editorGlyphKeymap — 예약 핸들러 느슨 변형 제외(죽은 항
   it.each([
     ['Ctrl+Alt+Y'], // (계속)=!alt·(끝)=!ctrl 양쪽 배제 — 발화 가능
     ['Ctrl+Alt+F'], // isFindReplace가 !alt — 발화 가능
+    ['Ctrl+Alt+B'], // isCompanyCode가 !alt — 발화 가능(과차단 금지)
     ['Alt+Z'], // isUndo/isRedo는 ctrl||meta 필수 — 발화 가능
     ['Ctrl+Alt+Z'], // isUndo/isRedo가 !alt — 발화 가능
     ['Ctrl+Shift+D'], // 라인 삭제 처리는 keymap 분기 뒤 — 등록 시 keymap이 정당하게 이김

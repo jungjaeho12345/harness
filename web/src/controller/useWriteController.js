@@ -56,9 +56,12 @@ function pick(src, keys) {
 
 // 탭 편집 필드 → 서버 영속 dto. 본문은 서버가 저장하는 키(markupVersion)로 싣고 body 키는 보내지 않는다
 // (server ARTICLE_FIELDS와 일치 — body로 보내면 본문이 통째로 유실된다). role은 어디서도 싣지 않는다(ADR-004).
-function toSaveDto(tab) {
+// bodyOverride(선택) — 자동 기업코드 변환(phase43)이 저장/송고 직전에 변환한 본문을 명시 전달할 때 사용한다.
+// commitBody의 setState는 같은 tick에 tabsRef에 반영되지 않아(effect 지연) save/submit이 stale 본문을 읽으므로,
+// 변환 본문을 오버라이드로 직접 싣는다. 미전달(undefined/null)이면 기존 동작(tab.fields.body) 그대로 — 하위호환.
+function toSaveDto(tab, bodyOverride) {
   const { body, ...rest } = tab.fields;
-  const dto = { ...rest, markupVersion: body };
+  const dto = { ...rest, markupVersion: bodyOverride ?? body };
   if (tab.articleId) dto.articleId = tab.articleId;
   return dto;
 }
@@ -273,10 +276,10 @@ export function useWriteController() {
   }, []);
 
   // 저장 — 신규는 생성(POST), 편집은 잠금 보유자 부분 수정(PUT). Model이 articleId 유무로 분기한다.
-  const save = useCallback(async () => {
+  const save = useCallback(async (bodyOverride) => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab), tab.clientId);
+    const r = await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId);
     if (r && r.ok && r.articleId && !tab.articleId) {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
@@ -310,19 +313,19 @@ export function useWriteController() {
 
   // 송고/보류/KILL/삭제승인. 신규(편집 컨텍스트 아님)는 전이 없이 RDS로 저장만 한다(news.md).
   // 편집 컨텍스트는 현재 편집 내용을 저장(PUT)한 뒤 생애주기 전이 → 성공 시 잠금 해제 + 빈 새 기사 탭으로 전환.
-  const submit = useCallback(async (action) => {
+  const submit = useCallback(async (action, bodyOverride) => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
 
     if (!tab.articleId) {
       // 신규(create)는 누른 의도 action(send/hold)을 함께 넘긴다 — 서버 initialStatus가 Z+hold만 DDH로,
       // 그 외/송고는 RDS로 저장한다(전이 없음). 편집 경로(아래)는 action을 PUT에 싣지 않는다.
-      const r = await model.saveArticle(toSaveDto(tab), tab.clientId, action);
+      const r = await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId, action);
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }
 
-    await model.saveArticle(toSaveDto(tab), tab.clientId);
+    await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId);
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});

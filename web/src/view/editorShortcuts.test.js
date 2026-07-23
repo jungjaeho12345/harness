@@ -3,7 +3,7 @@ import {
   isInsertEndMarker, isDeleteLine, insertEndMarker, deleteLineAt,
   CONTINUE_MARKER, isInsertContinueMarker, insertContinueMarker,
   transformTextLine, toUpper, toLower, capitalizeFirst, toggleCase,
-  isGlyphInput, isPasteOriginal, isUndo, isRedo,
+  isGlyphInput, isPasteOriginal, isUndo, isRedo, isCompanyCode,
 } from './editorShortcuts.js';
 import { textBlock, embedBlock, END_MARKER, blocksToText } from './editorContent.js';
 
@@ -160,6 +160,22 @@ describe('editorShortcuts — insert "(계속)" (Ctrl+Y)', () => {
     const once = insertContinueMarker([textBlock('a')], 0);
     const twice = insertContinueMarker(once.blocks, 0);
     expect(blocksToText(twice.blocks).split('\n')).toEqual(['a', '(계속)', '(계속)']);
+  });
+});
+
+describe('editorShortcuts — 기업코드변환 (Ctrl+B)', () => {
+  it('recognizes Ctrl+B (key/code), and not plain b / Alt+B / Ctrl+Alt+B', () => {
+    expect(isCompanyCode({ ctrlKey: true, key: 'b' })).toBe(true);
+    expect(isCompanyCode({ ctrlKey: true, key: 'B' })).toBe(true);
+    expect(isCompanyCode({ ctrlKey: true, code: 'KeyB' })).toBe(true);
+    expect(isCompanyCode({ key: 'b' })).toBe(false);
+    expect(isCompanyCode({ altKey: true, key: 'b' })).toBe(false);
+    expect(isCompanyCode({ ctrlKey: true, altKey: true, key: 'b' })).toBe(false);
+  });
+
+  it('ignores shift/meta (family와 동형 — Ctrl+Shift+B도 인식)', () => {
+    expect(isCompanyCode({ ctrlKey: true, shiftKey: true, key: 'b' })).toBe(true);
+    expect(isCompanyCode({ ctrlKey: true, metaKey: true, key: 'b' })).toBe(true);
   });
 });
 
