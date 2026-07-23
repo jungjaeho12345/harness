@@ -26,6 +26,7 @@ import { loadMemo, saveMemo } from './memoStore.js';
 import { AbbrevManageDialog } from './AbbrevManageDialog.jsx';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import { expandAbbrevInBlocks } from './abbrevConvert.js';
+import { mergeAbbrevs } from './commonAbbrevs.js';
 import { SimpTradConvertDialog } from './SimpTradConvertDialog.jsx';
 import { convertSimpTradInBlocks } from './simpTradConvert.js';
 import { HistoryCompareDialog } from './HistoryCompareDialog.jsx';
@@ -508,7 +509,11 @@ export function WriterPage() {
   // 안전 경로(commitBody(serialize(...)))만 쓴다 — DOM/Editor 직접 조작 금지(날짜삽입/대소문자변환과 동일).
   // 전체 본문 transform이라 setPendingCaretLine은 호출하지 않는다(오프셋 대량 변동 — 부정확 캐럿 이동보다 포커스 유지가 안전).
   const convertAbbrev = () => {
-    const r = expandAbbrevInBlocks(blocks, abbrevs);
+    // 사용자 약어 + 공용약어(언론 관용) 병합 — 같은 short는 사용자 우선. edit.noCommonAbbr=true면 공용약어 제외.
+    // 액션 시점에 loadEditorPrefs()를 읽는다(insertDate의 dateFormat 관례 — 지속 시각 효과가 없어 마운트 게이트 불필요).
+    const noCommonAbbr = loadEditorPrefs().edit.noCommonAbbr;
+    const pairs = mergeAbbrevs(abbrevs, { includeCommon: !noCommonAbbr });
+    const r = expandAbbrevInBlocks(blocks, pairs);
     if (!r.changed) return;                                   // 등록 약어 없음/매치 없음 → no-op(불필요한 dirty 방지).
     commitBody(serialize(r.blocks));
   };
