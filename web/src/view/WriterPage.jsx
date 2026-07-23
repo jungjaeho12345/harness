@@ -27,6 +27,7 @@ import { AbbrevManageDialog } from './AbbrevManageDialog.jsx';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import { expandAbbrevInBlocks } from './abbrevConvert.js';
 import { mergeAbbrevs } from './commonAbbrevs.js';
+import { convertCompanyCodeInBlocks } from './companyCodeConvert.js';
 import { SimpTradConvertDialog } from './SimpTradConvertDialog.jsx';
 import { convertSimpTradInBlocks } from './simpTradConvert.js';
 import { HistoryCompareDialog } from './HistoryCompareDialog.jsx';
@@ -56,7 +57,7 @@ import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
   toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput, isPasteOriginal,
-  isUndo, isRedo,
+  isUndo, isRedo, isCompanyCode,
 } from './editorShortcuts.js';
 import {
   createHistory, pushHistory, undo as undoHistory, redo as redoHistory,
@@ -518,6 +519,17 @@ export function WriterPage() {
     commitBody(serialize(r.blocks));
   };
 
+  // 우클릭 기업코드변환 / Ctrl+B — 본문 텍스트 블록의 종목명을 "종목명(코드)"로 태깅(임베드·"(끝)" 불변).
+  // convertAbbrev와 동형 안전 경로(commitBody(serialize(...)))만 쓴다 — DOM/Editor 직접 조작 금지. 전체 본문 transform이라
+  // setPendingCaretLine 미호출(오프셋 대량 변동, convertAbbrev와 동일 정책). 멱등(재실행 no-op)은 엔진 lookahead가 보장.
+  // 호출부(ctx/onKeyDown)에서 !isMapping 가드 — 매핑 이중 방어(applySimpTrad 선례).
+  const convertCompanyCode = () => {
+    if (isMapping) return;
+    const r = convertCompanyCodeInBlocks(blocks);
+    if (!r.changed) return;
+    commitBody(serialize(r.blocks));
+  };
+
   // 도구>간체↔번체 변환 — 방향 다이얼로그 버튼(간체→번체/번체→간체)이 호출. 등록 표(SIMP_TRAD_PAIRS)로 본문
   // 텍스트 블록을 방향대로 변환(임베드·"(끝)" 불변) → commitBody(serialize(...)) 안전 경로만(약어변환과 동일).
   // 매핑 가드 뒤에서만 도달하지만 다이얼로그가 열린 채 탭 전환에 대비해 isMapping 이중 방어. changed일 때만 반영(no-op 시
@@ -973,10 +985,10 @@ export function WriterPage() {
   //  - 약물입력(ctx.symbolInput): 비매핑(본문 편집 가능)일 때만 활성(약물 삽입=본문 변경 → 매핑 비활성, 찾기와 동일 가드).
   //  - 원본 붙여넣기(ctx.pasteOriginal): 클립보드 이미지 붙여넣기(Alt+V와 동일 경로) — 본문 변경이라 비매핑에서만 활성.
   //  - 텍스트 붙여넣기(ctx.pasteText): 클립보드 평문 삽입(마커-안전) — 본문 변경이라 비매핑에서만 활성.
-  //  - aux-tools 의존(기업코드변환): 항상 비활성 placeholder(미구현).
+  //  - 기업코드변환(ctx.companyCode): 본문 텍스트 변경(종목명→종목명(코드)) → 비매핑에서만 활성(약물입력과 동일 가드).
   const ctxEnabledIds = [
     'ctx.findReplace', 'ctx.selectAll', 'ctx.showMenuBar', 'ctx.showToolBar', 'ctx.showGlyphBar',
-    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.pasteOriginal', 'ctx.pasteText', 'ctx.symbolInput']),
+    ...(isMapping ? [] : ['ctx.cut', 'ctx.copy', 'ctx.paste', 'ctx.pasteOriginal', 'ctx.pasteText', 'ctx.symbolInput', 'ctx.companyCode']),
   ];
   // 보이기 토글의 현재 on 상태(체크 표식용).
   const ctxCheckedIds = [
@@ -1027,7 +1039,8 @@ export function WriterPage() {
       case 'ctx.paste':
         runEditorClipboardCommand(id === 'ctx.cut' ? 'cut' : id === 'ctx.copy' ? 'copy' : 'paste');
         break;
-      // aux 항목(ctx.companyCode)은 비활성이라 호출되지 않는다.
+      // 기업코드변환 — 본문 종목명을 "종목명(코드)"로 태깅(비매핑에서만, 이중 방어). Ctrl+B와 공용 핸들러.
+      case 'ctx.companyCode': if (!isMapping) convertCompanyCode(); break;
       default: break;
     }
   };
@@ -1038,6 +1051,13 @@ export function WriterPage() {
     // IME 조합 중에는 어떤 에디터 단축키도 가로채지 않는다(줄삭제/preventDefault 없이 브라우저·IME에 위임 —
     // news.md 173행 조합 중 무개입 원칙. 조합 상태는 nativeEvent.isComposing(레거시 keyCode 229)로 판정).
     if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
+    // Ctrl+B → 기업코드변환(본문 종목명 태깅). contentEditable 기본 bold(<b> 주입)가 블록 모델을 오염시키므로
+    // preventDefault는 항상(매핑이어도 — Ctrl+F 관례) 하고, 실행은 !isMapping일 때만. matchGlyphKeymap보다 앞(예약 조합).
+    if (isCompanyCode(e)) {
+      e.preventDefault();
+      if (!isMapping) convertCompanyCode();
+      return;
+    }
     // Ctrl+F → 찾기/바꾸기 다이얼로그(브라우저 기본 찾기 가로채기). 매핑이어도 preventDefault는 하되 다이얼로그는 안 연다.
     // isFindReplace는 !altKey라 Alt+Y와 충돌하지 않는다(라인삭제 조기 return보다 위에 둔다).
     if (isFindReplace(e)) {

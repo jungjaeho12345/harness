@@ -2771,7 +2771,7 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
 
 // Step 3(14-editor-find-context): 에디터 본문 우클릭 컨텍스트 메뉴(EditorContextMenu) + 바 보이기 토글 결선.
 // editor-canvas 우클릭 → editor-context-menu. 활성: 찾기/바꾸기·전체 선택·보이기 토글·표준편집(비매핑).
-// aux-tools 의존(기업코드변환)은 여전히 비활성 placeholder. 텍스트 붙여넣기는 36-editor-edit-clipboard에서 결선. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
+// 기업코드변환(ctx.companyCode)은 phase43에서 결선 — 비매핑에서 활성, 매핑에서 비활성. 텍스트 붙여넣기는 36-editor-edit-clipboard에서 결선. 약물바 토글은 실제 바(glyph-bar)를 켜고 끈다(phase17 step2 결선).
 describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMenu) 결선', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
@@ -2864,14 +2864,63 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     await waitFor(() => expect(screen.queryByTestId('glyph-bar')).toBeNull());
   });
 
-  it('aux 항목(기업코드변환)만 비활성으로 보인다(약물입력=phase17·원본 붙여넣기=Alt+V·텍스트 붙여넣기=phase36 결선됨)', async () => {
+  it('기업코드변환(ctx.companyCode)은 비매핑(편집)에서 활성이다(phase43 결선)', async () => {
     const { container } = await openWith([textBlock('헤드'), textBlock('본문')]);
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('기업코드변환')).toBeEnabled();
+  });
 
-    for (const label of ['기업코드변환']) {
-      expect(ctxItem(label)).toBeDisabled();
-    }
+  it('기업코드변환(ctx.companyCode)은 매핑에서 비활성이다(본문-only 불변식)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')], { mode: 'mapping', status: 'DPS', role: 'D' });
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    expect(ctxItem('기업코드변환')).toBeDisabled();
+  });
+
+  it('우클릭 기업코드변환 클릭 시 본문 종목명이 "종목명(코드)"로 태깅되고 저장 markupVersion에 반영된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('삼성전자'), textBlock('본문'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+
+    rightClickCanvas(container);
+    await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
+    await userEvent.click(ctxItem('기업코드변환'));
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // 종목명만 태깅, 임베드 없는 텍스트/"(끝)" 불변.
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('삼성전자(005930)\n본문\n(끝)');
+  });
+
+  it('Ctrl+B로 본문 종목명이 태깅되고, 재실행은 멱등이다(이중 감쌈 없음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, model } = await openWith([textBlock('카카오'), textBlock('(끝)')]);
+    const save = vi.spyOn(model, 'saveArticle');
+    const editor = container.querySelector('.yh-editor');
+
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true });
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true }); // 재실행 — 엔진 lookahead로 no-op(이중 감쌈 방지)
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(blocksToText(deserialize(save.mock.calls[0][0].markupVersion))).toBe('카카오(035720)\n(끝)');
+  });
+
+  it('매핑 모드: Ctrl+B가 본문을 바꾸지 않는다(본문-only 불변식 — onKeyDown 미부착 + 핸들러 가드 이중 방어)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const original = serialize([textBlock('삼성전자'), textBlock('(끝)')]);
+    const { container, model } = await openWith(
+      [textBlock('삼성전자'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    const save = vi.spyOn(model, 'saveArticle');
+    const editor = container.querySelector('.yh-editor');
+    if (editor) fireEvent.keyDown(editor, { key: 'b', ctrlKey: true });
+
+    await userEvent.click(actionBtn('저장'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로 PUT
   });
 
   it('편집(비매핑) 모드: 잘라내기/복사/붙여넣기·원본·텍스트 붙여넣기·찾기/바꾸기·전체 선택·약물입력·보이기 토글이 활성이다', async () => {
@@ -2879,7 +2928,7 @@ describe('WriterPage — 에디터 우클릭 컨텍스트 메뉴(EditorContextMe
     rightClickCanvas(container);
     await waitFor(() => expect(ctxMenu()).toBeInTheDocument());
 
-    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '텍스트 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
+    for (const label of ['잘라내기', '복사', '붙여넣기', '원본 붙여넣기', '텍스트 붙여넣기', '찾기/바꾸기', '전체 선택', '약물입력', '기업코드변환', '메뉴바 보이기', '툴바 보이기', '약물바 보이기']) {
       expect(ctxItem(label)).toBeEnabled();
     }
   });
