@@ -3,7 +3,7 @@
   "phase": "43-editor-aux-tools",
   "steps": [
     { "step": 0, "name": "common-abbrevs", "status": "completed", "completed_at": "2026-07-24T00:47:32+0900", "summary": "commonAbbrevs.js 신규(공용약어 43개 번들 + mergeAbbrevs 순수 병합 헬퍼: 사용자 우선 short dedupe, includeCommon 플래그). WriterPage.convertAbbrev가 loadEditorPrefs().edit.noCommonAbbr를 액션 시점에 읽어 mergeAbbrevs(abbrevs, {includeCommon:!noCommonAbbr})를 expandAbbrevInBlocks에 주입. 엔진(abbrevConvert)·약어관리 다이얼로그 불변. 테스트 commonAbbrevs.test.js(10). web 1763 pass, lint/build OK." },
-    { "step": 1, "name": "company-code-engine", "status": "pending" },
+    { "step": 1, "name": "company-code-engine", "status": "completed", "completed_at": "2026-07-24T00:55:10+0900", "summary": "companyCodeTable.js(KOSPI/KOSDAQ 115종목, 6자리 코드, 안전측 큐레이션—바 2글자 라틴티커·흔한단어 종목 제외) + companyCodeConvert.js 순수엔진: convertCompanyCode(text)/convertCompanyCodeInBlocks(blocks). 최장일치·좌→우 단일스캔·anti-cascade·미등록 pass-through, **재실행 멱등 우측 lookahead**(이미 (자기코드)면 재태깅 안 함). 테스트 17(멱등·최장일치 포함). lint/build OK. WriterPage 결선은 step2·3." },
     { "step": 2, "name": "company-code-shortcut", "status": "pending" },
     { "step": 3, "name": "company-code-manual", "status": "pending" },
     { "step": 4, "name": "company-code-save-override", "status": "pending" },
