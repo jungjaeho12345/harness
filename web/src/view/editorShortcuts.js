@@ -23,6 +23,12 @@ export function isInsertContinueMarker(e) {
   return !!(e && e.ctrlKey && !e.altKey && (e.key === 'y' || e.key === 'Y' || e.code === 'KeyY'));
 }
 
+// Ctrl+B — 본문 기업코드 변환(우클릭 "기업코드변환 Ctrl+B", news.md L178). isInsertContinueMarker와 동형(ctrl && !alt,
+// shift/meta 무시). 레이아웃 무관하게 code(KeyB)도 본다. contentEditable 기본 bold와 충돌하므로 결선부에서 preventDefault 필수.
+export function isCompanyCode(e) {
+  return !!(e && e.ctrlKey && !e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB'));
+}
+
 // Ctrl+Z / Cmd+Z — 되돌리기(undo). Shift 없이(Shift+Z는 redo). Alt 없이(다른 조합 오인 방지).
 export function isUndo(e) {
   return !!(e && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
