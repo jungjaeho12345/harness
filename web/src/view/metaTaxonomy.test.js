@@ -11,8 +11,11 @@ import {
   metaFieldConfig,
 } from './metaTaxonomy.js';
 
-// 지역/내용/속성 택소노미 순수 데이터 + 콤마 토큰 헬퍼 — Meta.md 전사(원문 표기 보존, 정정 금지).
-// CRITICAL: 파싱은 콤마 기준이다 — 공백 포함 토큰('PR Newswire', '봉화 상주')이 있어 공백 split은 데이터 파손.
+// 지역/내용/속성 택소노미 순수 데이터 + 콤마 토큰 헬퍼 — Meta.md 전사(원문 표기 보존).
+// 2026-07-24 스펙 교정(Meta.md 오타 수정) 반영: 봉화/상주·영양/영주·칠곡/포항·라오스/마카오·이집트/잠비아 분리,
+// 상임위·함남·니카라과·볼리비아·바누아투·솔로몬·통가·파푸아 표기 교정.
+// CRITICAL: 파싱은 콤마 기준이다 — 공백 포함 토큰('PR Newswire' 등 속성, 그리고 '봉화 상주' 같은
+// 교정 전 레거시 저장값)이 있어 공백 split은 데이터 파손.
 describe('parseTokens — 콤마 문자열 → 토큰 배열(관대한 파싱)', () => {
   it('콤마로 쪼개고 trim하며 빈 토큰을 버린다', () => {
     expect(parseTokens('서울, 대전 ,')).toEqual(['서울', '대전']);
@@ -28,7 +31,7 @@ describe('parseTokens — 콤마 문자열 → 토큰 배열(관대한 파싱)',
 
   it('공백 포함 토큰은 쪼개지 않고 보존한다(콤마 기준 파싱)', () => {
     expect(parseTokens('PR Newswire, 게시판')).toEqual(['PR Newswire', '게시판']);
-    expect(parseTokens('봉화 상주')).toEqual(['봉화 상주']);
+    expect(parseTokens('봉화 상주')).toEqual(['봉화 상주']); // 교정 전 레거시 저장값 — 분리하면 파손
     expect(parseTokens('N.K Photo, Web Service')).toEqual(['N.K Photo', 'Web Service']);
   });
 
@@ -115,9 +118,9 @@ describe('택소노미 데이터 무결성 — Meta.md 전사 잠금', () => {
     }
   });
 
-  it('전체 개수: 지역 그룹 34·leaf 396, 내용 그룹 6·leaf 57, 속성 96', () => {
+  it('전체 개수: 지역 그룹 34·leaf 401, 내용 그룹 6·leaf 57, 속성 96', () => {
     expect(REGION_GROUPS.length).toBe(34);
-    expect(allLeaves(REGION_GROUPS).length).toBe(396);
+    expect(allLeaves(REGION_GROUPS).length).toBe(401); // 2026-07-24 교정: 콤마 누락 5쌍 분리로 396→401
     expect(CATEGORY_GROUPS.length).toBe(6);
     expect(allLeaves(CATEGORY_GROUPS).length).toBe(57);
     expect(ATTRIBUTES.length).toBe(96);
@@ -131,7 +134,7 @@ describe('택소노미 데이터 무결성 — Meta.md 전사 잠금', () => {
 
   it('스팟 체크: 대표 항목이 leaf로 존재한다', () => {
     const regionLeaves = allLeaves(REGION_GROUPS);
-    for (const leaf of ['전국종합', '서울', '평양', '봉화 상주', '세종', '타히티', '독도']) {
+    for (const leaf of ['전국종합', '서울', '평양', '봉화', '상주', '세종', '타히티', '독도']) {
       expect(regionLeaves).toContain(leaf);
     }
     const categoryLeaves = allLeaves(CATEGORY_GROUPS);
@@ -153,23 +156,31 @@ describe('택소노미 데이터 무결성 — Meta.md 전사 잠금', () => {
     expect(byLabel(CATEGORY_GROUPS, '선거').items).toEqual(['선거일반', '대선', '총선', '지방선거', '재보선', '선거여론', '인수위']);
   });
 
-  it('콤마 누락 의심 토큰은 공백 포함 단일 토큰으로 보존한다(임의 분리 금지)', () => {
+  it('콤마 누락 교정(2026-07-24): 공백 결합 5쌍이 별도 leaf로 분리됐다', () => {
     const regionLeaves = allLeaves(REGION_GROUPS);
-    for (const kept of ['봉화 상주', '영양 영주', '칠곡 포항', '라오스 마카오', '이집트 잠비아']) {
-      expect(regionLeaves).toContain(kept);
+    for (const split of ['봉화', '상주', '영양', '영주', '칠곡', '포항', '라오스', '마카오', '이집트', '잠비아']) {
+      expect(regionLeaves).toContain(split);
     }
-    for (const notSplit of ['봉화', '상주', '영양', '영주', '칠곡', '포항', '라오스', '마카오', '이집트', '잠비아']) {
-      expect(regionLeaves).not.toContain(notSplit);
+    for (const legacy of ['봉화 상주', '영양 영주', '칠곡 포항', '라오스 마카오', '이집트 잠비아']) {
+      expect(regionLeaves).not.toContain(legacy);
     }
-    // '차드 ,카메룬'은 콤마가 있으므로(공백만 특이) 별도 두 leaf다.
     expect(regionLeaves).toContain('차드');
     expect(regionLeaves).toContain('카메룬');
   });
 
-  it('원문 오타 표기 보존(정정 금지): 상임이ㅜ·항남', () => {
-    expect(allLeaves(CATEGORY_GROUPS)).toContain('상임이ㅜ'); // '상임위' 아님
-    expect(allLeaves(REGION_GROUPS)).toContain('항남'); // 함경남도 — '함남' 아님
-    expect(allLeaves(CATEGORY_GROUPS)).not.toContain('상임위'); // '상임이ㅜ'는 내용(분류) 소속 — 잠금도 CATEGORY에
-    expect(allLeaves(REGION_GROUPS)).not.toContain('함남');
+  it('오타 교정(2026-07-24): 상임위·함남 및 국명 표기', () => {
+    expect(allLeaves(CATEGORY_GROUPS)).toContain('상임위'); // 舊 '상임이ㅜ'
+    expect(allLeaves(CATEGORY_GROUPS)).not.toContain('상임이ㅜ');
+    expect(allLeaves(REGION_GROUPS)).toContain('함남'); // 함경남도 — 舊 '항남'
+    expect(allLeaves(REGION_GROUPS)).not.toContain('항남');
+    expect(allLeaves(REGION_GROUPS)).not.toContain('상임위'); // 상임위는 내용(분류) 소속
+    const regionLeaves = allLeaves(REGION_GROUPS);
+    for (const [fixed, old] of [
+      ['니카라과', '나카라과'], ['볼리비아', '볼리아'], ['바누아투', '비누아투'],
+      ['솔로몬', '슬로몬'], ['통가', '퉁가'], ['파푸아', '파부아'],
+    ]) {
+      expect(regionLeaves).toContain(fixed);
+      expect(regionLeaves).not.toContain(old);
+    }
   });
 });
