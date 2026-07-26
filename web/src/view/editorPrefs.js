@@ -16,8 +16,9 @@ export const DEFAULT_EDITOR_PREFS = Object.freeze({
     email: false, emailValue: '', blog: false, blogValue: '',
   },
   // 편집(edit): columnLimit effect는 step4(래퍼 margin). language 허용 9종 ko/en/ja/zh/es/fr/ar/vi/ru.
+  // editorFont/editorFontSize: 툴바 글꼴·글씨크기 선택(raw 선택값). sentinel '기본' = override 없음(CSS 미주입 → 현재값 렌더).
   edit: {
-    columnLimit: false, dragDrop: true, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: BASE_LINE_HEIGHT, inputMode: 'unicode',
+    columnLimit: false, dragDrop: true, noCommonAbbr: false, companyCode: 'manual', language: 'ko', lineSpacing: BASE_LINE_HEIGHT, inputMode: 'unicode', editorFont: '기본', editorFontSize: '기본',
   },
   // 맞춤법(spellcheck): checkOption 단일 enum, errorTypes 다중 bool 6종, errorStyle bold/underline.
   spellcheck: {
@@ -90,6 +91,27 @@ export function normalizeLineSpacing(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 1.0) return BASE_LINE_HEIGHT;
   return n;
+}
+
+// 툴바 글꼴 선택값('바탕'/'돋움'/'굴림')을 실제 CSS font-family 스택으로 매핑한다.
+// sentinel '기본'과 매핑에 없는 값(미상/무효)은 null(override 없음) — 소비 시점(step1)에서 null이면 CSS 변수를 주입하지 않아
+// fallback(현재값 var(--yh-sans))이 렌더된다 = 바이트 동일 회귀 가드. 명명 폰트만 실제 스택 반환(거짓 컨트롤 금지).
+// 매핑/정규화는 소비 시점에서만 — loadEditorPrefs 병합은 raw 선택값을 유지한다(normalizeLineSpacing 계약과 동일).
+const FONT_FAMILY_CSS = Object.freeze({
+  바탕: "'Batang', 바탕, 'BatangChe', serif",
+  돋움: "'Dotum', 돋움, 'DotumChe', sans-serif",
+  굴림: "'Gulim', 굴림, 'GulimChe', sans-serif",
+});
+export function fontFamilyCss(value) {
+  return FONT_FAMILY_CSS[value] ?? null;
+}
+
+// 툴바 글씨크기 선택값('10'/'12'/'14'/'16')을 실제 CSS font-size 문자열('<n>px')로 매핑한다.
+// sentinel '기본'(Number('기본')=NaN)·무효값(≤0·비유한)은 null(override 없음) = 바이트 동일 회귀 가드.
+export function fontSizeCss(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `${n}px`;
 }
 
 // 순수: 해당 category 객체를 patch로 얕은 병합한 새 prefs 반환(입력 mutate 금지). 알 수 없는 category면 그대로 반환.
