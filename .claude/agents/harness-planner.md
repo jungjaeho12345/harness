@@ -46,7 +46,7 @@ model: opus
 - **신뢰 경계 = 서버**: 인가 관련 step은 acting role을 `x-session-id` 세션에서 도출하도록 지시한다.
 - **계층 분리**: 백엔드는 controllers→services→models→db, 의존성 주입. 프론트는 Model(계약)←Controller(훅)←View.
 - **TDD**: 각 step의 작업/AC에 "테스트 먼저" 흐름을 담는다.
-- **범위**: 배부 시스템은 범위 밖이다. step으로 만들지 마라.
+- **범위**: 배부 시스템은 2026-07-26 스코프에 포함됐다(ADR-008). 단, 배부 설계는 ADR-008 아키텍처(파일 스풀 outbound·tick pull)를 따라야 한다 — 앱 내 타이머/직접 네트워크 전송(egress)을 도입하는 step은 만들지 마라.
 
 ## 출력 / 핸드오프
 

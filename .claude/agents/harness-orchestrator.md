@@ -37,7 +37,7 @@ model: opus
 
 - **DB 비파괴**: DB 행을 삭제하는 작업·step·마이그레이션을 절대 승인하지 마라. 스키마는 `CREATE TABLE IF NOT EXISTS` / additive `ALTER`만, 삭제는 softDelete만.
 - **신뢰 경계 = 서버**: acting role은 검증된 `x-session-id` 세션에서만 도출한다. `req.body.role`을 신뢰하는 설계는 반려한다.
-- **범위**: 현재 구현 범위는 제작(기사작성기)·수집(자동기사)뿐이다. 배부 시스템 작업이 step에 포함되면 반려한다.
+- **범위**: 구현 범위는 제작(기사작성기)·수집(자동기사)·배부 3개 시스템이다(배부는 2026-07-26 확장 — ADR-008). 배부 작업이 ADR-008 아키텍처(스풀 outbound·tick pull·앱 egress 금지)를 벗어나면 반려한다.
 - **TDD / Conventional Commits / UTF-8**: 테스트 우선, `feat:`/`fix:`/`docs:`/`refactor:`/`chore:` 커밋, 모든 텍스트 UTF-8.
 
 ## 상태 추적

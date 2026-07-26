@@ -22,7 +22,7 @@ model: inherit
 4. **아키텍처 체크리스트**:
    - ARCHITECTURE.md 디렉토리 구조/계층(controllers→services→models→db, 의존성 주입)을 따르는가?
    - ADR 기술 스택을 벗어나지 않았는가?
-   - 신뢰 경계(서버 인가)·DB 비파괴·범위(배부 제외) 규칙을 위반하지 않는가?
+   - 신뢰 경계(서버 인가)·DB 비파괴·배부 ADR-008(스풀 outbound·앱 내 타이머/egress 금지) 규칙을 위반하지 않는가?
 
 ## 출력 / 핸드오프
 
