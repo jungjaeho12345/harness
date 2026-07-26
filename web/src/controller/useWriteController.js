@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
 import { PENDING_EDIT_KEY } from './useViewController.js';
+import { bodyTitle } from '../view/writerBody.js';
 
 const TABS_KEY = 'yh.writer.tabs';
 
@@ -59,9 +60,13 @@ function pick(src, keys) {
 // bodyOverride(선택) — 자동 기업코드 변환(phase43)이 저장/송고 직전에 변환한 본문을 명시 전달할 때 사용한다.
 // commitBody의 setState는 같은 tick에 tabsRef에 반영되지 않아(effect 지연) save/submit이 stale 본문을 읽으므로,
 // 변환 본문을 오버라이드로 직접 싣는다. 미전달(undefined/null)이면 기존 동작(tab.fields.body) 그대로 — 하위호환.
+// 오버라이드가 주어지면 title도 그 오버라이드 본문에서 재파생한다(phase45): 자동 기업코드 변환이 헤드라인(본문 첫 줄
+// =제목)을 코드 태깅해도 tab.fields.title은 같은 tick에 stale하므로, bodyTitle(단일 출처)로 오버라이드 본문에서
+// 제목을 다시 도출해 이번 저장 1회 지연(title 미반영)을 막는다. 오버라이드 없는 경로는 tab.fields.title 그대로.
 function toSaveDto(tab, bodyOverride) {
   const { body, ...rest } = tab.fields;
   const dto = { ...rest, markupVersion: bodyOverride ?? body };
+  if (bodyOverride != null) dto.title = bodyTitle(bodyOverride);
   if (tab.articleId) dto.articleId = tab.articleId;
   return dto;
 }
