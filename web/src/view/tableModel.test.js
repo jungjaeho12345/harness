@@ -97,10 +97,13 @@ describe('tableModel — grid transforms (pure, immutable)', () => {
     expect(deleteCol([['a'], ['b']], 0)).toEqual([['a'], ['b']]);
   });
 
-  it('delete on an empty table returns the original as-is', () => {
-    const empty = [];
-    expect(deleteRow(empty, 0)).toBe(empty);
-    expect(deleteCol(empty, 0)).toBe(empty);
+  it('delete on a min-size table is a no-op but returns a normalized grid (min 1 row/col kept)', () => {
+    // 빈 표 → 정규화된 새 [] 반환(참조-동일성 아님 — 다른 그리드 함수와 일관된 정규화 계약).
+    expect(deleteRow([], 0)).toEqual([]);
+    expect(deleteCol([], 0)).toEqual([]);
+    // 최소크기(1행/1열)라 삭제하지 않지만 반환은 정규화된다(null→''·비문자열→문자열, 열 패딩).
+    expect(deleteRow([['a', null, 3]], 0)).toEqual([['a', '', '3']]);
+    expect(deleteCol([['a'], [null]], 0)).toEqual([['a'], ['']]);
   });
 
   it('setCell replaces one cell and returns the original for out-of-range coords', () => {

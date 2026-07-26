@@ -4215,6 +4215,16 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     expect(container.querySelector('.yh-embed')).toBeNull();
   });
 
+  it('열린 채 탭을 전환하면 URL 임베드 다이얼로그가 닫힌다(urlEmbedKind 탭-로컬 — 다른 탭에서 열려 보이는 혼란 방지)', async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickTool('그림 삽입');
+    expect(screen.getByTestId('url-embed-input')).toBeInTheDocument();
+
+    // ＋ 버튼으로 새 작성 탭 추가 → 활성 탭 전환 → 조정 블록이 다이얼로그를 닫는다(setTableDialog/setMetaDialog 동형).
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('url-embed-input')).toBeNull());
+  });
+
   // 19-step2: 오디오/링크/로컬영상 결선 — 그림/유튜브와 동일 패턴(메뉴 클릭→다이얼로그→URL 제출→insertEmbed).
   it("'오디오 삽입' 클릭 → 다이얼로그(kind=audio) 오픈, 허용 URL 제출 시 audio 임베드가 생긴다", async () => {
     const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);

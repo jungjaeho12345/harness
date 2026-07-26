@@ -65,19 +65,19 @@ export function insertCol(rows, index) {
   return grid.map((row) => [...row.slice(0, at), '', ...row.slice(at)]);
 }
 
-// index 행 삭제. 행이 1개 이하면 삭제하지 않고 원본 반환(최소 1행 유지 — 0×N 표 방지).
+// index 행 삭제. 행이 1개 이하면 삭제하지 않고 정규화 그리드 반환(최소 1행 유지 — 0×N 표 방지, 반환 계약은 정규화로 통일).
 export function deleteRow(rows, index) {
   const grid = normalizeTableRows(rows);
-  if (grid.length <= 1) return rows;
+  if (grid.length <= 1) return grid;
   const at = clamp(index, 0, grid.length - 1);
   return grid.filter((_, r) => r !== at);
 }
 
-// 모든 행의 index 열 삭제. 열이 1개 이하면 원본 반환(최소 1열 유지 — N×0 표 방지).
+// 모든 행의 index 열 삭제. 열이 1개 이하면 삭제하지 않고 정규화 그리드 반환(최소 1열 유지 — N×0 표 방지, 반환 계약은 정규화로 통일).
 export function deleteCol(rows, index) {
   const grid = normalizeTableRows(rows);
   const cols = grid.length === 0 ? 0 : grid[0].length;
-  if (cols <= 1) return rows;
+  if (cols <= 1) return grid;
   const at = clamp(index, 0, cols - 1);
   return grid.map((row) => row.filter((_, c) => c !== at));
 }

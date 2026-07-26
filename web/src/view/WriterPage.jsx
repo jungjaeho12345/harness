@@ -333,6 +333,10 @@ export function WriterPage() {
     // 메타 선택 팝업의 value/onSubmit도 활성 탭-로컬 — 열린 채 전환하면 '적용'이 다른 탭의
     // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
     setMetaDialog(null);
+    // URL 임베드 다이얼로그(urlEmbedKind)도 비모달 로컬 state — 삽입 전용(URL 1개→insertEmbed)이라
+    // 좌표 오손은 없지만 열린 채 전환하면 다른 탭에서 열려 보인다. 계열 일관성(비모달+로컬 상태는
+    // 전환 시 닫는다 — phase 29~32)상 setTableDialog/setMetaDialog와 함께 닫는다.
+    setUrlEmbedKind(null);
     // 등록 다이얼로그의 imageEmbeds/sourceArticleId는 활성 탭-로컬 — 열린 채 전환하면 이전 탭 이미지가
     // 보이고 '등록'이 엉뚱한 기사 사진을 올린다(phase 29~32 문서-로컬 좌표 이월 계열). 함께 닫는다.
     setShowPhotoPublish(false);
