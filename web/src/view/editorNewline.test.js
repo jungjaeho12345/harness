@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks,
+  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks, shouldOverwriteNextChar,
 } from './editorNewline.js';
 import {
   textBlock, embedBlock, blocksToText, isTextBlock,
@@ -37,6 +37,62 @@ describe('editorNewline — "(끝)" placement & input blocking', () => {
   it('never blocks when there is no marker', () => {
     expect(isInputBlocked('본문', 0)).toBe(false);
     expect(isInputBlocked('본문', 2)).toBe(false);
+  });
+});
+
+// phase44 step3 — 수정(overwrite) 모드 덮어쓰기 대상 판정(순수·결정적). 캐럿 바로 뒤(text[offset])가
+// 같은 줄 일반 글자면 true, 줄 끝('\n')·문서 끝·"(끝)" 마커 영역·무효 오프셋이면 false(삽입 폴백).
+// 이 함수가 이 step의 실질 회귀 방어선(jsdom은 네이티브 문자 대체를 실행하지 않으므로 경계는 여기서 전수 잠근다).
+describe('editorNewline — shouldOverwriteNextChar (수정 모드 덮어쓰기 경계)', () => {
+  it('줄 중간: 캐럿 뒤에 같은 줄 일반 글자가 있으면 true(각 오프셋)', () => {
+    expect(shouldOverwriteNextChar('abc', 0)).toBe(true); // text[0]='a'
+    expect(shouldOverwriteNextChar('abc', 1)).toBe(true); // text[1]='b'
+    expect(shouldOverwriteNextChar('abc', 2)).toBe(true); // text[2]='c'
+  });
+
+  it('문서 끝(offset===length)·범위 밖은 false(삽입 폴백)', () => {
+    expect(shouldOverwriteNextChar('abc', 3)).toBe(false); // 문서 끝
+    expect(shouldOverwriteNextChar('abc', 99)).toBe(false); // 범위 밖
+  });
+
+  it('줄 끝(뒤가 "\\n")은 false(다음 줄 침범 금지), 다음 줄 첫 글자는 true', () => {
+    expect(shouldOverwriteNextChar('ab\ncd', 2)).toBe(false); // text[2]='\n' = 줄 끝
+    expect(shouldOverwriteNextChar('ab\ncd', 3)).toBe(true); // text[3]='c' = 다음 줄 첫 글자
+  });
+
+  it('"(끝)" 마커 시작 이상 오프셋은 전부 false(입력 차단 계약 재사용), 마커 앞 본문은 정상 판정', () => {
+    const text = '본문\n(끝)';
+    const markerStart = text.indexOf('(끝)');
+    expect(shouldOverwriteNextChar(text, markerStart)).toBe(false); // 마커 첫 글자 '('
+    for (let i = markerStart; i <= text.length; i += 1) {
+      expect(shouldOverwriteNextChar(text, i)).toBe(false); // 마커 영역·그 이상 전부 차단
+    }
+    expect(shouldOverwriteNextChar(text, 0)).toBe(true); // 마커 앞 본문 '본'
+    expect(shouldOverwriteNextChar(text, 1)).toBe(true); // 마커 앞 본문 '문'
+    expect(shouldOverwriteNextChar(text, 2)).toBe(false); // 마커 직전 '\n'(줄 끝 — 마커는 자기 줄)
+  });
+
+  it('임베드 경계는 blocksToText에서 "\\n"/문서 끝으로 나타나 자동 false', () => {
+    // blocksToText는 텍스트 블록만 '\n'으로 조인하고 임베드를 제외 → 임베드 자리는 줄 끝('\n')/문서 끝으로 보인다.
+    const text = blocksToText([textBlock('앞'), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('뒤')]);
+    expect(text).toBe('앞\n뒤'); // 임베드 제외
+    expect(shouldOverwriteNextChar(text, 1)).toBe(false); // '앞' 뒤 = '\n'(임베드 경계) → 삽입 폴백
+    expect(shouldOverwriteNextChar(text, text.length)).toBe(false); // 문서 끝
+  });
+
+  it('무효 오프셋(null/undefined/음수/비정수/NaN)은 false', () => {
+    expect(shouldOverwriteNextChar('abc', null)).toBe(false);
+    expect(shouldOverwriteNextChar('abc', undefined)).toBe(false);
+    expect(shouldOverwriteNextChar('abc', -1)).toBe(false);
+    expect(shouldOverwriteNextChar('abc', 1.5)).toBe(false);
+    expect(shouldOverwriteNextChar('abc', NaN)).toBe(false);
+    expect(shouldOverwriteNextChar('abc', '1')).toBe(false); // 문자열 오프셋(비정수 취급)
+  });
+
+  it('빈 문자열·무효 text는 false', () => {
+    expect(shouldOverwriteNextChar('', 0)).toBe(false);
+    expect(shouldOverwriteNextChar(null, 0)).toBe(false);
+    expect(shouldOverwriteNextChar(undefined, 0)).toBe(false);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DEFAULT_EDITOR_PREFS, loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing,
+  fontFamilyCss, fontSizeCss,
 } from './editorPrefs.js';
 import { COLORS } from './editorColoring.js';
 
@@ -87,6 +88,8 @@ describe('editorPrefs — editor preference store', () => {
     expect(edit.language).toBe('ko');
     expect(edit.lineSpacing).toBe(1.8); // base = CSS line-height 1.8 (기본 시각 회귀 방지)
     expect(edit.inputMode).toBe('unicode');
+    expect(edit.editorFont).toBe('기본'); // sentinel '기본' = override 없음 (바이트 동일 회귀 방지)
+    expect(edit.editorFontSize).toBe('기본');
   });
 
   it('returns spellcheck defaults when nothing is saved', () => {
@@ -117,6 +120,8 @@ describe('editorPrefs — editor preference store', () => {
     expect(prefs.edit.dragDrop).toBe(true); // 나머지 edit 키는 기본값 유지
     expect(prefs.edit.language).toBe('ko');
     expect(prefs.edit.inputMode).toBe('unicode');
+    expect(prefs.edit.editorFont).toBe('기본'); // 새 additive 키도 기본값으로 병합(1단계 병합 회귀)
+    expect(prefs.edit.editorFontSize).toBe('기본');
     expect(prefs.colors).toEqual(DEFAULT_EDITOR_PREFS.colors); // 저장 안 한 카테고리도 기본값
   });
 
@@ -352,5 +357,37 @@ describe('editorPrefs — editor preference store', () => {
 
   it("normalizeLineSpacing: 문자열 숫자('1.5')도 Number()로 받아 통과한다(dialog onChange가 문자열 저장)", () => {
     expect(normalizeLineSpacing('1.5')).toBe(1.5);
+  });
+
+  // --- fontFamilyCss / fontSizeCss: 저장된 글꼴/크기 선택값을 실제 CSS 문자열로 매핑 (소비 시점 전용) ---
+  // sentinel '기본'과 미상/무효값은 null(override 없음 → CSS 변수 미주입 → fallback=현재값 렌더 = 바이트 동일).
+  // 명명 폰트/수치만 실제 CSS 값을 반환한다(거짓 컨트롤 금지).
+
+  it("fontFamilyCss: '기본'/미상/무효값은 null을 반환한다(override 없음 = 바이트 동일 회귀 가드)", () => {
+    expect(fontFamilyCss('기본')).toBe(null);
+    expect(fontFamilyCss(undefined)).toBe(null);
+    expect(fontFamilyCss('없는값')).toBe(null);
+  });
+
+  it("fontFamilyCss: 명명 폰트('바탕'/'돋움'/'굴림')는 비어있지 않은 CSS font-family 스택을 반환한다", () => {
+    for (const font of ['바탕', '돋움', '굴림']) {
+      const css = fontFamilyCss(font);
+      expect(typeof css).toBe('string');
+      expect(css.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("fontSizeCss: '기본'/미상/무효값은 null을 반환한다(override 없음)", () => {
+    expect(fontSizeCss('기본')).toBe(null);
+    expect(fontSizeCss('없는값')).toBe(null);
+    expect(fontSizeCss(0)).toBe(null);
+    expect(fontSizeCss('x')).toBe(null);
+  });
+
+  it("fontSizeCss: 숫자 문자열은 '<n>px'로 매핑한다", () => {
+    expect(fontSizeCss('10')).toBe('10px');
+    expect(fontSizeCss('12')).toBe('12px');
+    expect(fontSizeCss('14')).toBe('14px');
+    expect(fontSizeCss('16')).toBe('16px');
   });
 });

@@ -42,14 +42,19 @@ import {
 } from './editorSelect.js';
 import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
 import { sortDocument, sortParagraph, deleteWordAt } from './editorEditOps.js';
-import { loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing } from './editorPrefs.js';
+import {
+  loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing, fontFamilyCss, fontSizeCss,
+} from './editorPrefs.js';
 import { UiLanguageDialog } from './UiLanguageDialog.jsx';
+import { HelpDialog } from './HelpDialog.jsx';
+import { AboutDialog } from './AboutDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
+import { shouldOverwriteNextChar } from './editorNewline.js';
 import {
   charCount, lineCount, wordCount, byteLength, caretPosition,
 } from './editorStats.js';
@@ -57,7 +62,7 @@ import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
   toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput, isPasteOriginal,
-  isUndo, isRedo, isCompanyCode,
+  isUndo, isRedo, isCompanyCode, isToggleOverwrite,
 } from './editorShortcuts.js';
 import {
   createHistory, pushHistory, undo as undoHistory, redo as redoHistory,
@@ -109,7 +114,7 @@ const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — b
 const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'tools.uiLanguage', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'tools.uiLanguage', 'help.preferences', 'help.open', 'help.about', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -117,6 +122,20 @@ const VIEW_TRANSFORMS = {
   'view.capitalize': capitalizeFirst,
   'view.toggleCase': toggleCase,
 };
+
+// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 1글자 확장한다.
+// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만(anchorOffset < 노드 길이) sel.extend로 1글자를 선택.
+// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
+// 텍스트 노드 내부에서만 확장하므로 줄 경계를 넘지 않는다. preventDefault는 호출부에서 하지 않아 네이티브 입력이 선택을 대체한다.
+function extendSelectionForOverwrite(root) {
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+  const node = sel.anchorNode;
+  if (!node || node.nodeType !== 3 || !root || !root.contains(node)) return; // 텍스트 노드·에디터 내부만.
+  if (sel.anchorOffset >= (node.textContent ?? '').length) return; // 노드 끝(형제 경계) — 확장 생략(삽입 폴백).
+  if (typeof sel.extend !== 'function') return; // 구형 환경 방어.
+  sel.extend(node, sel.anchorOffset + 1);
+}
 
 export function WriterPage() {
   const { identity, model } = useAppContext();
@@ -141,6 +160,10 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(false);
   const [showToolBar, setShowToolBar] = useState(false);
+  // 삽입/수정(overwrite) 모드 — Insert 키 토글. 전역 단일 모드(입력 모드지 문서-로컬 좌표가 아님):
+  // 탭별 격리·영속 없음(새로고침 시 삽입으로 리셋). L292~ 탭 전환 조정 블록에 넣지 않는다(리셋 대상 아님).
+  // 이 step은 토글+상태표시줄 표시까지 — 실제 캐럿 뒤 덮어쓰기 입력은 step3(이 state를 소비).
+  const [overwrite, setOverwrite] = useState(false);
   // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
   // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
   const [showGlyphBar, setShowGlyphBar] = useState(false);
@@ -173,6 +196,10 @@ export function WriterPage() {
   const [showMemo, setShowMemo] = useState(false);
   // UI 언어 설정 다이얼로그(도구>UI 언어 설정) 보이기 — showMemo와 동일한 boolean 토글. 크롬 설정이라 본문 무관(매핑에서도 안전).
   const [showUiLanguage, setShowUiLanguage] = useState(false);
+  // 도움말 열기(도움말>도움말 열기)·에디터 정보(도움말>에디터 정보) 다이얼로그 보이기 — showFileInfo와 동일한 boolean 토글.
+  // 읽기전용 안내/정보 표시라 본문/캐럿/임베드 무변경(매핑에서도 안전 — 매핑 가드 앞 결선, 파일 정보/환경설정과 동일 정책).
+  const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
   // 세션 내 진실 소스: 입력은 setMemoText만(in-memory), 영속은 '저장'에서 saveMemo만. 탭/articleId 비종속(전역 1개).
   const [memoText, setMemoText] = useState(() => loadMemo());
@@ -220,6 +247,12 @@ export function WriterPage() {
   // 자식 .yh-editor/.yh-editor__line이 상속(columnLimit 동형 게이트). raw 저장값을 보관하고 정규화는 주입 시점에.
   const [lineSpacing, setLineSpacing] = useState(() => loadEditorPrefs().edit.lineSpacing);
 
+  // 툴바 글꼴(edit.editorFont)·글씨크기(edit.editorFontSize) — 캔버스 래퍼(editor-canvas)에 CSS 변수
+  // (--yh-editor-font-family/--yh-editor-font-size)를 조건부 주입(줄간격과 달리 '기본'→null이면 미주입 → fallback 현재값 렌더).
+  // raw 저장값을 보관하고 매핑(fontFamilyCss/fontSizeCss)은 주입 시점에. 툴바는 즉시-반영 컨트롤이라 onChange 직접-저장(uiLanguage 패턴).
+  const [editorFont, setEditorFont] = useState(() => loadEditorPrefs().edit.editorFont);
+  const [editorFontSize, setEditorFontSize] = useState(() => loadEditorPrefs().edit.editorFontSize);
+
   // 편집>언어(edit.language)·입력모드(edit.inputMode) — 상태표시줄(라벨·바이트 모드)과 Editor lang 속성에 주입
   // (columnLimit/lineSpacing 동형 게이트). raw 저장값을 보관하고 폴백·정규화는 소비 시점에(StatusBar 내부·normalizeLanguage).
   const [language, setLanguage] = useState(() => loadEditorPrefs().edit.language);
@@ -244,6 +277,8 @@ export function WriterPage() {
     setEditorBg(c.background);
     setColumnLimit(loadEditorPrefs().edit.columnLimit); // 새로고침 후에도 컬럼제한 반영.
     setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 새로고침 후에도 줄간격 반영.
+    setEditorFont(loadEditorPrefs().edit.editorFont); // 새로고침 후에도 툴바 글꼴 반영.
+    setEditorFontSize(loadEditorPrefs().edit.editorFontSize); // 새로고침 후에도 툴바 글씨크기 반영.
     setLanguage(loadEditorPrefs().edit.language); // 새로고침 후에도 언어 반영.
     setInputMode(loadEditorPrefs().edit.inputMode); // 새로고침 후에도 입력모드 반영.
     setUiLanguage(loadEditorPrefs().ui.language); // 새로고침/재접속 후에도 UI 언어 반영(다른 prefs와 동일 게이트).
@@ -504,6 +539,17 @@ export function WriterPage() {
     if (!UI_LANGUAGES.includes(lang)) return; // 방어 — 허용값만(다이얼로그도 ko/en만 노출하지만 이중 방어).
     saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'ui', { language: lang })); // 동기 영속(새로고침/재접속 유지).
     setUiLanguage(lang); // 즉시 리렌더 — 메뉴바(t)+다이얼로그(t) 실시간 반영.
+  };
+
+  // 툴바 글꼴/크기 선택 — 즉시-반영 컨트롤이라 apply/cancel 없이 onChange 시 동기 영속 + 즉시 리렌더(uiLanguage 직접-저장 패턴).
+  // 매핑/정규화는 캔버스 래퍼 style에서 fontFamilyCss/fontSizeCss로 수행하므로 여기선 raw 선택값만 저장·보관한다.
+  const onToolbarFont = (v) => {
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', { editorFont: v })); // 동기 영속(새로고침 유지).
+    setEditorFont(v); // 즉시 리렌더 — 캔버스 CSS 변수(--yh-editor-font-family) 반영.
+  };
+  const onToolbarFontSize = (v) => {
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', { editorFontSize: v })); // 동기 영속.
+    setEditorFontSize(v); // 즉시 리렌더 — 캔버스 CSS 변수(--yh-editor-font-size) 반영.
   };
 
   // 도구>약어변환 — 등록 약어(abbrevs 세션 state)를 본문 텍스트 블록에서 확장(임베드·"(끝)" 불변). 매핑 가드 뒤에서만 호출.
@@ -788,6 +834,10 @@ export function WriterPage() {
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
     if (id === 'help.preferences') { setShowPrefs(true); return; }
+    // 도움말 열기(단축키/기능 안내)·에디터 정보(이름/버전) — 읽기전용 표시만(본문/캐럿/임베드 무변경).
+    // 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — help.preferences/tools.fileInfo와 동일 정책).
+    if (id === 'help.open') { setShowHelp(true); return; }
+    if (id === 'help.about') { setShowAbout(true); return; }
     // 그림/유튜브 URL 직접 삽입 — 매핑 가드 앞(임베드 변경은 매핑에서도 허용, 검색패널 onPick과 동일 정책).
     // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
     if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
@@ -1069,6 +1119,14 @@ export function WriterPage() {
     // IME 조합 중에는 어떤 에디터 단축키도 가로채지 않는다(줄삭제/preventDefault 없이 브라우저·IME에 위임 —
     // news.md 173행 조합 중 무개입 원칙. 조합 상태는 nativeEvent.isComposing(레거시 keyCode 229)로 판정).
     if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
+    // Insert → 삽입/수정(overwrite) 모드 토글. 수식어 없는 키라 아래 라인삭제 바일아웃(!ctrlD return)에서
+    // 삼켜지기 전에 여기서 처리한다(IME 가드 뒤 = 조합 중 무개입). Shift/Ctrl+Insert(붙여넣기/복사 레거시)는
+    // isToggleOverwrite가 배제. 실제 덮어쓰기 입력은 step3(overwrite state 소비) — 여기서는 모드 토글+표시만.
+    if (isToggleOverwrite(e)) {
+      e.preventDefault();
+      setOverwrite((v) => !v);
+      return;
+    }
     // Ctrl+B → 기업코드변환(본문 종목명 태깅). contentEditable 기본 bold(<b> 주입)가 블록 모델을 오염시키므로
     // preventDefault는 항상(매핑이어도 — Ctrl+F 관례) 하고, 실행은 !isMapping일 때만. matchGlyphKeymap보다 앞(예약 조합).
     if (isCompanyCode(e)) {
@@ -1129,6 +1187,19 @@ export function WriterPage() {
       e.preventDefault(); // 브라우저 기본(Ctrl+숫자 등) 억제 + Editor 후속 처리(Enter) 건너뛰기.
       onGlyphPick(keymapGlyph); // 내부 isMapping 가드·lastCaretRef 캐럿·insertGlyphAtCaret·commitBody·setPendingCaretLine.
       return;
+    }
+    // 수정(overwrite) 모드 문자 입력 — 캐럿 뒤 1글자를 selection으로 확장한 뒤 preventDefault 없이 통과시켜
+    // 네이티브 입력이 그 선택을 대체(덮어쓰기)하게 한다. 결과는 에코 경로(Editor.handleInput → onTextChange →
+    // commitBody coalesce)로 반영 → undo 1단계·색상 재칠 계약을 그대로 상속(Editor.jsx 미접촉). 인쇄 가능한
+    // 단일 문자 키만(수식어 Ctrl/Meta/Alt 없는 e.key.length===1; Shift는 대문자라 허용). 확장 조건 불충족
+    // (줄 끝/임베드 앞/"(끝)" 마커/문서 끝 = shouldOverwriteNextChar false, 또는 노드 끝 경계)이면 확장 안 함 = 삽입 폴백.
+    // preventDefault/return 하지 않는다 — 아래 라인삭제 바일아웃에서 자연 종료되고 네이티브 입력이 이어진다.
+    if (overwrite && !isMapping && e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const root = e.currentTarget;
+      const caret = readCaret(root);
+      if (caret && shouldOverwriteNextChar(blocksToText(blocks), caret.offset)) {
+        extendSelectionForOverwrite(root);
+      }
     }
     const ctrlD = isDeleteLine(e);
     if (!ctrlD && e.key !== 'Backspace' && e.key !== 'Delete') return;
@@ -1415,7 +1486,14 @@ export function WriterPage() {
           {/* 메뉴바/툴바는 기본 숨김 — 우클릭 컨텍스트 메뉴 '메뉴바/툴바 보이기'(ctx.showMenuBar/ctx.showToolBar)로만 토글한다(news.md L173).
               구 전용 토글 버튼(yh-editor-chrome-bar)은 제거됨. */}
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} t={t} />}
-          {showToolBar && <EditorToolBar />}
+          {showToolBar && (
+            <EditorToolBar
+              font={editorFont}
+              fontSize={editorFontSize}
+              onFontChange={onToolbarFont}
+              onFontSizeChange={onToolbarFontSize}
+            />
+          )}
           {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
               본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
           {showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}
@@ -1431,6 +1509,10 @@ export function WriterPage() {
               // 줄간격 — CSS 변수로 상시 주입(정규화된 line-height는 항상 유효). 자식 .yh-editor(line-height)/
               // .yh-editor__line(min-height)이 var()로 상속. String(2.0)==='2'라 CSS line-height로 유효(소수 탈락 무해).
               '--yh-editor-line-height': String(normalizeLineSpacing(lineSpacing)),
+              // 툴바 글꼴/크기 — '기본'(fontFamilyCss/fontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
+              // .yh-editor fallback(var(--yh-sans)/0.95rem)이 렌더된다(바이트 동일). 명명 값만 실제 변수 주입 → 자식이 상속.
+              ...(fontFamilyCss(editorFont) ? { '--yh-editor-font-family': fontFamilyCss(editorFont) } : null),
+              ...(fontSizeCss(editorFontSize) ? { '--yh-editor-font-size': fontSizeCss(editorFontSize) } : null),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
             // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭
@@ -1466,9 +1548,9 @@ export function WriterPage() {
               spellHighlightStyle={spellStyle}
             />
           </div>
-          {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿·언어(raw 코드)·입력모드(raw) 결선.
-              라벨/바이트 폴백·정규화는 StatusBar가 소유(단일 지점). overwrite는 기본값(placeholder) 유지. */}
-          <StatusBar text={blocksToText(blocks)} caret={statusCaret} language={language} inputMode={inputMode} />
+          {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿·언어(raw 코드)·입력모드(raw)·삽입/수정(overwrite) 결선.
+              라벨/바이트 폴백·정규화는 StatusBar가 소유(단일 지점). overwrite는 Insert 토글 state(전역 모드). */}
+          <StatusBar text={blocksToText(blocks)} caret={statusCaret} language={language} inputMode={inputMode} overwrite={overwrite} />
         </section>
 
         {/* 우측 40% — 메타데이터 */}
@@ -1691,6 +1773,13 @@ export function WriterPage() {
         onSelect={onSelectUiLanguage}
         onClose={() => setShowUiLanguage(false)}
       />
+
+      {/* 도움말>도움말 열기 — 단축키/기능 안내(읽기전용). 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선).
+          제목/본문은 t(ko/en)로 렌더, 닫기/Esc는 컴포넌트 onClose. */}
+      <HelpDialog open={showHelp} t={t} onClose={() => setShowHelp(false)} />
+
+      {/* 도움말>에디터 정보 — 이름/버전 등 정적 정보(읽기전용, 동적 조회 없음). 매핑에서도 안전(매핑 가드 앞 결선). */}
+      <AboutDialog open={showAbout} t={t} onClose={() => setShowAbout(false)} />
 
       {/* 약어 관리(도구>약어관리) — controlled: 커밋 목록은 abbrevs(부모 소유·마운트 lazy-init), onAdd/onRemove가 즉시
           saveAbbrevs로 localStorage 영속. 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선). */}

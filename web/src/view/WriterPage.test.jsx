@@ -10,7 +10,9 @@ import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 import { loadMemo } from './memoStore.js';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
-import { loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import {
+  loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS, fontFamilyCss, fontSizeCss,
+} from './editorPrefs.js';
 import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
 
@@ -1833,6 +1835,85 @@ describe('WriterPage — 편집>줄간격(editor-canvas line-height 변수) 적�
 
     expect(loadEditorPrefs().edit.lineSpacing).toBe(DEFAULT_EDITOR_PREFS.edit.lineSpacing); // 저장 불변(1.8)
     expect(lineHeightVar(screen.getByTestId('editor-canvas'))).toBe('1.8'); // 변수 불변
+  });
+});
+
+// Step 1(44-editor-gap-closeout): 툴바 글꼴(edit.editorFont)·글씨크기(edit.editorFontSize)를 WriterPage 캔버스
+// 래퍼(editor-canvas) 레벨에서 CSS 변수(--yh-editor-font-family/--yh-editor-font-size)로 조건부 주입한다.
+// 줄간격(상시 주입)과 달리 '기본'(fontFamilyCss/fontSizeCss===null)이면 변수를 아예 넣지 않아 fallback(현재값)이 렌더된다
+// = 바이트 동일 회귀 가드. 툴바는 즉시-반영 컨트롤이라 onChange 시 직접-저장(uiLanguage 패턴). Editor.jsx 무변경.
+describe('WriterPage — 툴바 글꼴/크기(editor-canvas 폰트 변수) 적용', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 편집 카테고리에 patch만 저장(다른 카테고리·키는 기본값 유지).
+  const savePref = (patch) => saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', patch));
+
+  const fontFamilyVar = (el) => el.style.getPropertyValue('--yh-editor-font-family');
+  const fontSizeVar = (el) => el.style.getPropertyValue('--yh-editor-font-size');
+
+  // 우클릭 컨텍스트 메뉴로 툴바를 켠다(showToolBar 토글 — L96 toggleCtx 패턴 재사용).
+  async function showToolbar() {
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(ctx).getByText('툴바 보이기').closest('button'));
+    await waitFor(() => expect(screen.getByTestId('toolbar')).toBeInTheDocument());
+  }
+
+  it('미저장(기본 \'기본\')이면 폰트 변수가 둘 다 미주입된다(바이트 동일 회귀 가드)', () => {
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontFamilyVar(canvas)).toBe(''); // 미주입 → .yh-editor fallback var(--yh-sans)
+    expect(fontSizeVar(canvas)).toBe(''); // 미주입 → .yh-editor fallback 0.95rem
+  });
+
+  it("editorFont='바탕'만 저장하면 font-family 변수만 주입되고 font-size는 미주입", () => {
+    savePref({ editorFont: '바탕' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontFamilyVar(canvas)).toBe(fontFamilyCss('바탕'));
+    expect(fontSizeVar(canvas)).toBe(''); // 크기는 여전히 기본 → 미주입
+  });
+
+  it("editorFontSize='16'만 저장하면 font-size 변수가 '16px'로 주입된다", () => {
+    savePref({ editorFontSize: '16' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontSizeVar(canvas)).toBe('16px');
+    expect(fontSizeVar(canvas)).toBe(fontSizeCss('16'));
+    expect(fontFamilyVar(canvas)).toBe(''); // 글꼴은 여전히 기본 → 미주입
+  });
+
+  it('배경색·컬럼제한·줄간격·글꼴·글씨크기를 함께 저장하면 캔버스에 모두 공존한다(회귀 없음)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...loadEditorPrefs().colors, background: '#123456' },
+      edit: {
+        ...loadEditorPrefs().edit, columnLimit: true, lineSpacing: 1.5, editorFont: '돋움', editorFontSize: '14',
+      },
+    });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(canvas).toHaveStyle({ backgroundColor: '#123456' });
+    expect(canvas).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' });
+    expect(canvas.style.getPropertyValue('--yh-editor-line-height')).toBe('1.5');
+    expect(fontFamilyVar(canvas)).toBe(fontFamilyCss('돋움'));
+    expect(fontSizeVar(canvas)).toBe('14px');
+  });
+
+  it("툴바에서 글꼴 '돋움'을 고르면 즉시 캔버스 변수에 반영되고 직접-저장 영속된다", async () => {
+    setup({ identity: { role: 'R' } });
+    expect(fontFamilyVar(screen.getByTestId('editor-canvas'))).toBe(''); // 선택 전 미주입
+    await showToolbar();
+    await userEvent.selectOptions(screen.getByTestId('tool-font'), '돋움');
+    await waitFor(() => expect(fontFamilyVar(screen.getByTestId('editor-canvas'))).toBe(fontFamilyCss('돋움')));
+    expect(loadEditorPrefs().edit.editorFont).toBe('돋움'); // 툴바 직접-저장 영속
+  });
+
+  it("editorFont='굴림' 저장 상태로 마운트하면 변수가 복원된다(새로고침 복원)", () => {
+    savePref({ editorFont: '굴림' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(fontFamilyVar(getByTestId('editor-canvas'))).toBe(fontFamilyCss('굴림'));
   });
 });
 
@@ -4361,6 +4442,103 @@ describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
     expect(within(menu).getByText('파일 정보').closest('button')).toBeEnabled();
     await userEvent.click(within(menu).getByText('파일 정보').closest('button'));
     expect(screen.getByRole('dialog', { name: '파일 정보' })).toBeInTheDocument();
+  });
+});
+
+// Step 4(44-editor-gap-closeout): 도움말>도움말 열기(help.open)·에디터 정보(help.about) 결선 —
+// 각각 읽기전용 다이얼로그(HelpDialog/AboutDialog)를 연다. 본문/캐럿/임베드 무변경(매핑에서도 안전 — 매핑 가드 앞 결선).
+describe('WriterPage — 도움말 열기/에디터 정보(help.open/help.about) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function clickHelpItem(label) {
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  it("도움말 메뉴 '도움말 열기'(help.open)·'에디터 정보'(help.about)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    expect(within(menu).getByText('도움말 열기').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('에디터 정보').closest('button')).toBeEnabled();
+  });
+
+  it("'도움말 열기' 클릭 시 HelpDialog(help-dialog, role=dialog '도움말 열기')가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    expect(screen.getByRole('dialog', { name: '도움말 열기' })).toBeInTheDocument();
+    expect(screen.getByTestId('help-dialog')).toBeInTheDocument();
+    // 실제 predicate와 일치하는 단축키가 보인다.
+    expect(screen.getByText('Alt+Y')).toBeInTheDocument();
+    expect(screen.getByText('Insert')).toBeInTheDocument();
+  });
+
+  it("HelpDialog는 닫기 클릭/Esc로 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    await userEvent.click(screen.getByTestId('help-dialog-close'));
+    expect(screen.queryByRole('dialog', { name: '도움말 열기' })).not.toBeInTheDocument();
+
+    await clickHelpItem('도움말 열기');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '도움말 열기' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '도움말 열기' })).not.toBeInTheDocument();
+  });
+
+  it("'에디터 정보' 클릭 시 AboutDialog(about-dialog, role=dialog '에디터 정보')가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('에디터 정보');
+    expect(screen.getByRole('dialog', { name: '에디터 정보' })).toBeInTheDocument();
+    expect(screen.getByTestId('about-dialog')).toBeInTheDocument();
+    expect(screen.getByText('기사 작성기')).toBeInTheDocument();
+  });
+
+  it("AboutDialog는 닫기 클릭/Esc로 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('에디터 정보');
+    await userEvent.click(screen.getByTestId('about-dialog-close'));
+    expect(screen.queryByRole('dialog', { name: '에디터 정보' })).not.toBeInTheDocument();
+
+    await clickHelpItem('에디터 정보');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '에디터 정보' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '에디터 정보' })).not.toBeInTheDocument();
+  });
+
+  it('읽기전용 — 두 다이얼로그 모두 입력 필드(input/textarea)가 없다', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    const help = screen.getByTestId('help-dialog');
+    expect(help.querySelector('input')).toBeNull();
+    expect(help.querySelector('textarea')).toBeNull();
+  });
+
+  it("매핑 모드에서도 '도움말 열기'/'에디터 정보'가 활성이고 다이얼로그가 열린다(읽기전용 — 매핑 가드 앞)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    expect(within(menu).getByText('도움말 열기').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('도움말 열기').closest('button'));
+    expect(screen.getByRole('dialog', { name: '도움말 열기' })).toBeInTheDocument();
   });
 });
 
@@ -7270,5 +7448,212 @@ describe('WriterPage — 자동 기업코드 변환(edit.companyCode=auto)', () 
 
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로(매핑=변환 없음)
+  });
+});
+
+// phase44 step2 — 상태표시줄 삽입/수정(overwrite) 토글. Insert 키로 삽입<->수정을 토글하고 상태표시줄이 표시한다.
+// (이 step은 토글+표시까지 — 실제 덮어쓰기 입력은 step3.) overwrite는 전역 단일 모드(탭별 격리·영속 없음).
+describe('WriterPage — 상태표시줄 삽입/수정 토글(Insert)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const statMode = () => screen.getByTestId('stat-mode').textContent;
+
+  it('초기 렌더는 삽입 모드다', () => {
+    setup({ identity: { role: 'R' } });
+    expect(statMode()).toBe('삽입');
+  });
+
+  it('Insert 키로 삽입<->수정을 토글한다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    expect(statMode()).toBe('삽입');
+
+    fireEvent.keyDown(box, { key: 'Insert' });
+    expect(statMode()).toBe('수정');
+
+    fireEvent.keyDown(box, { key: 'Insert' }); // 한 번 더 → 다시 삽입
+    expect(statMode()).toBe('삽입');
+  });
+
+  it('Insert 키다운은 브라우저 기본을 막는다(preventDefault)', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Insert' });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+    expect(spy).toHaveBeenCalled();
+    expect(statMode()).toBe('수정');
+  });
+
+  it('Shift+Insert(붙여넣기 레거시)는 토글하지 않는다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', shiftKey: true });
+    expect(statMode()).toBe('삽입'); // 불변 — 수식어 동반 Insert는 토글 대상 아님
+  });
+
+  it('Ctrl+Insert(복사 레거시)는 토글하지 않는다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', ctrlKey: true });
+    expect(statMode()).toBe('삽입'); // 불변
+  });
+
+  it('IME 조합 중 Insert는 토글하지 않는다(무개입)', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', isComposing: true });
+    expect(statMode()).toBe('삽입'); // IME 가드가 먼저 return
+  });
+
+  it('전역 모드: 수정으로 켠 뒤 새 탭으로 전환해도 수정이 유지된다(탭별 격리·리셋 없음)', async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert' });
+    expect(statMode()).toBe('수정');
+
+    // ＋(새 작성 탭)으로 새 탭 추가/전환 — 전역 모드라 리셋되지 않는다.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(
+      container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab').length,
+    ).toBe(2));
+    expect(statMode()).toBe('수정'); // 유지(문서-로컬 좌표 아님 — 탭 전환 조정 블록 미대상)
+  });
+});
+
+// phase44 step3 — 수정(overwrite) 모드 실제 덮어쓰기 타이핑.
+// overwrite=true에서 인쇄 가능한 단일 문자 keydown 시 WriterPage.onKeyDown이 캐럿 뒤 1글자를 selection으로
+// 확장(sel.extend)한 뒤 preventDefault 없이 통과 → 네이티브 입력이 그 선택을 대체(에코 경로로 반영).
+// jsdom은 contentEditable 네이티브 문자 대체를 실행하지 않으므로 여기서는 (B) "selection 확장 발생/미발생"을
+// window.getSelection()으로 단언한다. (A) 순수 판정 경계 전수는 editorNewline.test.js가 담당(결정적).
+describe('WriterPage — 수정(overwrite) 모드 덮어쓰기 타이핑', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const box = (c) => c.querySelector('.yh-editor');
+  const statMode = () => screen.getByTestId('stat-mode').textContent;
+
+  async function openBody(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const toModifyMode = (c) => { fireEvent.keyDown(box(c), { key: 'Insert' }); };
+
+  // lineIndex번째 .yh-editor__line의 텍스트 노드 offset에 collapsed 캐럿을 두고 selection 싱글턴을 돌려준다.
+  // 하이라이트 없는 줄은 firstChild가 단일 텍스트 노드다({block.text} 폴백 — Editor 렌더).
+  function caretAt(container, lineIndex, offset) {
+    const el = container.querySelectorAll('.yh-editor__line')[lineIndex];
+    const tnode = el.firstChild;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(tnode, offset);
+    range.collapse(true);
+    sel.addRange(range);
+    return sel;
+  }
+
+  it('삽입 모드(기본): 문자 keydown은 selection을 확장하지 않는다(일반 삽입)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    const sel = caretAt(container, 1, 1); // 'a|bcd'
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true); // 확장 없음
+  });
+
+  it('수정 모드 + 줄 중간: 문자 keydown이 캐럿 뒤 1글자를 selection으로 확장한다(preventDefault 안 함)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    expect(statMode()).toBe('수정');
+    const sel = caretAt(container, 1, 1); // 'a|bcd' → 캐럿 뒤 글자 'b'
+    const ev = createEvent.keyDown(box(container), { key: 'x' });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box(container), ev);
+    expect(sel.isCollapsed).toBe(false); // 1글자 확장됨
+    expect(sel.getRangeAt(0).toString()).toBe('b'); // 캐럿 뒤 정확히 1글자(줄 경계 안)
+    expect(spy).not.toHaveBeenCalled(); // preventDefault 안 함 → 네이티브 입력이 대체
+  });
+
+  it('수정 모드 + Shift+문자(대문자)도 확장한다(수식어 Shift는 문자 입력)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 2); // 'ab|cd' → 뒤 글자 'c'
+    fireEvent.keyDown(box(container), { key: 'X', shiftKey: true });
+    expect(sel.isCollapsed).toBe(false);
+    expect(sel.getRangeAt(0).toString()).toBe('c');
+  });
+
+  it('수정 모드 + 줄 끝: 확장 없음(삽입 폴백 — 다음 줄 침범 금지)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd'), textBlock('efgh')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 'abcd|' 줄 끝(뒤는 '\n')
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 문서 끝: 확장 없음(삽입 폴백)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 마지막 줄 끝 = 문서 끝
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + "(끝)" 마커 영역: 확장 없음(입력 차단 계약 유지)', async () => {
+    const { container } = await openBody([textBlock('본문'), textBlock('(끝)')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 0); // 마커 줄 시작(offset=markerStart)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 임베드 앞(줄 끝): 확장 없음(임베드 경계는 blocksToText에서 줄 끝으로 나타남)', async () => {
+    const { container } = await openBody([
+      textBlock('제목'), textBlock('abcd'),
+      embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('efgh'),
+    ]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 'abcd|' 뒤는 임베드 → blocksToText상 '\n'
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + IME 조합 중(isComposing): 확장 없음(IME 가드가 먼저 return)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'x', isComposing: true });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 수식어 조합(Ctrl+문자): 확장 없음(문자 입력이 아님)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'j', ctrlKey: true }); // 예약되지 않은 Ctrl 조합
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 비문자 키(방향키/Backspace/Delete): 확장 없음(문자 키만 트리거)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    for (const key of ['ArrowRight', 'ArrowLeft', 'Backspace', 'Delete']) {
+      const sel = caretAt(container, 1, 1);
+      fireEvent.keyDown(box(container), { key });
+      expect(sel.isCollapsed, key).toBe(true);
+    }
+  });
+
+  it('수정 모드 + Enter: 확장 없음(문자 키가 아님)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'Enter' });
+    expect(sel.isCollapsed).toBe(true);
   });
 });

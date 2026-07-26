@@ -56,6 +56,23 @@ describe('i18n — UI 언어(ko/en) 카탈로그 + 번역 헬퍼', () => {
     expect(MESSAGES.ko['common.close']).toBe('닫기');
   });
 
+  // Step 4(44-editor-gap-closeout): 도움말 열기/에디터 정보 다이얼로그 본문 전용 키 — ko/en 대칭 + 비어있지 않음.
+  it('도움말/에디터 정보 다이얼로그 본문 키가 ko/en 양쪽에 존재하며 비어있지 않다', () => {
+    const keys = [
+      'help.dialog.shortcutsTitle', 'help.dialog.overwrite', 'help.dialog.companyCode',
+      'help.dialog.nameLabel', 'help.dialog.appName', 'help.dialog.versionLabel',
+    ];
+    for (const key of keys) {
+      expect(MESSAGES.ko).toHaveProperty(key);
+      expect(MESSAGES.en).toHaveProperty(key);
+      expect(MESSAGES.ko[key].length).toBeGreaterThan(0);
+      expect(MESSAGES.en[key].length).toBeGreaterThan(0);
+    }
+    // ko 값 스펙 확인(본문 텍스트).
+    expect(MESSAGES.ko['help.dialog.shortcutsTitle']).toBe('단축키');
+    expect(MESSAGES.ko['help.dialog.appName']).toBe('기사 작성기');
+  });
+
   // (c) createTranslator('ko')는 항상 ko 원문 반환
   it("createTranslator('ko')는 모든 id에 대해 ko 원문(EDITOR_MENUS 라벨)을 반환한다", () => {
     const t = createTranslator('ko');

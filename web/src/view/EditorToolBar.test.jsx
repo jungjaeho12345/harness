@@ -1,3 +1,4 @@
+import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -39,13 +40,73 @@ describe('EditorToolBar — 에디터 툴바(글꼴/크기 셀렉트만)', () =>
     }
   });
 
-  it('글꼴 셀렉트 선택은 표시값만 바꾸고 부수효과가 없다 (model 미주입)', async () => {
-    const onSelect = vi.fn();
-    render(<EditorToolBar onSelect={onSelect} />);
+  // controlled 전환(phase 44 step0): 셀렉트는 value+onChange로 상위에 값을 알린다.
+  // 부수효과는 콜백뿐 — model/fetch 없음(순수 UI 규약 유지). value는 prop을 따른다.
+  it('글꼴 선택은 onFontChange 콜백만 호출한다(model/fetch 없는 controlled)', async () => {
+    const onFontChange = vi.fn();
+    const onFontSizeChange = vi.fn();
+    render(
+      <EditorToolBar
+        font="기본"
+        fontSize="기본"
+        onFontChange={onFontChange}
+        onFontSizeChange={onFontSizeChange}
+      />,
+    );
     const font = screen.getByTestId('tool-font');
-    await userEvent.selectOptions(font, TOOLBAR_FONTS[1]);
-    expect(font).toHaveValue(TOOLBAR_FONTS[1]);
-    expect(onSelect).not.toHaveBeenCalled();
+    await userEvent.selectOptions(font, '바탕');
+    expect(onFontChange).toHaveBeenCalledWith('바탕');
+    expect(onFontSizeChange).not.toHaveBeenCalled();
+  });
+
+  it('글씨크기 선택은 onFontSizeChange 콜백만 호출한다', async () => {
+    const onFontChange = vi.fn();
+    const onFontSizeChange = vi.fn();
+    render(
+      <EditorToolBar
+        font="기본"
+        fontSize="기본"
+        onFontChange={onFontChange}
+        onFontSizeChange={onFontSizeChange}
+      />,
+    );
+    const size = screen.getByTestId('tool-size');
+    await userEvent.selectOptions(size, '16');
+    expect(onFontSizeChange).toHaveBeenCalledWith('16');
+    expect(onFontChange).not.toHaveBeenCalled();
+  });
+
+  it('controlled value는 prop을 반영한다(stateful 하네스)', async () => {
+    function Harness() {
+      const [font, setFont] = React.useState('기본');
+      const [fontSize, setFontSize] = React.useState('기본');
+      return (
+        <EditorToolBar
+          font={font}
+          fontSize={fontSize}
+          onFontChange={setFont}
+          onFontSizeChange={setFontSize}
+        />
+      );
+    }
+    render(<Harness />);
+    const font = screen.getByTestId('tool-font');
+    const size = screen.getByTestId('tool-size');
+    expect(font).toHaveValue('기본');
+    await userEvent.selectOptions(font, '돋움');
+    expect(font).toHaveValue('돋움'); // 상위 state가 value에 반영
+    await userEvent.selectOptions(size, '12');
+    expect(size).toHaveValue('12');
+  });
+
+  it('font/fontSize prop 미전달·onChange 미전달 시에도 렌더가 깨지지 않는다(기본 prop 기본)', async () => {
+    render(<EditorToolBar />);
+    const font = screen.getByTestId('tool-font');
+    const size = screen.getByTestId('tool-size');
+    expect(font).toHaveValue('기본'); // 기본 prop = '기본'
+    expect(size).toHaveValue('기본');
+    // onChange 미전달이어도 선택 시 throw하지 않는다.
+    await userEvent.selectOptions(font, '바탕');
   });
 });
 

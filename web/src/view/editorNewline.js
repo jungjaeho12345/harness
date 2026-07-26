@@ -28,6 +28,20 @@ export function isInputBlocked(text, caretOffset) {
   return Number(caretOffset) >= idx;
 }
 
+// 수정(overwrite) 모드에서 캐럿 바로 뒤 글자를 덮어쓸 대상인지 — 순수 판정(DOM 비의존).
+// text = blocksToText(blocks)(텍스트 블록만 '\n'으로 조인, 임베드 제외). offset = readCaret().offset(절대 텍스트 좌표).
+// true: text[offset]가 같은 줄 일반 글자(캐럿 뒤 1글자를 selection 확장해 네이티브 입력으로 대체). 아래는 전부 false(삽입 폴백):
+//   - offset이 정수가 아니거나 음수/문서 끝 초과(>= length) — 무효/문서 끝.
+//   - text[offset] === '\n' — 줄 끝(다음 줄·임베드 앞 침범 금지). 임베드는 blocksToText에서 제외되어 경계가 '\n'/문서 끝으로 나타난다.
+//   - isInputBlocked(text, offset) — "(끝)" 마커 시작 이상(입력 차단 계약 재사용). 마커 직전은 '\n'(마커 자기 줄)이라 위에서 이미 차단.
+export function shouldOverwriteNextChar(text, offset) {
+  const s = String(text ?? '');
+  if (!Number.isInteger(offset) || offset < 0 || offset >= s.length) return false;
+  if (s[offset] === '\n') return false;
+  if (isInputBlocked(s, offset)) return false;
+  return true;
+}
+
 // 캐럿 위치에 텍스트(개행 포함 가능)를 삽입한 블록 배열을 만든다 — Enter('\n' 1개 삽입)·여러 줄 붙여넣기 공용.
 // blocks: 텍스트/임베드가 섞인 현재 DOM 블록. caret: { lineIndex, offset }(텍스트-only 기준) 또는 null.
 // text: 삽입할 문자열('\n'이면 Enter 분할). 반환 { blocks: 다음블록, caretLineIndex: 캐럿을 둘 텍스트-라인 인덱스(라인 시작) }.

@@ -503,7 +503,10 @@ a { color: var(--yh-blue); }
   border-radius: var(--yh-radius-lg);
   box-shadow: var(--yh-shadow-sm);
   background: transparent;
-  font-size: 0.95rem;
+  /* 툴바 글꼴/크기(44-1) — 캔버스 래퍼가 CSS 변수를 주입하면 그 값, 미주입('기본')이면 fallback(현재 상속/선언값)이 렌더된다.
+     font-family fallback은 body에서 상속하던 var(--yh-sans)와 동일(중간 셀렉터 override 없음), font-size fallback은 기존 0.95rem. */
+  font-family: var(--yh-editor-font-family, var(--yh-sans));
+  font-size: var(--yh-editor-font-size, 0.95rem);
   line-height: var(--yh-editor-line-height, 1.8);
   outline: none;
   transition: border-color var(--yh-transition), box-shadow var(--yh-transition);
@@ -1216,6 +1219,73 @@ a { color: var(--yh-blue); }
   margin: 0;
 }
 .yh-file-info__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
+/* 도움말 열기(도움말>도움말 열기) 다이얼로그 — 단축키/기능 안내 읽기전용 표시(파일정보와 동일 계열). */
+.yh-editor-help {
+  width: 24rem;
+}
+.yh-editor-help__section {
+  margin: 0 0 var(--yh-sp-sm);
+  font-family: var(--yh-serif);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.yh-editor-help__list {
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-editor-help__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--yh-sp-md);
+  padding: var(--yh-sp-sm) 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+}
+.yh-editor-help__keys {
+  font-family: var(--yh-mono, monospace);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--yh-blue);
+  margin: 0;
+}
+.yh-editor-help__desc {
+  font-size: 0.9rem;
+  margin: 0;
+}
+.yh-editor-help__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yh-sp-sm);
+}
+
+/* 에디터 정보(도움말>에디터 정보) 다이얼로그 — 이름/버전 정적 정보 읽기전용 표시(파일정보와 동일 계열). */
+.yh-editor-about {
+  width: 22rem;
+}
+.yh-editor-about__list {
+  margin: 0 0 var(--yh-sp-md);
+}
+.yh-editor-about__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--yh-sp-md);
+  padding: var(--yh-sp-sm) 0;
+  border-bottom: 1px solid var(--yh-gray-line);
+}
+.yh-editor-about__label {
+  font-size: 0.85rem;
+  color: var(--yh-gray-dark);
+  margin: 0;
+}
+.yh-editor-about__value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+}
+.yh-editor-about__actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--yh-sp-sm);
