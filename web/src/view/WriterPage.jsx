@@ -46,6 +46,8 @@ import {
   loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing, fontFamilyCss, fontSizeCss,
 } from './editorPrefs.js';
 import { UiLanguageDialog } from './UiLanguageDialog.jsx';
+import { HelpDialog } from './HelpDialog.jsx';
+import { AboutDialog } from './AboutDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
 import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
@@ -112,7 +114,7 @@ const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — b
 const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
 
 // 결선된 에디터 메뉴 항목(EditorMenuBar enabledIds) — 나머지는 비활성(미구현 액션).
-const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'tools.uiLanguage', 'help.preferences', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
+const MENU_ENABLED = ['file.new', 'file.open', 'file.close', 'file.save', 'file.saveAs', 'file.print', 'file.printPreview', 'file.recover', 'edit.undo', 'edit.redo', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteOriginal', 'edit.pasteText', 'edit.findReplace', 'edit.selectAll', 'edit.insertEnd', 'edit.insertContinue', 'view.toUpper', 'view.toLower', 'view.capitalize', 'view.toggleCase', 'view.justify', 'view.alignLeft', 'view.alignCenter', 'view.alignRight', 'tools.abbrManage', 'tools.abbrConvert', 'tools.symbolInput', 'tools.insertDate', 'tools.insertImage', 'tools.insertYoutube', 'tools.insertAudio', 'tools.insertLink', 'tools.insertLocalVideo', 'tools.fileInfo', 'tools.memo', 'tools.simpTradConvert', 'tools.historyCompare', 'tools.publishPhoto', 'tools.uiLanguage', 'help.preferences', 'help.open', 'help.about', 'edit.selectParagraph', 'edit.selectLine', 'edit.selectWord', 'edit.sortDocument', 'edit.sortParagraph', 'edit.deleteLine', 'edit.deleteWord', 'spell.checkAll', 'spell.checkParagraph', 'spell.checkToCaret', 'spell.checkFromCaret', 'spell.checkOff', 'table.insert', 'table.delete', 'table.copy', 'table.cut', 'table.deleteRow', 'table.deleteCol', 'table.addRowAbove', 'table.addRowBelow', 'table.addColLeft', 'table.addColRight'];
 // 보기 메뉴 대소문자 변환 id → 문자열 변환 함수(transformTextLine에 적용).
 const VIEW_TRANSFORMS = {
   'view.toUpper': toUpper,
@@ -194,6 +196,10 @@ export function WriterPage() {
   const [showMemo, setShowMemo] = useState(false);
   // UI 언어 설정 다이얼로그(도구>UI 언어 설정) 보이기 — showMemo와 동일한 boolean 토글. 크롬 설정이라 본문 무관(매핑에서도 안전).
   const [showUiLanguage, setShowUiLanguage] = useState(false);
+  // 도움말 열기(도움말>도움말 열기)·에디터 정보(도움말>에디터 정보) 다이얼로그 보이기 — showFileInfo와 동일한 boolean 토글.
+  // 읽기전용 안내/정보 표시라 본문/캐럿/임베드 무변경(매핑에서도 안전 — 매핑 가드 앞 결선, 파일 정보/환경설정과 동일 정책).
+  const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   // 전역 메모 텍스트(부모 소유·controlled) — glyphFavorites처럼 마운트 lazy-init(새로고침 후 저장본 복원).
   // 세션 내 진실 소스: 입력은 setMemoText만(in-memory), 영속은 '저장'에서 saveMemo만. 탭/articleId 비종속(전역 1개).
   const [memoText, setMemoText] = useState(() => loadMemo());
@@ -828,6 +834,10 @@ export function WriterPage() {
   const onMenuSelect = (id) => {
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
     if (id === 'help.preferences') { setShowPrefs(true); return; }
+    // 도움말 열기(단축키/기능 안내)·에디터 정보(이름/버전) — 읽기전용 표시만(본문/캐럿/임베드 무변경).
+    // 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — help.preferences/tools.fileInfo와 동일 정책).
+    if (id === 'help.open') { setShowHelp(true); return; }
+    if (id === 'help.about') { setShowAbout(true); return; }
     // 그림/유튜브 URL 직접 삽입 — 매핑 가드 앞(임베드 변경은 매핑에서도 허용, 검색패널 onPick과 동일 정책).
     // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
     if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
@@ -1763,6 +1773,13 @@ export function WriterPage() {
         onSelect={onSelectUiLanguage}
         onClose={() => setShowUiLanguage(false)}
       />
+
+      {/* 도움말>도움말 열기 — 단축키/기능 안내(읽기전용). 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선).
+          제목/본문은 t(ko/en)로 렌더, 닫기/Esc는 컴포넌트 onClose. */}
+      <HelpDialog open={showHelp} t={t} onClose={() => setShowHelp(false)} />
+
+      {/* 도움말>에디터 정보 — 이름/버전 등 정적 정보(읽기전용, 동적 조회 없음). 매핑에서도 안전(매핑 가드 앞 결선). */}
+      <AboutDialog open={showAbout} t={t} onClose={() => setShowAbout(false)} />
 
       {/* 약어 관리(도구>약어관리) — controlled: 커밋 목록은 abbrevs(부모 소유·마운트 lazy-init), onAdd/onRemove가 즉시
           saveAbbrevs로 localStorage 영속. 본문/캐럿/임베드 무변경 → 매핑에서도 안전(매핑 가드 앞 결선). */}

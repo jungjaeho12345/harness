@@ -4445,6 +4445,103 @@ describe('WriterPage — 파일 정보(tools.fileInfo) 결선', () => {
   });
 });
 
+// Step 4(44-editor-gap-closeout): 도움말>도움말 열기(help.open)·에디터 정보(help.about) 결선 —
+// 각각 읽기전용 다이얼로그(HelpDialog/AboutDialog)를 연다. 본문/캐럿/임베드 무변경(매핑에서도 안전 — 매핑 가드 앞 결선).
+describe('WriterPage — 도움말 열기/에디터 정보(help.open/help.about) 결선', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  async function clickHelpItem(label) {
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    await userEvent.click(within(menu).getByText(label).closest('button'));
+  }
+
+  it("도움말 메뉴 '도움말 열기'(help.open)·'에디터 정보'(help.about)가 활성이다(MENU_ENABLED — 비활성→활성)", async () => {
+    await openWith([textBlock('헤드')]);
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    expect(within(menu).getByText('도움말 열기').closest('button')).toBeEnabled();
+    expect(within(menu).getByText('에디터 정보').closest('button')).toBeEnabled();
+  });
+
+  it("'도움말 열기' 클릭 시 HelpDialog(help-dialog, role=dialog '도움말 열기')가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    expect(screen.getByRole('dialog', { name: '도움말 열기' })).toBeInTheDocument();
+    expect(screen.getByTestId('help-dialog')).toBeInTheDocument();
+    // 실제 predicate와 일치하는 단축키가 보인다.
+    expect(screen.getByText('Alt+Y')).toBeInTheDocument();
+    expect(screen.getByText('Insert')).toBeInTheDocument();
+  });
+
+  it("HelpDialog는 닫기 클릭/Esc로 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    await userEvent.click(screen.getByTestId('help-dialog-close'));
+    expect(screen.queryByRole('dialog', { name: '도움말 열기' })).not.toBeInTheDocument();
+
+    await clickHelpItem('도움말 열기');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '도움말 열기' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '도움말 열기' })).not.toBeInTheDocument();
+  });
+
+  it("'에디터 정보' 클릭 시 AboutDialog(about-dialog, role=dialog '에디터 정보')가 열린다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('에디터 정보');
+    expect(screen.getByRole('dialog', { name: '에디터 정보' })).toBeInTheDocument();
+    expect(screen.getByTestId('about-dialog')).toBeInTheDocument();
+    expect(screen.getByText('기사 작성기')).toBeInTheDocument();
+  });
+
+  it("AboutDialog는 닫기 클릭/Esc로 닫힌다", async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('에디터 정보');
+    await userEvent.click(screen.getByTestId('about-dialog-close'));
+    expect(screen.queryByRole('dialog', { name: '에디터 정보' })).not.toBeInTheDocument();
+
+    await clickHelpItem('에디터 정보');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '에디터 정보' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '에디터 정보' })).not.toBeInTheDocument();
+  });
+
+  it('읽기전용 — 두 다이얼로그 모두 입력 필드(input/textarea)가 없다', async () => {
+    await openWith([textBlock('헤드')]);
+    await clickHelpItem('도움말 열기');
+    const help = screen.getByTestId('help-dialog');
+    expect(help.querySelector('input')).toBeNull();
+    expect(help.querySelector('textarea')).toBeNull();
+  });
+
+  it("매핑 모드에서도 '도움말 열기'/'에디터 정보'가 활성이고 다이얼로그가 열린다(읽기전용 — 매핑 가드 앞)", async () => {
+    await openWith(
+      [textBlock('제목'), textBlock('본문'), textBlock('(끝)')],
+      { mode: 'mapping', status: 'DPS', role: 'D' },
+    );
+    await openTopMenu('도움말');
+    const menu = screen.getByTestId('menu-도움말');
+    expect(within(menu).getByText('도움말 열기').closest('button')).toBeEnabled();
+    await userEvent.click(within(menu).getByText('도움말 열기').closest('button'));
+    expect(screen.getByRole('dialog', { name: '도움말 열기' })).toBeInTheDocument();
+  });
+});
+
 // Step 1(22-editor-memo): 도구>메모장(tools.memo) 결선 —
 // 메뉴 클릭 시 controlled MemoDialog를 연다. 값은 부모 memoText(마운트 lazy-init), '저장'만 localStorage(yh.editorMemo) 영속.
 // 메모는 기사와 무관한 전역 스크래치패드 — 본문/캐럿/임베드 무변경(매핑에서도 안전). localStorage는 케이스별로 격리.

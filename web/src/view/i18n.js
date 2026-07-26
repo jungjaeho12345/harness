@@ -90,6 +90,13 @@ const KO = {
   'help.open': '도움말 열기',
   'help.about': '에디터 정보',
   'help.preferences': '환경설정',
+  // 도움말 열기/에디터 정보 다이얼로그 본문 전용(메뉴 라벨 아님 — ko/en 대칭 + 비어있지 않음만 강제)
+  'help.dialog.shortcutsTitle': '단축키',
+  'help.dialog.overwrite': '삽입/수정 모드 전환',
+  'help.dialog.companyCode': '기업코드 변환',
+  'help.dialog.nameLabel': '이름',
+  'help.dialog.appName': '기사 작성기',
+  'help.dialog.versionLabel': '버전',
   // UI 언어 다이얼로그 전용 + 공용
   'ui.dialog.title': 'UI 언어 설정',
   'ui.dialog.langLabel': '언어',
@@ -182,6 +189,13 @@ const EN = {
   'help.open': 'Open Help',
   'help.about': 'About Editor',
   'help.preferences': 'Preferences',
+  // Open Help / About Editor dialog body (not menu labels — only ko/en symmetry + non-empty enforced)
+  'help.dialog.shortcutsTitle': 'Keyboard Shortcuts',
+  'help.dialog.overwrite': 'Toggle Insert/Overwrite Mode',
+  'help.dialog.companyCode': 'Convert Company Code',
+  'help.dialog.nameLabel': 'Name',
+  'help.dialog.appName': 'Article Writer',
+  'help.dialog.versionLabel': 'Version',
   // UI language dialog + common
   'ui.dialog.title': 'UI Language',
   'ui.dialog.langLabel': 'Language',

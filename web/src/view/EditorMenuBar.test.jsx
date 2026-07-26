@@ -173,6 +173,25 @@ describe('EditorMenuBar — enabledIds 항목 활성화(결선)', () => {
     await userEvent.click(screen.getByText('환경설정'));
     expect(onSelect).toHaveBeenCalledWith('help.preferences');
   });
+
+  // Step 4(44-editor-gap-closeout): 도움말>도움말 열기(help.open)·에디터 정보(help.about) 결선.
+  it("enabledIds=['help.open']면 도움말>도움말 열기가 활성·클릭 시 onSelect를 호출한다", async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['help.open']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    expect(screen.getByText('도움말 열기').closest('button')).toBeEnabled();
+    await userEvent.click(screen.getByText('도움말 열기'));
+    expect(onSelect).toHaveBeenCalledWith('help.open');
+  });
+
+  it("enabledIds=['help.about']면 도움말>에디터 정보가 활성·클릭 시 onSelect를 호출한다", async () => {
+    const onSelect = vi.fn();
+    render(<EditorMenuBar onSelect={onSelect} enabledIds={['help.about']} />);
+    await userEvent.click(screen.getByRole('menuitem', { name: '도움말' }));
+    expect(screen.getByText('에디터 정보').closest('button')).toBeEnabled();
+    await userEvent.click(screen.getByText('에디터 정보'));
+    expect(onSelect).toHaveBeenCalledWith('help.about');
+  });
 });
 
 // Step 2(42-editor-ui-language): 상단 메뉴바 라벨을 번역기 t로 렌더한다.
