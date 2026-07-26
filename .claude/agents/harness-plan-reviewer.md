@@ -33,7 +33,7 @@ model: opus
 - 계층 분리(controllers→services→models→db / Model-Controller-View, 의존성 주입)를 따르는가?
 - **DB 비파괴** — DB 행 삭제를 지시하는 step이 없는가? 스키마 변경이 멱등인가?
 - **신뢰 경계 = 서버** — 인가를 `x-session-id` 세션에서 도출하는가? `req.body.role` 신뢰 흔적이 없는가?
-- **범위** — 배부 시스템 등 범위 밖 작업이 섞이지 않았는가?
+- **범위** — 범위 밖 작업이 섞이지 않았는가? 배부 작업은 ADR-008 아키텍처(스풀 outbound·tick pull·앱 내 타이머/egress 금지) 준수를 점검한다.
 - 비밀번호/시크릿이 응답·클라이언트로 새는 설계가 없는가?
 
 **C. 메타데이터**
