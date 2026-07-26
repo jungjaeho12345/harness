@@ -114,12 +114,13 @@ export function insertContinueMarker(blocks, textLineIndex) {
 
 // 보기 메뉴 대소문자 변환 — 텍스트-줄 인덱스(텍스트 블록만 0-base로 센 순번)의 텍스트에 fn 적용.
 // 임베드/다른 줄/"(끝)"은 불변. 범위 밖이면 변경 없이 그대로 반환. 입력 blocks는 변형하지 않는다.
+// 그 줄의 정렬(align) 필드는 승계한다(RHS 선평가라 교체-전 next[blockIndex].align이 안전).
 export function transformTextLine(blocks, textLineIndex, fn) {
   const list = normalizeBlocks(blocks);
   const blockIndex = textLineToBlockIndex(list, textLineIndex);
   if (blockIndex < 0) return { blocks: list };
   const next = list.slice();
-  next[blockIndex] = textBlock(fn(next[blockIndex].text));
+  next[blockIndex] = textBlock(fn(next[blockIndex].text), next[blockIndex].align);
   return { blocks: next };
 }
 

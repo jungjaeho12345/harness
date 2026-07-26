@@ -85,8 +85,9 @@ export function insertDateAtCaret(blocks, caret, dateString) {
     col = list[fallbackIdx].text.length; // 줄 끝.
   }
 
+  // 정렬(align) 필드는 교체-전 원본(list[blockIndex].align)에서 읽어 승계한다(새 줄 생성 분기는 승계 대상 아님).
   const old = list[blockIndex].text;
   const next = list.slice();
-  next[blockIndex] = textBlock(old.slice(0, col) + d + old.slice(col));
+  next[blockIndex] = textBlock(old.slice(0, col) + d + old.slice(col), list[blockIndex].align);
   return { blocks: next, caretTextLine: blockIndexToTextLine(next, blockIndex) };
 }

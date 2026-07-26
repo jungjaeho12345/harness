@@ -204,4 +204,23 @@ describe('editorDate — insertDateAtCaret', () => {
     expect(r.blocks).not.toBe(input);
     expect(r.caretTextLine).toBe(null);
   });
+
+  it('preserves the align field of the line the date is inserted into (승계)', () => {
+    const r = insertDateAtCaret([textBlock('머리글', 'justify')], { lineIndex: 0, offset: 3 }, '2026-07-26');
+    expect(r.blocks[0]).toEqual(textBlock('머리글2026-07-26', 'justify'));
+    expect(r.blocks[0].align).toBe('justify');
+  });
+
+  it('does not add a spurious align key to an unaligned line', () => {
+    const r = insertDateAtCaret([textBlock('머리글')], { lineIndex: 0, offset: 3 }, '2026-07-26');
+    expect(r.blocks[0].text).toBe('머리글2026-07-26');
+    expect('align' in r.blocks[0]).toBe(false);
+  });
+
+  it('does not add align to a newly created text block (embed-only fallback)', () => {
+    const r = insertDateAtCaret([embedBlock({ embedType: 'image', src: 'x' })], null, '2026-07-26');
+    const created = r.blocks.find((b) => b.type === 'text');
+    expect(created.text).toBe('2026-07-26');
+    expect('align' in created).toBe(false);
+  });
 });
