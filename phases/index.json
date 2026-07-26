@@ -243,6 +243,11 @@
       "dir": "44-editor-gap-closeout",
       "status": "completed",
       "completed_at": "2026-07-26T12:54:55+0900"
+    },
+    {
+      "dir": "45-editor-backlog-cleanup",
+      "status": "pending",
+      "note": "누적 minor 백로그 일괄 정리(비차단 수용분 해소) — triage 후 채택 5 step: (0) 편집 op 형제 align 미승계 수정, (1) auto 기업코드 변환 title 1회 지연 수정, (2) overwrite 이모지 서로게이트 분할 수정, (3) phase31 잠복 위생(urlEmbedKind 탭 전환 초기화 + tableModel 정규화 반환), (4) 위생 nit 일괄(주석/죽은 키/중복호출, 동작 변경 0). 제외 3(감사 잔여): 동일탭 캐럿stale(재현 없음)·빈줄 임베드 동반삭제(계약 변경 위험)·sortParagraph clamp(이미 방어됨) — index.json excluded에 근거."
     }
   ]
 }
