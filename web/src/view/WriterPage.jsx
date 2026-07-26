@@ -59,7 +59,7 @@ import {
   insertEndMarker, isInsertEndMarker, isDeleteLine, deleteLineAt,
   isInsertContinueMarker, insertContinueMarker, transformTextLine,
   toUpper, toLower, capitalizeFirst, toggleCase, isGlyphInput, isPasteOriginal,
-  isUndo, isRedo, isCompanyCode,
+  isUndo, isRedo, isCompanyCode, isToggleOverwrite,
 } from './editorShortcuts.js';
 import {
   createHistory, pushHistory, undo as undoHistory, redo as redoHistory,
@@ -143,6 +143,10 @@ export function WriterPage() {
   const [statusCaret, setStatusCaret] = useState(null);
   const [showMenuBar, setShowMenuBar] = useState(false);
   const [showToolBar, setShowToolBar] = useState(false);
+  // 삽입/수정(overwrite) 모드 — Insert 키 토글. 전역 단일 모드(입력 모드지 문서-로컬 좌표가 아님):
+  // 탭별 격리·영속 없음(새로고침 시 삽입으로 리셋). L292~ 탭 전환 조정 블록에 넣지 않는다(리셋 대상 아님).
+  // 이 step은 토글+상태표시줄 표시까지 — 실제 캐럿 뒤 덮어쓰기 입력은 step3(이 state를 소비).
+  const [overwrite, setOverwrite] = useState(false);
   // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
   // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
   const [showGlyphBar, setShowGlyphBar] = useState(false);
@@ -1090,6 +1094,14 @@ export function WriterPage() {
     // IME 조합 중에는 어떤 에디터 단축키도 가로채지 않는다(줄삭제/preventDefault 없이 브라우저·IME에 위임 —
     // news.md 173행 조합 중 무개입 원칙. 조합 상태는 nativeEvent.isComposing(레거시 keyCode 229)로 판정).
     if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
+    // Insert → 삽입/수정(overwrite) 모드 토글. 수식어 없는 키라 아래 라인삭제 바일아웃(!ctrlD return)에서
+    // 삼켜지기 전에 여기서 처리한다(IME 가드 뒤 = 조합 중 무개입). Shift/Ctrl+Insert(붙여넣기/복사 레거시)는
+    // isToggleOverwrite가 배제. 실제 덮어쓰기 입력은 step3(overwrite state 소비) — 여기서는 모드 토글+표시만.
+    if (isToggleOverwrite(e)) {
+      e.preventDefault();
+      setOverwrite((v) => !v);
+      return;
+    }
     // Ctrl+B → 기업코드변환(본문 종목명 태깅). contentEditable 기본 bold(<b> 주입)가 블록 모델을 오염시키므로
     // preventDefault는 항상(매핑이어도 — Ctrl+F 관례) 하고, 실행은 !isMapping일 때만. matchGlyphKeymap보다 앞(예약 조합).
     if (isCompanyCode(e)) {
@@ -1498,9 +1510,9 @@ export function WriterPage() {
               spellHighlightStyle={spellStyle}
             />
           </div>
-          {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿·언어(raw 코드)·입력모드(raw) 결선.
-              라벨/바이트 폴백·정규화는 StatusBar가 소유(단일 지점). overwrite는 기본값(placeholder) 유지. */}
-          <StatusBar text={blocksToText(blocks)} caret={statusCaret} language={language} inputMode={inputMode} />
+          {/* 상태표시줄 — 본문 텍스트(임베드 제외)·캐럿·언어(raw 코드)·입력모드(raw)·삽입/수정(overwrite) 결선.
+              라벨/바이트 폴백·정규화는 StatusBar가 소유(단일 지점). overwrite는 Insert 토글 state(전역 모드). */}
+          <StatusBar text={blocksToText(blocks)} caret={statusCaret} language={language} inputMode={inputMode} overwrite={overwrite} />
         </section>
 
         {/* 우측 40% — 메타데이터 */}

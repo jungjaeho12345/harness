@@ -7353,3 +7353,73 @@ describe('WriterPage — 자동 기업코드 변환(edit.companyCode=auto)', () 
     expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로(매핑=변환 없음)
   });
 });
+
+// phase44 step2 — 상태표시줄 삽입/수정(overwrite) 토글. Insert 키로 삽입<->수정을 토글하고 상태표시줄이 표시한다.
+// (이 step은 토글+표시까지 — 실제 덮어쓰기 입력은 step3.) overwrite는 전역 단일 모드(탭별 격리·영속 없음).
+describe('WriterPage — 상태표시줄 삽입/수정 토글(Insert)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const statMode = () => screen.getByTestId('stat-mode').textContent;
+
+  it('초기 렌더는 삽입 모드다', () => {
+    setup({ identity: { role: 'R' } });
+    expect(statMode()).toBe('삽입');
+  });
+
+  it('Insert 키로 삽입<->수정을 토글한다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    expect(statMode()).toBe('삽입');
+
+    fireEvent.keyDown(box, { key: 'Insert' });
+    expect(statMode()).toBe('수정');
+
+    fireEvent.keyDown(box, { key: 'Insert' }); // 한 번 더 → 다시 삽입
+    expect(statMode()).toBe('삽입');
+  });
+
+  it('Insert 키다운은 브라우저 기본을 막는다(preventDefault)', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    const ev = createEvent.keyDown(box, { key: 'Insert' });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+    expect(spy).toHaveBeenCalled();
+    expect(statMode()).toBe('수정');
+  });
+
+  it('Shift+Insert(붙여넣기 레거시)는 토글하지 않는다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', shiftKey: true });
+    expect(statMode()).toBe('삽입'); // 불변 — 수식어 동반 Insert는 토글 대상 아님
+  });
+
+  it('Ctrl+Insert(복사 레거시)는 토글하지 않는다', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', ctrlKey: true });
+    expect(statMode()).toBe('삽입'); // 불변
+  });
+
+  it('IME 조합 중 Insert는 토글하지 않는다(무개입)', () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert', isComposing: true });
+    expect(statMode()).toBe('삽입'); // IME 가드가 먼저 return
+  });
+
+  it('전역 모드: 수정으로 켠 뒤 새 탭으로 전환해도 수정이 유지된다(탭별 격리·리셋 없음)', async () => {
+    const { container } = setup({ identity: { role: 'R' } });
+    const box = container.querySelector('.yh-editor');
+    fireEvent.keyDown(box, { key: 'Insert' });
+    expect(statMode()).toBe('수정');
+
+    // ＋(새 작성 탭)으로 새 탭 추가/전환 — 전역 모드라 리셋되지 않는다.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(
+      container.querySelectorAll('[data-testid="writer-tabs"] > .yh-tab').length,
+    ).toBe(2));
+    expect(statMode()).toBe('수정'); // 유지(문서-로컬 좌표 아님 — 탭 전환 조정 블록 미대상)
+  });
+});

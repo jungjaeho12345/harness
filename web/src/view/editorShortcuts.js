@@ -29,6 +29,13 @@ export function isCompanyCode(e) {
   return !!(e && e.ctrlKey && !e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB'));
 }
 
+// Insert — 삽입/수정(overwrite) 모드 토글. 수식어 없는 Insert만(Shift+Insert=붙여넣기·Ctrl+Insert=복사 레거시 제외).
+// 레이아웃 무관하게 code(Insert)도 함께 본다(isDeleteLine 등 predicate 관례).
+export function isToggleOverwrite(e) {
+  return !!(e && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey
+    && (e.key === 'Insert' || e.code === 'Insert'));
+}
+
 // Ctrl+Z / Cmd+Z — 되돌리기(undo). Shift 없이(Shift+Z는 redo). Alt 없이(다른 조합 오인 방지).
 export function isUndo(e) {
   return !!(e && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey

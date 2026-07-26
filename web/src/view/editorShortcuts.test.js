@@ -3,7 +3,7 @@ import {
   isInsertEndMarker, isDeleteLine, insertEndMarker, deleteLineAt,
   CONTINUE_MARKER, isInsertContinueMarker, insertContinueMarker,
   transformTextLine, toUpper, toLower, capitalizeFirst, toggleCase,
-  isGlyphInput, isPasteOriginal, isUndo, isRedo, isCompanyCode,
+  isGlyphInput, isPasteOriginal, isUndo, isRedo, isCompanyCode, isToggleOverwrite,
 } from './editorShortcuts.js';
 import { textBlock, embedBlock, END_MARKER, blocksToText } from './editorContent.js';
 
@@ -55,6 +55,21 @@ describe('editorShortcuts — key recognition', () => {
     expect(isUndo({ key: 'z' })).toBe(false);
     expect(isUndo({ ctrlKey: true, key: 'y' })).toBe(false);
     expect(isUndo(null)).toBe(false);
+  });
+
+  it('recognizes Insert (삽입/수정 토글) — 수식어 없는 Insert만, Shift/Ctrl/Alt/Meta 동반 제외', () => {
+    expect(isToggleOverwrite({ key: 'Insert' })).toBe(true);
+    expect(isToggleOverwrite({ code: 'Insert' })).toBe(true);
+    // 수식어 동반 Insert는 레거시 편집(Shift+Insert=붙여넣기·Ctrl+Insert=복사) — 토글하지 않는다.
+    expect(isToggleOverwrite({ shiftKey: true, key: 'Insert' })).toBe(false);
+    expect(isToggleOverwrite({ ctrlKey: true, key: 'Insert' })).toBe(false);
+    expect(isToggleOverwrite({ altKey: true, key: 'Insert' })).toBe(false);
+    expect(isToggleOverwrite({ metaKey: true, key: 'Insert' })).toBe(false);
+    // 무관 키/빈 이벤트는 인식하지 않는다.
+    expect(isToggleOverwrite({ key: 'a' })).toBe(false);
+    expect(isToggleOverwrite({ key: 'Delete' })).toBe(false);
+    expect(isToggleOverwrite(null)).toBe(false);
+    expect(isToggleOverwrite(undefined)).toBe(false);
   });
 
   it('recognizes Ctrl+Shift+Z (다시실행) — Ctrl+Y("(계속)삽입")와 불간섭', () => {
