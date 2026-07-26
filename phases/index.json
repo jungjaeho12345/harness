@@ -241,7 +241,8 @@
     },
     {
       "dir": "44-editor-gap-closeout",
-      "status": "in_progress"
+      "status": "completed",
+      "completed_at": "2026-07-26T12:54:55+0900"
     }
   ]
 }
