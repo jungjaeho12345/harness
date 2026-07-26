@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks, shouldOverwriteNextChar,
+  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks,
+  shouldOverwriteNextChar, overwriteExtendLength,
 } from './editorNewline.js';
 import {
   textBlock, embedBlock, blocksToText, isTextBlock,
@@ -93,6 +94,37 @@ describe('editorNewline — shouldOverwriteNextChar (수정 모드 덮어쓰기 
     expect(shouldOverwriteNextChar('', 0)).toBe(false);
     expect(shouldOverwriteNextChar(null, 0)).toBe(false);
     expect(shouldOverwriteNextChar(undefined, 0)).toBe(false);
+  });
+});
+
+// phase45 step2 — 수정(overwrite) 모드에서 캐럿 뒤 "한 문자(코드포인트)"를 덮어쓸 때 확장할
+// UTF-16 코드유닛 수(1 또는 2). astral 문자(이모지=high+low 서로게이트 페어)는 2, 그 외는 1.
+// jsdom이 네이티브 문자 대체를 실행하지 않으므로 서로게이트 경계는 이 순수 함수로 전수 잠근다.
+describe('editorNewline — overwriteExtendLength (서로게이트-safe 확장 길이)', () => {
+  it('BMP 문자는 1 코드유닛', () => {
+    expect(overwriteExtendLength('abc', 1)).toBe(1); // 'b'
+    expect(overwriteExtendLength('가나', 1)).toBe(1); // 한글(BMP)
+  });
+
+  it('astral 문자(이모지=서로게이트 페어)는 2 코드유닛', () => {
+    expect(overwriteExtendLength('a😀b', 1)).toBe(2); // 인덱스 1이 high 서로게이트(😀 시작)
+    expect(overwriteExtendLength('😀', 0)).toBe(2); // 문자열 시작의 이모지
+    expect(overwriteExtendLength('a😀', 1)).toBe(2); // 문자열 끝의 이모지(low가 마지막 코드유닛)
+  });
+
+  it('lone high 서로게이트는 1(짝 없으면 안전 폴백)', () => {
+    expect(overwriteExtendLength('a\uD83Db', 1)).toBe(1); // 뒤가 low 서로게이트 아님
+    expect(overwriteExtendLength('a\uD83D', 1)).toBe(1); // lone high가 문자열 끝(뒤 코드유닛 없음)
+  });
+
+  it('경계/무효 오프셋은 1(안전 기본)', () => {
+    expect(overwriteExtendLength('abc', 3)).toBe(1); // 문서 끝(offset===length)
+    expect(overwriteExtendLength('abc', -1)).toBe(1); // 음수
+    expect(overwriteExtendLength('abc', 1.5)).toBe(1); // 비정수
+    expect(overwriteExtendLength('abc', NaN)).toBe(1); // NaN
+    expect(overwriteExtendLength('', 0)).toBe(1); // 빈 문자열
+    expect(overwriteExtendLength(null, 0)).toBe(1); // 무효 text
+    expect(overwriteExtendLength(undefined, 0)).toBe(1);
   });
 });
 

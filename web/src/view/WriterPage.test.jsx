@@ -7656,4 +7656,24 @@ describe('WriterPage — 수정(overwrite) 모드 덮어쓰기 타이핑', () =>
     fireEvent.keyDown(box(container), { key: 'Enter' });
     expect(sel.isCollapsed).toBe(true);
   });
+
+  // phase45 step2 — astral 문자(이모지=서로게이트 페어) 온전 확장. 캐럿 뒤 이모지는 DOM 텍스트 노드에서
+  // 2 코드유닛(high+low)이라 +1(코드유닛 1개)만 확장하면 반쪽(lone 서로게이트)만 선택돼 네이티브 대체가 깨진다.
+  it('수정 모드 + 이모지 앞: 서로게이트 페어 2 코드유닛을 온전히 확장한다', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('a😀b')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1); // 'a|😀b' — DOM 코드유닛 오프셋 1(😀 시작 = high 서로게이트)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(false); // 확장됨
+    expect(sel.getRangeAt(0).toString()).toBe('😀'); // 반쪽 lone 서로게이트 아니라 이모지 전체(2 코드유닛)
+  });
+
+  it('수정 모드 + BMP 문자는 여전히 1 코드유닛 확장(회귀 가드)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('a😀b')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 0); // '|a😀b' — 뒤 글자 'a'(BMP)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(false);
+    expect(sel.getRangeAt(0).toString()).toBe('a'); // BMP는 1 코드유닛
+  });
 });

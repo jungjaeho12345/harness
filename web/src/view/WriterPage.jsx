@@ -54,7 +54,7 @@ import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
-import { shouldOverwriteNextChar } from './editorNewline.js';
+import { shouldOverwriteNextChar, overwriteExtendLength } from './editorNewline.js';
 import {
   charCount, lineCount, wordCount, byteLength, caretPosition,
 } from './editorStats.js';
@@ -123,18 +123,21 @@ const VIEW_TRANSFORMS = {
   'view.toggleCase': toggleCase,
 };
 
-// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 1글자 확장한다.
-// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만(anchorOffset < 노드 길이) sel.extend로 1글자를 선택.
-// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
+// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 한 문자 확장한다.
+// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만 sel.extend로 그 글자를 선택.
+// 서로게이트 페어(이모지 등 astral 문자)는 2 코드유닛을 온전히 확장한다(overwriteExtendLength — 반쪽 대체 방지).
+// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이거나 확장이 노드 길이를 넘으면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
 // 텍스트 노드 내부에서만 확장하므로 줄 경계를 넘지 않는다. preventDefault는 호출부에서 하지 않아 네이티브 입력이 선택을 대체한다.
 function extendSelectionForOverwrite(root) {
   const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
   if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
   const node = sel.anchorNode;
   if (!node || node.nodeType !== 3 || !root || !root.contains(node)) return; // 텍스트 노드·에디터 내부만.
-  if (sel.anchorOffset >= (node.textContent ?? '').length) return; // 노드 끝(형제 경계) — 확장 생략(삽입 폴백).
+  const text = node.textContent ?? '';
+  const len = overwriteExtendLength(text, sel.anchorOffset); // 서로게이트 페어면 2, 아니면 1.
+  if (sel.anchorOffset + len > text.length) return; // 확장이 노드 경계를 넘으면(끝/반쪽) 확장 생략 = 삽입 폴백.
   if (typeof sel.extend !== 'function') return; // 구형 환경 방어.
-  sel.extend(node, sel.anchorOffset + 1);
+  sel.extend(node, sel.anchorOffset + len);
 }
 
 export function WriterPage() {
