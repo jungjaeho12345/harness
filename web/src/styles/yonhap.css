@@ -503,7 +503,10 @@ a { color: var(--yh-blue); }
   border-radius: var(--yh-radius-lg);
   box-shadow: var(--yh-shadow-sm);
   background: transparent;
-  font-size: 0.95rem;
+  /* 툴바 글꼴/크기(44-1) — 캔버스 래퍼가 CSS 변수를 주입하면 그 값, 미주입('기본')이면 fallback(현재 상속/선언값)이 렌더된다.
+     font-family fallback은 body에서 상속하던 var(--yh-sans)와 동일(중간 셀렉터 override 없음), font-size fallback은 기존 0.95rem. */
+  font-family: var(--yh-editor-font-family, var(--yh-sans));
+  font-size: var(--yh-editor-font-size, 0.95rem);
   line-height: var(--yh-editor-line-height, 1.8);
   outline: none;
   transition: border-color var(--yh-transition), box-shadow var(--yh-transition);

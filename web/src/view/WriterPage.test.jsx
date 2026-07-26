@@ -10,7 +10,9 @@ import { createFakeModel } from '../test/fakeModel.js';
 import { serialize, deserialize, textBlock, embedBlock, blocksToText } from './editorContent.js';
 import { loadMemo } from './memoStore.js';
 import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
-import { loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS } from './editorPrefs.js';
+import {
+  loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS, fontFamilyCss, fontSizeCss,
+} from './editorPrefs.js';
 import { saveDraft, loadDraft } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
 
@@ -1833,6 +1835,85 @@ describe('WriterPage — 편집>줄간격(editor-canvas line-height 변수) 적�
 
     expect(loadEditorPrefs().edit.lineSpacing).toBe(DEFAULT_EDITOR_PREFS.edit.lineSpacing); // 저장 불변(1.8)
     expect(lineHeightVar(screen.getByTestId('editor-canvas'))).toBe('1.8'); // 변수 불변
+  });
+});
+
+// Step 1(44-editor-gap-closeout): 툴바 글꼴(edit.editorFont)·글씨크기(edit.editorFontSize)를 WriterPage 캔버스
+// 래퍼(editor-canvas) 레벨에서 CSS 변수(--yh-editor-font-family/--yh-editor-font-size)로 조건부 주입한다.
+// 줄간격(상시 주입)과 달리 '기본'(fontFamilyCss/fontSizeCss===null)이면 변수를 아예 넣지 않아 fallback(현재값)이 렌더된다
+// = 바이트 동일 회귀 가드. 툴바는 즉시-반영 컨트롤이라 onChange 시 직접-저장(uiLanguage 패턴). Editor.jsx 무변경.
+describe('WriterPage — 툴바 글꼴/크기(editor-canvas 폰트 변수) 적용', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  // 편집 카테고리에 patch만 저장(다른 카테고리·키는 기본값 유지).
+  const savePref = (patch) => saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', patch));
+
+  const fontFamilyVar = (el) => el.style.getPropertyValue('--yh-editor-font-family');
+  const fontSizeVar = (el) => el.style.getPropertyValue('--yh-editor-font-size');
+
+  // 우클릭 컨텍스트 메뉴로 툴바를 켠다(showToolBar 토글 — L96 toggleCtx 패턴 재사용).
+  async function showToolbar() {
+    fireEvent.contextMenu(screen.getByTestId('editor-canvas'));
+    const ctx = await screen.findByTestId('editor-context-menu');
+    await userEvent.click(within(ctx).getByText('툴바 보이기').closest('button'));
+    await waitFor(() => expect(screen.getByTestId('toolbar')).toBeInTheDocument());
+  }
+
+  it('미저장(기본 \'기본\')이면 폰트 변수가 둘 다 미주입된다(바이트 동일 회귀 가드)', () => {
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontFamilyVar(canvas)).toBe(''); // 미주입 → .yh-editor fallback var(--yh-sans)
+    expect(fontSizeVar(canvas)).toBe(''); // 미주입 → .yh-editor fallback 0.95rem
+  });
+
+  it("editorFont='바탕'만 저장하면 font-family 변수만 주입되고 font-size는 미주입", () => {
+    savePref({ editorFont: '바탕' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontFamilyVar(canvas)).toBe(fontFamilyCss('바탕'));
+    expect(fontSizeVar(canvas)).toBe(''); // 크기는 여전히 기본 → 미주입
+  });
+
+  it("editorFontSize='16'만 저장하면 font-size 변수가 '16px'로 주입된다", () => {
+    savePref({ editorFontSize: '16' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(fontSizeVar(canvas)).toBe('16px');
+    expect(fontSizeVar(canvas)).toBe(fontSizeCss('16'));
+    expect(fontFamilyVar(canvas)).toBe(''); // 글꼴은 여전히 기본 → 미주입
+  });
+
+  it('배경색·컬럼제한·줄간격·글꼴·글씨크기를 함께 저장하면 캔버스에 모두 공존한다(회귀 없음)', () => {
+    saveEditorPrefs({
+      ...loadEditorPrefs(),
+      colors: { ...loadEditorPrefs().colors, background: '#123456' },
+      edit: {
+        ...loadEditorPrefs().edit, columnLimit: true, lineSpacing: 1.5, editorFont: '돋움', editorFontSize: '14',
+      },
+    });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    const canvas = getByTestId('editor-canvas');
+    expect(canvas).toHaveStyle({ backgroundColor: '#123456' });
+    expect(canvas).toHaveStyle({ paddingLeft: '10%', paddingRight: '10%' });
+    expect(canvas.style.getPropertyValue('--yh-editor-line-height')).toBe('1.5');
+    expect(fontFamilyVar(canvas)).toBe(fontFamilyCss('돋움'));
+    expect(fontSizeVar(canvas)).toBe('14px');
+  });
+
+  it("툴바에서 글꼴 '돋움'을 고르면 즉시 캔버스 변수에 반영되고 직접-저장 영속된다", async () => {
+    setup({ identity: { role: 'R' } });
+    expect(fontFamilyVar(screen.getByTestId('editor-canvas'))).toBe(''); // 선택 전 미주입
+    await showToolbar();
+    await userEvent.selectOptions(screen.getByTestId('tool-font'), '돋움');
+    await waitFor(() => expect(fontFamilyVar(screen.getByTestId('editor-canvas'))).toBe(fontFamilyCss('돋움')));
+    expect(loadEditorPrefs().edit.editorFont).toBe('돋움'); // 툴바 직접-저장 영속
+  });
+
+  it("editorFont='굴림' 저장 상태로 마운트하면 변수가 복원된다(새로고침 복원)", () => {
+    savePref({ editorFont: '굴림' });
+    const { getByTestId } = setup({ identity: { role: 'R' } });
+    expect(fontFamilyVar(getByTestId('editor-canvas'))).toBe(fontFamilyCss('굴림'));
   });
 });
 

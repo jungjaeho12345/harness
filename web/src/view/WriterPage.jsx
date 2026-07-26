@@ -42,7 +42,9 @@ import {
 } from './editorSelect.js';
 import { wordBoundsAt, paragraphBoundsAt } from './editorRange.js';
 import { sortDocument, sortParagraph, deleteWordAt } from './editorEditOps.js';
-import { loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing } from './editorPrefs.js';
+import {
+  loadEditorPrefs, saveEditorPrefs, setEditorPref, normalizeLineSpacing, fontFamilyCss, fontSizeCss,
+} from './editorPrefs.js';
 import { UiLanguageDialog } from './UiLanguageDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
@@ -220,6 +222,12 @@ export function WriterPage() {
   // 자식 .yh-editor/.yh-editor__line이 상속(columnLimit 동형 게이트). raw 저장값을 보관하고 정규화는 주입 시점에.
   const [lineSpacing, setLineSpacing] = useState(() => loadEditorPrefs().edit.lineSpacing);
 
+  // 툴바 글꼴(edit.editorFont)·글씨크기(edit.editorFontSize) — 캔버스 래퍼(editor-canvas)에 CSS 변수
+  // (--yh-editor-font-family/--yh-editor-font-size)를 조건부 주입(줄간격과 달리 '기본'→null이면 미주입 → fallback 현재값 렌더).
+  // raw 저장값을 보관하고 매핑(fontFamilyCss/fontSizeCss)은 주입 시점에. 툴바는 즉시-반영 컨트롤이라 onChange 직접-저장(uiLanguage 패턴).
+  const [editorFont, setEditorFont] = useState(() => loadEditorPrefs().edit.editorFont);
+  const [editorFontSize, setEditorFontSize] = useState(() => loadEditorPrefs().edit.editorFontSize);
+
   // 편집>언어(edit.language)·입력모드(edit.inputMode) — 상태표시줄(라벨·바이트 모드)과 Editor lang 속성에 주입
   // (columnLimit/lineSpacing 동형 게이트). raw 저장값을 보관하고 폴백·정규화는 소비 시점에(StatusBar 내부·normalizeLanguage).
   const [language, setLanguage] = useState(() => loadEditorPrefs().edit.language);
@@ -244,6 +252,8 @@ export function WriterPage() {
     setEditorBg(c.background);
     setColumnLimit(loadEditorPrefs().edit.columnLimit); // 새로고침 후에도 컬럼제한 반영.
     setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 새로고침 후에도 줄간격 반영.
+    setEditorFont(loadEditorPrefs().edit.editorFont); // 새로고침 후에도 툴바 글꼴 반영.
+    setEditorFontSize(loadEditorPrefs().edit.editorFontSize); // 새로고침 후에도 툴바 글씨크기 반영.
     setLanguage(loadEditorPrefs().edit.language); // 새로고침 후에도 언어 반영.
     setInputMode(loadEditorPrefs().edit.inputMode); // 새로고침 후에도 입력모드 반영.
     setUiLanguage(loadEditorPrefs().ui.language); // 새로고침/재접속 후에도 UI 언어 반영(다른 prefs와 동일 게이트).
@@ -504,6 +514,17 @@ export function WriterPage() {
     if (!UI_LANGUAGES.includes(lang)) return; // 방어 — 허용값만(다이얼로그도 ko/en만 노출하지만 이중 방어).
     saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'ui', { language: lang })); // 동기 영속(새로고침/재접속 유지).
     setUiLanguage(lang); // 즉시 리렌더 — 메뉴바(t)+다이얼로그(t) 실시간 반영.
+  };
+
+  // 툴바 글꼴/크기 선택 — 즉시-반영 컨트롤이라 apply/cancel 없이 onChange 시 동기 영속 + 즉시 리렌더(uiLanguage 직접-저장 패턴).
+  // 매핑/정규화는 캔버스 래퍼 style에서 fontFamilyCss/fontSizeCss로 수행하므로 여기선 raw 선택값만 저장·보관한다.
+  const onToolbarFont = (v) => {
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', { editorFont: v })); // 동기 영속(새로고침 유지).
+    setEditorFont(v); // 즉시 리렌더 — 캔버스 CSS 변수(--yh-editor-font-family) 반영.
+  };
+  const onToolbarFontSize = (v) => {
+    saveEditorPrefs(setEditorPref(loadEditorPrefs(), 'edit', { editorFontSize: v })); // 동기 영속.
+    setEditorFontSize(v); // 즉시 리렌더 — 캔버스 CSS 변수(--yh-editor-font-size) 반영.
   };
 
   // 도구>약어변환 — 등록 약어(abbrevs 세션 state)를 본문 텍스트 블록에서 확장(임베드·"(끝)" 불변). 매핑 가드 뒤에서만 호출.
@@ -1415,7 +1436,14 @@ export function WriterPage() {
           {/* 메뉴바/툴바는 기본 숨김 — 우클릭 컨텍스트 메뉴 '메뉴바/툴바 보이기'(ctx.showMenuBar/ctx.showToolBar)로만 토글한다(news.md L173).
               구 전용 토글 버튼(yh-editor-chrome-bar)은 제거됨. */}
           {showMenuBar && <EditorMenuBar onSelect={onMenuSelect} enabledIds={MENU_ENABLED} t={t} />}
-          {showToolBar && <EditorToolBar />}
+          {showToolBar && (
+            <EditorToolBar
+              font={editorFont}
+              fontSize={editorFontSize}
+              onFontChange={onToolbarFont}
+              onFontSizeChange={onToolbarFontSize}
+            />
+          )}
           {/* 약물바 — 우클릭 '약물바 보이기' 토글로 켜짐(showMenuBar/showToolBar와 동일 배치). 매핑 모드(텍스트 잠금)에서는
               본문-only 불변식을 위해 바 자체를 미렌더한다(onGlyphPick의 isMapping no-op과 이중 방어). */}
           {showGlyphBar && !isMapping && <EditorGlyphBar items={glyphFavorites} onPick={onGlyphPick} />}
@@ -1431,6 +1459,10 @@ export function WriterPage() {
               // 줄간격 — CSS 변수로 상시 주입(정규화된 line-height는 항상 유효). 자식 .yh-editor(line-height)/
               // .yh-editor__line(min-height)이 var()로 상속. String(2.0)==='2'라 CSS line-height로 유효(소수 탈락 무해).
               '--yh-editor-line-height': String(normalizeLineSpacing(lineSpacing)),
+              // 툴바 글꼴/크기 — '기본'(fontFamilyCss/fontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
+              // .yh-editor fallback(var(--yh-sans)/0.95rem)이 렌더된다(바이트 동일). 명명 값만 실제 변수 주입 → 자식이 상속.
+              ...(fontFamilyCss(editorFont) ? { '--yh-editor-font-family': fontFamilyCss(editorFont) } : null),
+              ...(fontSizeCss(editorFontSize) ? { '--yh-editor-font-size': fontSizeCss(editorFontSize) } : null),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
             // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭
