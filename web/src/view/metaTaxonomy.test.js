@@ -171,6 +171,8 @@ describe('택소노미 데이터 무결성 — Meta.md 전사 잠금', () => {
   it('오타 교정(2026-07-24): 상임위·함남 및 국명 표기', () => {
     expect(allLeaves(CATEGORY_GROUPS)).toContain('상임위'); // 舊 '상임이ㅜ'
     expect(allLeaves(CATEGORY_GROUPS)).not.toContain('상임이ㅜ');
+    expect(allLeaves(CATEGORY_GROUPS)).toContain('국민연금'); // 舊 '국민영화' (2026-07-26 사용자 확정)
+    expect(allLeaves(CATEGORY_GROUPS)).not.toContain('국민영화');
     expect(allLeaves(REGION_GROUPS)).toContain('함남'); // 함경남도 — 舊 '항남'
     expect(allLeaves(REGION_GROUPS)).not.toContain('항남');
     expect(allLeaves(REGION_GROUPS)).not.toContain('상임위'); // 상임위는 내용(분류) 소속
