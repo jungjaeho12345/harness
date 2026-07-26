@@ -46,13 +46,12 @@ describe('i18n — UI 언어(ko/en) 카탈로그 + 번역 헬퍼', () => {
   });
 
   it('UI 언어 다이얼로그 전용 키가 ko/en 양쪽에 존재한다', () => {
-    for (const key of ['ui.dialog.title', 'ui.dialog.langLabel', 'ui.dialog.ko', 'ui.dialog.en', 'common.save', 'common.close']) {
+    for (const key of ['ui.dialog.title', 'ui.dialog.ko', 'ui.dialog.en', 'common.close']) {
       expect(MESSAGES.ko).toHaveProperty(key);
       expect(MESSAGES.en).toHaveProperty(key);
     }
     // 다이얼로그 라벨의 ko 값 스펙 확인
     expect(MESSAGES.ko['ui.dialog.title']).toBe('UI 언어 설정');
-    expect(MESSAGES.ko['common.save']).toBe('저장');
     expect(MESSAGES.ko['common.close']).toBe('닫기');
   });
 

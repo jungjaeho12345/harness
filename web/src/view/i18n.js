@@ -1,6 +1,8 @@
 // 에디터 UI 언어(ko/en) 문자열 카탈로그 + 번역 헬퍼 — 순수 모듈(React/DOM/localStorage 무관).
 // 키 = EditorMenuBar.jsx의 EDITOR_MENUS가 이미 가진 안정 id(예: 'file', 'file.new', 'tools.uiLanguage')를 재사용한다.
-//   → Step 2에서 t(item.id, item.label) 한 줄로 결선되고, fallback(item.label=ko 원문)이 ko 불변식을 이중 보장한다.
+//   → Step 2에서 t(item.id, item.label) 한 줄로 결선된다. t 주입 + lang='ko'면 반환값은 MESSAGES.ko[id](카탈로그 값)이지
+//     fallback(원문 label)이 아니다 → ko 바이트 동일은 "카탈로그 값 === 라벨" 일치에 의존하며 i18n.test.js가 이를 강제한다.
+//     fallback(item.label=ko 원문)은 t 미주입 시의 이차 보장일 뿐이다.
 // ko 값은 EDITOR_MENUS의 라벨과 바이트 동일해야 한다(이 phase 최상위 불변식). i18n.test.js가 강제한다.
 // 지원 UI 언어는 ko/en 2종뿐. news.md L196의 문서 언어 9종(editorPrefs.edit.language)과는 별개 개념이다.
 
@@ -99,10 +101,8 @@ const KO = {
   'help.dialog.versionLabel': '버전',
   // UI 언어 다이얼로그 전용 + 공용
   'ui.dialog.title': 'UI 언어 설정',
-  'ui.dialog.langLabel': '언어',
   'ui.dialog.ko': '한국어',
   'ui.dialog.en': '영어',
-  'common.save': '저장',
   'common.close': '닫기',
 };
 
@@ -198,10 +198,8 @@ const EN = {
   'help.dialog.versionLabel': 'Version',
   // UI language dialog + common
   'ui.dialog.title': 'UI Language',
-  'ui.dialog.langLabel': 'Language',
   'ui.dialog.ko': 'Korean',
   'ui.dialog.en': 'English',
-  'common.save': 'Save',
   'common.close': 'Close',
 };
 

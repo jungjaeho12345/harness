@@ -165,7 +165,7 @@ export function WriterPage() {
   const [showToolBar, setShowToolBar] = useState(false);
   // 삽입/수정(overwrite) 모드 — Insert 키 토글. 전역 단일 모드(입력 모드지 문서-로컬 좌표가 아님):
   // 탭별 격리·영속 없음(새로고침 시 삽입으로 리셋). L292~ 탭 전환 조정 블록에 넣지 않는다(리셋 대상 아님).
-  // 이 step은 토글+상태표시줄 표시까지 — 실제 캐럿 뒤 덮어쓰기 입력은 step3(이 state를 소비).
+  // 토글+상태표시줄 표시는 여기서, 실제 캐럿 뒤 덮어쓰기 입력은 onKeyDown 문자 분기가 이 state를 소비한다(구현됨).
   const [overwrite, setOverwrite] = useState(false);
   // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
   // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
@@ -1128,7 +1128,7 @@ export function WriterPage() {
     if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
     // Insert → 삽입/수정(overwrite) 모드 토글. 수식어 없는 키라 아래 라인삭제 바일아웃(!ctrlD return)에서
     // 삼켜지기 전에 여기서 처리한다(IME 가드 뒤 = 조합 중 무개입). Shift/Ctrl+Insert(붙여넣기/복사 레거시)는
-    // isToggleOverwrite가 배제. 실제 덮어쓰기 입력은 step3(overwrite state 소비) — 여기서는 모드 토글+표시만.
+    // isToggleOverwrite가 배제. 여기서는 모드 토글+표시만 — 실제 덮어쓰기 입력은 아래 문자 분기(overwrite state 소비)가 담당한다.
     if (isToggleOverwrite(e)) {
       e.preventDefault();
       setOverwrite((v) => !v);
@@ -1472,6 +1472,10 @@ export function WriterPage() {
     articleId: activeTab.articleId,
   });
 
+  // 툴바 글꼴/크기 매핑을 1회 계산해 캔버스 래퍼 style에서 조건·값에 재사용(순수 함수라 결과 동일). '기본'이면 null → 조건부 스프레드 미주입.
+  const editorFontCss = fontFamilyCss(editorFont);
+  const editorFontSizeCss = fontSizeCss(editorFontSize);
+
   return (
     <main className="yh-page">
       {/* 작성 탭 스트립 — ＋로 새 탭, ×로 닫기, 클릭으로 전환 */}
@@ -1516,10 +1520,10 @@ export function WriterPage() {
               // 줄간격 — CSS 변수로 상시 주입(정규화된 line-height는 항상 유효). 자식 .yh-editor(line-height)/
               // .yh-editor__line(min-height)이 var()로 상속. String(2.0)==='2'라 CSS line-height로 유효(소수 탈락 무해).
               '--yh-editor-line-height': String(normalizeLineSpacing(lineSpacing)),
-              // 툴바 글꼴/크기 — '기본'(fontFamilyCss/fontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
+              // 툴바 글꼴/크기 — '기본'(editorFontCss/editorFontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
               // .yh-editor fallback(var(--yh-sans)/0.95rem)이 렌더된다(바이트 동일). 명명 값만 실제 변수 주입 → 자식이 상속.
-              ...(fontFamilyCss(editorFont) ? { '--yh-editor-font-family': fontFamilyCss(editorFont) } : null),
-              ...(fontSizeCss(editorFontSize) ? { '--yh-editor-font-size': fontSizeCss(editorFontSize) } : null),
+              ...(editorFontCss ? { '--yh-editor-font-family': editorFontCss } : null),
+              ...(editorFontSizeCss ? { '--yh-editor-font-size': editorFontSizeCss } : null),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
             // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭
