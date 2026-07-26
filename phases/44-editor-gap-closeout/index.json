@@ -1,0 +1,12 @@
+{
+  "project": "기사 작성기",
+  "phase": "44-editor-gap-closeout",
+  "steps": [
+    { "step": 0, "name": "toolbar-font-store", "status": "completed", "summary": "editorPrefs.edit에 additive 키 editorFont/editorFontSize(기본값 sentinel '기본') 추가 + 순수 헬퍼 fontFamilyCss(value)->string|null(바탕/돋움/굴림만 CSS 스택, '기본'/미상/무효는 null)·fontSizeCss(value)->string|null(양수만 '<n>px', '기본'/무효는 null) 추가. EditorToolBar controlled 전환(font/fontSize+onFontChange/onFontSizeChange, TOOLBAR_FONTS/SIZES 맨앞 '기본' 추가). L42~49 테스트를 controlled 콜백 단언으로 의도적 갱신. AC 통과(lint/build/test:web 1806 pass)." },
+    { "step": 1, "name": "toolbar-font-effect", "status": "pending" },
+    { "step": 2, "name": "overwrite-toggle", "status": "pending" },
+    { "step": 3, "name": "overwrite-typing", "status": "pending" },
+    { "step": 4, "name": "help-dialogs", "status": "pending" },
+    { "step": 5, "name": "continue-view-test", "status": "pending" }
+  ]
+}
