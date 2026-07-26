@@ -7423,3 +7423,140 @@ describe('WriterPage — 상태표시줄 삽입/수정 토글(Insert)', () => {
     expect(statMode()).toBe('수정'); // 유지(문서-로컬 좌표 아님 — 탭 전환 조정 블록 미대상)
   });
 });
+
+// phase44 step3 — 수정(overwrite) 모드 실제 덮어쓰기 타이핑.
+// overwrite=true에서 인쇄 가능한 단일 문자 keydown 시 WriterPage.onKeyDown이 캐럿 뒤 1글자를 selection으로
+// 확장(sel.extend)한 뒤 preventDefault 없이 통과 → 네이티브 입력이 그 선택을 대체(에코 경로로 반영).
+// jsdom은 contentEditable 네이티브 문자 대체를 실행하지 않으므로 여기서는 (B) "selection 확장 발생/미발생"을
+// window.getSelection()으로 단언한다. (A) 순수 판정 경계 전수는 editorNewline.test.js가 담당(결정적).
+describe('WriterPage — 수정(overwrite) 모드 덮어쓰기 타이핑', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const box = (c) => c.querySelector('.yh-editor');
+  const statMode = () => screen.getByTestId('stat-mode').textContent;
+
+  async function openBody(blocks) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  const toModifyMode = (c) => { fireEvent.keyDown(box(c), { key: 'Insert' }); };
+
+  // lineIndex번째 .yh-editor__line의 텍스트 노드 offset에 collapsed 캐럿을 두고 selection 싱글턴을 돌려준다.
+  // 하이라이트 없는 줄은 firstChild가 단일 텍스트 노드다({block.text} 폴백 — Editor 렌더).
+  function caretAt(container, lineIndex, offset) {
+    const el = container.querySelectorAll('.yh-editor__line')[lineIndex];
+    const tnode = el.firstChild;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(tnode, offset);
+    range.collapse(true);
+    sel.addRange(range);
+    return sel;
+  }
+
+  it('삽입 모드(기본): 문자 keydown은 selection을 확장하지 않는다(일반 삽입)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    const sel = caretAt(container, 1, 1); // 'a|bcd'
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true); // 확장 없음
+  });
+
+  it('수정 모드 + 줄 중간: 문자 keydown이 캐럿 뒤 1글자를 selection으로 확장한다(preventDefault 안 함)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    expect(statMode()).toBe('수정');
+    const sel = caretAt(container, 1, 1); // 'a|bcd' → 캐럿 뒤 글자 'b'
+    const ev = createEvent.keyDown(box(container), { key: 'x' });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box(container), ev);
+    expect(sel.isCollapsed).toBe(false); // 1글자 확장됨
+    expect(sel.getRangeAt(0).toString()).toBe('b'); // 캐럿 뒤 정확히 1글자(줄 경계 안)
+    expect(spy).not.toHaveBeenCalled(); // preventDefault 안 함 → 네이티브 입력이 대체
+  });
+
+  it('수정 모드 + Shift+문자(대문자)도 확장한다(수식어 Shift는 문자 입력)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 2); // 'ab|cd' → 뒤 글자 'c'
+    fireEvent.keyDown(box(container), { key: 'X', shiftKey: true });
+    expect(sel.isCollapsed).toBe(false);
+    expect(sel.getRangeAt(0).toString()).toBe('c');
+  });
+
+  it('수정 모드 + 줄 끝: 확장 없음(삽입 폴백 — 다음 줄 침범 금지)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd'), textBlock('efgh')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 'abcd|' 줄 끝(뒤는 '\n')
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 문서 끝: 확장 없음(삽입 폴백)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 마지막 줄 끝 = 문서 끝
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + "(끝)" 마커 영역: 확장 없음(입력 차단 계약 유지)', async () => {
+    const { container } = await openBody([textBlock('본문'), textBlock('(끝)')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 0); // 마커 줄 시작(offset=markerStart)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 임베드 앞(줄 끝): 확장 없음(임베드 경계는 blocksToText에서 줄 끝으로 나타남)', async () => {
+    const { container } = await openBody([
+      textBlock('제목'), textBlock('abcd'),
+      embedBlock({ type: 'image', src: 'https://img/x.png' }), textBlock('efgh'),
+    ]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 4); // 'abcd|' 뒤는 임베드 → blocksToText상 '\n'
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + IME 조합 중(isComposing): 확장 없음(IME 가드가 먼저 return)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'x', isComposing: true });
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 수식어 조합(Ctrl+문자): 확장 없음(문자 입력이 아님)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'j', ctrlKey: true }); // 예약되지 않은 Ctrl 조합
+    expect(sel.isCollapsed).toBe(true);
+  });
+
+  it('수정 모드 + 비문자 키(방향키/Backspace/Delete): 확장 없음(문자 키만 트리거)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    for (const key of ['ArrowRight', 'ArrowLeft', 'Backspace', 'Delete']) {
+      const sel = caretAt(container, 1, 1);
+      fireEvent.keyDown(box(container), { key });
+      expect(sel.isCollapsed, key).toBe(true);
+    }
+  });
+
+  it('수정 모드 + Enter: 확장 없음(문자 키가 아님)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('abcd')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1);
+    fireEvent.keyDown(box(container), { key: 'Enter' });
+    expect(sel.isCollapsed).toBe(true);
+  });
+});

@@ -52,6 +52,7 @@ import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
+import { shouldOverwriteNextChar } from './editorNewline.js';
 import {
   charCount, lineCount, wordCount, byteLength, caretPosition,
 } from './editorStats.js';
@@ -119,6 +120,20 @@ const VIEW_TRANSFORMS = {
   'view.capitalize': capitalizeFirst,
   'view.toggleCase': toggleCase,
 };
+
+// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 1글자 확장한다.
+// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만(anchorOffset < 노드 길이) sel.extend로 1글자를 선택.
+// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
+// 텍스트 노드 내부에서만 확장하므로 줄 경계를 넘지 않는다. preventDefault는 호출부에서 하지 않아 네이티브 입력이 선택을 대체한다.
+function extendSelectionForOverwrite(root) {
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+  const node = sel.anchorNode;
+  if (!node || node.nodeType !== 3 || !root || !root.contains(node)) return; // 텍스트 노드·에디터 내부만.
+  if (sel.anchorOffset >= (node.textContent ?? '').length) return; // 노드 끝(형제 경계) — 확장 생략(삽입 폴백).
+  if (typeof sel.extend !== 'function') return; // 구형 환경 방어.
+  sel.extend(node, sel.anchorOffset + 1);
+}
 
 export function WriterPage() {
   const { identity, model } = useAppContext();
@@ -1162,6 +1177,19 @@ export function WriterPage() {
       e.preventDefault(); // 브라우저 기본(Ctrl+숫자 등) 억제 + Editor 후속 처리(Enter) 건너뛰기.
       onGlyphPick(keymapGlyph); // 내부 isMapping 가드·lastCaretRef 캐럿·insertGlyphAtCaret·commitBody·setPendingCaretLine.
       return;
+    }
+    // 수정(overwrite) 모드 문자 입력 — 캐럿 뒤 1글자를 selection으로 확장한 뒤 preventDefault 없이 통과시켜
+    // 네이티브 입력이 그 선택을 대체(덮어쓰기)하게 한다. 결과는 에코 경로(Editor.handleInput → onTextChange →
+    // commitBody coalesce)로 반영 → undo 1단계·색상 재칠 계약을 그대로 상속(Editor.jsx 미접촉). 인쇄 가능한
+    // 단일 문자 키만(수식어 Ctrl/Meta/Alt 없는 e.key.length===1; Shift는 대문자라 허용). 확장 조건 불충족
+    // (줄 끝/임베드 앞/"(끝)" 마커/문서 끝 = shouldOverwriteNextChar false, 또는 노드 끝 경계)이면 확장 안 함 = 삽입 폴백.
+    // preventDefault/return 하지 않는다 — 아래 라인삭제 바일아웃에서 자연 종료되고 네이티브 입력이 이어진다.
+    if (overwrite && !isMapping && e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const root = e.currentTarget;
+      const caret = readCaret(root);
+      if (caret && shouldOverwriteNextChar(blocksToText(blocks), caret.offset)) {
+        extendSelectionForOverwrite(root);
+      }
     }
     const ctrlD = isDeleteLine(e);
     if (!ctrlD && e.key !== 'Backspace' && e.key !== 'Delete') return;
