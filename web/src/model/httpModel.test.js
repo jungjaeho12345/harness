@@ -446,6 +446,71 @@ describe('createHttpModel', () => {
     expect(r).toEqual({ ok: true, items: [{ id: 1, caption: '토픽' }] });
   });
 
+  it('queryDistributionTargets GETs /api/distribution-targets with the filters as query (no body, no role)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      items: [{ id: 1, name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' }],
+    }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.queryDistributionTargets({ active: 'Y' });
+    const [url, init] = callAt(0);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/api/distribution-targets');
+    expect(parsed.searchParams.get('active')).toBe('Y');
+    expect(parsed.searchParams.get('role')).toBeNull(); // 신원/역할은 어떤 형태로도 싣지 않는다(ADR-004).
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    // 응답을 가공 없이 그대로 반환한다(라우트와 1:1).
+    expect(r).toEqual({ ok: true, items: [{ id: 1, name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' }] });
+
+    // 필터 미전달이면 쿼리 없이 그대로 호출한다.
+    await model.queryDistributionTargets();
+    expect(callAt(1)[0]).toBe(`${BASE}/api/distribution-targets`);
+  });
+
+  it('createDistributionTarget POSTs /api/distribution-targets with the entry body and never role (ADR-004)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, id: 3 }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.createDistributionTarget({ name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/distribution-targets`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    const body = JSON.parse(init.body);
+    expect(body).toEqual({ name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+    expect(body.role).toBeUndefined();
+    expect(r).toEqual({ ok: true, id: 3 });
+  });
+
+  it('updateDistributionTarget PUTs /api/distribution-targets/:id with only the changed fields', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, changes: 1 }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.updateDistributionTarget(7, { name: '한국방송' });
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/distribution-targets/7`);
+    expect(init.method).toBe('PUT');
+    expect(init.credentials).toBe('include');
+    expect(JSON.parse(init.body)).toEqual({ name: '한국방송' });
+    expect(r).toEqual({ ok: true, changes: 1 });
+  });
+
+  it('deactivateDistributionTarget POSTs /:id/deactivate with no body (soft delete — DELETE 라우트 없음)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, changes: 1 }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.deactivateDistributionTarget(7);
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/distribution-targets/7/deactivate`);
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    expect(r).toEqual({ ok: true, changes: 1 });
+  });
+
   it('getLogsDigest GETs /api/logs/digest with no body and returns { ok, items } (never role)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ seq: 1, level: 'INFO' }] }));
     const model = createHttpModel({ base: BASE });

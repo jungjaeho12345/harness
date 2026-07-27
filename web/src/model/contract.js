@@ -24,6 +24,11 @@ export const MODEL_KEYS = Object.freeze([
   'queryReceiverConfig',
   'createReceiverConfig',
   'deleteReceiverConfig',
+  // 배부 대상 관리(phase 46, distMgmt.do — Z 전용) — /api/distribution-targets 라우트와 1:1. 삭제 없음(비활성=soft delete).
+  'queryDistributionTargets',
+  'createDistributionTarget',
+  'updateDistributionTarget',
+  'deactivateDistributionTarget',
   'subscribe',
   // 메뉴 액션(phase 1) — 이력보기/송고이력보기·후속/계속기사작성·번역. 백엔드 라우트와 1:1.
   'queryHistory',
