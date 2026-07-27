@@ -71,6 +71,18 @@ test('sanitizeSpoolDir: 길이 초과(65자 이상)를 거부한다', () => {
   assert.equal(sanitizeSpoolDir('a'.repeat(200)), '');
 });
 
+test('sanitizeSpoolDir: 길이 경계값 1/63/64/65를 정확히 가른다 (off-by-one 잠금)', () => {
+  // 화이트리스트는 /^[a-z0-9][a-z0-9_-]{0,63}$/ — 선행 1자 + 최대 63자 = 총 64자가 상한이다.
+  // 63자가 빠지면 {0,62}/{0,64} 같은 off-by-one 변경이 테스트를 통과해 버린다.
+  assert.equal(sanitizeSpoolDir('a'), 'a', '1자는 허용');
+  assert.equal(sanitizeSpoolDir('a'.repeat(63)), 'a'.repeat(63), '63자는 허용');
+  assert.equal(sanitizeSpoolDir('a'.repeat(64)), 'a'.repeat(64), '64자는 허용(상한)');
+  assert.equal(sanitizeSpoolDir('a'.repeat(65)), '', '65자는 거부(상한+1)');
+  // 구분기호가 섞인 경계도 같은 상한을 따른다(문자 종류가 길이 판정을 바꾸지 않는다).
+  assert.equal(sanitizeSpoolDir(`a${'-'.repeat(63)}`), `a${'-'.repeat(63)}`, '총 64자');
+  assert.equal(sanitizeSpoolDir(`a${'-'.repeat(64)}`), '', '총 65자');
+});
+
 test('sanitizeSpoolDir: Windows 예약 장치명을 대소문자 무시로 거부한다', () => {
   for (const bad of ['con', 'nul', 'com1', 'com9', 'lpt1', 'lpt9', 'aux', 'prn']) {
     assert.equal(sanitizeSpoolDir(bad), '', `거부되어야 함: ${bad}`);
@@ -83,6 +95,18 @@ test('sanitizeSpoolDir: Windows 예약 장치명을 대소문자 무시로 거�
   assert.equal(sanitizeSpoolDir('console'), 'console');
   assert.equal(sanitizeSpoolDir('com10'), 'com10');
   assert.equal(sanitizeSpoolDir('con1'), 'con1');
+});
+
+test('sanitizeSpoolDir: 예약 장치명의 확장자 변형(con.txt·nul.log 등)도 거부한다', () => {
+  // Windows는 확장자가 붙어도 장치명으로 해석한다("con.txt" 폴더 생성 불가) — phase 47이 무조건 실패하는 값이다.
+  // 현재는 화이트리스트가 '.'을 막아 자연 거부되지만, 훗날 '.'을 허용하는 규칙 완화가 들어오면
+  // RESERVED 집합의 완전일치 비교만으로는 뚫린다. 그 회귀를 여기서 잠근다.
+  for (const bad of [
+    'con.txt', 'nul.log', 'aux.dat', 'prn.ps', 'com1.dat', 'lpt9.txt',
+    'CON.TXT', 'NUL.log', 'con.', 'com1.tar.gz',
+  ]) {
+    assert.equal(sanitizeSpoolDir(bad), '', `거부되어야 함: ${bad}`);
+  }
 });
 
 test('sanitizeSpoolDir: 비문자열 입력은 강제변환 없이 거부한다(throw 금지)', () => {

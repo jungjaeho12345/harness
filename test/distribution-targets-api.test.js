@@ -112,6 +112,60 @@ test('distribution-targets: body의 role:Z 스푸핑은 통하지 않는다 (신
   } finally { await ctx.close(); }
 });
 
+test('distribution-targets: deactivate 라우트도 body의 role:Z 스푸핑에 뚫리지 않는다', async () => {
+  const ctx = await start();
+  try {
+    // 4개 라우트 중 부수효과 진입점(POST /:id/deactivate)만 스푸핑 잠금이 비어 있었다 —
+    // 여기가 뚫리면 비-Z가 배부 대상을 임의로 내릴 수 있다(배부 중단 = 가용성 공격).
+    const z = await loginAs(ctx, 'Z', 'admin');
+    const { body: created } = await api(ctx.base, 'POST', '/api/distribution-targets', { sid: z, body: VALID });
+
+    const r = await loginAs(ctx, 'R', 'rep');
+    for (const body of [{ role: 'Z' }, { role: 'Z', id: created.id }, { role: 'Z', active: 'Y' }]) {
+      const off = await api(ctx.base, 'POST', `/api/distribution-targets/${created.id}/deactivate`, {
+        sid: r, body,
+      });
+      assert.equal(off.status, 403, `body ${JSON.stringify(body)}`);
+      assert.equal(off.body.reason, 'forbidden');
+    }
+    // 세션 없이 role만 실어도 401에서 멈춘다(게이트 순서: 인증 → 인가).
+    const anon = await api(ctx.base, 'POST', `/api/distribution-targets/${created.id}/deactivate`, {
+      body: { role: 'Z' },
+    });
+    assert.equal(anon.status, 401);
+    assert.equal(anon.body.reason, 'unauthenticated');
+
+    // 어느 시도도 행 상태를 바꾸지 못했다.
+    assert.equal(
+      ctx.db.prepare('SELECT active FROM DistributionTarget WHERE id = ?').get(created.id).active,
+      'Y',
+    );
+  } finally { await ctx.close(); }
+});
+
+test('distribution-targets: PUT body의 id/createdAt은 무시된다 (서버 소유 필드)', async () => {
+  const ctx = await start();
+  try {
+    const sid = await loginAs(ctx, 'Z', 'admin');
+    const { body: created } = await api(ctx.base, 'POST', '/api/distribution-targets', { sid, body: VALID });
+    const before = ctx.db.prepare('SELECT * FROM DistributionTarget WHERE id = ?').get(created.id);
+
+    const put = await api(ctx.base, 'PUT', `/api/distribution-targets/${created.id}`, {
+      sid,
+      body: { id: 999, name: '이름만 바뀐다', createdAt: '1999-01-01T00:00:00.000Z' },
+    });
+    assert.equal(put.status, 200);
+
+    // 대상 식별은 URL이 한다 — body의 id는 다른 행을 만들지도, 이 행의 id를 옮기지도 않는다.
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) AS c FROM DistributionTarget').get().c, 1);
+    const after = ctx.db.prepare('SELECT * FROM DistributionTarget WHERE id = ?').get(created.id);
+    assert.equal(after.id, created.id);
+    assert.equal(after.name, '이름만 바뀐다');
+    assert.equal(after.createdAt, before.createdAt, 'createdAt은 서버 소유 — 클라 값으로 덮이지 않는다');
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) AS c FROM DistributionTarget WHERE id = 999').get().c, 0);
+  } finally { await ctx.close(); }
+});
+
 test('distribution-targets: Z 풀 루프 — 등록 → 목록 → 수정 → 비활성(행 보존)', async () => {
   const ctx = await start();
   try {
