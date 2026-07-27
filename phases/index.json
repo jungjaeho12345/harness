@@ -255,6 +255,12 @@
       "status": "completed",
       "completed_at": "2026-07-27T20:05:00+0900",
       "note": "배부 3부작(46 대상관리 → 47 즉시배부 → 48 tick)의 첫 phase — ADR-008 기반. 범위는 배부 대상(수신처) 관리 CRUD만: (0) DistributionTarget 테이블 additive 신설 + distributionTargetModel(삭제 없음), (1) distributionTargetService(Z 게이트·입력 검증) + spoolDir 슬러그 검증기 + REST 라우트, (2) Model 계약 3면(contract/httpModel/fakeModel), (3) distMgmt.do 관리 화면(Z 전용). 배부 실행(스풀 파일 쓰기·distributedAt·EPS→DPS 전이·tick)은 phase 47/48 — 이 phase에 혼입 금지. 앱 내 타이머·네트워크 egress·디렉토리 생성 없음."
+    },
+    {
+      "dir": "47-distribution-service",
+      "status": "completed",
+      "completed_at": "2026-07-27T21:05:00+0900",
+      "note": "배부 3부작의 두 번째 — 배부 실행 서비스(즉시 배부 경로만), ADR-008 기반. (0) spoolWriter: 주입형 fs 스풀 writer + 기사 JSON 파일 포맷 확정(yh-dist-article v1, markupVersion 원문 포함, internalComment·잠금컬럼·첨부 제외) + 결정적 파일명(articleId__compactTs.json) + 쓰기 직전 sanitizeSpoolDir 재검증, (1) distributionService.distribute(articleId, 'press'|'all'): active='Y' 대상 kind 화이트리스트 선택 → 스풀 기록 → Contents.distributedAt 최초 1회 stamp → ArticleHistory eventType='distribute' 1회 1행(additive) + docs/SCHEMA.md 문서화, (2) send-hook: applyAction 커밋 이후 후처리 결선 + 컨트롤러/부트스트랩 결선(DIST_SPOOL_DIR은 부트스트랩에서만 판독, 미설정 시 비활성). 배부군 판정은 상태가 아니라 **엠바고 우선**(1차 있으면 미배부 / 2차만이면 press / 엠바고 없고 DPS면 all) — lifecycle DDH.send='DPS'와 articleService의 EPS 치환 RDS 한정 때문에 엠바고 기사가 DPS로 도달하므로 상태 기준 판정은 엠바고 파기를 일으킨다. 시각 도래 배부·tick 엔드포인트·EPS→DPS 전이는 phase 48 — 혼입 금지. 새 공개 라우트 없음, 앱 내 타이머·네트워크 egress 없음, DB 행 삭제 없음. **phase 48 인계: 엠바고가 설정됐지만 상태가 EPS가 아닌(DPS) 기사가 존재한다 — tick 대상 선정이 EPS 상태만 보면 이 기사는 영영 배부되지 않는다. 엠바고 시각 + 미배부 여부(ArticleHistory eventType='distribute'의 action)를 기준으로 선정하라.**"
     }
   ]
 }
