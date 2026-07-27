@@ -143,6 +143,20 @@ describe('editorEditOps — deleteWordAt (단어 지우기)', () => {
     expect(r.changed).toBe(false);
     expect(r.blocks).toEqual(blocks);
   });
+
+  it('preserves the align field of the line a word is deleted from (승계)', () => {
+    const r = deleteWordAt([textBlock('hello world', 'center')], 0, 0);
+    expect(r.changed).toBe(true);
+    expect(r.blocks[0]).toEqual(textBlock(' world', 'center'));
+    expect(r.blocks[0].align).toBe('center');
+  });
+
+  it('does not add a spurious align key to an unaligned line', () => {
+    const r = deleteWordAt([textBlock('hello world')], 0, 0);
+    expect(r.changed).toBe(true);
+    expect(r.blocks[0].text).toBe(' world');
+    expect('align' in r.blocks[0]).toBe(false);
+  });
 });
 
 describe('editorEditOps — input immutability (입력 blocks 불변)', () => {

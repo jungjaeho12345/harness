@@ -190,4 +190,23 @@ describe('editorGlyph — insertGlyphAtCaret', () => {
     expect(r.blocks).not.toBe(input);
     expect(r.caretTextLine).toBe(null);
   });
+
+  it('preserves the align field of the line the glyph is inserted into (승계)', () => {
+    const r = insertGlyphAtCaret([textBlock('가나', 'right')], { lineIndex: 0, offset: 1 }, '§');
+    expect(r.blocks[0]).toEqual(textBlock('가§나', 'right'));
+    expect(r.blocks[0].align).toBe('right');
+  });
+
+  it('does not add a spurious align key to an unaligned line', () => {
+    const r = insertGlyphAtCaret([textBlock('가나')], { lineIndex: 0, offset: 1 }, '§');
+    expect(r.blocks[0].text).toBe('가§나');
+    expect('align' in r.blocks[0]).toBe(false);
+  });
+
+  it('does not add align to a newly created text block (embed-only fallback)', () => {
+    const r = insertGlyphAtCaret([embedBlock({ embedType: 'image', src: 'x' })], null, '§');
+    const created = r.blocks.find((b) => b.type === 'text');
+    expect(created.text).toBe('§');
+    expect('align' in created).toBe(false);
+  });
 });

@@ -54,7 +54,7 @@ import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
-import { shouldOverwriteNextChar } from './editorNewline.js';
+import { shouldOverwriteNextChar, overwriteExtendLength } from './editorNewline.js';
 import {
   charCount, lineCount, wordCount, byteLength, caretPosition,
 } from './editorStats.js';
@@ -123,18 +123,21 @@ const VIEW_TRANSFORMS = {
   'view.toggleCase': toggleCase,
 };
 
-// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 1글자 확장한다.
-// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만(anchorOffset < 노드 길이) sel.extend로 1글자를 선택.
-// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
+// 수정(overwrite) 모드 selection 확장 — collapsed 캐럿을 "같은 텍스트 노드 안에서" 앞으로 한 문자 확장한다.
+// anchor가 텍스트 노드이고 그 노드 안에 다음 글자가 있을 때만 sel.extend로 그 글자를 선택.
+// 서로게이트 페어(이모지 등 astral 문자)는 2 코드유닛을 온전히 확장한다(overwriteExtendLength — 반쪽 대체 방지).
+// 노드 끝(다음 글자가 형제 span 등 하이라이트 경계)이거나 확장이 노드 길이를 넘으면 확장하지 않는다 = 삽입 폴백(오손 없음, 문서화된 안전 저하).
 // 텍스트 노드 내부에서만 확장하므로 줄 경계를 넘지 않는다. preventDefault는 호출부에서 하지 않아 네이티브 입력이 선택을 대체한다.
 function extendSelectionForOverwrite(root) {
   const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
   if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
   const node = sel.anchorNode;
   if (!node || node.nodeType !== 3 || !root || !root.contains(node)) return; // 텍스트 노드·에디터 내부만.
-  if (sel.anchorOffset >= (node.textContent ?? '').length) return; // 노드 끝(형제 경계) — 확장 생략(삽입 폴백).
+  const text = node.textContent ?? '';
+  const len = overwriteExtendLength(text, sel.anchorOffset); // 서로게이트 페어면 2, 아니면 1.
+  if (sel.anchorOffset + len > text.length) return; // 확장이 노드 경계를 넘으면(끝/반쪽) 확장 생략 = 삽입 폴백.
   if (typeof sel.extend !== 'function') return; // 구형 환경 방어.
-  sel.extend(node, sel.anchorOffset + 1);
+  sel.extend(node, sel.anchorOffset + len);
 }
 
 export function WriterPage() {
@@ -162,7 +165,7 @@ export function WriterPage() {
   const [showToolBar, setShowToolBar] = useState(false);
   // 삽입/수정(overwrite) 모드 — Insert 키 토글. 전역 단일 모드(입력 모드지 문서-로컬 좌표가 아님):
   // 탭별 격리·영속 없음(새로고침 시 삽입으로 리셋). L292~ 탭 전환 조정 블록에 넣지 않는다(리셋 대상 아님).
-  // 이 step은 토글+상태표시줄 표시까지 — 실제 캐럿 뒤 덮어쓰기 입력은 step3(이 state를 소비).
+  // 토글+상태표시줄 표시는 여기서, 실제 캐럿 뒤 덮어쓰기 입력은 onKeyDown 문자 분기가 이 state를 소비한다(구현됨).
   const [overwrite, setOverwrite] = useState(false);
   // 약물바 보이기(우클릭 컨텍스트 메뉴) — showMenuBar/showToolBar와 동일한 레이아웃 토글.
   // 우클릭 '약물바 보이기'가 이 값을 켜고 끄면 EditorGlyphBar(자주쓰는 약물)를 렌더/숨긴다(매핑 모드 제외).
@@ -330,6 +333,10 @@ export function WriterPage() {
     // 메타 선택 팝업의 value/onSubmit도 활성 탭-로컬 — 열린 채 전환하면 '적용'이 다른 탭의
     // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
     setMetaDialog(null);
+    // URL 임베드 다이얼로그(urlEmbedKind)도 비모달 로컬 state — 삽입 전용(URL 1개→insertEmbed)이라
+    // 좌표 오손은 없지만 열린 채 전환하면 다른 탭에서 열려 보인다. 계열 일관성(비모달+로컬 상태는
+    // 전환 시 닫는다 — phase 29~32)상 setTableDialog/setMetaDialog와 함께 닫는다.
+    setUrlEmbedKind(null);
     // 등록 다이얼로그의 imageEmbeds/sourceArticleId는 활성 탭-로컬 — 열린 채 전환하면 이전 탭 이미지가
     // 보이고 '등록'이 엉뚱한 기사 사진을 올린다(phase 29~32 문서-로컬 좌표 이월 계열). 함께 닫는다.
     setShowPhotoPublish(false);
@@ -1121,7 +1128,7 @@ export function WriterPage() {
     if ((e.nativeEvent && e.nativeEvent.isComposing) || e.keyCode === 229) return;
     // Insert → 삽입/수정(overwrite) 모드 토글. 수식어 없는 키라 아래 라인삭제 바일아웃(!ctrlD return)에서
     // 삼켜지기 전에 여기서 처리한다(IME 가드 뒤 = 조합 중 무개입). Shift/Ctrl+Insert(붙여넣기/복사 레거시)는
-    // isToggleOverwrite가 배제. 실제 덮어쓰기 입력은 step3(overwrite state 소비) — 여기서는 모드 토글+표시만.
+    // isToggleOverwrite가 배제. 여기서는 모드 토글+표시만 — 실제 덮어쓰기 입력은 아래 문자 분기(overwrite state 소비)가 담당한다.
     if (isToggleOverwrite(e)) {
       e.preventDefault();
       setOverwrite((v) => !v);
@@ -1465,6 +1472,10 @@ export function WriterPage() {
     articleId: activeTab.articleId,
   });
 
+  // 툴바 글꼴/크기 매핑을 1회 계산해 캔버스 래퍼 style에서 조건·값에 재사용(순수 함수라 결과 동일). '기본'이면 null → 조건부 스프레드 미주입.
+  const editorFontCss = fontFamilyCss(editorFont);
+  const editorFontSizeCss = fontSizeCss(editorFontSize);
+
   return (
     <main className="yh-page">
       {/* 작성 탭 스트립 — ＋로 새 탭, ×로 닫기, 클릭으로 전환 */}
@@ -1509,10 +1520,10 @@ export function WriterPage() {
               // 줄간격 — CSS 변수로 상시 주입(정규화된 line-height는 항상 유효). 자식 .yh-editor(line-height)/
               // .yh-editor__line(min-height)이 var()로 상속. String(2.0)==='2'라 CSS line-height로 유효(소수 탈락 무해).
               '--yh-editor-line-height': String(normalizeLineSpacing(lineSpacing)),
-              // 툴바 글꼴/크기 — '기본'(fontFamilyCss/fontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
+              // 툴바 글꼴/크기 — '기본'(editorFontCss/editorFontSizeCss===null)이면 키 자체를 넣지 않아(조건부 스프레드) 미주입 →
               // .yh-editor fallback(var(--yh-sans)/0.95rem)이 렌더된다(바이트 동일). 명명 값만 실제 변수 주입 → 자식이 상속.
-              ...(fontFamilyCss(editorFont) ? { '--yh-editor-font-family': fontFamilyCss(editorFont) } : null),
-              ...(fontSizeCss(editorFontSize) ? { '--yh-editor-font-size': fontSizeCss(editorFontSize) } : null),
+              ...(editorFontCss ? { '--yh-editor-font-family': editorFontCss } : null),
+              ...(editorFontSizeCss ? { '--yh-editor-font-size': editorFontSizeCss } : null),
             }}
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
             // 본문 표 더블클릭 → 표 편집 다이얼로그. '표 수정' 메뉴 항목이 없어 편집 진입은 표준 더블클릭

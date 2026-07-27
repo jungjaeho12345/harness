@@ -112,7 +112,9 @@ export const EDITOR_MENUS = Object.freeze([
 ]);
 
 // t는 선택적 번역기 (key, fallback?) => string. Step 2(42-editor-ui-language)에서 라벨 국제화용으로 주입된다.
-// 미전달/ko일 때는 fallback(=원문 label)을 그대로 반환 → 기존 호출부·테스트가 바이트 동일로 통과(phase 8 하위호환).
+// t 미주입 시 fallback(=원문 label)을 그대로 반환 → 기존 호출부·테스트가 바이트 동일로 통과(phase 8 하위호환).
+// t 주입 + lang='ko'면 반환값은 fallback이 아니라 카탈로그 값 MESSAGES.ko[id]인데, 이는 원문 label과 바이트 동일해야 하는
+// 불변식(i18n.test.js 강제)이라 표시 텍스트가 동일하다.
 export function EditorMenuBar({ onSelect, enabledIds, t }) {
   const [openId, setOpenId] = useState(null);
   const ref = useRef(null);

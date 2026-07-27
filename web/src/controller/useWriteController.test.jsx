@@ -670,3 +670,80 @@ describe('useWriteController — save/submit bodyOverride (phase43)', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe('변환안된본문');
   });
 });
+
+// phase45 step1 — auto 기업코드 변환(edit.companyCode==='auto') 저장/송고 시 title 1회 지연 수정.
+// 본문 첫 줄(=헤드라인=제목)이 종목코드로 태깅되면, bodyOverride가 markupVersion만 최신화하고
+// title은 stale tab.fields.title에서 취해 이번 저장 1회 코드 미반영이던 결함을 고친다(다음 저장 self-heal).
+// 수정: bodyOverride!=null일 때 dto.title을 그 오버라이드 본문에서 bodyTitle로 재파생(단일 출처 재사용).
+describe('useWriteController — bodyOverride title 재파생 (phase45)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  it('save(bodyOverride) — 오버라이드 본문 첫 줄에서 title을 재파생한다(stale title 아님)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    // stale 상태: 제목/본문 모두 코드 태깅 前(삼성전자).
+    act(() => { result.current.updateField('title', '삼성전자'); });
+    act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
+
+    // 자동 기업코드 변환 본문(헤드라인 코드 태깅)을 오버라이드로 저장.
+    await act(async () => { await result.current.save('삼성전자(005930)\n본문\n(끝)'); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('삼성전자(005930)\n본문\n(끝)');
+    expect(dto.title).toBe('삼성전자(005930)'); // stale '삼성전자'가 아니라 오버라이드 본문에서 재파생
+  });
+
+  it('submit(action, bodyOverride) — 편집 PUT dto.title도 오버라이드 본문에서 재파생', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    // 편집 탭 stale 상태(제목=삼성전자).
+    act(() => { result.current.updateField('title', '삼성전자'); });
+    act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
+
+    await act(async () => { await result.current.submit('send', '삼성전자(005930)\n본문\n(끝)'); });
+
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.markupVersion).toBe('삼성전자(005930)\n본문\n(끝)');
+    expect(dto.title).toBe('삼성전자(005930)'); // 송고(send) 영속 제목이 코드 태깅됨
+  });
+
+  it('save() — 오버라이드 없으면 title을 재파생하지 않는다(사용자 편집 title 보존·하위호환)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    // 사용자가 제목만 직접 편집(본문 첫 줄과 다름) — 재파생하면 이 값을 덮어써 버린다.
+    act(() => { result.current.updateField('title', '내가 쓴 제목'); });
+    act(() => { result.current.updateField('body', '본문 첫 줄\n둘째 줄'); });
+
+    await act(async () => { await result.current.save(); }); // 인자 없음 → 오버라이드 없음
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.title).toBe('내가 쓴 제목'); // tab.fields.title 그대로(재파생 안 함)
+    expect(dto.markupVersion).toBe('본문 첫 줄\n둘째 줄');
+  });
+
+  it('saveMapping — 오버라이드 없는 경로라 title 재파생 미발생(본문 첫 줄과 무관하게 원본 title 유지)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+    // 매핑은 본문(임베드)만 바꾼다 — 본문 첫 줄이 title과 달라도 title은 재파생되지 않는다.
+    act(() => { result.current.updateField('body', '전혀 다른 첫 줄\n[임베드]'); });
+
+    await act(async () => { await result.current.saveMapping(); });
+
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.title).toBe('제목'); // FULL.title 그대로 — bodyTitle('전혀 다른 첫 줄...')로 재파생 안 함
+  });
+
+  it('saveAsNew — 오버라이드 없는 경로라 title 재파생 미발생', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('body', '복제본 첫 줄\n둘째 줄'); });
+
+    await act(async () => { await result.current.saveAsNew(); });
+
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.title).toBe('제목'); // 재파생 안 함 — 사용자 title 보존
+  });
+});

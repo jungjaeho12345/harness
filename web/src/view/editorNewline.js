@@ -42,6 +42,21 @@ export function shouldOverwriteNextChar(text, offset) {
   return true;
 }
 
+// 수정(overwrite) 모드에서 캐럿 뒤 "한 문자(코드포인트)"를 덮어쓸 때 확장할 UTF-16 코드유닛 수(1 또는 2).
+// text[offset]가 high 서로게이트이고 text[offset+1]가 low 서로게이트면 2(astral 문자=이모지 온전히 대체), 아니면 1.
+// convertSimpTrad의 코드포인트 단위 순회와 동형(서로게이트 페어 인지). 무효/범위 밖/lone 서로게이트는 1(안전 기본).
+export function overwriteExtendLength(text, offset) {
+  const s = String(text ?? '');
+  const i = Number(offset);
+  if (!Number.isInteger(i) || i < 0 || i >= s.length) return 1;
+  const hi = s.charCodeAt(i);
+  if (hi >= 0xD800 && hi <= 0xDBFF && i + 1 < s.length) {
+    const lo = s.charCodeAt(i + 1);
+    if (lo >= 0xDC00 && lo <= 0xDFFF) return 2;
+  }
+  return 1;
+}
+
 // 캐럿 위치에 텍스트(개행 포함 가능)를 삽입한 블록 배열을 만든다 — Enter('\n' 1개 삽입)·여러 줄 붙여넣기 공용.
 // blocks: 텍스트/임베드가 섞인 현재 DOM 블록. caret: { lineIndex, offset }(텍스트-only 기준) 또는 null.
 // text: 삽입할 문자열('\n'이면 Enter 분할). 반환 { blocks: 다음블록, caretLineIndex: 캐럿을 둘 텍스트-라인 인덱스(라인 시작) }.

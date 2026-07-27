@@ -4215,6 +4215,16 @@ describe('WriterPage — URL 직접 임베드(tools.insertImage·tools.insertYou
     expect(container.querySelector('.yh-embed')).toBeNull();
   });
 
+  it('열린 채 탭을 전환하면 URL 임베드 다이얼로그가 닫힌다(urlEmbedKind 탭-로컬 — 다른 탭에서 열려 보이는 혼란 방지)', async () => {
+    await openWith([textBlock('헤드라인'), textBlock('본문')]);
+    await clickTool('그림 삽입');
+    expect(screen.getByTestId('url-embed-input')).toBeInTheDocument();
+
+    // ＋ 버튼으로 새 작성 탭 추가 → 활성 탭 전환 → 조정 블록이 다이얼로그를 닫는다(setTableDialog/setMetaDialog 동형).
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('url-embed-input')).toBeNull());
+  });
+
   // 19-step2: 오디오/링크/로컬영상 결선 — 그림/유튜브와 동일 패턴(메뉴 클릭→다이얼로그→URL 제출→insertEmbed).
   it("'오디오 삽입' 클릭 → 다이얼로그(kind=audio) 오픈, 허용 URL 제출 시 audio 임베드가 생긴다", async () => {
     const { container } = await openWith([textBlock('헤드라인'), textBlock('본문')]);
@@ -7655,5 +7665,25 @@ describe('WriterPage — 수정(overwrite) 모드 덮어쓰기 타이핑', () =>
     const sel = caretAt(container, 1, 1);
     fireEvent.keyDown(box(container), { key: 'Enter' });
     expect(sel.isCollapsed).toBe(true);
+  });
+
+  // phase45 step2 — astral 문자(이모지=서로게이트 페어) 온전 확장. 캐럿 뒤 이모지는 DOM 텍스트 노드에서
+  // 2 코드유닛(high+low)이라 +1(코드유닛 1개)만 확장하면 반쪽(lone 서로게이트)만 선택돼 네이티브 대체가 깨진다.
+  it('수정 모드 + 이모지 앞: 서로게이트 페어 2 코드유닛을 온전히 확장한다', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('a😀b')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 1); // 'a|😀b' — DOM 코드유닛 오프셋 1(😀 시작 = high 서로게이트)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(false); // 확장됨
+    expect(sel.getRangeAt(0).toString()).toBe('😀'); // 반쪽 lone 서로게이트 아니라 이모지 전체(2 코드유닛)
+  });
+
+  it('수정 모드 + BMP 문자는 여전히 1 코드유닛 확장(회귀 가드)', async () => {
+    const { container } = await openBody([textBlock('제목'), textBlock('a😀b')]);
+    toModifyMode(container);
+    const sel = caretAt(container, 1, 0); // '|a😀b' — 뒤 글자 'a'(BMP)
+    fireEvent.keyDown(box(container), { key: 'x' });
+    expect(sel.isCollapsed).toBe(false);
+    expect(sel.getRangeAt(0).toString()).toBe('a'); // BMP는 1 코드유닛
   });
 });

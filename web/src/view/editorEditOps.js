@@ -83,7 +83,7 @@ export function sortParagraph(blocks, caretLineIndex) {
 }
 
 // caretLineIndex 텍스트 줄의 column(줄-로컬) 위치 단어(wordBoundsAt — \S 런)를 삭제한다. 주변 공백은
-// 병합/삭제하지 않는다. 마커 줄·매핑 실패·단어 없음(start === end)이면 no-op.
+// 병합/삭제하지 않는다. 마커 줄·매핑 실패·단어 없음(start === end)이면 no-op. 그 줄의 정렬(align) 필드는 승계한다.
 // 반환 { blocks, changed, caretColumn } — caretColumn은 삭제 후 캐럿을 둘 줄-로컬 위치(단어 start), no-op이면 null.
 export function deleteWordAt(blocks, caretLineIndex, column) {
   const list = normalizeBlocks(blocks);
@@ -94,6 +94,6 @@ export function deleteWordAt(blocks, caretLineIndex, column) {
   const { start, end } = wordBoundsAt(lineText, column);
   if (start === end) return { blocks: list, changed: false, caretColumn: null };
   const next = list.slice();
-  next[blockIndex] = textBlock(lineText.slice(0, start) + lineText.slice(end));
+  next[blockIndex] = textBlock(lineText.slice(0, start) + lineText.slice(end), list[blockIndex].align);
   return { blocks: next, changed: true, caretColumn: start };
 }

@@ -218,4 +218,16 @@ describe('editorShortcuts — case transforms (보기 메뉴)', () => {
     const blocks = [textBlock('a')];
     expect(transformTextLine(blocks, 5, toUpper).blocks).toEqual(blocks);
   });
+
+  it('preserves the align field of the transformed line (승계)', () => {
+    const r = transformTextLine([textBlock('hello', 'center')], 0, toUpper);
+    expect(r.blocks[0]).toEqual(textBlock('HELLO', 'center'));
+    expect(r.blocks[0].align).toBe('center');
+  });
+
+  it('does not add a spurious align key to an unaligned line', () => {
+    const r = transformTextLine([textBlock('hello')], 0, toUpper);
+    expect(r.blocks[0].text).toBe('HELLO');
+    expect('align' in r.blocks[0]).toBe(false);
+  });
 });
