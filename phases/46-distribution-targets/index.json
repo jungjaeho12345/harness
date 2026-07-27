@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "46-distribution-targets",
+  "steps": [
+    { "step": 0, "name": "db-model", "status": "completed", "summary": "DistributionTarget 테이블 additive 신설 + distributionTargetModel(CRUD, 삭제 없음) 완료. 변경 파일 5: 소스 2(src/db/schema.js — SCHEMA의 ReceiverConfig 엔트리 뒤에 DistributionTarget 추가: id INTEGER PRIMARY KEY(ROWID alias)·name·kind·spoolDir·active VARCHAR DEFAULT 'Y'·createdAt·updatedAt, 엔트리 위 한 줄 주석 '배부 대상(수신처) — ADR-008. 삭제 없음(active='N' soft delete)'. createSchema 로직/다른 테이블 정의 무변경 — CREATE TABLE IF NOT EXISTS + 누락 컬럼 ALTER ADD COLUMN 경로가 그대로 신규 테이블에 적용됨. src/models/distributionTargetModel.js 신규 — createDistributionTargetModel(db)이 { query, findById, insert, update }만 노출. COLUMNS=['name','kind','spoolDir','active','createdAt','updatedAt'](id 제외)·FILTERABLE=['id',...COLUMNS] 화이트리스트로 query의 AND 동등 필터(ORDER BY id)·insert present-only(Number(lastInsertRowid) 반환)·update present-only SET(빈 fields면 prepare 없이 0, id는 COLUMNS에 없어 SET 불가) 구성. receiverConfigModel/userModel SQL 스타일 그대로. remove/delete 미노출 — 비활성은 active='N' update가 유일 경로) + 테스트 2(test/distributionTargetModel.test.js 신규 9건, test/schema.test.js +4건 및 FK 미선언 테이블 목록에 'DistributionTarget' 추가) + docs 1(docs/SCHEMA.md — L8 테이블 목록을 'User, Article, Contents, ArticleHistory, ReceiverConfig, Photo, DistributionTarget 7개'로 교체(ArticleHistory 누락 stale 동반 교정), ## Photo Table 뒤에 ## DistributionTarget Table 섹션 추가: kind enum·active 기본값·행 삭제 없음(soft delete)·spoolDir 문자열 저장만(스풀 쓰기는 phase 47)·ReceiverConfig 비재사용(ADR-008 (2))·보조 인덱스/FK 없음). TDD: 신규 13건 사전 red 확인(schema 4건 '테이블/컬럼 없음' + 모델 파일 ERR_MODULE_NOT_FOUND) 후 green. 부분 컬럼 구버전 마이그레이션 기대값은 계획 확정값(name 보존·active 'Y'·kind/spoolDir/createdAt/updatedAt null)으로 선단언했고 실측 일치. ADR-008 준수: node:fs/node:path/타이머/fetch 0건(spoolDir는 문자열 컬럼일 뿐 — 디렉토리 생성·파일 쓰기 없음). DB 비파괴: DELETE FROM/DROP/TRUNCATE 0건, additive CREATE/ALTER만. 서비스/컨트롤러/server/web 무접촉(diffstat 확인). AC 그린: npm test 440 pass·fail 0(기준선 427 대비 +13 무회귀), npm run lint clean." },
+    { "step": 1, "name": "service-routes", "status": "pending" },
+    { "step": 2, "name": "model-contract", "status": "pending" },
+    { "step": 3, "name": "dist-mgmt-ui", "status": "pending" }
+  ]
+}
