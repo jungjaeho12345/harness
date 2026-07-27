@@ -1,5 +1,5 @@
 // 상단 공통 헤더 — 좌측 로고/타이틀, 우측 로그인 사용자 정보('유저아이디 · 부서 · (권한)') + 로그아웃.
-// 권한 Z에게는 수신설정 관리·사용자 관리 진입 링크를 추가로 보여준다(비-Z에게는 노출하지 않음).
+// 권한 Z에게는 수신설정 관리·사용자 관리·배부대상 관리 진입 링크를 추가로 보여준다(비-Z에게는 노출하지 않음).
 // 데이터/네비게이션은 컨텍스트·컨트롤러 경유(transport 직접 호출 금지, ADR-003).
 
 import { useAppContext } from '../app/context.js';
@@ -28,6 +28,7 @@ export function TopBar() {
             <>
               <button type="button" className="yh-btn" onClick={() => navigate('rcvMgmt.do')}>수신설정 관리</button>
               <button type="button" className="yh-btn" onClick={() => navigate('userMgmt.do')}>사용자 관리</button>
+              <button type="button" className="yh-btn" onClick={() => navigate('distMgmt.do')}>배부대상 관리</button>
               <button type="button" className="yh-btn" onClick={() => navigate('logs.do')}>실시간 로그</button>
             </>
           )}

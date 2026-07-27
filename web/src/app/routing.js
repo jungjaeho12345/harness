@@ -4,8 +4,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-export const ROUTES = Object.freeze(['login.do', 'writer.do', 'list.do', 'rcvMgmt.do', 'userMgmt.do', 'logs.do']);
-export const Z_ONLY_ROUTES = Object.freeze(['rcvMgmt.do', 'userMgmt.do', 'logs.do']);
+export const ROUTES = Object.freeze(['login.do', 'writer.do', 'list.do', 'rcvMgmt.do', 'userMgmt.do', 'logs.do', 'distMgmt.do']);
+export const Z_ONLY_ROUTES = Object.freeze(['rcvMgmt.do', 'userMgmt.do', 'logs.do', 'distMgmt.do']);
 export const DEFAULT_ROUTE = 'login.do';
 
 // 현재 location → { route, articleId }. 정의되지 않은 경로는 login.do로 떨어진다(news.md).

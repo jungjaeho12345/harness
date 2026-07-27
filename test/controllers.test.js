@@ -37,11 +37,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 8개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
+    ['article', 'auth', 'collection', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
   );
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
@@ -62,6 +62,11 @@ test('createControllers: 8개 도메인과 메서드를 결선한다', () => {
   for (const m of ['query', 'create', 'remove']) {
     assert.equal(typeof controllers.receiverConfig[m], 'function', `receiverConfig.${m}`);
   }
+  // 배부 대상(ADR-008) — 삭제 경로는 없다(비활성은 deactivate).
+  for (const m of ['query', 'create', 'update', 'deactivate']) {
+    assert.equal(typeof controllers.distributionTarget[m], 'function', `distributionTarget.${m}`);
+  }
+  assert.equal(controllers.distributionTarget.remove, undefined, 'remove 경로는 없어야 한다');
   assert.equal(typeof controllers.collection.receive, 'function');
 });
 

@@ -5,7 +5,7 @@
 ## 기술명세서
 - DB는 SQLite를 사용한다 (node:sqlite, 서버 기동 시 server/index.js가 생성한다).
 - DB 파일은 프로젝트 루트의 news.db이다.
-- 테이블은 User, Article, Contents, ReceiverConfig, Photo 5개이다.
+- 테이블은 User, Article, Contents, ArticleHistory, ReceiverConfig, Photo, DistributionTarget 7개이다.
 - 타입은 Article/Contents는 VARCHAR, User는 TEXT로 설정한다 (추가된 컬럼은 VARCHAR).
 - 스키마 변경은 기존 데이터를 삭제하지 않고 컬럼을 추가하는 방식(멱등 마이그레이션)으로만 적용한다.
 - DB에 있는 내용은 절대 삭제하지 않는다.
@@ -71,4 +71,17 @@ ContentsVO에 대한 명세서
 - sourceArticleId는 등록 시점 편집 중이던 기사아이디다(미저장 신규 기사면 빈 문자열 — best-effort 출처 기록).
 - registeredBy는 검증된 세션의 userId로만 채운다(ADR-004 — 클라이언트가 보낸 값은 신뢰하지 않는다). createdAt는 ISO-8601 UTC 문자열로 서버가 stamp한다.
 - 행 삭제/수정 없음(append-only) — 사진 삭제는 범위 밖(DB 비파괴 원칙).
+- 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.
+
+## DistributionTarget Table
+배부(distribution) 대상 수신처 관리에 대한 명세서. Z(관리자) 전용 CRUD. 아키텍처는 ADR-008이 단일 출처다.
+# property
+- id(INTEGER PK, ROWID alias, 자동 증가), 수신처명(name), 종류(kind), 스풀폴더(spoolDir), 활성여부(active), 생성시간(createdAt), 수정시간(updatedAt) 컬럼을 가진다.
+- id는 INTEGER PRIMARY KEY (SQLite ROWID alias) — 자동 증가. 나머지 컬럼은 VARCHAR.
+- kind는 'press'(언론사) 또는 'nonpress'(비언론사)이다. 엠바고 배부 규칙(1차→언론사, 2차→비언론사)이 이 값으로 대상을 고른다.
+- spoolDir는 배부 스풀 하위 폴더명(슬러그 문자열)이다. **문자열 저장/검증만 하며 앱은 이 phase에서 디렉토리를 만들거나 파일을 쓰지 않는다**(실제 스풀 쓰기는 phase 47 — ADR-008의 파일 스풀 outbound).
+- active는 'Y'/'N', 기본값 'Y'. 'N'이면 배부 대상에서 제외된다.
+- **행 삭제 없음 — 비활성은 active='N' soft delete로 처리한다(DB 비파괴 원칙). 모델은 삭제(remove/delete) 함수를 노출하지 않는다.**
+- createdAt/updatedAt은 ISO-8601 UTC 문자열로 서버가 stamp한다.
+- ReceiverConfig(수집 inbound 전용)와 재사용하지 않는 별도 테이블이다 — ADR-008 (2).
 - 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.

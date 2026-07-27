@@ -7,6 +7,7 @@ describe('parseLocation', () => {
   it('maps a known .do path to its route', () => {
     expect(parseLocation({ pathname: '/list.do' }).route).toBe('list.do');
     expect(parseLocation({ pathname: '/writer.do' }).route).toBe('writer.do');
+    expect(parseLocation({ pathname: '/distMgmt.do' }).route).toBe('distMgmt.do');
   });
 
   it('falls back to login.do for undefined paths', () => {
@@ -52,6 +53,13 @@ describe('resolveRoute (guards)', () => {
     expect(resolveRoute('logs.do', Z)).toBe('logs.do');
   });
 
+  it('guards distMgmt.do as Z-only (배부 대상 관리 — phase 46)', () => {
+    expect(Z_ONLY_ROUTES).toContain('distMgmt.do');
+    expect(resolveRoute('distMgmt.do', null)).toBe(DEFAULT_ROUTE);
+    expect(resolveRoute('distMgmt.do', R)).toBe('list.do');
+    expect(resolveRoute('distMgmt.do', Z)).toBe('distMgmt.do');
+  });
+
   it('passes through normal routes for logged-in users', () => {
     expect(resolveRoute('writer.do', R)).toBe('writer.do');
     expect(resolveRoute('list.do', R)).toBe('list.do');
@@ -77,5 +85,6 @@ describe('buildPath', () => {
     expect(ROUTES).toContain('login.do');
     expect(ROUTES).toContain('userMgmt.do');
     expect(ROUTES).toContain('logs.do');
+    expect(ROUTES).toContain('distMgmt.do');
   });
 });

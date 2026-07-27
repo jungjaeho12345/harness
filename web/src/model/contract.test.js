@@ -3,9 +3,9 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 28 contract methods', () => {
+  it('is frozen and lists the 32 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(28);
+    expect(MODEL_KEYS).toHaveLength(32);
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
       expect(MODEL_KEYS).toContain(key);
@@ -36,6 +36,19 @@ describe('MODEL_KEYS', () => {
     for (const key of ['publishPhoto', 'searchPhotos']) {
       expect(MODEL_KEYS).toContain(key);
     }
+  });
+
+  it('includes the distribution-target keys (phase 46) and no delete key', () => {
+    for (const key of [
+      'queryDistributionTargets',
+      'createDistributionTarget',
+      'updateDistributionTarget',
+      'deactivateDistributionTarget',
+    ]) {
+      expect(MODEL_KEYS).toContain(key);
+    }
+    // 삭제 라우트는 존재하지 않는다(비활성=soft delete가 유일 경로, ADR-008).
+    expect(MODEL_KEYS).not.toContain('deleteDistributionTarget');
   });
 });
 
@@ -213,5 +226,87 @@ describe('createFakeModel', () => {
     const fallback = createFakeModel({ articles: [{ articleId: 'AKR2', title: '원문' }] });
     const g = await fallback.translate('AKR2');
     expect(g.translatedText).toBeTruthy();
+  });
+
+  // --- 배부 대상(phase 46) — 서버 계약(/api/distribution-targets)과 같은 shape을 in-memory로 모사 ---
+  it('createDistributionTarget→queryDistributionTargets round-trips with active defaulted to Y', async () => {
+    const fake = createFakeModel();
+
+    const r = await fake.createDistributionTarget({ name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+    expect(r.ok).toBe(true);
+    expect(r.id).toBeTruthy();
+
+    const q = await fake.queryDistributionTargets();
+    expect(q.ok).toBe(true);
+    expect(q.items).toHaveLength(1);
+    expect(q.items[0]).toMatchObject({
+      id: r.id, name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y', // active 미지정 → 서버와 동형으로 'Y'
+    });
+    expect(q.items[0].createdAt).toBeTruthy();
+
+    // 반환 items는 복사본이라 고쳐도 스토어는 불변.
+    q.items[0].name = 'tampered';
+    expect((await fake.queryDistributionTargets()).items[0].name).toBe('KBS');
+  });
+
+  it('createDistributionTarget ignores client-sent id/createdAt and stamps its own (server 동형)', async () => {
+    const fake = createFakeModel();
+
+    const r = await fake.createDistributionTarget({
+      id: 999, name: 'MBC', kind: 'nonpress', spoolDir: 'mbc', active: 'N', createdAt: '1999-01-01T00:00:00Z',
+    });
+    const { items } = await fake.queryDistributionTargets();
+    expect(items[0].id).toBe(r.id);
+    expect(items[0].id).not.toBe(999);
+    expect(items[0].createdAt).not.toBe('1999-01-01T00:00:00Z');
+    // active는 클라 지정값을 존중한다(서버는 Y|N만 허용 — 검증의 진실은 서버).
+    expect(items[0].active).toBe('N');
+  });
+
+  it('deactivateDistributionTarget keeps the row and flips active to N (soft delete, 행 삭제 없음)', async () => {
+    const fake = createFakeModel();
+    const { id } = await fake.createDistributionTarget({ name: 'SBS', kind: 'press', spoolDir: 'sbs' });
+
+    const d = await fake.deactivateDistributionTarget(id);
+    expect(d).toEqual({ ok: true, changes: 1 });
+
+    const { items } = await fake.queryDistributionTargets();
+    expect(items).toHaveLength(1); // 목록에서 사라지지 않는다.
+    expect(items[0]).toMatchObject({ id, name: 'SBS', active: 'N' });
+  });
+
+  it('updateDistributionTarget merges present-only fields and 404s on an unknown id (deactivate도 동형)', async () => {
+    const fake = createFakeModel();
+    const { id } = await fake.createDistributionTarget({ name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+    const u = await fake.updateDistributionTarget(id, { name: '한국방송', kind: undefined, id: 42, createdAt: 'x' });
+    expect(u).toEqual({ ok: true, changes: 1 });
+
+    const { items } = await fake.queryDistributionTargets();
+    // 전달한 필드만 반영 — 나머지(kind/spoolDir/active)와 서버 소유 필드(id/createdAt)는 불변.
+    expect(items[0]).toMatchObject({ id, name: '한국방송', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+    expect(items[0].createdAt).not.toBe('x');
+
+    expect(await fake.updateDistributionTarget(9999, { name: 'x' })).toEqual({ ok: false, reason: 'not-found' });
+    expect(await fake.deactivateDistributionTarget(9999)).toEqual({ ok: false, reason: 'not-found' });
+  });
+
+  it('queryDistributionTargets applies equality filters (active/kind) over the allowed keys', async () => {
+    const fake = createFakeModel();
+    const a = await fake.createDistributionTarget({ name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+    await fake.createDistributionTarget({ name: '사내망', kind: 'nonpress', spoolDir: 'intra' });
+    await fake.deactivateDistributionTarget(a.id);
+
+    const active = await fake.queryDistributionTargets({ active: 'Y' });
+    expect(active.items.map((t) => t.spoolDir)).toEqual(['intra']);
+
+    const press = await fake.queryDistributionTargets({ kind: 'press' });
+    expect(press.items.map((t) => t.spoolDir)).toEqual(['kbs']);
+
+    const byDir = await fake.queryDistributionTargets({ spoolDir: 'intra' });
+    expect(byDir.items).toHaveLength(1);
+
+    // 허용 목록 밖 키는 무시된다(서버 pickFilters와 동형).
+    expect((await fake.queryDistributionTargets({ nope: 'zzz' })).items).toHaveLength(2);
   });
 });

@@ -285,7 +285,7 @@ test('backfillEmptyDepartments: 멱등 — 두 번째 호출은 보정할 행이
 test('createSchema: FK 제약을 선언하지 않는다', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
-  for (const t of ['Article', 'ArticleHistory', 'Contents', 'Photo', 'ReceiverConfig', 'User']) {
+  for (const t of ['Article', 'ArticleHistory', 'Contents', 'DistributionTarget', 'Photo', 'ReceiverConfig', 'User']) {
     const fks = db.prepare(`PRAGMA foreign_key_list(${t})`).all();
     assert.equal(fks.length, 0, `${t}에 FK가 없어야 함`);
   }
@@ -332,4 +332,68 @@ test('createSchema: Photo가 없는 구버전 DB에 additive로 생기고 기존
   assert.ok(tables.includes('Photo'), 'Photo 테이블이 additive로 생겨야 함');
   const row = db.prepare("SELECT * FROM Contents WHERE articleId='a1'").get();
   assert.equal(row.title, '옛 기사', '기존 행은 보존되어야 함 (비파괴)');
+});
+
+test('createSchema: DistributionTarget 테이블과 컬럼을 생성한다 (배부 대상 — additive 신규)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('DistributionTarget'), 'DistributionTarget 테이블이 있어야 함');
+  const cols = columns(db, 'DistributionTarget');
+  for (const c of ['id', 'name', 'kind', 'spoolDir', 'active', 'createdAt', 'updatedAt']) {
+    assert.ok(cols.includes(c), `DistributionTarget.${c}`);
+  }
+});
+
+test('createSchema: DistributionTarget.id는 INTEGER PRIMARY KEY (ROWID alias 자동증가)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const idCol = db.prepare('PRAGMA table_info(DistributionTarget)').all().find((c) => c.name === 'id');
+  assert.equal(idCol.pk, 1, 'id가 PK여야 함');
+  assert.equal(idCol.type, 'INTEGER', 'id 타입은 INTEGER여야 함');
+  db.prepare("INSERT INTO DistributionTarget (name, kind) VALUES ('연합뉴스TV', 'press')").run();
+  db.prepare("INSERT INTO DistributionTarget (name, kind) VALUES ('공공기관', 'nonpress')").run();
+  const ids = db.prepare('SELECT id FROM DistributionTarget ORDER BY id').all().map((r) => r.id);
+  assert.deepEqual(ids, [1, 2], 'id가 자동 증가해야 함');
+});
+
+test('createSchema: DistributionTarget이 없는 구버전 DB에 additive로 생기고 기존 행이 보존된다', () => {
+  const db = new DatabaseSync(':memory:');
+  // 구버전: DistributionTarget 테이블 없이 다른 테이블 + 기존 행만 있는 DB.
+  db.exec('CREATE TABLE Contents (articleId VARCHAR PRIMARY KEY, title VARCHAR)');
+  db.prepare("INSERT INTO Contents (articleId, title) VALUES ('a1', '옛 기사')").run();
+
+  createSchema(db);
+
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name);
+  assert.ok(tables.includes('DistributionTarget'), 'DistributionTarget 테이블이 additive로 생겨야 함');
+  const row = db.prepare("SELECT * FROM Contents WHERE articleId='a1'").get();
+  assert.equal(row.title, '옛 기사', '기존 행은 보존되어야 함 (비파괴)');
+});
+
+test('createSchema: 부분 컬럼 구버전 DistributionTarget에 누락 컬럼을 추가하고 기존 행을 보존한다', () => {
+  const db = new DatabaseSync(':memory:');
+  // 구버전: id/name만 있는 DistributionTarget + 기존 행.
+  db.exec('CREATE TABLE DistributionTarget (id INTEGER PRIMARY KEY, name VARCHAR)');
+  db.prepare("INSERT INTO DistributionTarget (name) VALUES ('옛 대상')").run();
+
+  createSchema(db);
+
+  const cols = columns(db, 'DistributionTarget');
+  for (const c of ['kind', 'spoolDir', 'active', 'createdAt', 'updatedAt']) {
+    assert.ok(cols.includes(c), `누락된 DistributionTarget.${c} 컬럼이 추가되어야 함`);
+  }
+  const row = db.prepare("SELECT * FROM DistributionTarget WHERE name='옛 대상'").get();
+  assert.equal(row.name, '옛 대상', '기존 데이터는 보존되어야 함');
+  assert.equal(row.active, 'Y', "active는 상수 DEFAULT 'Y'로 기존 행에 채워진다");
+  assert.equal(row.kind, null, '기존 행의 kind는 NULL(미설정 — 정상)');
+  assert.equal(row.spoolDir, null, '기존 행의 spoolDir는 NULL(미설정 — 정상)');
+  assert.equal(row.createdAt, null, '기존 행의 createdAt은 NULL');
+  assert.equal(row.updatedAt, null, '기존 행의 updatedAt은 NULL');
 });

@@ -243,6 +243,24 @@ export function createHttpModel({ base = '' } = {}) {
       return request(`/api/receiver-config/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
 
+    // --- 배부 대상 (Z 전용 — 서버 게이트, ADR-008. 삭제 없음: 비활성은 deactivate) ---
+    // 검증(name/kind/spoolDir/active)·유일성의 진실은 서버다 — 여기서는 요청/응답을 그대로 잇기만 한다.
+    // role 등 신원 값은 body/query에 싣지 않는다(서버가 세션에서 도출, ADR-004).
+    queryDistributionTargets(filters = {}) {
+      return request('/api/distribution-targets', { query: filters });
+    },
+    createDistributionTarget(entry) {
+      return request('/api/distribution-targets', { method: 'POST', body: entry });
+    },
+    // present-only — 호출자가 바꾼 필드만 담아 보낸다(서버가 전달된 필드만 검증·반영).
+    updateDistributionTarget(id, fields) {
+      return request(`/api/distribution-targets/${encodeURIComponent(id)}`, { method: 'PUT', body: fields });
+    },
+    // 비활성(soft delete) — 행은 남고 active='N'이 된다. body 없음.
+    deactivateDistributionTarget(id) {
+      return request(`/api/distribution-targets/${encodeURIComponent(id)}/deactivate`, { method: 'POST' });
+    },
+
     // --- 실시간 무효화 스트림 (SSE) ---
     // 인증의 1차 수단은 HttpOnly 세션 쿠키 — EventSource는 헤더를 못 보내지만 withCredentials:true로
     // cross-origin 쿠키를 자동 전송한다(step5, server는 쿠키 우선 readSessionToken으로 인증).

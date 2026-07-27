@@ -6,6 +6,7 @@
 const CAPABILITIES = {
   manageUsers: ['Z'],          // 사용자(USER) CRUD — Z 전용
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
+  manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
 };
 
@@ -54,5 +55,14 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, op, payload };
   }
 
-  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig };
+  // Z 전용 게이트 — 배부 대상(수신처) 관리 (ADR-008).
+  function manageDistributionTarget(sessionId, op, payload) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'manageDistributionTarget');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, op, payload };
+  }
+
+  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget };
 }

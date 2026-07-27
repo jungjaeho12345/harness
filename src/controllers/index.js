@@ -11,6 +11,7 @@ import { createArticleModel } from '../models/articleModel.js';
 import { createArticleHistoryModel } from '../models/articleHistoryModel.js';
 import { createReceiverConfigModel } from '../models/receiverConfigModel.js';
 import { createPhotoModel } from '../models/photoModel.js';
+import { createDistributionTargetModel } from '../models/distributionTargetModel.js';
 
 import { createSessionService } from '../services/sessionService.js';
 import { createUserService } from '../services/userService.js';
@@ -21,6 +22,7 @@ import { createCollectionService } from '../services/collectionService.js';
 import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
+import { createDistributionTargetService } from '../services/distributionTargetService.js';
 
 export function createControllers(db, {
   sessionService,
@@ -34,6 +36,7 @@ export function createControllers(db, {
   const articleHistoryModel = createArticleHistoryModel(db);
   const receiverConfigModel = createReceiverConfigModel(db);
   const photoModel = createPhotoModel(db);
+  const distributionTargetModel = createDistributionTargetModel(db);
 
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
   const session = sessionService ?? createSessionService();
@@ -47,6 +50,7 @@ export function createControllers(db, {
   const mediaSearch = createMediaSearch({ fetchFn, env });
   const translate = createTranslate({ fetchFn, env });
   const photoService = createPhotoService({ photoModel });
+  const distributionTargetService = createDistributionTargetService({ distributionTargetModel, authorization });
 
   // 인증/세션 — 로그인은 자격 검증(userService) → 세션 발급(sessionService) 오케스트레이션.
   const auth = {
@@ -98,6 +102,14 @@ export function createControllers(db, {
     remove: (sessionId, id) => receiverConfigService.remove(sessionId, id),
   };
 
+  // 배부 대상(수신처) — Z 전용 게이트·검증은 서비스가 강제한다(ADR-008). 삭제 경로 없음(deactivate).
+  const distributionTarget = {
+    query: (sessionId, filters) => distributionTargetService.query(sessionId, filters),
+    create: (sessionId, entry) => distributionTargetService.create(sessionId, entry),
+    update: (sessionId, id, fields) => distributionTargetService.update(sessionId, id, fields),
+    deactivate: (sessionId, id) => distributionTargetService.deactivate(sessionId, id),
+  };
+
   const collection = {
     receive: (sourceId, payload) => collectionService.receive(sourceId, payload),
     pull: (sourceId) => collectionService.pull(sourceId),
@@ -108,5 +120,5 @@ export function createControllers(db, {
     search: (q) => photoService.search(q),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection, photo };
+  return { auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget };
 }

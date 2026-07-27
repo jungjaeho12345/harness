@@ -83,6 +83,24 @@ describe('App — session restore gate + routing', () => {
     expect(screen.getByRole('button', { name: '실시간 로그' })).toBeInTheDocument();
   });
 
+  it('guards distMgmt.do: a non-Z user lands on list.do without the nav button', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'kim', role: 'R' } });
+    go('/distMgmt.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'list.do'));
+    expect(screen.queryByRole('button', { name: '배부대상 관리' })).toBeNull();
+  });
+
+  it('renders DistMgmtPage for a Z user at /distMgmt.do with the TopBar nav button', async () => {
+    const model = modelReturning({ ok: true, user: { userId: 'boss', role: 'Z' } });
+    go('/distMgmt.do');
+    render(<App model={model} />);
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveAttribute('data-route', 'distMgmt.do'));
+    expect(screen.getByRole('heading', { name: '배부 대상 관리' })).toBeInTheDocument();
+    // 배부대상 관리 진입 버튼은 Z에게만 보인다(프론트 가드는 UX — 실제 강제는 서버 Z 게이트).
+    expect(screen.getByRole('button', { name: '배부대상 관리' })).toBeInTheDocument();
+  });
+
   it('hides the 실시간 로그 nav button from non-Z users', async () => {
     const model = modelReturning({ ok: true, user: { userId: 'kim', role: 'R', department: '정치' } });
     go('/list.do');

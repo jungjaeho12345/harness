@@ -81,6 +81,16 @@ const SCHEMA = {
     ['active', "VARCHAR DEFAULT 'Y'"],
     ['createdAt', 'VARCHAR'],
   ],
+  // 배부 대상(수신처) — ADR-008. 삭제 없음(active='N' soft delete).
+  DistributionTarget: [
+    ['id', 'INTEGER PRIMARY KEY'],
+    ['name', 'VARCHAR'],
+    ['kind', 'VARCHAR'], // 'press'(언론사) | 'nonpress'(비언론사) — enum 강제는 서비스 계층
+    ['spoolDir', 'VARCHAR'], // 배부 스풀 하위 폴더명(슬러그 문자열) — 저장만, 파일 쓰기는 phase 47
+    ['active', "VARCHAR DEFAULT 'Y'"],
+    ['createdAt', 'VARCHAR'],
+    ['updatedAt', 'VARCHAR'],
+  ],
   Photo: [
     ['id', 'INTEGER PRIMARY KEY'],
     ['src', 'VARCHAR'],

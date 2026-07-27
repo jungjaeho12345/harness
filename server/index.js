@@ -405,6 +405,39 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // --- 배부 대상 (Z 전용 — 게이트는 distributionTargetService가 강제, ADR-008) ---
+  // 삭제 라우트는 두지 않는다: 대상 제거는 POST /:id/deactivate(active='N') soft delete가 유일 경로다.
+  app.get('/api/distribution-targets', (req, res, next) => {
+    try {
+      const r = controllers.distributionTarget.query(readSessionToken(req), req.query);
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  app.post('/api/distribution-targets', (req, res, next) => {
+    try {
+      const r = controllers.distributionTarget.create(readSessionToken(req), req.body ?? {});
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  app.put('/api/distribution-targets/:id', (req, res, next) => {
+    try {
+      const r = controllers.distributionTarget.update(
+        readSessionToken(req), Number(req.params.id), req.body ?? {},
+      );
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // PUT /:id(body active:'N')와 같은 상태 전이의 두 번째 진입점 — 서비스 내부에서 동일 헬퍼로 수렴한다.
+  app.post('/api/distribution-targets/:id/deactivate', (req, res, next) => {
+    try {
+      const r = controllers.distributionTarget.deactivate(readSessionToken(req), Number(req.params.id));
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
   // --- 기사 조회/검색 ---
   app.get('/api/articles/search', (req, res, next) => {
     try {

@@ -2,6 +2,11 @@
 // httpModel과 같은 응답 shape({ ok, items, user, articleId, ... })을 흉내내고, 비밀번호는 어떤 응답에도 넣지 않는다.
 // assertModel을 통과해야 한다(모든 MODEL_KEYS를 함수로 구현).
 
+// 배부 대상 조회 필터 / 수정 가능 필드 — 서버(distributionTargetService)의 FILTER_KEYS·검증 대상과 같은 집합.
+// id·createdAt·updatedAt은 서버 소유라 클라 입력으로 바뀌지 않는다.
+const DIST_TARGET_FILTER_KEYS = ['id', 'name', 'kind', 'spoolDir', 'active'];
+const DIST_TARGET_MUTABLE_KEYS = ['name', 'kind', 'spoolDir', 'active'];
+
 function stripPassword(user) {
   if (!user) return user;
   const safe = { ...user };
@@ -13,6 +18,8 @@ export function createFakeModel(seed = {}) {
   const users = [...(seed.users ?? [])];
   const articles = [...(seed.articles ?? [])];
   const receiverConfigs = [...(seed.receiverConfigs ?? [])];
+  // 배부 대상(phase 46) — 행은 절대 지우지 않는다(비활성=active 'N', 서버 soft delete와 동형).
+  const distributionTargets = [...(seed.distributionTargets ?? [])];
   const mediaItems = [...(seed.mediaItems ?? [])];
   // 사진DB(phase 41) — 등록→검색 루프를 네트워크 없이 재현하는 in-memory 스토어.
   const photos = [...(seed.photos ?? [])];
@@ -233,6 +240,49 @@ export function createFakeModel(seed = {}) {
       const i = receiverConfigs.findIndex((c) => c.id === id);
       if (i >= 0) receiverConfigs.splice(i, 1);
       return { ok: true };
+    },
+
+    // --- 배부 대상(Z 전용 — 게이트/검증의 진실은 서버, fake는 shape만 모사) ---
+    // 허용 키 동등 필터 후 복사본 반환(원본 불변). 비활성 행도 숨기지 않는다 — 서버가 그렇게 응답한다.
+    queryDistributionTargets(filters = {}) {
+      const items = distributionTargets.filter(
+        (t) => DIST_TARGET_FILTER_KEYS.every((k) => filters[k] === undefined || t[k] === filters[k]),
+      );
+      return { ok: true, items: items.map((t) => ({ ...t })) };
+    },
+    // id·createdAt·updatedAt은 서버가 정한다 — entry의 동명 필드는 채택하지 않는다(ADR-004 동형).
+    // active 미지정 시 'Y' stamp도 서버와 동형. 그 외 값 검증(kind 집합·슬러그·유일성)은 흉내내지 않는다.
+    createDistributionTarget(entry = {}) {
+      const id = seq++;
+      const stamp = new Date().toISOString();
+      distributionTargets.push({
+        id,
+        name: entry.name,
+        kind: entry.kind,
+        spoolDir: entry.spoolDir,
+        active: entry.active ?? 'Y',
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+      return { ok: true, id };
+    },
+    // present-only 병합 — 전달한 가변 필드만 반영하고 미전달 필드는 불변.
+    updateDistributionTarget(id, fields = {}) {
+      const t = distributionTargets.find((x) => x.id === id);
+      if (!t) return { ok: false, reason: 'not-found' };
+      for (const key of DIST_TARGET_MUTABLE_KEYS) {
+        if (fields[key] !== undefined) t[key] = fields[key];
+      }
+      t.updatedAt = new Date().toISOString();
+      return { ok: true, changes: 1 };
+    },
+    // 비활성(soft delete) — 행을 제거하지 않는다(splice 금지). active='N'만 설정한다.
+    deactivateDistributionTarget(id) {
+      const t = distributionTargets.find((x) => x.id === id);
+      if (!t) return { ok: false, reason: 'not-found' };
+      t.active = 'N';
+      t.updatedAt = new Date().toISOString();
+      return { ok: true, changes: 1 };
     },
 
     subscribe(filter, onChange, onStatus) {
