@@ -58,8 +58,14 @@ export function createDistributionTargetService({
     return ACTIVE.has(value) ? { ok: true, value } : { ok: false, reason: 'invalid-active' };
   }
 
+  // id 정규화 — DB의 id는 INTEGER PK라 항상 number다. 진입부에서 한 번 맞춰
+  // findById/applyPatch/checkSpoolDir(자기 제외 엄격 비교)가 같은 타입을 보게 한다.
+  // 숫자로 변환되지 않는 id는 NaN이 되어 행에 매치되지 않는다 → 기존과 동일하게 not-found로 수렴.
+  const normalizeId = (id) => Number(id);
+
   // spoolDir 검증 — 규칙의 단일 출처는 sanitizeSpoolDir(타입 게이트 포함)다. 여기서 재구현하지 않는다.
   // 유일성은 비활성 행까지 포함해 따진다(비활성 대상의 스풀 폴더가 그대로 남아 있기 때문).
+  // selfId는 정규화된 id여야 한다(엄격 비교 — 문자열 '1'은 자기 자신을 걸러내지 못한다).
   function checkSpoolDir(value, selfId) {
     const dir = sanitizeSpoolDir(value);
     if (dir === '') return { ok: false, reason: 'invalid-spool-dir' };
@@ -115,8 +121,9 @@ export function createDistributionTargetService({
   function update(sessionId, id, fields = {}) {
     const gate = authorization.manageDistributionTarget(sessionId, 'update', fields);
     if (!gate.ok) return gate;
+    const key = normalizeId(id);
     // 존재 확인을 검증보다 먼저 한다 — 없는 id가 검증 reason으로 둔갑하지 않도록.
-    if (!distributionTargetModel.findById(id)) return { ok: false, reason: 'not-found' };
+    if (!distributionTargetModel.findById(key)) return { ok: false, reason: 'not-found' };
 
     const patch = {};
     if (fields.name !== undefined) {
@@ -130,7 +137,7 @@ export function createDistributionTargetService({
       patch.kind = kind.value;
     }
     if (fields.spoolDir !== undefined) {
-      const spoolDir = checkSpoolDir(fields.spoolDir, id); // 자기 자신은 중복에서 제외.
+      const spoolDir = checkSpoolDir(fields.spoolDir, key); // 자기 자신은 중복에서 제외.
       if (!spoolDir.ok) return spoolDir;
       patch.spoolDir = spoolDir.value;
     }
@@ -139,14 +146,14 @@ export function createDistributionTargetService({
       if (!active.ok) return active;
       patch.active = active.value;
     }
-    return applyPatch(id, patch);
+    return applyPatch(key, patch);
   }
 
   // 비활성(soft delete) — 행을 지우지 않는다. update와 같은 헬퍼로 수렴한다.
   function deactivate(sessionId, id) {
     const gate = authorization.manageDistributionTarget(sessionId, 'deactivate', { id });
     if (!gate.ok) return gate;
-    return applyPatch(id, { active: 'N' });
+    return applyPatch(normalizeId(id), { active: 'N' });
   }
 
   return { query, create, update, deactivate };

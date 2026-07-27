@@ -223,6 +223,36 @@ test('update로 자기 자신과 같은 spoolDir 재저장은 duplicate가 아�
   assert.equal(r.changes, 1);
 });
 
+test('id는 진입부에서 정규화된다 — 문자열 id로 직접 호출해도 숫자 id와 동일하게 동작', () => {
+  // 라우트는 Number(req.params.id)로 강제하지만, 서비스를 직접 부르는 호출자(phase 47 배부 실행)는
+  // 문자열 id를 넘길 수 있다. 자기 제외 비교가 엄격 비교라 '1' !== 1로 자기 자신을 중복으로 오판했다.
+  const { service, sessionService, distributionTargetModel } = setup();
+  const z = sessionFor(sessionService, 'Z', 'admin');
+  const { id } = service.create(z, VALID);
+  const other = service.create(z, { name: '연합', kind: 'press', spoolDir: 'yna' });
+
+  // 자기 자신의 spoolDir 재저장은 문자열 id여도 duplicate가 아니다.
+  const same = service.update(z, String(id), { spoolDir: 'kbs' });
+  assert.equal(same.ok, true, `duplicate로 오판하면 안 된다: ${same.reason}`);
+  assert.equal(same.changes, 1);
+
+  // 다른 행의 spoolDir 탈취는 문자열 id여도 여전히 거부된다(정규화가 검사를 느슨하게 만들지 않는다).
+  assert.equal(service.update(z, String(other.id), { spoolDir: 'kbs' }).reason, 'duplicate-spool-dir');
+  assert.equal(distributionTargetModel.findById(other.id).spoolDir, 'yna');
+
+  // 문자열 id의 update/deactivate는 숫자 id와 같은 행에 적용된다.
+  assert.equal(service.update(z, String(id), { name: '문자열 id' }).ok, true);
+  assert.equal(distributionTargetModel.findById(id).name, '문자열 id');
+  assert.equal(service.deactivate(z, String(id)).ok, true);
+  assert.equal(distributionTargetModel.findById(id).active, 'N');
+
+  // 숫자로 변환되지 않는 id는 기존과 동일하게 not-found로 수렴한다(404 계약 유지).
+  for (const bad of ['abc', '', ' ', null, undefined, {}, []]) {
+    assert.equal(service.update(z, bad, { name: 'x' }).reason, 'not-found', `not-found여야 함: ${JSON.stringify(bad)}`);
+    assert.equal(service.deactivate(z, bad).reason, 'not-found', `not-found여야 함: ${JSON.stringify(bad)}`);
+  }
+});
+
 test('update는 present-only — 전달한 필드만 반영하고 나머지는 불변', () => {
   const { service, sessionService, distributionTargetModel } = setup();
   const z = sessionFor(sessionService, 'Z', 'admin');
