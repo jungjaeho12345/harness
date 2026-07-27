@@ -833,12 +833,18 @@ function bootstrap() {
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
 
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService });
+  const logService = createLogService();
+  // 배부 스풀 루트(ADR-008)는 여기서만 판독해 주입한다 — 미설정이면 배부 비활성
+  // (수집 watcher가 RCV_SPOOL_DIR를 부트스트랩에서만 읽는 것과 동형).
+  const controllers = createControllers(db, {
+    sessionService,
+    logger: logService,
+    distSpoolDir: process.env.DIST_SPOOL_DIR,
+  });
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
-  const logService = createLogService();
   const app = createApp({ controllers, sessionService, logService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;
@@ -867,6 +873,10 @@ function bootstrap() {
     watcher.start();
     logService.info(`FTP watcher watching ${spoolDir}`);
   }
+
+  // 배부 스풀 상태 — 앱은 스풀 파일만 쓰고 실제 발송은 외부 전송기가 한다(타이머·egress 없음).
+  if (process.env.DIST_SPOOL_DIR) logService.info(`Distribution spool at ${process.env.DIST_SPOOL_DIR}`);
+  else logService.info('Distribution disabled (DIST_SPOOL_DIR unset)');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -10,11 +10,17 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../src/db/schema.js';
 import { createArticleModel } from '../src/models/articleModel.js';
 import { createArticleHistoryModel } from '../src/models/articleHistoryModel.js';
+import { createDistributionTargetModel } from '../src/models/distributionTargetModel.js';
 import { createArticleService } from '../src/services/articleService.js';
+import { createSessionService } from '../src/services/sessionService.js';
+import { createControllers } from '../src/controllers/index.js';
 
 const EMBARGO_1 = '2026-07-28T09:00:00.000Z';
 const EMBARGO_2 = '2026-07-29T09:00:00.000Z';
@@ -296,4 +302,237 @@ test('훅: distributionService 미주입(기존 호출 형태)이어도 송고 �
   assert.equal(row.status, 'DPS');
   assert.equal(row.distributedAt, null, '배부가 없으므로 배부시간도 없다');
   assert.equal(h.service.queryHistory(id).length, 1);
+});
+
+// ── B. 통합 — 실제 결선(createControllers) + 가짜 fs ────────────────────────
+// 실디스크·네트워크·타이머 접촉 0. 스풀 루트는 가짜 경로이고 fs는 주입한다.
+
+const ROOT = '/spool/dist';
+const DEFAULT_TARGETS = [
+  { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+  { name: '기업홍보', kind: 'nonpress', spoolDir: 'corp' },
+];
+
+function fakeFs({ failWrite = false } = {}) {
+  const files = new Map(); // path -> { data, enc }
+  const dirs = [];
+  return {
+    files,
+    dirs,
+    fs: {
+      mkdirSync: (dir, opts) => { dirs.push({ dir, opts }); },
+      writeFileSync: (p, data, enc) => {
+        if (failWrite) throw new Error(`EACCES: ${p}`);
+        files.set(p, { data, enc });
+      },
+    },
+  };
+}
+
+function fakeLogger() {
+  const lines = { debug: [], info: [], warn: [], error: [] };
+  const push = (lv) => (m) => { lines[lv].push(m); };
+  return { lines, logger: { debug: push('debug'), info: push('info'), warn: push('warn'), error: push('error') } };
+}
+
+// wire=false면 배부 옵션을 하나도 주지 않는다(기존 호출 형태 = 배부 비활성).
+function wiredSetup({ wire = true, failWrite = false, targets = DEFAULT_TARGETS } = {}) {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const h = fakeFs({ failWrite });
+  const log = fakeLogger();
+  const sessionService = createSessionService();
+  const controllers = wire
+    ? createControllers(db, { sessionService, distSpoolDir: ROOT, spoolFs: h.fs, logger: log.logger })
+    : createControllers(db, { sessionService });
+
+  const targetModel = createDistributionTargetModel(db);
+  for (const t of targets) {
+    targetModel.insert({
+      active: 'Y', createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', ...t,
+    });
+  }
+  return { db, controllers, h, log, articleModel: createArticleModel(db) };
+}
+
+// 기대 경로는 반드시 join으로 조립한다 — Windows에서 join('/spool','kbs')는 '\spool\kbs'다.
+const filesIn = (h, dir) => [...h.files.keys()].filter((p) => p.startsWith(`${join(ROOT, dir)}${sep}`));
+const readPayload = (h, path) => JSON.parse(h.files.get(path).data);
+
+function makeArticle(s, { status, ...contents } = {}) {
+  const c = s.controllers.article.create({
+    title: '제목', markupVersion: markup(true), author: 'kim', department: '사회부', ...contents,
+  });
+  assert.equal(c.ok, true);
+  if (status) s.articleModel.update(c.articleId, { contents: { status } });
+  return c.articleId;
+}
+
+test('결선: 엠바고 없는 송고는 언론사·비언론사 폴더에 각각 파일을 쓰고 배부시간·이력을 남긴다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s);
+  // 이전 송고 흔적을 심어 둔다 — 후처리가 전이 이전에 실행되면 파일에 이 옛 값이 실린다.
+  s.articleModel.update(id, { contents: { sentAt: '2020-01-01T00:00:00.000Z' } });
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+
+  assert.equal(s.h.files.size, 2);
+  const pressFiles = filesIn(s.h, 'kbs');
+  const nonpressFiles = filesIn(s.h, 'corp');
+  assert.equal(pressFiles.length, 1, '언론사 폴더에 1개');
+  assert.equal(nonpressFiles.length, 1, '비언론사 폴더에 1개');
+
+  const row = contentsRow(s.db, id);
+  assert.ok(row.distributedAt, 'Contents.distributedAt이 stamp된다');
+
+  const items = s.controllers.article.queryHistory(id);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].eventType, 'distribute', '최신순(id DESC) — 배부 이력이 위');
+  assert.equal(items[0].action, 'all');
+  assert.equal(items[0].actorUserId, 'desk');
+  assert.equal(items[1].eventType, 'status');
+
+  // 커밋 순서 불변식: 파일 내용은 "전이 이후" 값이어야 한다.
+  for (const p of [...pressFiles, ...nonpressFiles]) {
+    const payload = readPayload(s.h, p);
+    assert.equal(payload.article.status, 'DPS', '파일에 전이 이후 상태가 실린다');
+    assert.equal(payload.article.sentAt, row.sentAt, '파일의 sentAt은 이번 송고에서 stamp된 값이다');
+    assert.notEqual(payload.article.sentAt, '2020-01-01T00:00:00.000Z');
+    assert.equal(payload.article.articleId, id);
+  }
+});
+
+test('결선: 2차 엠바고만 있는 송고는 언론사 폴더에만 쓰고 상태는 EPS로 유지된다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s, { secondEmbargoAt: EMBARGO_2 });
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+  assert.deepEqual(r, { ok: true, status: 'EPS' });
+
+  const pressFiles = filesIn(s.h, 'kbs');
+  assert.equal(s.h.files.size, 1);
+  assert.equal(pressFiles.length, 1);
+  assert.equal(filesIn(s.h, 'corp').length, 0, '비언론사에는 배부하지 않는다');
+
+  const row = contentsRow(s.db, id);
+  assert.equal(row.status, 'EPS', '배부 후에도 EPS를 유지한다(전이 추가 금지)');
+  assert.ok(row.distributedAt);
+
+  const payload = readPayload(s.h, pressFiles[0]);
+  assert.equal(payload.article.status, 'EPS');
+  assert.equal(payload.article.secondEmbargoAt, EMBARGO_2);
+  assert.equal(payload.audience, 'press');
+});
+
+test('결선: 1차 엠바고가 있는 송고는 파일을 쓰지 않고 배부시간·배부이력도 남기지 않는다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s, { embargoAt: EMBARGO_1 });
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+  assert.deepEqual(r, { ok: true, status: 'EPS' });
+
+  assert.equal(s.h.files.size, 0);
+  assert.equal(s.h.dirs.length, 0, '폴더 생성조차 하지 않는다');
+  assert.equal(contentsRow(s.db, id).distributedAt, null);
+
+  const items = s.controllers.article.queryHistory(id);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].eventType, 'status');
+});
+
+test('결선(DDH): 2차 엠바고만 있는 보류 기사의 송고는 DPS가 되지만 언론사에만 배부한다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s, { status: 'DDH', secondEmbargoAt: EMBARGO_2 });
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+  assert.equal(r.status, 'DPS', '전제: DDH 송고 결과는 DPS다');
+
+  const pressFiles = filesIn(s.h, 'kbs');
+  assert.equal(pressFiles.length, 1);
+  assert.equal(filesIn(s.h, 'corp').length, 0, 'DPS라고 전체 배부하면 2차 엠바고 파기다');
+  assert.equal(readPayload(s.h, pressFiles[0]).article.status, 'DPS');
+});
+
+test('결선: 스풀 쓰기가 모두 실패해도 송고는 성공이고 배부시간·배부이력은 남지 않는다', () => {
+  const s = wiredSetup({ failWrite: true });
+  const id = makeArticle(s);
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  const row = contentsRow(s.db, id);
+  assert.equal(row.status, 'DPS');
+  assert.equal(row.sender, 'desk');
+  assert.equal(row.distributedAt, null, '나간 파일이 없으면 배부시간도 없다');
+  assert.equal(s.h.files.size, 0);
+
+  const items = s.controllers.article.queryHistory(id);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].eventType, 'status');
+  assert.ok(
+    s.log.lines.warn.some((m) => m.includes('distribution spool failed')),
+    `실패가 로그로 표면화된다: ${JSON.stringify(s.log.lines.warn)}`,
+  );
+});
+
+test('결선: 송고이력(sendOnly)은 배부 이후에도 status/send 1건만 반환한다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s);
+  s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+
+  assert.equal(s.controllers.article.queryHistory(id).length, 2, '배부 이력이 실제로 쌓인 상태');
+  const sendHistory = s.controllers.article.queryHistory(id, { sendOnly: true });
+  assert.equal(sendHistory.length, 1);
+  assert.equal(sendHistory[0].eventType, 'status');
+  assert.equal(sendHistory[0].action, 'send');
+});
+
+// ── C. 기본 비활성 잠금 ────────────────────────────────────────────────────
+
+test('기본값: 배부 옵션을 주지 않은 createControllers는 배부하지 않는다', () => {
+  const s = wiredSetup({ wire: false });
+  const id = makeArticle(s);
+
+  const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(s.h.files.size, 0);
+  assert.equal(s.h.dirs.length, 0);
+  assert.equal(contentsRow(s.db, id).distributedAt, null);
+  assert.equal(s.controllers.article.queryHistory(id).length, 1);
+});
+
+test('기본값: DIST_SPOOL_DIR 환경변수가 설정돼 있어도 컨트롤러는 그것을 읽지 않는다', () => {
+  const envDir = join(tmpdir(), `dist-spool-env-guard-${process.pid}-${Date.now()}`);
+  const prev = process.env.DIST_SPOOL_DIR;
+  try {
+    process.env.DIST_SPOOL_DIR = envDir;
+    const s = wiredSetup({ wire: false });
+    const id = makeArticle(s);
+
+    const r = s.controllers.article.applyAction(id, 'D', 'send', { userId: 'desk' });
+
+    assert.deepEqual(r, { ok: true, status: 'DPS' });
+    assert.equal(contentsRow(s.db, id).distributedAt, null);
+    assert.equal(s.controllers.article.queryHistory(id).length, 1);
+    assert.equal(existsSync(envDir), false, 'env를 읽었다면 실디스크에 스풀 폴더가 생긴다');
+  } finally {
+    if (prev === undefined) delete process.env.DIST_SPOOL_DIR;
+    else process.env.DIST_SPOOL_DIR = prev;
+  }
+});
+
+// ── D. 아키텍처 가드 ───────────────────────────────────────────────────────
+
+test('가드: 기사 서비스에 파일시스템·네트워크·타이머가 없다', () => {
+  const src = readFileSync(new URL('../src/services/articleService.js', import.meta.url), 'utf8');
+  for (const forbidden of ['node:fs', 'fetch', 'setInterval', 'setTimeout']) {
+    assert.equal(src.includes(forbidden), false, `articleService에 ${forbidden}이 없어야 한다`);
+  }
+});
+
+test('가드: 컨트롤러는 스풀 루트 환경변수를 판독하지 않는다(부트스트랩 전용)', () => {
+  const src = readFileSync(new URL('../src/controllers/index.js', import.meta.url), 'utf8');
+  assert.equal(src.includes('DIST_SPOOL_DIR'), false, '환경변수 판독은 부트스트랩 한 곳에서만 한다');
 });

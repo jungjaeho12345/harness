@@ -13,7 +13,7 @@ server/
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig)
+  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distribution · spoolWriter)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)

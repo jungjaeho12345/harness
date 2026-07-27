@@ -6,6 +6,11 @@
 // media 검색의 env(API 키)/fetchFn은 합성 루트인 여기서 기본값(서버 환경변수·전역 fetch)을 공급하고,
 // 테스트는 가짜 fetchFn/env를 주입해 네트워크 없이 결정적으로 검증한다.
 
+// 배부(ADR-008)의 실 fs는 합성 루트인 여기서 공급하고(env·전역 fetch 기본값과 동형),
+// 스풀 루트(env 판독)는 부트스트랩에서만 결정해 주입받는다 — 여기서 env를 읽으면
+// 이 함수를 직접 호출하는 다수의 테스트가 개발자 머신의 환경변수에 따라 실디스크에 파일을 쓴다.
+import { mkdirSync, writeFileSync } from 'node:fs';
+
 import { createUserModel } from '../models/userModel.js';
 import { createArticleModel } from '../models/articleModel.js';
 import { createArticleHistoryModel } from '../models/articleHistoryModel.js';
@@ -23,12 +28,18 @@ import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
+import { createSpoolWriter } from '../services/spoolWriter.js';
+import { createDistributionService } from '../services/distributionService.js';
 
 export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
   lockoutPolicy = {},
+  // 배부(ADR-008) — 스풀 루트가 주어질 때만 활성. 미주입이면 배부는 비활성이다(기본값 없음).
+  distSpoolDir = undefined,
+  spoolFs = { mkdirSync, writeFileSync },
+  logger = null,
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -43,7 +54,15 @@ export function createControllers(db, {
 
   // 서비스 결선.
   const userService = createUserService({ userModel, ...lockoutPolicy });
-  const articleService = createArticleService({ articleModel, db, historyModel: articleHistoryModel });
+  // 배부 결선(ADR-008): writer(포맷·쓰기) → 배부 서비스(대상 선택·DB 기록) → 기사 서비스(송고 후처리 훅).
+  // 스풀 루트 미주입이면 writer가 비활성이라 배부는 아무 일도 하지 않는다(fs 접촉 0).
+  const spoolWriter = createSpoolWriter({ rootDir: distSpoolDir, fs: spoolFs });
+  const distributionService = createDistributionService({
+    articleModel, distributionTargetModel, historyModel: articleHistoryModel, spoolWriter, logger,
+  });
+  const articleService = createArticleService({
+    articleModel, db, historyModel: articleHistoryModel, distributionService,
+  });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });
