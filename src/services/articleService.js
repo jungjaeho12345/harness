@@ -66,7 +66,14 @@ function sanitizeFileRefFields(contents) {
   return contents;
 }
 
-export function createArticleService({ articleModel, db, historyModel }) {
+export function createArticleService({
+  articleModel,
+  db,
+  historyModel,
+  // 배부 실행 서비스(ADR-008). 기본값 null 필수 — 이 키를 넘기지 않는 기존 호출자가 다수다.
+  // 미주입이면 배부는 일어나지 않는다(하위호환).
+  distributionService = null,
+}) {
   // 이력 기록 헬퍼 — 부가 기록이므로 본 기능(편집/전이)을 막지 않는다.
   // historyModel 미주입 시 건너뛰고, insert 실패는 try/catch로 격리한다.
   function record(rec) {
@@ -157,6 +164,32 @@ export function createArticleService({ articleModel, db, historyModel }) {
       toStatus: finalStatus,
       actorUserId: userId ?? null,
     });
+
+    // 배부 후처리(ADR-008) — 상태 전이 저장·이력 기록이 모두 끝난 뒤에만 실행한다.
+    // articleModel.update는 자체 트랜잭션으로 BEGIN/COMMIT을 끝내고 반환하므로 여기는 "커밋 이후"다:
+    // 배부(스풀 파일 쓰기)가 상태 전이를 롤백할 수 있는 경로가 구조적으로 존재하지 않는다.
+    // 이 블록을 update 앞이나 트랜잭션 안으로 옮기지 마라 — 파일은 롤백할 수 없고,
+    // 파일 IO가 DB 트랜잭션을 열어둔 채 지연시킨다.
+    // 스풀 실패는 송고를 실패시키지 않는다: 반환값을 바꾸지 않고 예외도 밖으로 흘리지 않는다.
+    if (action === 'send' && distributionService) {
+      // 송고가 완료된 상태에서만 배부한다(R의 RDS 송고·보류/KILL 결과는 배부 대상이 아니다).
+      const sent = finalStatus === 'DPS' || finalStatus === 'EPS';
+      // CRITICAL: 엠바고 우선 판정 — 상태(DPS/EPS)로 배부군을 정하지 마라.
+      //   DPS는 엠바고 기사에서도 도달한다(DDH→send, DPS 재송고): 위 EPS 치환이 fromStatus==='RDS'로
+      //   한정돼 있어 엠바고가 설정된 DDH 기사를 송고하면 EPS가 아니라 DPS가 된다.
+      //   상태로 판정하면 그 기사를 즉시 전체 배부해 엠바고를 파기한다(되돌릴 수 없다).
+      // 엠바고 값은 전이 이전에 읽은 row.contents를 본다 — applyAction은 엠바고 컬럼을 수정하지 않으므로
+      // 전이 전후 값이 동일하다(불필요한 재조회·경합 표면을 만들지 않는다). 판정은 falsy 기준이다(''는 미설정).
+      const audience = !sent ? null
+        : row.contents.embargoAt ? null // 1차 엠바고 → 시각 도래 배부(후속 phase). 지금은 배부하지 않는다.
+          : row.contents.secondEmbargoAt ? 'press' // 2차 엠바고만 → 송고 즉시 언론사(news.md)
+            : (finalStatus === 'DPS' ? 'all' : null); // 엠바고 없음 → 전체(ADR-008 (4))
+      // "배부 없음"은 audience를 넘기지 않는 것으로 표현한다 — 배부 서비스는 'press'|'all'만 받는다.
+      if (audience) {
+        try { distributionService.distribute(articleId, audience, { actorUserId: userId ?? null }); }
+        catch { /* 배부 실패는 송고를 막지 않는다 — 가시성은 배부 서비스의 logger가 담당한다 */ }
+      }
+    }
     return { ok: true, status: finalStatus };
   }
 
