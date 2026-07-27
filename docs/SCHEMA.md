@@ -46,9 +46,24 @@ ContentsVO에 대한 명세서
 - 편집 잠금 컬럼으로 LockYN(lockYN), 잠근 사용자(lockerUserId), 잠근 세션(lockerSessionId), 잠금 시각(lockedAt)이 있다. LockYN은 'Y'/'N'이며 기본값은 'N'이다.
 - 공통정보 컬럼으로 공동작성(coAuthor), 지역(region), 속성(attribute), 키워드(keyword), 내부코멘트(internalComment), 외부코멘트(externalComment), 첨부파일(attachmentFile), 자료파일(referenceFile)이 있다.
 - 시간 컬럼은 ISO-8601 UTC 문자열로 저장한다.
+- 배부시간(distributedAt)은 **최초 배부 지시 시각**이다. 스풀 파일 기록이 1건 이상 성공했을 때만 서버가 stamp하며, **이미 값이 있으면 갱신하지 않는다**(재배부·2차 엠바고의 2회 배부에도 최초 값을 유지한다). 발송 완료 시각이 아니라 배부 지시 완료 시각이다(ADR-008 — 실제 발송은 외부 전송기가 한다). 배부가 비활성(스풀 루트 미설정)이거나 대상이 0건이면 stamp하지 않는다. 기사 조회는 이 값을 범위 조건(distributedAtFrom/distributedAtTo)으로 쓸 수 있다.
 - 기사상태(status)는 기사 생애주기 값 RDS, DPS, RRH, RRK, DDH, DDK, DPD, EPS, EEK, EEH를 가진다 (전이 규칙은 news.md 기사 생애주기를 따른다). DPD는 DPS 기사의 삭제 승인 상태값이다(행 삭제가 아니라 상태값 전이 — DB 비파괴). EPS는 엠바고가 설정된 기사를 송고할 때의 상태(송고 대기)이고, EEK/EEH는 EPS 기사를 KILL/보류한 상태값이다.
 - 기사아이디는 'AKR' + YYYYMMDD + 난수 9자리 규칙으로 생성한다 (중복이면 난수를 다시 생성한다).
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
+
+## ArticleHistory Table
+기사의 편집·생애주기·배부 이벤트 로그에 대한 명세서. append-only.
+# property
+- id(INTEGER PK, ROWID alias, 자동 증가), 기사아이디(articleId), 이벤트종류(eventType), 액션(action), 이전상태(fromStatus), 다음상태(toStatus), 행위자(actorUserId), 기록시간(createdAt), 본문스냅샷(markupVersion) 컬럼을 가진다.
+- id는 INTEGER PRIMARY KEY (SQLite ROWID alias) — 자동 증가. 나머지 컬럼은 VARCHAR.
+- eventType 값은 다음 셋이며 집합은 **additive**다(값 추가만으로 확장하고 컬럼은 늘리지 않는다).
+  - 'edit'(편집 저장): actorUserId는 수정자, markupVersion은 그 시점 본문 스냅샷이다(본문 없는 메타 전용 편집이면 NULL). action/fromStatus/toStatus는 NULL.
+  - 'status'(생애주기 전이): action은 전이 액션(send/hold/kill/approveDelete), fromStatus/toStatus는 전이 전후 상태다. 전이가 **성공**했을 때만 기록하고 스냅샷은 NULL이다(본문 불변).
+  - 'distribute'(배부 지시 — phase 47, ADR-008): action에 대상군('press'=언론사 | 'all'=언론사+비언론사)이 들어가고 fromStatus/toStatus/markupVersion은 NULL이다. createdAt은 그 배부의 지시 시각(스풀 파일의 distributedAt과 같은 값)이다. **배부 1회당 1행**이며 수신처 수와 무관하다(수신처별 상세는 스풀 파일과 로그가 증거다). 스풀 기록이 1건 이상 성공했을 때만 남기고 **실패는 기록하지 않는다**(성공/실패 구분 컬럼이 없어 "배부됨"으로 오독되므로, 실패 가시성은 로그가 담당한다).
+- 소비처는 알 수 없는 eventType 값을 만나도 안전하게 동작한다 — 이력 목록은 값을 원문 그대로 표시하고, 송고이력 필터는 eventType='status' AND action='send'만 통과시키며, 기사이력비교는 스냅샷이 있는 행만 고른다.
+- 행 삭제/수정 없음(append-only) — 모델은 삭제 함수를 노출하지 않는다(DB 비파괴 원칙).
+- createdAt은 ISO-8601 UTC 문자열로 서버가 stamp한다. 목록 조회는 최신순(id DESC)이며 본문 blob 없이 스냅샷 존재 여부(hasSnapshot)만 파생해 노출한다.
+- 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.
 
 ## ReceiverConfig Table
 수집(자동기사) 수신 설정에 대한 명세서. Z(관리자) 전용 CRUD.
@@ -79,7 +94,7 @@ ContentsVO에 대한 명세서
 - id(INTEGER PK, ROWID alias, 자동 증가), 수신처명(name), 종류(kind), 스풀폴더(spoolDir), 활성여부(active), 생성시간(createdAt), 수정시간(updatedAt) 컬럼을 가진다.
 - id는 INTEGER PRIMARY KEY (SQLite ROWID alias) — 자동 증가. 나머지 컬럼은 VARCHAR.
 - kind는 'press'(언론사) 또는 'nonpress'(비언론사)이다. 엠바고 배부 규칙(1차→언론사, 2차→비언론사)이 이 값으로 대상을 고른다.
-- spoolDir는 배부 스풀 하위 폴더명(슬러그 문자열)이다. **문자열 저장/검증만 하며 앱은 이 phase에서 디렉토리를 만들거나 파일을 쓰지 않는다**(실제 스풀 쓰기는 phase 47 — ADR-008의 파일 스풀 outbound).
+- spoolDir는 배부 스풀 하위 폴더명(슬러그 문자열)이다. **배부 실행 시 서버가 스풀 루트 아래 이 폴더에 기사 JSON을 기록한다**(phase 47 — ADR-008의 파일 스풀 outbound). 대상 관리 API는 문자열 검증·저장만 한다.
 - active는 'Y'/'N', 기본값 'Y'. 'N'이면 배부 대상에서 제외된다.
 - **행 삭제 없음 — 비활성은 active='N' soft delete로 처리한다(DB 비파괴 원칙). 모델은 삭제(remove/delete) 함수를 노출하지 않는다.**
 - createdAt/updatedAt은 ISO-8601 UTC 문자열로 서버가 stamp한다.
