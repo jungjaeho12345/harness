@@ -191,6 +191,22 @@ test('대상: 알 수 없는 kind(레거시/직접 SQL)는 어떤 audience에도
   }
 });
 
+test('대상: audience=press인데 활성 언론사가 0건이면 비언론사로 대체 배부하지 않는다', () => {
+  // 2차 엠바고 기사의 즉시 배부 경로다 — 언론사 수신처가 없다고 비언론사로 흘러가면 엠바고 파기다.
+  // 대상 0건은 에러가 아니라 "아무것도 하지 않음"이며 DB도 건드리지 않는다.
+  const { service, db, h, calls } = setup({
+    targets: [{ name: '기업홍보', kind: 'nonpress', spoolDir: 'corp' }],
+  });
+  const r = service.distribute(ARTICLE_ID, 'press');
+
+  assert.deepEqual(r, { ok: true, attempted: 0, written: 0, failures: [], distributedAt: null });
+  assert.equal(h.files.size, 0);
+  assert.equal(h.dirs.length, 0, '비언론사 폴더는 mkdir조차 하지 않는다');
+  assert.equal(calls.update, 0);
+  assert.equal(contentsRow(db).distributedAt, null);
+  assert.equal(historyRows(db).length, 0);
+});
+
 test('audience: 알 수 없는 값은 invalid-audience이고 DB·fs를 전혀 건드리지 않는다', () => {
   // 'nonpress'는 phase 48 소관이라 지금은 거부다. 프로토타입 키('__proto__' 등)가 대상군을 얻으면 오발송이다.
   const bads = [

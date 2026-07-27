@@ -238,6 +238,20 @@ test('훅(DDH): 엠바고가 없으면 보류 해제 송고는 정상적으로 �
   assert.equal(dist.calls[0].audience, 'all');
 });
 
+// 송고 완료 게이트(sent) — 엠바고 판정보다 앞선다. 이 게이트가 없으면 2차 엠바고가 설정된 기사를
+// 기자(R)가 "송고"하는 것만으로 언론사에 나간다(전이 결과는 RDS = 데스크 미승인). 상태가 DPS/EPS가
+// 아닌 유일한 send 결과가 이 경로라, 여기서만 게이트 소실이 관측된다.
+test('훅(R): 2차 엠바고가 있어도 기자 송고(RDS 유지)는 배부하지 않는다(데스크 미승인 유출 금지)', () => {
+  const dist = fakeDistribution();
+  const h = unitSetup(dist);
+  const id = seed(h, { secondEmbargoAt: EMBARGO_2 });
+
+  const r = h.service.applyAction(id, 'R', 'send', { userId: 'kim' });
+
+  assert.equal(r.status, 'RDS', '전제: 기자 송고는 데스크 미송고(RDS)로 남는다');
+  assert.equal(dist.calls.length, 0, '데스크가 승인하지 않은 기사가 언론사로 나가면 안 된다');
+});
+
 test('훅: 엠바고가 추가된 DPS 기사의 재송고는 배부하지 않는다', () => {
   const dist = fakeDistribution();
   const h = unitSetup(dist);
@@ -452,6 +466,22 @@ test('결선(DDH): 2차 엠바고만 있는 보류 기사의 송고는 DPS가 �
   assert.equal(pressFiles.length, 1);
   assert.equal(filesIn(s.h, 'corp').length, 0, 'DPS라고 전체 배부하면 2차 엠바고 파기다');
   assert.equal(readPayload(s.h, pressFiles[0]).article.status, 'DPS');
+});
+
+test('결선(R): 2차 엠바고 기사의 기자 송고는 스풀 파일·배부시간·배부이력을 남기지 않는다', () => {
+  const s = wiredSetup();
+  const id = makeArticle(s, { secondEmbargoAt: EMBARGO_2 });
+
+  const r = s.controllers.article.applyAction(id, 'R', 'send', { userId: 'kim' });
+
+  assert.deepEqual(r, { ok: true, status: 'RDS' });
+  assert.equal(s.h.files.size, 0, '데스크 미승인 기사가 스풀에 나가면 안 된다');
+  assert.equal(s.h.dirs.length, 0, '폴더 생성조차 하지 않는다');
+  assert.equal(contentsRow(s.db, id).distributedAt, null);
+
+  const items = s.controllers.article.queryHistory(id);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].eventType, 'status');
 });
 
 test('결선: 스풀 쓰기가 모두 실패해도 송고는 성공이고 배부시간·배부이력은 남지 않는다', () => {
