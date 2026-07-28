@@ -12,8 +12,8 @@ server/
   ftpWatcher.js         # 수집(자동기사) FTP 스풀 디렉토리 watcher — 파일 이벤트 시 controllers.collection.receive 호출 (watch 주입형, 테스트는 실제 FS 미사용)
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
-  models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig)
+  models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
+  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)
@@ -43,6 +43,13 @@ test/                   # 백엔드 테스트 (node --test)
 [실시간] 기사 생성/수정/상태전이/잠금변경 → 서버 in-process EventEmitter
          → SSE(/api/stream) → httpModel.subscribe → Controller가 "무효화 신호" 수신
          → 자기 필터로 재조회 → View 갱신   (행 데이터를 push받지 않음)
+
+[배부]   송고 성공(articleService.applyAction) → 엠바고 판정으로 배부 종류 결정
+         (엠바고 없음 DPS → 언론사+비언론사 / 2차 엠바고만 EPS → 언론사 / 1차·1+2차 EPS → 시점 배부는 tick)
+         → distributionService → 활성 DistributionTarget별 spoolWriter
+         → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
+         → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
+         → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
 ```
 
 ## 상태 관리

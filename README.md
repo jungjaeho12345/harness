@@ -46,6 +46,7 @@ npm run dev        # 프론트엔드 개발 서버 (Vite, :5173)
 - `YOUTUBE_API_KEY` — 영상 검색(YouTube Data API v3)
 - `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` — 이미지 검색(Google Custom Search)
 - (선택) `RCV_SPOOL_DIR` — 수집 FTP 스풀 디렉토리, `COLLECTION_TOKEN` — 수집 인제스트 토큰
+- (선택) `DIST_SPOOL_DIR` — 배부 스풀 루트 디렉토리(미설정 시 배부 비활성 — ADR-008)
 
 미디어 검색 키가 없으면 검색은 오류 대신 빈 결과를 반환한다.
 

@@ -1,0 +1,30 @@
+{
+  "project": "기사 작성기",
+  "phase": "47-distribution-service",
+  "steps": [
+    {
+      "step": 0,
+      "name": "spool-writer",
+      "status": "completed",
+      "summary": "배부 스풀 writer(ADR-008 (1) 파일 스풀 outbound) 완료. 변경 파일 2: 소스 1(src/services/spoolWriter.js 신규 — createSpoolWriter({rootDir, mkdir, writeFile, rename, now})가 write({spoolDir, articleId, article, contents}) 하나만 노출. ① rootDir 미설정 시 spool-disabled, ② sanitizeSpoolDir 재검증(DB 저장값도 불신 — 경로 합성 직전이 마지막 방어 지점) invalid-spool-dir, ③ articleId /^[A-Za-z0-9_-]{1,64}$/ 화이트리스트 invalid-article-id, ④ mkdir(recursive) → 같은 디렉토리 임시파일(.<name>.tmp) writeFile → rename 원자적 게시, ⑤ 실패 전량 spool-write-failed로 반환(throw 0 — 한 수신처 실패가 다른 수신처·송고를 막지 않는다는 step1 전제). 외부 반출 페이로드 shape·필드 allowlist를 이 모듈이 단일 출처로 소유 — CONTENTS_FIELDS 18개 + Article.markupVersion + 서버 stamp distributedAt, internalComment·lockYN·locker*·lockedAt·미지 컬럼은 미노출. 파일명 <articleId>_<compactStamp>.json으로 재배부 시 이전 배부본 미덮어씀) + 테스트 1(test/spoolWriter.test.js 신규 9건 — mkdir/writeFile/rename 가짜 주입으로 실제 FS 미접촉). TDD: 사전 red(ERR_MODULE_NOT_FOUND) 확인 후 green. ADR-008 준수: fetch/setInterval/setTimeout/EventSource/SQL 0건. AC 그린: npm test 498 pass·fail 0(기준선 489 대비 +9 무회귀), npm run lint clean."
+    },
+    {
+      "step": 1,
+      "name": "distribution-service",
+      "status": "completed",
+      "summary": "배부 실행 서비스 완료. 변경 파일 2: 소스 1(src/services/distributionService.js 신규 — createDistributionService({distributionTargetModel, articleModel, historyModel, spoolWriter, now})가 distribute(articleId, {kinds, actorUserId}) 하나만 노출(tick/타이머 진입점 없음). ① spoolWriter 미주입 시 spool-disabled, ② kinds는 KINDS=['press','nonpress'] 화이트리스트 교집합(비배열·빈배열·미지 값은 무동작 {ok:true,distributed:[],failed:[]}), ③ 기사 부재 not-found(파일 쓰기 0), ④ kind별 distributionTargetModel.query({kind, active:'Y'})로 활성 대상만 선정(비활성 제외), ⑤ 수신처별 spoolWriter.write({spoolDir, articleId, article, contents}) — 페이로드 조립 없이 DB 행을 그대로 전달(파일 shape 단일 출처는 spoolWriter), ⑥ 부분 실패 격리(try/catch + res.ok 분기 → distributed[]/failed[]로 보고, throw 0), ⑦ kind에서 성공 1건 이상일 때만 ArticleHistory에 eventType='distribute'·action=kind 1행 append(거짓 기록 금지 — 이 행이 phase 48 tick의 '이미 배부됨' 판정 근거), ⑧ 전체 성공 1건 이상일 때만 articleModel.update(id, {contents:{distributedAt: now()}}) present-only 갱신(status·sentAt·본문 불변). 이력 기록 실패는 try/catch로 격리(배부 미회수). 시점 판정(엠바고 시각 비교)·EPS→DPS 전이는 미구현 — phase 48 소관임을 파일 상단 주석에 명시) + 테스트 1(test/distributionService.test.js 신규 12건 — in-memory DB + 실제 모델 + 가짜 spoolWriter). TDD: 사전 red 확인 후 green. ADR-008 준수: node:fs·fetch·setInterval·setTimeout·DELETE FROM·DROP 0건(grep). DB 비파괴 잠금: 배부 전후 Article/Contents/DistributionTarget 행 수 동일 + 기존 송고 이력 보존 + 배부 이력이 송고이력 필터(eventType='status'&&action='send')에 미포함. AC 그린: npm test 510 pass·fail 0(step0 498 대비 +12 무회귀), npm run lint clean."
+    },
+    {
+      "step": 2,
+      "name": "send-hook",
+      "status": "completed",
+      "summary": "송고 시점 즉시 배부 훅 완료. 변경 파일 2: 소스 1(src/services/articleService.js — ① 순수 헬퍼 distributionKindsForSend(status, contents) export 신설: DPS→['press','nonpress'](ADR-008 (4)), EPS이면서 embargoAt 없음+secondEmbargoAt 있음→['press'](news.md '2차 엠바고... 송고시 바로 언론사에 배부'), 그 외(1차·1+2차 EPS, R의 RDS 유지 등)→[](시점 배부는 phase 48 tick). 시각 비교 로직 없음. ② createArticleService에 선택 의존성 distributionService 추가(미주입 시 훅 비활성 — 하위호환), ③ applyAction의 이력 기록 직후 action==='send' && kinds.length>0일 때만 fire-and-forget 호출 — Promise.resolve(...).catch(()=>{}) + try/catch로 비동기 reject·동기 throw 모두 격리해 송고 전이·이력을 되돌리지 않는다. applyAction은 동기 반환 계약 유지(라우트·기존 테스트가 await 없이 호출). 판정은 DB 반영 최종 status + DB 엠바고 컬럼으로만(ADR-004) + 테스트 1(test/articleSendDistribution.test.js 신규 10건 — 가짜 distributionService 주입). TDD: 사전 red 3건(핵심 판정 케이스) 확인 후 green. 계약 잠금: 거부된 송고((끝) 마커 없음·EPS send 등 정의 외 전이) 미배부, hold/kill/approveDelete 미배부, DPS 재송고·DDH→DPS 배부, 배부 실패(fail/reject) 시 status DPS·status 이력 1건 유지, 미주입 시 distributedAt null, 반환값에 .then 부재. AC 그린: npm test 520 pass·fail 0(step1 510 대비 +10 무회귀), npm run lint clean."
+    },
+    {
+      "step": 3,
+      "name": "wiring-docs",
+      "status": "completed",
+      "summary": "배부 결선 + 문서 현행화 완료. 변경 파일 7: 소스 3(src/controllers/index.js — env.DIST_SPOOL_DIR이 있을 때만 createSpoolWriter({rootDir: env.DIST_SPOOL_DIR, ...spoolFs}) → createDistributionService({distributionTargetModel, articleModel, historyModel, spoolWriter}) 결선 후 createArticleService에 주입. 미설정이면 둘 다 undefined라 송고 훅 비활성(기본값 하드코딩 없음 — 의도치 않은 파일 쓰기 방지). 선택 파라미터 spoolFs 추가(mkdir/writeFile/rename 주입 seam — fetchFn과 동일한 이유로 테스트가 실제 FS 미접촉). 컨트롤러 도메인 집합은 9개 그대로(배부 실행 진입점 미노출 — 트리거는 송고 훅뿐). server/index.js — bootstrap에 DIST_SPOOL_DIR 설정 시 로그 1줄만 추가(디렉토리 사전 생성·라우트·타이머·watcher 0, tick은 phase 48). .env.example — DIST_SPOOL_DIR 주석 항목 추가) + 테스트 1(test/controllers.test.js +2건: DIST_SPOOL_DIR 설정 시 Z 세션으로 등록한 활성 수신처(kbs)에 송고→mkdir '/spool/out/kbs'·rename 파일명 패턴·Contents.distributedAt 기록·ArticleHistory distribute:press 1행까지 end-to-end 확인, 미설정 시 writeFile 0건·distributedAt null·송고는 DPS 정상) + docs 3(docs/ARCHITECTURE.md — services/models 목록에 distribution·spoolWriter·distributionTargetModel 추가 + 데이터 흐름에 [배부] 블록(엠바고 판정→spoolWriter→distributedAt/ArticleHistory→외부 전송기, 앱 egress·타이머 없음). docs/SCHEMA.md — Contents 절에 distributedAt 갱신 정책(최근 배부 시각, 개별 이벤트는 ArticleHistory append-only) 1줄, DistributionTarget 절 spoolDir 문구를 phase 47 현행(실제 경로 합성·재검증)으로 교체. README.md — 환경변수 절에 (선택) DIST_SPOOL_DIR 추가). TDD: 신규 2건 중 결선 케이스 사전 red 확인 후 green. 범위 준수: web/** 무접촉(diffstat). AC 그린: npm test 522 pass·fail 0(step2 520 대비 +2 무회귀), npm run test:web 1927 pass·fail 0(기준선 유지 — web 무변경), npm run lint clean, npm run build clean. [리뷰 반영] 코드리뷰 high 1건(배부 실패 무음 삼킴 — fire-and-forget이라 반환값이 버려져 미발송이 로그·DB 어디에도 남지 않음, ftpWatcher.onError 관례 위반) 수정: distributionService에 onFailure(선택) 추가 + createControllers가 logService(선택)를 받아 'distribution failed articleId=..·targetId=..·kind=..·reason=..' warn(본문·페이로드 미포함), bootstrap이 logService를 컨트롤러·HTTP 계층과 공유하도록 순서 조정. low 2건 동시 수정: spoolFs 주입을 mkdir/writeFile/rename 3종으로 한정(rootDir 덮어쓰기 차단), logService.warn 옵셔널 호출. 회귀 테스트 3건 추가. 최종: npm test 527 pass·fail 0, npm run test:web 1927 pass·fail 0, lint·build clean."
+    }
+  ]
+}

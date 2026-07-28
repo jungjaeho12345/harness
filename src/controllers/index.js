@@ -23,12 +23,20 @@ import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
+import { createDistributionService } from '../services/distributionService.js';
+import { createSpoolWriter } from '../services/spoolWriter.js';
 
+// spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
+//   테스트가 실제 파일시스템을 건드리지 않게 하기 위한 seam이다. 미주입이면 node:fs/promises가 쓰인다.
+// logService(선택): 배부 실패처럼 fire-and-forget 경로에서 사라질 사실을 표면화하는 데만 쓴다
+//   (HTTP 계층의 logService와 같은 인스턴스를 부트스트랩이 넘긴다). 미주입이면 조용히 생략한다.
 export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
   lockoutPolicy = {},
+  spoolFs,
+  logService,
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -41,9 +49,36 @@ export function createControllers(db, {
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
   const session = sessionService ?? createSessionService();
 
+  // 배부(ADR-008) — 스풀 루트(DIST_SPOOL_DIR)가 설정된 환경에서만 활성화한다.
+  // 기본값을 하드코딩하지 않는다: 미설정 환경에서 의도치 않은 파일 쓰기가 생기면 안 된다.
+  // 앱은 스풀 파일을 쓰기만 한다 — 네트워크 전송(egress)도 타이머도 없다(발송은 외부 전송기).
+  const spoolWriter = env && env.DIST_SPOOL_DIR
+    ? createSpoolWriter({
+      rootDir: env.DIST_SPOOL_DIR,
+      // 주입은 FS 조작 3종만 받는다(rootDir 등 다른 설정을 덮어쓰지 못하게 한정).
+      ...(spoolFs ? { mkdir: spoolFs.mkdir, writeFile: spoolFs.writeFile, rename: spoolFs.rename } : {}),
+    })
+    : undefined;
+  const distributionService = spoolWriter
+    ? createDistributionService({
+      distributionTargetModel,
+      articleModel,
+      historyModel: articleHistoryModel,
+      spoolWriter,
+      // 송고 훅은 fire-and-forget이라 반환값을 보지 않는다 — 미발송을 로그로 표면화한다.
+      // 기사/수신처 식별자와 사유만 담는다(본문·페이로드 금지 — 마스킹 규율).
+      onFailure: ({ articleId, targetId, kind, reason }) => {
+        logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
+      },
+    })
+    : undefined;
+
   // 서비스 결선.
   const userService = createUserService({ userModel, ...lockoutPolicy });
-  const articleService = createArticleService({ articleModel, db, historyModel: articleHistoryModel });
+  // distributionService 미주입(스풀 미설정) 시 송고 훅은 비활성 — 기존 동작 그대로.
+  const articleService = createArticleService({
+    articleModel, db, historyModel: articleHistoryModel, distributionService,
+  });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });

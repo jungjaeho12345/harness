@@ -255,6 +255,12 @@
       "status": "completed",
       "completed_at": "2026-07-27T20:05:00+0900",
       "note": "배부 3부작(46 대상관리 → 47 즉시배부 → 48 tick)의 첫 phase — ADR-008 기반. 범위는 배부 대상(수신처) 관리 CRUD만: (0) DistributionTarget 테이블 additive 신설 + distributionTargetModel(삭제 없음), (1) distributionTargetService(Z 게이트·입력 검증) + spoolDir 슬러그 검증기 + REST 라우트, (2) Model 계약 3면(contract/httpModel/fakeModel), (3) distMgmt.do 관리 화면(Z 전용). 배부 실행(스풀 파일 쓰기·distributedAt·EPS→DPS 전이·tick)은 phase 47/48 — 이 phase에 혼입 금지. 앱 내 타이머·네트워크 egress·디렉토리 생성 없음."
+    },
+    {
+      "dir": "47-distribution-service",
+      "status": "completed",
+      "completed_at": "2026-07-28T11:56:33+0900",
+      "note": "배부 3부작의 두 번째 phase(즉시 배부) — ADR-008 기반. 범위는 송고 시점 즉시 배부까지: (0) spoolWriter(주입형 FS·원자적 rename·경로 재검증·외부 반출 필드 allowlist), (1) distributionService(활성 대상 선정→스풀 쓰기→Contents.distributedAt 갱신→ArticleHistory kind별 이력, 부분 실패 격리·거짓 기록 금지), (2) 송고 훅(distributionKindsForSend — 엠바고 없음 DPS→press+nonpress / 2차만 EPS→press 즉시 / 1차·1+2차 EPS→없음, 동기 반환 계약 유지·배부 실패가 송고를 되돌리지 않음), (3) DIST_SPOOL_DIR 결선(미설정 시 배부 비활성)+문서 현행화. 시점 배부(POST /api/distribution/tick)·EPS→DPS 완결 전이·배부 UI/재전송은 phase 48/MVP-4 — 이 phase에 혼입 없음(앱 타이머·egress 0). 리뷰 게이트에서 high 1건(배부 실패 무음 삼킴) 수정 후 통과."
     }
   ]
 }
