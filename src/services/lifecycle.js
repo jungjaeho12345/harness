@@ -34,6 +34,17 @@ export function initialStatus(role, action) {
   return 'RDS';
 }
 
+// 엠바고 배부 완결에 의한 시스템 전이 — EPS→DPS (ADR-008 (5)).
+// 위 전이표(DESK_TABLE/REPORTER_TABLE)와 분리한 이유:
+//  - 그 표는 news.md의 **역할·액션 기반** 전이이고, EPS에 send가 없다는 사실 자체가 계약이다.
+//  - 이 전이의 주체는 사람이 아니라 시스템(시점 배부 tick)이며, 이력의 action도 'embargoComplete'로 구분된다.
+// EEH/EEK(보류·킬된 엠바고 기사)는 절대 되살리지 않는다 — EPS일 때만 허용한다.
+export function embargoCompleteTransition(status) {
+  return status === 'EPS'
+    ? { ok: true, status: 'DPS' }
+    : { ok: false, reason: 'forbidden-transition' };
+}
+
 // 다음 status를 { ok:true, status } 로 반환하거나, 정의 외 조합은 { ok:false, reason } 로 거부.
 export function transition(status, role, action) {
   if (!ACTIONS.has(action)) return { ok: false, reason: 'unknown-action' };
