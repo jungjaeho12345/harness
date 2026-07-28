@@ -49,7 +49,12 @@ test/                   # 백엔드 테스트 (node --test)
          → distributionService → 활성 DistributionTarget별 spoolWriter
          → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
          → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
+         → 배부 완료 시 SSE 무효화 재발행(onChange('distribute')) → 목록 배부시간 즉시 갱신
          → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
+[시점배부] 외부 cron → POST /api/distribution/tick (Z 세션 또는 DISTRIBUTION_TOKEN — 앱 타이머 없음)
+         → articleService.distributionTick: pending EPS 중 시각 도래분(1차→언론사, 2차→비언론사)만 배부
+         → 배부 이력(distribute) kind 기준 완결 판정 → EPS→DPS 전이(ArticleHistory status/embargoComplete)
+         → app.notifyChange('distribute')로 무효화 재발행
 ```
 
 ## 상태 관리

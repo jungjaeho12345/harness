@@ -48,6 +48,7 @@ ContentsVO에 대한 명세서
 - 시간 컬럼은 ISO-8601 UTC 문자열로 저장한다.
 - 배부시간(distributedAt)은 배부(스풀 기록) 실행 시각이다 — 배부가 실행될 때마다 가장 최근 시각으로 갱신하고, 개별 배부 이벤트는 ArticleHistory에 append-only로 남는다(ADR-008: 스풀 기록 시각 = 배부 지시 완료, 발송 완료가 아니다).
 - 기사상태(status)는 기사 생애주기 값 RDS, DPS, RRH, RRK, DDH, DDK, DPD, EPS, EEK, EEH를 가진다 (전이 규칙은 news.md 기사 생애주기를 따른다). DPD는 DPS 기사의 삭제 승인 상태값이다(행 삭제가 아니라 상태값 전이 — DB 비파괴). EPS는 엠바고가 설정된 기사를 송고할 때의 상태(송고 대기)이고, EEK/EEH는 EPS 기사를 KILL/보류한 상태값이다.
+- EPS→DPS 완결 전이(ADR-008): 시점 배부(POST /api/distribution/tick)가 엠바고 배부를 마치면 EPS 기사를 DPS로 전이한다. 완결 판정은 ArticleHistory의 배부 이력 kind 기준이다(press⇔1차 embargoAt, nonpress⇔2차 secondEmbargoAt가 설정된 경우 required; 2차만 기사의 press는 송고 즉시 배부분이라 완결 조건이 아니다). 전이는 present-only status 갱신이며 ArticleHistory에 eventType='status', action='embargoComplete'(actorUserId=null, 시스템)로 append-only 기록된다.
 - 기사아이디는 'AKR' + YYYYMMDD + 난수 9자리 규칙으로 생성한다 (중복이면 난수를 다시 생성한다).
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
 
