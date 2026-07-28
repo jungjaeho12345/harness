@@ -19,6 +19,7 @@
 
 ## MVP 제외 사항
 - ~~배부 시스템~~ → 2026-07-26 스코프 확장으로 착수(ADR-008). 배부 UI 보강·실패 재전송은 후속(MVP-4).
+- 배부 tick 후속 과제(phase 48 코드리뷰 잔여 finding, MVP-4): ① 송고 시 배부 kind 규칙이 articleService에 이원화되어 있음 — embargoSchedule로 단일화, ② 2차만 엠바고 기사의 송고 시 press 배부 실패 복구 경로 부재(영구 미완결), ③ tick 결과 `incomplete`에 "미도래 대기"와 "배부 실패"가 혼재 — 의미 분리, ④ tick 전용 인증(운영 루틴용 토큰)·실행 로그 보강.
 - 우클릭 메뉴의 이력보기/송고이력보기/번역/매핑/후속·계속기사작성/재송 (메뉴 표시만, 동작 안 함). (삭제요청은 DPS 기사 삭제 승인 → DPD 전이로 동작한다 — D/Z 전용.)
 - HTTPS 강제, HttpOnly/Secure/SameSite 쿠키 세션, SSE 인증 강화, 계정 잠금 등 추가 보안 하드닝(후속 과제).
 - 본문 평문(content) 컬럼 — 본문은 markupVersion 블록 JSON에만 저장(평문 컬럼 미사용).
