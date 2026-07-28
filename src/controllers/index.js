@@ -24,6 +24,7 @@ import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
 import { createDistributionService } from '../services/distributionService.js';
+import { createDistributionTickService } from '../services/distributionTickService.js';
 import { createSpoolWriter } from '../services/spoolWriter.js';
 
 // spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
@@ -80,6 +81,12 @@ export function createControllers(db, {
     articleModel, db, historyModel: articleHistoryModel, distributionService,
   });
   const authorization = createAuthorization({ sessionService: session, articleModel });
+  // 시점 배부(tick, phase 48) — 스풀 미설정이어도 항상 생성한다: 인가 게이트(Z 전용)가 스풀 설정 여부보다
+  // 먼저 판정돼야 비인가 호출자에게 배부 설정 상태(spool-disabled)가 새지 않는다.
+  // distributionService 미주입(스풀 미설정) 시 서비스 계약대로 'spool-disabled'를 반환한다(step1).
+  const distributionTickService = createDistributionTickService({
+    articleModel, historyModel: articleHistoryModel, distributionService, articleService, authorization,
+  });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });
   const mediaSearch = createMediaSearch({ fetchFn, env });
@@ -155,5 +162,14 @@ export function createControllers(db, {
     search: (q) => photoService.search(q),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget };
+  // 시점 배부(tick) — Z 전용 게이트·프로세스 내 단일 실행·spool-disabled 판정은 distributionTickService가
+  // 강제한다(ADR-008 (3)). 컨트롤러는 위임만 한다(ADR-006) — HTTP 결선은 server/index.js(step2).
+  const distribution = {
+    tick: (sessionId) => distributionTickService.run(sessionId),
+  };
+
+  return {
+    auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget,
+    distribution,
+  };
 }

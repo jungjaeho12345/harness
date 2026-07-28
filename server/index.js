@@ -97,6 +97,7 @@ const STATUS_BY_REASON = {
   'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
+  busy: 409,   // 이전 tick이 실행 중 — 중복 배부 방지 게이트(ADR-008). 재시도는 다음 주기 호출이 한다.
 };
 
 function fail(res, result, fallback = 400) {
@@ -435,6 +436,20 @@ export function createApp({
     try {
       const r = controllers.distributionTarget.deactivate(readSessionToken(req), Number(req.params.id));
       return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // --- 시점 배부 tick (Z 전용 — 게이트는 distributionTickService가 강제, ADR-008 (3)) ---
+  // 외부 운영 cron이 주기 호출한다. 앱 내부에는 타이머가 없다.
+  // 신호 책임: 이 라우트는 status 전이에 대한 'status'만 발행한다.
+  // 배부('update') 신호의 단일 출처는 distributionService.onDistributed다 — 여기서 중복 발행하지 않는다.
+  app.post('/api/distribution/tick', async (req, res, next) => {
+    try {
+      const r = await controllers.distribution.tick(readSessionToken(req));
+      if (!r.ok) return fail(res, r);
+      if (r.transitioned.length) app.notifyChange('status');
+      logService.info(`distribution tick evaluated=${r.evaluated} distributed=${r.distributed.length} transitioned=${r.transitioned.length} failed=${r.failed.length}`);
+      return res.json(r);
     } catch (e) { next(e); }
   });
 
@@ -849,7 +864,7 @@ function bootstrap() {
 
   // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).
   // 여기서 디렉토리를 미리 만들지 않는다: 생성은 실제 배부 시점의 spoolWriter 책임이다.
-  // 시점 배부(tick)는 phase 48 — 앱에 타이머/주기 실행은 두지 않는다.
+  // 시점 배부는 POST /api/distribution/tick 외부 호출로만 실행된다 — 앱에 타이머/주기 실행은 없다.
   if (process.env.DIST_SPOOL_DIR) {
     logService.info(`distribution spool root ${process.env.DIST_SPOOL_DIR}`);
   }

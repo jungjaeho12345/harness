@@ -37,11 +37,14 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 10개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
+    [
+      'article', 'auth', 'collection', 'distribution', 'distributionTarget',
+      'media', 'photo', 'receiverConfig', 'translation', 'user',
+    ],
   );
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
@@ -68,6 +71,19 @@ test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
   }
   assert.equal(controllers.distributionTarget.remove, undefined, 'remove 경로는 없어야 한다');
   assert.equal(typeof controllers.collection.receive, 'function');
+  // 시점 배부 tick(phase 48, ADR-008 (3)) — 스풀 미설정이어도 항상 존재한다(인가가 spool 판정보다 먼저).
+  assert.equal(typeof controllers.distribution.tick, 'function');
+});
+
+test('createControllers: DIST_SPOOL_DIR 미설정에서도 distribution.tick이 존재하고 비-Z는 forbidden', async () => {
+  const { db, controllers } = setup(); // setup()의 env(ENV)에는 DIST_SPOOL_DIR이 없다.
+  seedUser(db, { userId: 'rep', role: 'R', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('rep', 'pw');
+
+  assert.equal(typeof controllers.distribution.tick, 'function');
+  const r = await controllers.distribution.tick(sessionId);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'forbidden', '인가 게이트가 spool-disabled 판정보다 먼저 적용된다');
 });
 
 test('auth.login: 자격 검증 후 세션을 발급하고 비밀번호를 노출하지 않는다', async () => {

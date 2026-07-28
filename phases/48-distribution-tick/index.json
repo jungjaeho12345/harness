@@ -21,7 +21,10 @@
     {
       "step": 2,
       "name": "tick-route",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-28T15:14:39+0900",
+      "summary": "src/controllers/index.js에 distributionTickService를 스풀 설정 여부와 무관하게 항상 생성·결선하고 10번째 도메인 controllers.distribution.tick(sessionId)을 노출(인가가 spool-disabled 판정보다 먼저 적용되도록). server/index.js에 STATUS_BY_REASON.busy=409(additive 1줄)와 POST /api/distribution/tick 라우트를 추가(위임만, status 전이 시에만 notifyChange('status') 1회 — 'update' 신호는 발행하지 않음). 부트스트랩 주석을 현행화(앱 내 타이머 없음, 외부 POST 호출로만 실행). 신규 test/distribution-tick-api.test.js 10건(401/403/spool-disabled/정상 배부+DPS 전이/멱등/중첩호출 409 busy/미래엠바고 미배부/GET 404/role·now 스푸핑 무시)과 test/controllers.test.js 보강(도메인 키 10개, DIST_SPOOL_DIR 미설정에서도 tick 존재+비Z forbidden) 전부 green, 기존 565건 포함 총 576건 무회귀, lint 경고 0, build clean.",
+      "completed_at": "2026-07-28T15:26:00+0900"
     },
     {
       "step": 3,
