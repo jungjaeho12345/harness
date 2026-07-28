@@ -101,3 +101,31 @@ test('editDps: DPS가 아니면 not-dps, 없는 기사는 not-found, 모르는 �
   assert.equal(authz.editDps(d, 'AKR000', 'revise').reason, 'not-found');
   assert.equal(authz.editDps(d, articleId, 'bogus').reason, 'unknown-action');
 });
+
+// --- 시점 배부 tick 실행 게이트 (ADR-008 (3) — Z/시스템 전용) ---
+
+test('runDistributionTick: Z만 통과하고 세션에서 도출한 userId를 돌려준다', () => {
+  const { authz, sessionService } = setup();
+  const z = sessionFor(sessionService, 'Z', 'admin1');
+
+  const gate = authz.runDistributionTick(z);
+  assert.equal(gate.ok, true);
+  assert.equal(gate.role, 'Z');
+  assert.equal(gate.userId, 'admin1', 'actorUserId는 검증된 세션에서만 온다(ADR-004)');
+});
+
+test('runDistributionTick: 미인증은 unauthenticated, R/D는 forbidden', () => {
+  const { authz, sessionService } = setup();
+
+  assert.equal(authz.runDistributionTick(undefined).reason, 'unauthenticated');
+  assert.equal(authz.runDistributionTick('bogus-session').reason, 'unauthenticated');
+  assert.equal(authz.runDistributionTick(sessionFor(sessionService, 'R', 'kim')).reason, 'forbidden');
+  assert.equal(authz.runDistributionTick(sessionFor(sessionService, 'D', 'desk')).reason, 'forbidden');
+});
+
+test('runDistributionTick: capability 표에 Z 전용으로 등재된다', () => {
+  const { authz } = setup();
+  assert.equal(authz.assertAuthorized('Z', 'runDistributionTick').ok, true);
+  assert.equal(authz.assertAuthorized('D', 'runDistributionTick').ok, false);
+  assert.equal(authz.assertAuthorized('R', 'runDistributionTick').ok, false);
+});

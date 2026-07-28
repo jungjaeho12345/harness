@@ -24,6 +24,7 @@ import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
 import { createDistributionService } from '../services/distributionService.js';
+import { createDistributionTickService } from '../services/distributionTickService.js';
 import { createSpoolWriter } from '../services/spoolWriter.js';
 
 // spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
@@ -59,6 +60,17 @@ export function createControllers(db, {
       ...(spoolFs ? { mkdir: spoolFs.mkdir, writeFile: spoolFs.writeFile, rename: spoolFs.rename } : {}),
     })
     : undefined;
+  // 배부 변경 구독자 — transport(createApp)가 SSE 무효화 신호(app.notifyChange)를 여기에 건다.
+  // 컨트롤러가 seam을 소유하는 이유: 부트스트랩 순서상 app이 컨트롤러보다 나중에 만들어지므로,
+  // 부트스트랩에서 app을 늦게 대입해 잇는 방식은 createApp을 직접 조립하는 경로에서 결선이 빠진다.
+  const changeListeners = [];
+  function notifyDistributionChange() {
+    // 구독자 예외가 배부/tick 결과를 바꾸지 않도록 개별 격리한다.
+    for (const listener of changeListeners) {
+      try { listener(); } catch { /* 구독자 실패는 배부를 막지 않는다 */ }
+    }
+  }
+
   const distributionService = spoolWriter
     ? createDistributionService({
       distributionTargetModel,
@@ -70,8 +82,18 @@ export function createControllers(db, {
       onFailure: ({ articleId, targetId, kind, reason }) => {
         logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
+      // 배부 완료(= distributedAt 갱신) 후 목록 무효화. 송고 훅 경로는 라우트가 완료 시점을 모르므로
+      // 이 신호가 없으면 목록의 배부시간이 다음 수동 조회 전까지 옛 값으로 남는다.
+      onDistributed: () => notifyDistributionChange(),
     })
     : undefined;
+
+  // 시점 배부 tick(ADR-008 (3)) — 배부 비활성(스풀 미설정)이면 tickService가 spool-disabled를 반환한다.
+  const distributionTickService = createDistributionTickService({
+    articleModel,
+    historyModel: articleHistoryModel,
+    distributionService,
+  });
 
   // 서비스 결선.
   const userService = createUserService({ userModel, ...lockoutPolicy });
@@ -145,6 +167,22 @@ export function createControllers(db, {
     deactivate: (sessionId, id) => distributionTargetService.deactivate(sessionId, id),
   };
 
+  // 시점 배부 실행(ADR-008 (3)) — Z/시스템 전용 pull. 앱에는 타이머가 없다(외부 운영 루틴이 호출).
+  const distribution = {
+    async tick(sessionId) {
+      const gate = authorization.runDistributionTick(sessionId);
+      if (!gate.ok) return gate;
+      // actorUserId는 검증된 세션에서만 온다 — 클라이언트가 보낸 actor를 쓰면 이력이 위조된다(ADR-004).
+      const result = await distributionTickService.tick({ actorUserId: gate.userId });
+      // 배부가 0건이어도 완결 전이(EPS→DPS)가 있으면 목록의 status 배지가 바뀐다 — 알리지 않으면 화면이 옛 상태로 남는다.
+      // (배부가 있었던 경우는 distributionService.onDistributed가 이미 알렸다. 중복 신호는 무해하고, 누락이 유해하다.)
+      if (result.ok && result.completed && result.completed.length > 0) notifyDistributionChange();
+      return result;
+    },
+    // 무효화 신호 구독 — transport가 app.notifyChange를 건다.
+    onChange: (listener) => { if (typeof listener === 'function') changeListeners.push(listener); },
+  };
+
   const collection = {
     receive: (sourceId, payload) => collectionService.receive(sourceId, payload),
     pull: (sourceId) => collectionService.pull(sourceId),
@@ -155,5 +193,7 @@ export function createControllers(db, {
     search: (q) => photoService.search(q),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget };
+  return {
+    auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget, distribution,
+  };
 }

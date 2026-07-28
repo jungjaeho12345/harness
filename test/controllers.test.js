@@ -37,11 +37,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 10개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
+    ['article', 'auth', 'collection', 'distribution', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
   );
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
@@ -383,4 +383,176 @@ test('createControllers: 배부 실패는 logService.warn으로 표면화된다(
   assert.match(warns[0], /^distribution failed articleId=AKR\d+ targetId=1 kind=press reason=spool-write-failed$/);
   // 실패했으므로 배부 시각도 기록되지 않는다(거짓 기록 금지).
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
+});
+
+// --- 시점 배부 tick 결선 (phase 48, ADR-008 (3)(5)) ---
+
+// 엠바고가 설정된 기사를 송고해 EPS로 만든 뒤, 엠바고 시각만 과거로 되돌려 tick 대상으로 만든다.
+// (엠바고 값은 사용자 입력 자유 텍스트라 서비스가 아니라 DB에 직접 심는 편이 결정적이다.)
+function seedEmbargoArticle(db, controllers, { embargoAt, secondEmbargoAt } = {}) {
+  const c = controllers.article.create({
+    title: '제목', markupVersion: END_MARKUP, author: 'kim', embargoAt, secondEmbargoAt,
+  });
+  const r = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  assert.equal(r.status, 'EPS', '엠바고가 설정된 기사는 송고 시 EPS가 된다');
+  return c.articleId;
+}
+
+test('createControllers: distribution 도메인은 tick·onChange만 노출한다(타이머 진입점 없음)', () => {
+  const { controllers } = setup();
+  assert.deepEqual(Object.keys(controllers.distribution).sort(), ['onChange', 'tick']);
+});
+
+test('distribution.tick: Z 세션이면 도래한 엠바고를 배부하고 EPS→DPS로 전이한다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs,
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const articleId = seedEmbargoArticle(db, controllers, { embargoAt: '2020-01-01T00:00:00.000Z' });
+  await flushSpool();
+  assert.deepEqual(spoolFs.calls.writeFile, [], '1차 엠바고 기사는 송고 시 배부하지 않는다(phase 47)');
+
+  const r = await controllers.distribution.tick(sessionId);
+
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.completed, [articleId]);
+  assert.equal(spoolFs.calls.rename.length, 1, '언론사 스풀에 기록된다');
+  assert.equal(db.prepare('SELECT status FROM Contents WHERE articleId = ?').get(articleId).status, 'DPS');
+  const hist = db.prepare('SELECT eventType, action FROM ArticleHistory WHERE articleId = ? ORDER BY id').all(articleId);
+  assert.deepEqual(hist.map((h) => `${h.eventType}:${h.action}`), ['status:send', 'distribute:press', 'status:embargoComplete']);
+});
+
+test('distribution.tick: 비-Z는 forbidden, 미인증은 unauthenticated이며 파일을 쓰지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs,
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  seedUser(db, { userId: 'desk', role: 'D', password: 'pw' });
+  const { sessionId: zSid } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(zSid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+  const articleId = seedEmbargoArticle(db, controllers, { embargoAt: '2020-01-01T00:00:00.000Z' });
+  const { sessionId: dSid } = await controllers.auth.login('desk', 'pw');
+
+  assert.equal((await controllers.distribution.tick(dSid)).reason, 'forbidden');
+  assert.equal((await controllers.distribution.tick(undefined)).reason, 'unauthenticated');
+
+  assert.deepEqual(spoolFs.calls.writeFile, []);
+  assert.equal(db.prepare('SELECT status FROM Contents WHERE articleId = ?').get(articleId).status, 'EPS');
+});
+
+test('distribution.tick: 스풀 미설정이면 게이트 통과 후 spool-disabled를 돌려준다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, { env: ENV, sessionService, spoolFs: fakeSpoolFs() });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+
+  assert.deepEqual(await controllers.distribution.tick(sessionId), { ok: false, reason: 'spool-disabled' });
+  // 비-Z는 배부 활성 여부와 무관하게 여전히 거부된다(설정 상태가 인가를 약화시키지 않는다).
+  assert.equal((await controllers.distribution.tick('bogus')).reason, 'unauthenticated');
+});
+
+test('distribution.tick: 이력은 tick을 호출한 세션 사용자로 남는다(클라이언트 값 불신)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs: fakeSpoolFs(),
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+  const articleId = seedEmbargoArticle(db, controllers, { embargoAt: '2020-01-01T00:00:00.000Z' });
+
+  await controllers.distribution.tick(sessionId);
+
+  const rows = db.prepare("SELECT actorUserId FROM ArticleHistory WHERE articleId = ? AND eventType != 'status'").all(articleId);
+  assert.equal(rows.length > 0, true);
+  for (const row of rows) assert.equal(row.actorUserId, 'admin');
+});
+
+// --- 배부 변경 구독(onChange) — SSE 무효화 재발행의 seam ---
+
+test('distribution.onChange: 송고 훅 배부 완료 후 구독자에게 알린다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs: fakeSpoolFs(),
+  });
+  const seen = [];
+  controllers.distribution.onChange(() => seen.push('changed'));
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(seen.length, 1, 'fire-and-forget 배부가 끝난 뒤 목록 무효화 신호가 필요하다');
+});
+
+test('distribution.onChange: 배부 0건 + 완결 전이만 있어도 알린다(자가 치유 경로)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs: fakeSpoolFs(),
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  // 수신처가 없으므로 배부는 0건이지만, 배부 이력을 미리 심어 완결 상태로 만든다.
+  const articleId = seedEmbargoArticle(db, controllers, { embargoAt: '2020-01-01T00:00:00.000Z' });
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, action, createdAt) VALUES (?, 'distribute', 'press', ?)",
+  ).run(articleId, '2020-01-01T00:00:00.000Z');
+
+  const seen = [];
+  controllers.distribution.onChange(() => seen.push('changed'));
+  const r = await controllers.distribution.tick(sessionId);
+
+  assert.deepEqual(r.distributed, []);
+  assert.deepEqual(r.completed, [articleId]);
+  assert.equal(seen.length, 1, 'status 배지가 EPS→DPS로 바뀌었으므로 목록을 무효화해야 한다');
+});
+
+test('distribution.onChange: 아무 일도 없는 tick은 알리지 않고, 구독자 예외는 격리된다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs: fakeSpoolFs(),
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const seen = [];
+  controllers.distribution.onChange(() => { throw new Error('구독자 폭발'); });
+  controllers.distribution.onChange(() => seen.push('changed'));
+
+  const empty = await controllers.distribution.tick(sessionId);
+  assert.deepEqual(empty.completed, []);
+  assert.equal(seen.length, 0, '대상이 없으면 불필요한 전체 재조회를 유발하지 않는다');
+
+  const articleId = seedEmbargoArticle(db, controllers, { embargoAt: '2020-01-01T00:00:00.000Z' });
+  const r = await controllers.distribution.tick(sessionId);
+
+  assert.equal(r.ok, true, '구독자 예외가 tick 결과를 바꾸지 않는다');
+  assert.deepEqual(r.completed, [articleId]);
+  // 배부(onDistributed)와 완결 전이 양쪽에서 신호가 날 수 있다 — 중복은 멱등 재조회라 무해하고, 누락이 유해하다.
+  assert.equal(seen.length >= 1, true, '앞선 구독자가 throw해도 뒤 구독자는 호출된다');
 });

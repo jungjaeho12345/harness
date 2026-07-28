@@ -7,6 +7,7 @@ const CAPABILITIES = {
   manageUsers: ['Z'],          // 사용자(USER) CRUD — Z 전용
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
   manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
+  runDistributionTick: ['Z'],  // 시점 배부 tick 실행 — Z/시스템 전용 (ADR-008 (3))
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
 };
 
@@ -64,5 +65,18 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, op, payload };
   }
 
-  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget };
+  // Z 전용 게이트 — 시점 배부 tick 실행 (ADR-008 (3)). 외부 운영 루틴이 주기 호출하는 pull 엔드포인트용.
+  // 다른 게이트와 달리 userId도 돌려준다: tick이 남기는 배부/전이 이력의 actor가 필요한데,
+  // 그 값은 반드시 검증된 세션에서만 와야 한다(클라이언트가 보낸 actor를 쓰면 이력이 위조된다 — ADR-004).
+  function runDistributionTick(sessionId) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'runDistributionTick');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, userId: me.userId };
+  }
+
+  return {
+    assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget, runDistributionTick,
+  };
 }
