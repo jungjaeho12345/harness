@@ -19,7 +19,7 @@
 
 ## MVP 제외 사항
 - ~~배부 시스템~~ → 2026-07-26 스코프 확장으로 착수(ADR-008). 배부 UI 보강·실패 재전송은 후속(MVP-4).
-- 배부 tick 후속 과제(phase 48 코드리뷰 잔여 finding, MVP-4): ① 송고 시 배부 kind 규칙이 articleService에 이원화되어 있음 — embargoSchedule로 단일화, ② 2차만 엠바고 기사의 송고 시 press 배부 실패 복구 경로 부재(영구 미완결), ③ tick 결과 `incomplete`에 "미도래 대기"와 "배부 실패"가 혼재 — 의미 분리, ④ tick 전용 인증(운영 루틴용 토큰)·실행 로그 보강.
+- 배부 tick 후속 과제(phase 48 코드리뷰 잔여 finding, MVP-4): ① 송고 시 배부 kind 규칙이 articleService에 이원화되어 있음 — embargoSchedule로 단일화, ② 2차만 엠바고 기사의 송고 시 press 배부 실패 복구 경로 부재(영구 미완결), ③ tick 결과 `incomplete`에 "미도래 대기"와 "배부 실패"가 혼재 — 의미 분리, ④ tick 전용 인증(운영 루틴용 토큰)·실행 로그 보강, ⑤ (재리뷰 med) 엠바고 입력 무음 고착 — 엠바고 진입 판정(truthiness)과 배부 판정(엄격 ISO-8601 오프셋 필수)의 기준이 달라, 오프셋 없는 자유 텍스트 엠바고 값(예: `2026-07-28 14:00`)이 든 기사는 EPS 진입 후 tick이 배부·전이·경고 아무 신호 없이 영구 고착됨 — 배부 운영 개시 전에 (a) 쓰기 시점 서버 검증/정규화로 오프셋 없는 값 거부 또는 (b) EPS인데 requiredKinds가 빈 기사를 tick 결과·logService.warn으로 표면화 필요.
 - 우클릭 메뉴의 이력보기/송고이력보기/번역/매핑/후속·계속기사작성/재송 (메뉴 표시만, 동작 안 함). (삭제요청은 DPS 기사 삭제 승인 → DPD 전이로 동작한다 — D/Z 전용.)
 - HTTPS 강제, HttpOnly/Secure/SameSite 쿠키 세션, SSE 인증 강화, 계정 잠금 등 추가 보안 하드닝(후속 과제).
 - 본문 평문(content) 컬럼 — 본문은 markupVersion 블록 JSON에만 저장(평문 컬럼 미사용).
