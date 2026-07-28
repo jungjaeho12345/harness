@@ -97,6 +97,8 @@ const STATUS_BY_REASON = {
   'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
+  // 배부 스풀(DIST_SPOOL_DIR) 미설정 — 요청이 잘못된 게 아니라 서버 기능이 꺼져 있는 상태다(ADR-008).
+  'spool-disabled': 503,
 };
 
 function fail(res, result, fallback = 400) {
@@ -296,6 +298,12 @@ export function createApp({
   // 부트스트랩(watcher 등 HTTP 밖 경로)에서도 무효화를 알릴 수 있도록 노출한다.
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
+  // 배부 완료 → 무효화 신호 재발행(ADR-008 phase 48). 두 경로를 모두 덮는다:
+  //  - 송고 훅: fire-and-forget이라 라우트가 배부 완료 시점을 몰라 목록의 배부시간이 옛 값으로 남는다.
+  //  - tick: 배부가 0건이어도 EPS→DPS 완결 전이가 있으면 상태 배지가 바뀐다.
+  // 컨트롤러가 seam을 소유하므로 createApp을 직접 조립하는 경로에서도 결선이 빠지지 않는다.
+  controllers.distribution?.onChange?.(() => app.notifyChange('distribute'));
+
   // 쿠키(우선) 또는 x-session-id 헤더(폴백) → 검증된 신원. req.body.role은 절대 쓰지 않는다.
   function sessionOf(req) {
     const sid = readSessionToken(req);
@@ -434,6 +442,16 @@ export function createApp({
   app.post('/api/distribution-targets/:id/deactivate', (req, res, next) => {
     try {
       const r = controllers.distributionTarget.deactivate(readSessionToken(req), Number(req.params.id));
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // --- 시점 배부 tick (Z/시스템 전용 — 게이트는 controllers.distribution이 강제, ADR-008 (3)) ---
+  // 외부 운영 루틴이 주기 호출하는 pull 엔드포인트다. 앱에는 타이머가 없다.
+  // 바디는 읽지 않는다: 대상 기사·강제 시각·kind를 받으면 엠바고 시각을 우회한 임의 반출이 가능해진다.
+  app.post('/api/distribution/tick', async (req, res, next) => {
+    try {
+      const r = await controllers.distribution.tick(readSessionToken(req));
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
   });

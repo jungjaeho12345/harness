@@ -13,7 +13,7 @@ server/
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter)
+  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · distributionTick · embargoSchedule · spoolWriter)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)
@@ -50,6 +50,13 @@ test/                   # 백엔드 테스트 (node --test)
          → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
          → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
          → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
+
+[시점배부] 외부 운영 루틴 → POST /api/distribution/tick (Z 전용 pull, 앱 내 타이머 없음)
+         → distributionTickService: status='EPS' 기사 조회
+         → embargoSchedule(순수 규칙)로 도래분 산출(이미 배부된 kind는 이력 기준으로 제외 — 멱등)
+         → distributionService로 배부 → 배부 이력(eventType='distribute')이 완결 조건을 채우면
+         → lifecycle.embargoCompleteTransition → status EPS→DPS + ArticleHistory(action='embargoComplete')
+         → SSE 무효화 신호(kind='distribute') 재발행 → 목록의 배부시간·상태 즉시 갱신
 ```
 
 ## 상태 관리
