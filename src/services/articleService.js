@@ -66,7 +66,20 @@ function sanitizeFileRefFields(contents) {
   return contents;
 }
 
-export function createArticleService({ articleModel, db, historyModel }) {
+// 송고 성공 시 "지금 즉시" 배부할 대상 종류를 정한다 — news.md "엠바고 규칙" + ADR-008 (4)의 직역.
+//   엠바고 없음 → DPS      : 언론사 + 비언론사 전체 즉시 배부
+//   2차 엠바고만 → EPS     : 송고 시 바로 언론사(press). 비언론사는 2차 시각에(phase 48 tick)
+//   1차 / 1+2차 → EPS      : 즉시 배부 없음 — 1차 시각에 언론사, 2차 시각에 비언론사(phase 48 tick)
+//   그 외(R의 RDS 유지 등) : 배부 없음
+// "지금이 엠바고 시각인가"는 여기서 판단하지 않는다(시점 판정은 tick의 책임 — 시각 비교 금지).
+export function distributionKindsForSend(status, contents = {}) {
+  if (status === 'DPS') return ['press', 'nonpress'];
+  if (status === 'EPS' && !contents.embargoAt && contents.secondEmbargoAt) return ['press'];
+  return [];
+}
+
+// distributionService(선택): 미주입이면 배부 훅이 비활성이며 송고는 기존과 동일하게 동작한다.
+export function createArticleService({ articleModel, db, historyModel, distributionService }) {
   // 이력 기록 헬퍼 — 부가 기록이므로 본 기능(편집/전이)을 막지 않는다.
   // historyModel 미주입 시 건너뛰고, insert 실패는 try/catch로 격리한다.
   function record(rec) {
@@ -157,6 +170,20 @@ export function createArticleService({ articleModel, db, historyModel }) {
       toStatus: finalStatus,
       actorUserId: userId ?? null,
     });
+
+    // 송고 성공 직후 즉시 배부(ADR-008). 부수효과이므로:
+    //  - applyAction의 동기 반환 계약을 바꾸지 않는다(라우트/기존 테스트가 await 없이 호출한다).
+    //  - 배부 실패가 송고(상태 전이)를 되돌리지 않는다 — 스풀 쓰기 실패로 기사가 묶이면 복구 수단이 없다.
+    // 엠바고 판정은 DB에 반영된 최종 status와 DB의 엠바고 컬럼으로만 한다(클라이언트 값 불신 — ADR-004).
+    if (action === 'send' && distributionService) {
+      const kinds = distributionKindsForSend(finalStatus, row.contents);
+      if (kinds.length > 0) {
+        try {
+          Promise.resolve(distributionService.distribute(articleId, { kinds, actorUserId: userId ?? null }))
+            .catch(() => { /* 배부 실패는 송고를 막지 않는다(발송 결과는 앱이 알지 못한다 — ADR-008) */ });
+        } catch { /* 동기 throw도 동일하게 격리한다 */ }
+      }
+    }
     return { ok: true, status: finalStatus };
   }
 
