@@ -29,6 +29,24 @@ function isDue(value, nowMs) {
 // 같은 kind를 두 번 스풀에 기록할 수 있다(외부 전송기가 두 번 발송 — 되돌릴 수 없다).
 let running = false;
 
+// 리뷰 승인안 a(phase 48 코드리뷰 high) — tick↔송고 훅 press 경합 유예.
+// applyAction(articleService)은 EPS를 먼저 커밋하고 press 배부를 await 없이(fire-and-forget) 호출한다.
+// 그 창(스풀 write~history insert, 수 ms~수백 ms)에 tick이 돌면 "2차 엠바고만" 기사는
+// pressAlwaysDue=true이고 history에 press 행이 아직 없어 tick이 press를 한 번 더 distribute한다
+// → 같은 수신처 스풀에 2개 파일 → 외부 전송기 2회 발송(되돌릴 수 없다).
+// 해법: 송고 시점(sentAt) 기준 유예 시간 안에는 tick이 press를 회복 배부하지 않는다(송고 훅의
+// in-flight 배부를 신뢰). 유예가 지나도 press 이력이 없으면(=송고 훅 배부가 실패한 경우) 그때 회복한다.
+// 새 환경변수는 만들지 않는다(ADR-008) — 모듈 상수로 고정.
+const GRACE_MS = 60000; // 60초.
+
+function pressRecoveryReady(row, nowMs) {
+  // sentAt이 없거나(레거시 데이터) 파싱 불가면 유예 창이 이미 지난 것으로 본다(기존 동작 보존).
+  if (!row.sentAt) return true;
+  const sentMs = Date.parse(row.sentAt);
+  if (!Number.isFinite(sentMs)) return true;
+  return nowMs - sentMs > GRACE_MS;
+}
+
 export function createDistributionTickService({
   articleModel,
   historyModel,
@@ -43,9 +61,10 @@ export function createDistributionTickService({
     if (required.length === 0) return [];
 
     const nowMs = now().getTime();
-    // 2차 엠바고만 설정된 기사는 press의 도래 시각이 "송고 시점"이다(news.md) — tick에서는 항상 도래로 본다.
+    // 2차 엠바고만 설정된 기사는 press의 도래 시각이 "송고 시점"이다(news.md) — tick에서는 도래로 본다.
+    // 단, pressRecoveryReady 유예가 지나야만 적용한다(위 GRACE_MS 설명 참조 — high 수정).
     // 1차 엠바고가 설정된 기사(embargoAt truthy)로 이 예외를 확대하지 않는다.
-    const pressAlwaysDue = !row.embargoAt && !!row.secondEmbargoAt;
+    const pressAlwaysDue = !row.embargoAt && !!row.secondEmbargoAt && pressRecoveryReady(row, nowMs);
     const due = new Set();
     if (pressAlwaysDue || isDue(row.embargoAt, nowMs)) due.add('press');
     if (isDue(row.secondEmbargoAt, nowMs)) due.add('nonpress');
@@ -79,8 +98,20 @@ export function createDistributionTickService({
         try {
           const kinds = dueKinds(row);
           if (kinds.length > 0) {
-            await distributionService.distribute(articleId, { kinds, actorUserId: gate.userId });
-            distributed.push({ articleId, kinds });
+            // med 수정: distribute 반환을 반영한다 — 활성 대상 0건이거나 전 수신처 실패면
+            // distributed가 비어 있다(distributionService.distribute 계약). 그런 경우를 "배부됨"으로
+            // 집계하지 않는다 — 요구 kind 수신처가 없어 EPS에 정체된 기사가 로그상 정상으로 보이면 안 된다.
+            const res = await distributionService.distribute(articleId, { kinds, actorUserId: gate.userId });
+            const recordedKinds = res && res.ok
+              ? [...new Set((res.distributed || []).map((d) => d.kind))]
+              : [];
+            if (recordedKinds.length > 0) distributed.push({ articleId, kinds: recordedKinds });
+
+            const missingKinds = kinds.filter((k) => !recordedKinds.includes(k));
+            if (missingKinds.length > 0) {
+              const reason = res && res.ok ? 'not-distributed' : ((res && res.reason) || 'distribute-failed');
+              for (const kind of missingKinds) failed.push({ articleId, kind, reason });
+            }
           }
 
           const comp = articleService.completeEmbargoDistribution(articleId, { actorUserId: gate.userId });

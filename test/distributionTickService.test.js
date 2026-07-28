@@ -74,13 +74,13 @@ function sessionFor(sessionService, role, userId = 'z1') {
   });
 }
 
-function insertEps(articleModel, { embargoAt, secondEmbargoAt } = {}) {
+function insertEps(articleModel, { embargoAt, secondEmbargoAt, sentAt } = {}) {
   const articleId = nextId();
   articleModel.insert({
     article: { articleId, title: '제목' },
     contents: {
       articleId, status: 'EPS', embargoAt: embargoAt ?? '', secondEmbargoAt: secondEmbargoAt ?? '',
-      createdAt: '2025-12-01T00:00:00.000Z',
+      sentAt: sentAt ?? '', createdAt: '2025-12-01T00:00:00.000Z',
     },
   });
   return articleId;
@@ -278,7 +278,9 @@ test('실패 격리: 후보 3건 중 2번째의 distribute가 throw해도 1·3�
     async distribute(articleId, opts) {
       calls.push({ articleId, ...opts });
       if (calls.length === 2) throw new Error('boom');
-      return { ok: true, distributed: [], failed: [] };
+      // 1·3번째는 실제로 기록된 것으로 만든다 — 이 테스트는 throw 격리만 검증한다(빈 distributed의
+      // "실패로 표면화" 검증은 별도 테스트가 담당한다).
+      return { ok: true, distributed: opts.kinds.map((kind) => ({ targetId: 1, kind })), failed: [] };
     },
   };
   const { service, sessionService, articleModel } = setup({ distributionService, articleService: as });
@@ -446,4 +448,120 @@ test('정합성: 2차만 설정 + press 이력 있음 → tick kinds=["nonpress"
   assert.deepEqual(ds.calls[0].kinds, ['nonpress']);
   const diff = required.filter((k) => !ds.calls[0].kinds.includes(k));
   assert.deepEqual(diff, ['press']);
+});
+
+// ---- 경합 유예(high 회귀) — tick↔송고 훅 press 경합으로 인한 되돌릴 수 없는 이중 배부 차단 ----
+// articleService.applyAction은 EPS 커밋 후 press 배부를 await 없이(fire-and-forget) 호출한다.
+// 그 창(스풀 write~history insert)에 tick이 돌면 "2차 엠바고만" 기사는 이력 없음으로 보여 press를
+// 한 번 더 distribute할 수 있다 — 리뷰 승인안 a: sentAt 기준 유예(GRACE_MS) 안에서는 회복 배부를 보류한다.
+
+const SENT_AT = '2026-01-01T00:00:00.000Z';
+const WITHIN_GRACE = () => new Date('2026-01-01T00:00:10.000Z'); // sentAt + 10s (< 60s 유예).
+const AFTER_GRACE = () => new Date('2026-01-01T00:01:05.000Z'); // sentAt + 65s (> 60s 유예).
+
+test('(a) 유예 내: 2차만 설정 + 방금 송고(sentAt≈now) + press 이력 없음 → tick은 press를 재배부하지 않는다', async () => {
+  const ds = fakeDistributionService();
+  const { service, sessionService, articleModel } = setup({
+    distributionService: ds, articleService: fakeArticleService(), now: WITHIN_GRACE,
+  });
+  const z = sessionFor(sessionService, 'Z');
+  insertEps(articleModel, { secondEmbargoAt: FUTURE, sentAt: SENT_AT });
+
+  const res = await service.run(z);
+
+  assert.equal(res.ok, true);
+  assert.equal(ds.calls.length, 0, '유예 내에는 tick이 press를 회복 배부하지 않아야 한다(송고 훅의 in-flight 배부를 신뢰)');
+});
+
+test('(b) 유예 경과: 같은 기사, now = sentAt + GRACE + 여유, press 이력 여전히 없음 → tick이 press를 회복 배부한다', async () => {
+  const ds = fakeDistributionService();
+  const { service, sessionService, articleModel } = setup({
+    distributionService: ds, articleService: fakeArticleService(), now: AFTER_GRACE,
+  });
+  const z = sessionFor(sessionService, 'Z');
+  insertEps(articleModel, { secondEmbargoAt: FUTURE, sentAt: SENT_AT });
+
+  const res = await service.run(z);
+
+  assert.equal(res.ok, true);
+  assert.equal(ds.calls.length, 1, '유예가 지나도 press 이력이 없으면(송고 훅 배부 실패) tick이 회복 배부해야 한다');
+  assert.deepEqual(ds.calls[0].kinds, ['press']);
+});
+
+test('(c) sentAt 없음(레거시 기사) → 유예 무관하게 회복 배부 허용(기존 동작 보존)', async () => {
+  const ds = fakeDistributionService();
+  const { service, sessionService, articleModel } = setup({
+    distributionService: ds, articleService: fakeArticleService(), now: WITHIN_GRACE,
+  });
+  const z = sessionFor(sessionService, 'Z');
+  insertEps(articleModel, { secondEmbargoAt: FUTURE }); // sentAt 미설정.
+
+  const res = await service.run(z);
+
+  assert.equal(res.ok, true);
+  assert.equal(ds.calls.length, 1);
+  assert.deepEqual(ds.calls[0].kinds, ['press']);
+});
+
+test('1차 엠바고(embargoAt truthy)는 도래 판정에 유예를 적용하지 않는다 — 실제 엠바고 시각 기반이라 경합 대상이 아니다', async () => {
+  const ds = fakeDistributionService();
+  const { service, sessionService, articleModel } = setup({
+    distributionService: ds, articleService: fakeArticleService(), now: WITHIN_GRACE,
+  });
+  const z = sessionFor(sessionService, 'Z');
+  // embargoAt(PAST) 도래 + sentAt이 now와 근접(유예 내)이어도, 1차 엠바고 판정에는 유예가 끼어들지 않는다.
+  insertEps(articleModel, { embargoAt: PAST, sentAt: SENT_AT });
+
+  await service.run(z);
+
+  assert.equal(ds.calls.length, 1);
+  assert.deepEqual(ds.calls[0].kinds, ['press']);
+});
+
+// ---- distribute 반환 반영(med 회귀) — 실패를 성공으로 오집계하지 않는다 ----
+
+test('활성 대상 0건(distribute가 {ok:true, distributed:[], failed:[...]} 반환) → 그 기사는 성공 distributed로 잡히지 않고 failed로 표면화된다', async () => {
+  const calls = [];
+  const distributionService = {
+    async distribute(articleId, opts) {
+      calls.push({ articleId, ...opts });
+      return {
+        ok: true,
+        distributed: [],
+        failed: [{ targetId: 1, kind: 'press', reason: 'spool-write-failed' }],
+      };
+    },
+  };
+  const { service, sessionService, articleModel } = setup({ distributionService, articleService: fakeArticleService() });
+  const z = sessionFor(sessionService, 'Z');
+  const articleId = insertEps(articleModel, { embargoAt: PAST });
+
+  const res = await service.run(z);
+
+  assert.equal(res.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(res.distributed.length, 0, '실제로 기록된 kind가 없으므로 성공 distributed에 담기면 안 된다');
+  assert.ok(
+    res.failed.some((f) => f.articleId === articleId && f.kind === 'press'),
+    'distributionService가 실패를 알렸으면 tick의 failed에도 표면화되어야 한다',
+  );
+});
+
+test('distribute가 ok:false(reason 포함)를 반환 → distributed에 담기지 않고 failed에 그 이유가 담긴다', async () => {
+  const distributionService = {
+    async distribute() {
+      return { ok: false, reason: 'spool-disabled' };
+    },
+  };
+  const { service, sessionService, articleModel } = setup({ distributionService, articleService: fakeArticleService() });
+  const z = sessionFor(sessionService, 'Z');
+  const articleId = insertEps(articleModel, { embargoAt: PAST });
+
+  const res = await service.run(z);
+
+  assert.equal(res.ok, true);
+  assert.equal(res.distributed.length, 0);
+  assert.equal(res.failed.length, 1);
+  assert.equal(res.failed[0].articleId, articleId);
+  assert.equal(res.failed[0].reason, 'spool-disabled');
 });
