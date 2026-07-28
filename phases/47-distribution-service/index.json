@@ -1,0 +1,10 @@
+{
+  "project": "기사 작성기",
+  "phase": "47-distribution-service",
+  "steps": [
+    { "step": 0, "name": "spool-writer", "status": "pending" },
+    { "step": 1, "name": "distribution-service", "status": "pending" },
+    { "step": 2, "name": "send-hook", "status": "pending" },
+    { "step": 3, "name": "wiring-docs", "status": "pending" }
+  ]
+}

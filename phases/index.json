@@ -255,6 +255,10 @@
       "status": "completed",
       "completed_at": "2026-07-27T20:05:00+0900",
       "note": "배부 3부작(46 대상관리 → 47 즉시배부 → 48 tick)의 첫 phase — ADR-008 기반. 범위는 배부 대상(수신처) 관리 CRUD만: (0) DistributionTarget 테이블 additive 신설 + distributionTargetModel(삭제 없음), (1) distributionTargetService(Z 게이트·입력 검증) + spoolDir 슬러그 검증기 + REST 라우트, (2) Model 계약 3면(contract/httpModel/fakeModel), (3) distMgmt.do 관리 화면(Z 전용). 배부 실행(스풀 파일 쓰기·distributedAt·EPS→DPS 전이·tick)은 phase 47/48 — 이 phase에 혼입 금지. 앱 내 타이머·네트워크 egress·디렉토리 생성 없음."
+    },
+    {
+      "dir": "47-distribution-service",
+      "status": "in-progress"
     }
   ]
 }
