@@ -1,0 +1,11 @@
+{
+  "project": "기사 작성기",
+  "phase": "48-distribution-tick",
+  "steps": [
+    { "step": 0, "name": "embargo-completion", "status": "pending" },
+    { "step": 1, "name": "tick-service", "status": "pending" },
+    { "step": 2, "name": "tick-route", "status": "pending" },
+    { "step": 3, "name": "distribute-notify", "status": "pending" },
+    { "step": 4, "name": "docs-sync", "status": "pending" }
+  ]
+}

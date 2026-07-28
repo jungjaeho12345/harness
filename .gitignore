@@ -28,3 +28,4 @@ __pycache__/
 
 # 업로드 파일 저장 디렉터리 (런타임 산출물)
 uploads/
+.harness-tmp/
