@@ -13,7 +13,10 @@
     {
       "step": 1,
       "name": "tick-service",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-28T15:05:40+0900",
+      "summary": "신규 src/services/distributionTickService.js(createDistributionTickService)를 추가: 주입된 now 기준 EPS 후보를 순회해 requiredDistributionKinds(step0 재사용) ∩ 도래한 kind(Date.parse<=now, 2차 엠바고만인 기사는 press 항상 도래) − 이미 배부된 kind(ArticleHistory eventType='distribute')로 due kinds를 구해 distributionService.distribute에 위임하고, 이후 articleService.completeEmbargoDistribution으로 완결 전이를 시도. 모듈 스코프 running 플래그+try/finally로 프로세스 내 단일 실행(busy)을 보장하고, 인가(authorization.runDistributionTick, capability 1건 additive 추가: Z 전용)가 busy/spool-disabled 판정보다 항상 먼저 수행됨. 기사 1건 예외는 격리되어 failed 배열에 기록. 신규 test/distributionTickService.test.js 22건 전부 green(인가/실행/멱등/단일실행/정합성 회귀 포함), 기존 543건 무회귀(총 565건), lint 경고 0. HTTP 라우트 결선은 step2 범위.",
+      "completed_at": "2026-07-28T15:20:00+0900"
     },
     {
       "step": 2,

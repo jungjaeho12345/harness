@@ -8,6 +8,7 @@ const CAPABILITIES = {
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
   manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
+  runDistributionTick: ['Z'], // 시점 배부 tick 실행 — Z 전용 (ADR-008 (3))
 };
 
 // 고침/포털고침으로 인정하는 액션.
@@ -64,5 +65,17 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, op, payload };
   }
 
-  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget };
+  // Z 전용 게이트 — 시점 배부 tick 실행 (ADR-008 (3)). userId는 배부/전이 이력의 actor로 쓴다.
+  function runDistributionTick(sessionId) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'runDistributionTick');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, userId: me.userId };
+  }
+
+  return {
+    assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget,
+    runDistributionTick,
+  };
 }
