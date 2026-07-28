@@ -302,3 +302,55 @@ test('레거시 행의 잘못된 spoolDir는 실제 writer가 거부해 failed�
     assert.equal(String(call[1]).startsWith('/spool/out/kbs'), true, JSON.stringify(call));
   }
 });
+
+test('실패는 onFailure로 표면화된다 — 무음 삼킴 금지(fire-and-forget 호출자가 결과를 보지 않는다)', async () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  distributionTargetModel.insert({ name: 'MBC', kind: 'press', spoolDir: 'mbc', active: 'Y' });
+
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter({ failFor: new Set(['mbc']) }),
+    now: () => NOW,
+    onFailure: (info) => seen.push(info),
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].articleId, ARTICLE_ID);
+  assert.equal(seen[0].spoolDir, 'mbc');
+  assert.equal(seen[0].kind, 'press');
+  assert.equal(seen[0].reason, 'spool-write-failed');
+});
+
+test('onFailure가 throw해도 배부와 기록은 정상 완료된다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  distributionTargetModel.insert({ name: 'MBC', kind: 'press', spoolDir: 'mbc', active: 'Y' });
+
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter({ failFor: new Set(['kbs']) }),
+    now: () => NOW,
+    onFailure: () => { throw new Error('로그 실패'); },
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+});

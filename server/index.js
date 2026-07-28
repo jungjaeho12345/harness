@@ -833,12 +833,13 @@ function bootstrap() {
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
 
   const sessionService = createSessionService();
-  const controllers = createControllers(db, { sessionService });
+  // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
+  const logService = createLogService();
+  const controllers = createControllers(db, { sessionService, logService });
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
-  const logService = createLogService();
   const app = createApp({ controllers, sessionService, logService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;

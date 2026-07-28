@@ -354,3 +354,33 @@ test('createControllers: DIST_SPOOL_DIR 미설정이면 배부가 비활성이�
   assert.deepEqual(spoolFs.calls.writeFile, [], '스풀 루트 미설정이면 파일을 쓰지 않는다');
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
 });
+
+test('createControllers: 배부 실패는 logService.warn으로 표면화된다(식별자·사유만)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const warns = [];
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' },
+    sessionService,
+    // 모든 쓰기가 실패하는 FS — 미발송이 무음으로 사라지지 않아야 한다.
+    spoolFs: {
+      mkdir: async () => { throw new Error('권한 없음'); },
+      writeFile: async () => {},
+      rename: async () => {},
+    },
+    logService: { warn: (m) => warns.push(m), info: () => {}, error: () => {} },
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(warns.length, 1);
+  assert.match(warns[0], /^distribution failed articleId=AKR\d+ targetId=1 kind=press reason=spool-write-failed$/);
+  // 실패했으므로 배부 시각도 기록되지 않는다(거짓 기록 금지).
+  assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
+});

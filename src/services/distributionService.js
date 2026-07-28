@@ -14,13 +14,21 @@
 // 배부 대상 종류 — news.md 엠바고 규칙의 두 축(1차→언론사, 2차→비언론사).
 const KINDS = ['press', 'nonpress'];
 
+// onFailure(선택): 수신처 1곳의 스풀 기록 실패를 표면화한다(ftpWatcher.onError와 동형).
+//   배부 호출자는 fire-and-forget이라 반환값을 보지 않으므로, 이 콜백이 없으면 미발송이 무음으로 사라진다.
 export function createDistributionService({
   distributionTargetModel,
   articleModel,
   historyModel,
   spoolWriter,
   now = () => new Date().toISOString(),
+  onFailure,
 }) {
+  // 실패 알림 자체가 배부를 깨뜨리지 않도록 격리한다.
+  function notifyFailure(info) {
+    if (!onFailure) return;
+    try { onFailure(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
+  }
   // 이력 기록은 부가 기록이다 — 실패해도 이미 끝난 배부를 되돌리지 않는다(articleService.record와 동형).
   function record(rec) {
     if (!historyModel) return;
@@ -66,7 +74,10 @@ export function createDistributionService({
           okInKind += 1;
           distributed.push({ targetId: t.id, kind, spoolDir: t.spoolDir, file: res.file });
         } else {
-          failed.push({ targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' });
+          const info = { articleId, targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' };
+          failed.push(info);
+          // 미발송은 운영자가 알아야 한다 — 무음 삼킴 금지(재전송은 후속 MVP-4).
+          notifyFailure(info);
         }
       }
 
