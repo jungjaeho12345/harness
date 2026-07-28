@@ -16,6 +16,9 @@ const KINDS = ['press', 'nonpress'];
 
 // onFailure(선택): 수신처 1곳의 스풀 기록 실패를 표면화한다(ftpWatcher.onError와 동형).
 //   배부 호출자는 fire-and-forget이라 반환값을 보지 않으므로, 이 콜백이 없으면 미발송이 무음으로 사라진다.
+// onDistributed(선택): 배부가 실제로 1건 이상 이뤄졌을 때 호출한다(SSE 무효화 재발행 훅).
+//   송고 즉시 배부는 fire-and-forget이라 라우트가 notifyChange를 보낸 뒤 distributedAt이 기록된다 —
+//   이 콜백이 없으면 목록의 배부시간이 즉시 갱신되지 않는다(handoff #2).
 export function createDistributionService({
   distributionTargetModel,
   articleModel,
@@ -23,11 +26,17 @@ export function createDistributionService({
   spoolWriter,
   now = () => new Date().toISOString(),
   onFailure,
+  onDistributed,
 }) {
   // 실패 알림 자체가 배부를 깨뜨리지 않도록 격리한다.
   function notifyFailure(info) {
     if (!onFailure) return;
     try { onFailure(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
+  }
+  // 배부 완료 알림도 배부/호출자를 깨뜨리지 않도록 격리한다.
+  function notifyDistributed(info) {
+    if (!onDistributed) return;
+    try { onDistributed(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
   }
   // 이력 기록은 부가 기록이다 — 실패해도 이미 끝난 배부를 되돌리지 않는다(articleService.record와 동형).
   function record(rec) {
@@ -93,6 +102,8 @@ export function createDistributionService({
     // present-only 업데이트라 status·sentAt·본문 등 다른 컬럼은 건드리지 않는다(DB 비파괴).
     if (distributed.length > 0) {
       articleModel.update(articleId, { contents: { distributedAt: now() } });
+      // 배부 완료 → 목록의 배부시간 즉시 갱신을 위한 무효화 재발행(SSE). 이번에 성공한 kind만 알린다.
+      notifyDistributed({ articleId, kinds: [...new Set(distributed.map((d) => d.kind))] });
     }
 
     return { ok: true, distributed, failed };

@@ -438,6 +438,26 @@ export function createApp({
     } catch (e) { next(e); }
   });
 
+  // 시점 배부 pull(ADR-008 (3)) — 외부 cron이 주기 호출한다. 앱 내 타이머는 없다.
+  // 게이트: DISTRIBUTION_TOKEN이 설정돼 있고 x-distribution-token이 일치하면 시스템 호출로 허용하고,
+  //   아니면 Z 세션을 요구한다(둘 다 아니면 401/403). role은 검증 세션에서만 도출한다 — req.body.role 무시(ADR-004).
+  // 얇은 transport(ADR-006): 배부/완결 전이 로직은 controllers.article.distributionTick이 소유한다.
+  app.post('/api/distribution/tick', async (req, res, next) => {
+    try {
+      const token = process.env.DISTRIBUTION_TOKEN;
+      const tokenOk = !!token && req.get('x-distribution-token') === token;
+      if (!tokenOk) {
+        const { me } = sessionOf(req);
+        if (!me) return res.status(401).json(UNAUTH);
+        if (me.role !== 'Z') return res.status(403).json(FORBIDDEN);
+      }
+      const r = await controllers.article.distributionTick();
+      // 시점 배부/완결 전이 → 목록의 배부시간·상태 즉시 갱신(무효화 신호만, 행 데이터 없음 — ADR-005).
+      app.notifyChange('distribute');
+      return res.json(r);
+    } catch (e) { next(e); }
+  });
+
   // --- 기사 조회/검색 ---
   app.get('/api/articles/search', (req, res, next) => {
     try {
@@ -835,12 +855,18 @@ function bootstrap() {
   const sessionService = createSessionService();
   // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
   const logService = createLogService();
-  const controllers = createControllers(db, { sessionService, logService });
+  // 배부 완료(fire-and-forget) → SSE 무효화 재발행을 위한 지연 바인딩:
+  //   createControllers가 createApp보다 먼저 생성되므로 app.notifyChange를 나중에 연결한다.
+  let notifyChange = () => {};
+  const controllers = createControllers(db, {
+    sessionService, logService, onChange: (kind) => notifyChange(kind),
+  });
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
   const app = createApp({ controllers, sessionService, logService, forceHttps });
+  notifyChange = app.notifyChange; // 이제 배부 완료가 SSE 무효화로 이어진다.
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {

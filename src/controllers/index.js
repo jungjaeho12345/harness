@@ -30,6 +30,8 @@ import { createSpoolWriter } from '../services/spoolWriter.js';
 //   테스트가 실제 파일시스템을 건드리지 않게 하기 위한 seam이다. 미주입이면 node:fs/promises가 쓰인다.
 // logService(선택): 배부 실패처럼 fire-and-forget 경로에서 사라질 사실을 표면화하는 데만 쓴다
 //   (HTTP 계층의 logService와 같은 인스턴스를 부트스트랩이 넘긴다). 미주입이면 조용히 생략한다.
+// onChange(선택): 배부 등 fire-and-forget 부수효과 완료 시 SSE 무효화 신호를 재발행하는 훅.
+//   부트스트랩이 app.notifyChange를 지연 바인딩해 넘긴다(createControllers가 createApp보다 먼저 생성됨).
 export function createControllers(db, {
   sessionService,
   env = process.env,
@@ -37,6 +39,7 @@ export function createControllers(db, {
   lockoutPolicy = {},
   spoolFs,
   logService,
+  onChange,
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -70,6 +73,8 @@ export function createControllers(db, {
       onFailure: ({ articleId, targetId, kind, reason }) => {
         logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
+      // 배부 완료 → SSE 무효화 재발행(목록 배부시간 즉시 갱신). 행 데이터 없이 kind 신호만.
+      onDistributed: () => onChange?.('distribute'),
     })
     : undefined;
 
@@ -117,6 +122,7 @@ export function createControllers(db, {
     derive: (sourceId, mode, overrides) => articleService.deriveArticle(sourceId, mode, overrides),
     queryHistory: (articleId, opts) => articleService.queryHistory(articleId, opts),
     getHistorySnapshot: (articleId, historyId) => articleService.getHistorySnapshot(articleId, historyId),
+    distributionTick: (opts) => articleService.distributionTick(opts),
     acquireEditLock: (articleId, opts) => articleService.acquireEditLock(articleId, opts),
     releaseEditLock: (articleId, opts) => articleService.releaseEditLock(articleId, opts),
     forceReleaseEditLock: (articleId) => articleService.forceReleaseEditLock(articleId),

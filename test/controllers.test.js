@@ -384,3 +384,52 @@ test('createControllers: 배부 실패는 logService.warn으로 표면화된다(
   // 실패했으므로 배부 시각도 기록되지 않는다(거짓 기록 금지).
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
 });
+
+// --- 배부 완료 SSE 재발행 + tick 노출 (phase 48) ---
+
+test('createControllers: article.distributionTick를 노출한다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const controllers = createControllers(db, { env: ENV, sessionService: createSessionService() });
+  assert.equal(typeof controllers.article.distributionTick, 'function');
+});
+
+test('createControllers: 송고 즉시 배부 완료 시 onChange("distribute")로 무효화 재발행(handoff #2)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const changes = [];
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' },
+    sessionService,
+    spoolFs: fakeSpoolFs(),
+    onChange: (kind) => changes.push(kind),
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  // 배부가 실제로 일어난 뒤(비동기) 무효화 신호가 재발행된다.
+  assert.ok(changes.includes('distribute'), 'onChange("distribute")가 호출되어야 한다');
+});
+
+test('createControllers: 활성 대상이 없어 배부가 0건이면 onChange는 호출되지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const changes = [];
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' },
+    sessionService: createSessionService(),
+    spoolFs: fakeSpoolFs(),
+    onChange: (kind) => changes.push(kind),
+  });
+  // 수신처 미등록 상태로 송고 → 배부 0건.
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+  assert.equal(changes.includes('distribute'), false, '배부 0건이면 재발행 없음');
+});

@@ -56,6 +56,67 @@ async function login(base, userId, password) {
   return (await api(base, 'POST', '/api/login', { body: { userId, password } })).body;
 }
 
+// --- POST /api/distribution/tick (ADR-008 (3): Z/시스템 전용 pull) ---
+// role은 검증 세션에서만 도출한다(req.body.role 무시). 시스템 토큰은 process.env로만 읽는다.
+
+test('POST /api/distribution/tick: 미인증 → 401', async () => {
+  const ctx = await start();
+  try {
+    const r = await api(ctx.base, 'POST', '/api/distribution/tick', { body: {} });
+    assert.equal(r.status, 401);
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/distribution/tick: 비-Z 세션 → 403, req.body.role은 무시', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    // 클라가 role:'Z'를 보내도 세션 role(R)만 신뢰 → 403.
+    const r = await api(ctx.base, 'POST', '/api/distribution/tick', { sid, body: { role: 'Z' } });
+    assert.equal(r.status, 403);
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/distribution/tick: Z 세션 → 200 (no-op 결과 shape)', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'adm', role: 'Z', department: '관리', password: 'pw' });
+    const sid = (await login(ctx.base, 'adm', 'pw')).sessionId;
+    const r = await api(ctx.base, 'POST', '/api/distribution/tick', { sid, body: {} });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.deepEqual(r.body.distributed, []);
+    assert.deepEqual(r.body.completed, []);
+  } finally { await ctx.close(); }
+});
+
+test('POST /api/distribution/tick: DISTRIBUTION_TOKEN 설정 시 올바른 토큰이면 세션 없이 200, 오토큰+비-Z는 401/403', async () => {
+  const prev = process.env.DISTRIBUTION_TOKEN;
+  process.env.DISTRIBUTION_TOKEN = 'cron-secret';
+  const ctx = await start();
+  try {
+    // 올바른 시스템 토큰 → 세션 없이 허용.
+    const ok = await fetch(`${ctx.base}/api/distribution/tick`, {
+      method: 'POST', headers: { 'x-distribution-token': 'cron-secret' },
+    });
+    assert.equal(ok.status, 200);
+    // 토큰 불일치 + 미인증 → 401.
+    const bad = await fetch(`${ctx.base}/api/distribution/tick`, {
+      method: 'POST', headers: { 'x-distribution-token': 'wrong' },
+    });
+    assert.equal(bad.status, 401);
+    // 토큰 불일치 + 비-Z 세션 → 403.
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const forbidden = await api(ctx.base, 'POST', '/api/distribution/tick', { sid, body: {} });
+    assert.equal(forbidden.status, 403);
+  } finally {
+    await ctx.close();
+    if (prev === undefined) delete process.env.DISTRIBUTION_TOKEN; else process.env.DISTRIBUTION_TOKEN = prev;
+  }
+});
+
 test('GET /api/health → 200 ok', async () => {
   const ctx = await start();
   try {
