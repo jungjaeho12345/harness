@@ -297,3 +297,60 @@ test('media.search: 영상 검색은 YouTube로 위임한다', async () => {
   assert.deepEqual(r.items, []);
   assert.match(calledUrl, /youtube/);
 });
+
+// --- 배부 결선 (phase 47, ADR-008) ---
+// 스풀 FS 조작은 주입해서 검증한다 — 실제 파일을 만들지 않는다(fetchFn 주입과 동일한 이유).
+function fakeSpoolFs() {
+  const calls = { mkdir: [], writeFile: [], rename: [] };
+  const op = (name) => async (...args) => { calls[name].push(args); };
+  return { calls, mkdir: op('mkdir'), writeFile: op('writeFile'), rename: op('rename') };
+}
+
+// 배부 훅은 fire-and-forget이라 마이크로태스크 큐를 비운 뒤 단언한다.
+const flushSpool = () => new Promise((resolve) => setImmediate(resolve));
+
+test('createControllers: DIST_SPOOL_DIR 설정 시 송고가 활성 수신처 스풀에 배부된다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs,
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  assert.equal(controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' }).ok, true);
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  const a = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(a.status, 'DPS');
+  assert.equal(spoolFs.calls.mkdir[0][0], '/spool/out/kbs');
+  assert.equal(spoolFs.calls.rename.length, 1);
+  assert.match(spoolFs.calls.rename[0][1], /^\/spool\/out\/kbs\/AKR\d{8}\d{9}_.*\.json$/);
+  // 배부 사실이 DB에 기록된다(배부시간 + 이력).
+  const row = db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId);
+  assert.notEqual(row.distributedAt, null);
+  const hist = db.prepare("SELECT * FROM ArticleHistory WHERE articleId = ? AND eventType = 'distribute'").all(c.articleId);
+  assert.deepEqual(hist.map((h) => h.action), ['press']);
+});
+
+test('createControllers: DIST_SPOOL_DIR 미설정이면 배부가 비활성이고 송고는 정상 동작한다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, { env: ENV, sessionService, spoolFs });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  const a = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(a.status, 'DPS');
+  assert.deepEqual(spoolFs.calls.writeFile, [], '스풀 루트 미설정이면 파일을 쓰지 않는다');
+  assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
+});

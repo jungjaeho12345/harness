@@ -23,12 +23,17 @@ import { createMediaSearch } from '../services/mediaSearch.js';
 import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
+import { createDistributionService } from '../services/distributionService.js';
+import { createSpoolWriter } from '../services/spoolWriter.js';
 
+// spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
+//   테스트가 실제 파일시스템을 건드리지 않게 하기 위한 seam이다. 미주입이면 node:fs/promises가 쓰인다.
 export function createControllers(db, {
   sessionService,
   env = process.env,
   fetchFn = globalThis.fetch,
   lockoutPolicy = {},
+  spoolFs,
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -41,9 +46,24 @@ export function createControllers(db, {
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
   const session = sessionService ?? createSessionService();
 
+  // 배부(ADR-008) — 스풀 루트(DIST_SPOOL_DIR)가 설정된 환경에서만 활성화한다.
+  // 기본값을 하드코딩하지 않는다: 미설정 환경에서 의도치 않은 파일 쓰기가 생기면 안 된다.
+  // 앱은 스풀 파일을 쓰기만 한다 — 네트워크 전송(egress)도 타이머도 없다(발송은 외부 전송기).
+  const spoolWriter = env && env.DIST_SPOOL_DIR
+    ? createSpoolWriter({ rootDir: env.DIST_SPOOL_DIR, ...(spoolFs ?? {}) })
+    : undefined;
+  const distributionService = spoolWriter
+    ? createDistributionService({
+      distributionTargetModel, articleModel, historyModel: articleHistoryModel, spoolWriter,
+    })
+    : undefined;
+
   // 서비스 결선.
   const userService = createUserService({ userModel, ...lockoutPolicy });
-  const articleService = createArticleService({ articleModel, db, historyModel: articleHistoryModel });
+  // distributionService 미주입(스풀 미설정) 시 송고 훅은 비활성 — 기존 동작 그대로.
+  const articleService = createArticleService({
+    articleModel, db, historyModel: articleHistoryModel, distributionService,
+  });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });
   const collectionService = createCollectionService({ articleService, receiverConfigModel, fetchFn });

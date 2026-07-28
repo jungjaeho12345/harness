@@ -846,6 +846,13 @@ function bootstrap() {
     logService.info(`API server on http://127.0.0.1:${port}`);
   });
 
+  // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).
+  // 여기서 디렉토리를 미리 만들지 않는다: 생성은 실제 배부 시점의 spoolWriter 책임이다.
+  // 시점 배부(tick)는 phase 48 — 앱에 타이머/주기 실행은 두지 않는다.
+  if (process.env.DIST_SPOOL_DIR) {
+    logService.info(`distribution spool root ${process.env.DIST_SPOOL_DIR}`);
+  }
+
   // 수집 FTP watcher — RCV_SPOOL_DIR 미설정 시 비활성.
   const spoolDir = process.env.RCV_SPOOL_DIR;
   if (spoolDir) {
