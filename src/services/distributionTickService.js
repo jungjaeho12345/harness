@@ -13,6 +13,7 @@
 //
 // 멱등성: 외부 루틴이 분 단위로 반복 호출한다. 이미 배부된 kind는 이력 기준으로 걸러지고(pendingKinds),
 //   완결된 기사는 DPS가 되어 다음 tick의 조회 대상(status='EPS')에서 자연히 빠진다.
+//   단, 이 멱등성은 순차 호출에서만 성립한다 — 겹친 호출은 single-flight로 건너뛴다(아래 inFlight).
 
 import { pendingKinds, isEmbargoComplete, requiredKinds, distributedKinds } from './embargoSchedule.js';
 import { embargoCompleteTransition } from './lifecycle.js';
@@ -40,10 +41,15 @@ export function createDistributionTickService({
   // 한 기사 처리 — 배부(있으면)와 완결 판정을 **독립적으로** 수행한다.
   // 배부할 pending이 0이어도 완결 판정을 건너뛰지 않는다: 이전 tick이 이력을 남긴 뒤 전이 전에 중단됐거나
   // 송고 훅이 필요한 kind를 이미 전부 배부한 기사는 배부 없이 전이만 필요하다(자가 치유 — 없으면 영구 EPS 고착).
-  async function processArticle(contents, nowIso, actorUserId, out) {
-    const articleId = contents.articleId;
+  async function processArticle(articleId, nowIso, actorUserId, out) {
+    // 반출 판단은 목록 스냅샷이 아니라 **지금 다시 읽은 행**으로 한다.
+    // 앞 기사의 스풀 쓰기(await) 동안 HTTP 핸들러가 끼어들어 데스크가 이 기사를 KILL/보류(EPS→EEK/EEH)했거나
+    // 엠바고 시각을 뒤로 미뤘을 수 있다 — 스냅샷 기준으로 배부하면 킬·연기된 기사가 외부로 나간다(회수 불가).
+    const entry = articleModel.getById(articleId)?.contents;
+    if (!entry || entry.status !== 'EPS') return;
+    if (requiredKinds(entry).length === 0) return;
 
-    const pending = pendingKinds(contents, historyRowsOf(articleId), nowIso);
+    const pending = pendingKinds(entry, historyRowsOf(articleId), nowIso);
     if (pending.length > 0) {
       const res = await distributionService.distribute(articleId, { kinds: pending, actorUserId });
       if (res && res.ok) {
@@ -91,33 +97,44 @@ export function createDistributionTickService({
     out.completed.push(articleId);
   }
 
+  // single-flight 표식 — 겹친 tick은 같은 이력을 읽고 같은 kind를 두 번 반출한다.
+  // 이력 차집합(pendingKinds) 멱등성은 "직전 호출이 끝난 뒤의 순차 호출"에서만 성립하기 때문이다.
+  // 진행 중이면 즉시 건너뛴다. (전제: tick은 단일 인스턴스에서만 호출한다 — 다중 인스턴스 중복 방지는 이 표식의 범위 밖이다.)
+  let inFlight = false;
+
   // 1회 실행. 호출될 때만 동작한다(타이머 없음).
-  // 반환: { ok:true, checkedCount, distributed, completed, incomplete, failed }
+  // 반환: { ok:true, checkedCount, distributed, completed, incomplete, failed } | 진행 중 겹침이면 { ok:true, skipped:true }
   async function tick({ actorUserId = null } = {}) {
     if (!distributionService) return { ok: false, reason: 'spool-disabled' };
+    if (inFlight) return { ok: true, skipped: true };
+    inFlight = true;
 
-    const nowIso = now();
-    // 대상은 엠바고 송고 대기(EPS)뿐이다. 보류(EEH)·킬(EEK)된 기사는 시각이 지나도 나가면 안 된다.
-    const targets = articleModel.query({ status: 'EPS' });
+    try {
+      const nowIso = now();
+      // 대상은 엠바고 송고 대기(EPS)뿐이다. 보류(EEH)·킬(EEK)된 기사는 시각이 지나도 나가면 안 된다.
+      const targets = articleModel.query({ status: 'EPS' });
 
-    const out = { distributed: [], completed: [], incomplete: [], failed: [] };
-    let checkedCount = 0;
+      const out = { distributed: [], completed: [], incomplete: [], failed: [] };
+      let checkedCount = 0;
 
-    for (const contents of targets) {
-      // 엠바고 시각이 하나도 없는 EPS 기사는 시점 배부의 대상이 아니다(required 빈 배열 → 완결 판정도 false).
-      if (requiredKinds(contents).length === 0) continue;
-      checkedCount += 1;
-      try {
-        await processArticle(contents, nowIso, actorUserId, out);
-      } catch {
-        // 한 기사의 실패가 나머지 기사의 엠바고를 통째로 밀리게 하면 안 된다.
-        // 사유는 고정 문자열만 싣는다 — 예외 메시지에는 스풀 경로 등 내부 정보가 섞인다(마스킹 규율).
-        // 상세는 배부 실패 로그(logService.warn)가 이미 식별자·사유 형태로 남긴다.
-        out.failed.push({ articleId: contents.articleId, kind: null, reason: 'tick-failed' });
+      for (const contents of targets) {
+        // 엠바고 시각이 하나도 없는 EPS 기사는 시점 배부의 대상이 아니다(required 빈 배열 → 완결 판정도 false).
+        if (requiredKinds(contents).length === 0) continue;
+        checkedCount += 1;
+        try {
+          await processArticle(contents.articleId, nowIso, actorUserId, out);
+        } catch {
+          // 한 기사의 실패가 나머지 기사의 엠바고를 통째로 밀리게 하면 안 된다.
+          // 사유는 고정 문자열만 싣는다 — 예외 메시지에는 스풀 경로 등 내부 정보가 섞인다(마스킹 규율).
+          // 상세는 배부 실패 로그(logService.warn)가 이미 식별자·사유 형태로 남긴다.
+          out.failed.push({ articleId: contents.articleId, kind: null, reason: 'tick-failed' });
+        }
       }
-    }
 
-    return { ok: true, checkedCount, ...out };
+      return { ok: true, checkedCount, ...out };
+    } finally {
+      inFlight = false;
+    }
   }
 
   return { tick };

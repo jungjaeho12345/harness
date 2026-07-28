@@ -64,13 +64,13 @@ function setup({ now = AFTER, distributionOpts, withService = true } = {}) {
   };
 }
 
-// 기사 1건 적재. status·엠바고 시각을 자유 지정.
-function addArticle(articleModel, articleId, { status = 'EPS', embargoAt, secondEmbargoAt } = {}) {
+// 기사 1건 적재. status·엠바고 시각을 자유 지정. createdAt으로 처리 순서(query는 createdAt DESC)를 고정할 수 있다.
+function addArticle(articleModel, articleId, { status = 'EPS', embargoAt, secondEmbargoAt, createdAt = '2026-07-28T00:00:00.000Z' } = {}) {
   articleModel.insert({
     article: { articleId, title: '제목', markupVersion: '{"blocks":[{"text":"본문 (끝)"}]}' },
     contents: {
       articleId, title: '제목', author: 'r1', status,
-      createdAt: '2026-07-28T00:00:00.000Z', sentAt: BEFORE,
+      createdAt, sentAt: BEFORE,
       ...(embargoAt ? { embargoAt } : {}),
       ...(secondEmbargoAt ? { secondEmbargoAt } : {}),
     },
@@ -409,6 +409,134 @@ test('배부 중 데스크가 KILL하면 완결 전이하지 않는다(스냅샷
   assert.equal(statusOf(db, 'AKR1'), 'EEK', 'KILL된 기사를 DPS로 되살리면 안 된다');
   assert.deepEqual(r.completed, []);
   assert.equal(historyOf(db, 'AKR1').some((h) => h.action === 'embargoComplete'), false);
+});
+
+test('기사 A 배부 도중 기사 B가 EEK로 전이되면 B는 스풀에 반출되지 않는다(스냅샷 contents로 배부 금지)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  // createdAt DESC 순서로 처리되므로 A가 먼저 처리되게 A의 createdAt을 더 늦게 둔다.
+  addArticle(articleModel, 'AKR-A', { embargoAt: T1, createdAt: '2026-07-28T01:00:00.000Z' });
+  addArticle(articleModel, 'AKR-B', { embargoAt: T1, createdAt: '2026-07-28T00:00:00.000Z' });
+
+  const calls = [];
+  const distributionService = {
+    async distribute(articleId, { kinds }) {
+      calls.push({ articleId, kinds });
+      // A의 스풀 쓰기(await) 동안 데스크가 B를 KILL한 상황.
+      if (articleId === 'AKR-A') articleModel.update('AKR-B', { contents: { status: 'EEK' } });
+      for (const kind of kinds) {
+        historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: T1 });
+      }
+      return { ok: true, distributed: kinds.map((k) => ({ targetId: 1, kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService, now: () => BETWEEN,
+  });
+
+  const r = await service.tick();
+
+  assert.deepEqual(calls.map((c) => c.articleId), ['AKR-A'], 'KILL된 B는 배부(스풀 반출)하지 않는다');
+  assert.equal(statusOf(db, 'AKR-B'), 'EEK');
+  assert.equal(historyOf(db, 'AKR-B').length, 0, 'B에는 배부 이력이 남지 않는다');
+  assert.deepEqual(r.completed, ['AKR-A']);
+  assert.equal(r.incomplete.some((i) => i.articleId === 'AKR-B'), false, 'EPS가 아닌 기사는 판정 대상이 아니다');
+});
+
+test('기사 A 배부 도중 기사 B의 엠바고 시각이 미래로 수정되면 B는 반출하지 않는다(스냅샷 시각으로 배부 금지)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  addArticle(articleModel, 'AKR-A', { embargoAt: T1, createdAt: '2026-07-28T01:00:00.000Z' });
+  addArticle(articleModel, 'AKR-B', { embargoAt: T1, createdAt: '2026-07-28T00:00:00.000Z' });
+
+  const calls = [];
+  const distributionService = {
+    async distribute(articleId, { kinds }) {
+      calls.push({ articleId, kinds });
+      // A의 스풀 쓰기(await) 동안 데스크가 B의 엠바고를 뒤로 미룬 상황.
+      if (articleId === 'AKR-A') articleModel.update('AKR-B', { contents: { embargoAt: '2099-01-01T00:00:00.000Z' } });
+      for (const kind of kinds) {
+        historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: T1 });
+      }
+      return { ok: true, distributed: kinds.map((k) => ({ targetId: 1, kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService, now: () => BETWEEN,
+  });
+
+  const r = await service.tick();
+
+  assert.deepEqual(calls.map((c) => c.articleId), ['AKR-A'], '미뤄진 B는 반출하지 않는다');
+  assert.equal(statusOf(db, 'AKR-B'), 'EPS', 'B는 EPS로 남아 다음 tick을 기다린다');
+  assert.equal(historyOf(db, 'AKR-B').length, 0);
+  assert.deepEqual(r.completed, ['AKR-A']);
+});
+
+// --- 리뷰 반영: tick 동시 호출(single-flight) ---
+// 이력 차집합(pendingKinds) 멱등성은 순차 호출에서만 성립한다. 겹친 호출은 같은 이력을 읽고
+// 같은 kind를 두 번 반출한다 — 진행 중이면 건너뛴다(tick은 단일 인스턴스에서만 호출하는 전제).
+
+test('tick 동시 호출: 겹친 2회 호출에도 배부·이력은 1회분만 생성된다(single-flight)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  // 실제 스풀 쓰기처럼 이력 기록 전에 비동기 지연이 있다 — 겹친 tick은 둘 다 "이력 없음"을 읽는다.
+  const calls = [];
+  const distributionService = {
+    async distribute(articleId, { kinds }) {
+      calls.push({ articleId, kinds });
+      await new Promise((resolve) => setImmediate(resolve));
+      for (const kind of kinds) {
+        historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: T1 });
+      }
+      return { ok: true, distributed: kinds.map((k) => ({ targetId: 1, kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService, now: () => BETWEEN,
+  });
+
+  const [r1, r2] = await Promise.all([service.tick(), service.tick()]);
+
+  assert.equal(calls.length, 1, '스풀 반출은 1회분이어야 한다');
+  const distRows = historyOf(db, 'AKR1').filter((h) => h.eventType === 'distribute');
+  assert.equal(distRows.length, 1, '배부 이력이 중복되지 않는다');
+  assert.equal(
+    historyOf(db, 'AKR1').filter((h) => h.action === 'embargoComplete').length, 1,
+    '완결 전이 이력도 1회뿐이다',
+  );
+  assert.equal(statusOf(db, 'AKR1'), 'DPS');
+
+  const skipped = [r1, r2].filter((r) => r.skipped === true);
+  assert.equal(skipped.length, 1, '겹친 호출 중 하나는 건너뛴다');
+  assert.equal(skipped[0].ok, true);
+
+  // 진행 중 표식은 tick 종료와 함께 해제된다 — 다음 순차 호출은 정상 동작(멱등: 재배부 0).
+  const r3 = await service.tick();
+  assert.equal(r3.ok, true);
+  assert.equal(r3.skipped, undefined);
+  assert.equal(calls.length, 1);
+});
+
+test('tick 동시 호출: 한 호출에서 기사 처리 실패가 나도 표식이 해제되어 다음 호출이 동작한다', async () => {
+  const { service, articleModel, db } = setup({ now: BETWEEN, distributionOpts: { throwOn: 'AKR1' } });
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  const [r1, r2] = await Promise.all([service.tick(), service.tick()]);
+  assert.equal([r1, r2].filter((r) => r.skipped === true).length, 1);
+
+  const r3 = await service.tick();
+  assert.equal(r3.ok, true);
+  assert.equal(r3.skipped, undefined, '실패 후에도 잠기지 않는다');
+  assert.equal(statusOf(db, 'AKR1'), 'EPS');
 });
 
 test('배부 중 기사가 사라져도 tick이 깨지지 않는다', async () => {

@@ -72,6 +72,37 @@ test('dueKinds: 파싱 불가/빈 값/비문자열 엠바고는 due가 되지 �
   assert.deepEqual(dueKinds({}, now), []);
 });
 
+// --- 리뷰 반영: Date.parse의 값 형식별 타임존 불일치 차단 ---
+// 오프셋 없는 값('…T15:00')은 서버 로컬로, 날짜만('2026-07-30')은 UTC 자정으로 해석된다 —
+// 같은 입력이 서버 TZ에 따라 다른 시각이 되고(KST 기준 최대 9시간 조기 판정), dev/prod 동작이 갈린다.
+// 명시적 오프셋(Z 또는 ±hh:mm)이 있는 ISO-8601만 유효하고, 그 외는 판정 불가(= 미도래)다.
+
+test('dueKinds: 오프셋 없는 ISO 값은 due가 되지 않는다(서버 TZ 의존 금지)', () => {
+  const now = '2026-12-31T00:00:00.000Z';
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28T05:00' }, now), []);
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28T05:00:00' }, now), []);
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28T05:00:00.000' }, now), []);
+  assert.deepEqual(dueKinds({ secondEmbargoAt: '2026-07-28T09:00:00' }, now), []);
+});
+
+test('dueKinds: 날짜만 있는 값은 due가 되지 않는다(UTC 자정 해석 → 조기 반출 금지)', () => {
+  const now = '2026-12-31T00:00:00.000Z';
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28' }, now), []);
+  assert.deepEqual(dueKinds({ secondEmbargoAt: '2026-07-28' }, now), []);
+});
+
+test('requiredKinds: 오프셋 없는 값·날짜만인 값은 시점 배부 대상이 아니다', () => {
+  assert.deepEqual(requiredKinds({ embargoAt: '2026-07-28' }), []);
+  assert.deepEqual(requiredKinds({ embargoAt: '2026-07-28T05:00:00' }), []);
+  assert.deepEqual(requiredKinds({ secondEmbargoAt: '2026-07-28T09:00' }), []);
+});
+
+test('dueKinds: ±hh:mm 오프셋 표기는 유효하다(UTC 표기와 동일 시각으로 판정)', () => {
+  // 2026-07-28T14:00:00+09:00 == 2026-07-28T05:00:00Z (T1)
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28T14:00:00+09:00' }, T1), ['press']);
+  assert.deepEqual(dueKinds({ embargoAt: '2026-07-28T14:00:00.000+09:00' }, '2026-07-28T04:59:59.999Z'), []);
+});
+
 test('dueKinds: now가 파싱 불가면 아무것도 due가 아니다', () => {
   assert.deepEqual(dueKinds({ embargoAt: T1, secondEmbargoAt: T2 }, 'not-a-date'), []);
   assert.deepEqual(dueKinds({ embargoAt: T1 }, undefined), []);

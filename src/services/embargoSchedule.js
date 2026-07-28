@@ -13,13 +13,19 @@
 // 배부 종류의 단일 출처(순서 고정: press 우선). 이력의 action 값도 이 allowlist로만 받는다.
 export const DISTRIBUTION_KINDS = ['press', 'nonpress'];
 
-// 시각 문자열 → epoch ms. 파싱 불가면 null.
+// 시각 문자열 → epoch ms. 명시적 오프셋(Z 또는 ±hh:mm)이 있는 ISO-8601만 유효, 그 외는 null(= 미도래).
 // 사전식 문자열 비교를 쓰지 않는 이유: 엠바고 입력은 자유 텍스트라 포맷이 섞일 수 있고,
 // 사전식 비교는 포맷이 다른 순간 순서가 뒤집혀 엠바고 전 기사를 외부로 내보낸다.
+// Date.parse를 그대로 신뢰하지 않는 이유: 값 형식별로 타임존 해석이 갈린다 —
+// 날짜만('2026-07-30')은 UTC 자정으로, 오프셋 없는 값('…T15:00')은 서버 로컬로 해석되어
+// 같은 입력이 서버 TZ에 따라 다른 시각(KST 기준 최대 9시간 조기 반출)이 된다.
+// 판정 불가한 값은 도래로 수렴시키지 않는다(파일 상단 CRITICAL — 잘못 나간 기사는 회수 불가).
+const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
 function toEpoch(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  if (!trimmed) return null;
+  if (!ISO_WITH_OFFSET.test(trimmed)) return null;
   const ms = Date.parse(trimmed);
   return Number.isNaN(ms) ? null : ms;
 }
