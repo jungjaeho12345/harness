@@ -5,6 +5,7 @@
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
+import { dueDistributionKinds, isEmbargoComplete } from './embargoTick.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -187,6 +188,60 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true, status: finalStatus };
   }
 
+  // 시점 배부(tick) — 외부 cron이 POST /api/distribution/tick으로 주기 호출한다(ADR-008 (3), 앱 타이머 없음).
+  // pending EPS 기사 중 배부 시각이 도래한 kind를 배부하고, 엠바고 배부가 완결되면 EPS→DPS로 전이한다(ADR-008 (5)).
+  //  - 시점/완결 판정은 embargoTick 순수 함수에 위임한다(시각 비교 로직을 여기서 재구현하지 않는다).
+  //  - 완결 판정 근거는 "배부 후 재조회한" ArticleHistory distribute 이력 kind다(2차만 기사의 송고 시 press 이력 포함).
+  //  - EPS→DPS는 present-only update(status만) — sentAt·본문·distributedAt(배부가 이미 갱신) 등은 불변(DB 비파괴).
+  //  - actorUserId=null: 시스템 tick이라 사람 액터가 없다(클라 값에서 도출 금지).
+  async function distributionTick({ now } = {}) {
+    const nowVal = now ?? nowISO();
+    if (!distributionService) return { ok: true, distributed: [], completed: [] };
+
+    const eps = articleModel.query({ status: 'EPS' });
+    const distributed = [];
+    const completed = [];
+
+    // 배부 이력에서 이 기사에 이미 배부된 kind 집합을 뽑는다(완결/멱등 판정 근거).
+    const distributedKindsOf = (articleId) => new Set(
+      (historyModel ? historyModel.queryByArticle(articleId) : [])
+        .filter((r) => r.eventType === 'distribute')
+        .map((r) => r.action),
+    );
+
+    for (const row of eps) {
+      const articleId = row.articleId;
+      // 한 기사의 오류가 다른 기사·전체 tick을 막지 않게 격리한다.
+      try {
+        const due = dueDistributionKinds(row, distributedKindsOf(articleId), nowVal);
+        if (due.length > 0) {
+          // 배부는 phase 47 distributionService에 위임(대상 선정·스풀 쓰기·distributedAt·이력의 단일 출처).
+          await distributionService.distribute(articleId, { kinds: due, actorUserId: null });
+          distributed.push({ articleId, kinds: due });
+        }
+
+        // 완결 판정은 배부 후 최신 이력 kind 기준. required가 모두 배부됐고 아직 EPS면 전이.
+        if (isEmbargoComplete(row, distributedKindsOf(articleId))) {
+          const fresh = articleModel.getById(articleId);
+          if (fresh?.contents?.status === 'EPS') {
+            articleModel.update(articleId, { contents: { status: 'DPS' } });
+            record({
+              articleId,
+              eventType: 'status',
+              action: 'embargoComplete',
+              fromStatus: 'EPS',
+              toStatus: 'DPS',
+              actorUserId: null,
+            });
+            completed.push(articleId);
+          }
+        }
+      } catch { /* 기사별 오류 격리 — 다음 기사/다음 tick으로 진행 */ }
+    }
+
+    return { ok: true, distributed, completed };
+  }
+
   // 후속기사작성(followUp)/계속기사작성(continue) — 원본을 바탕으로 "새 기사"를 작성한다.
   // 항상 create()로만 신규 행을 만든다(새 articleId·status RDS·트랜잭션) — 원본은 절대 변경하지 않는다(DB 비파괴, ADR-002).
   // 명세 근거: news.md 85행은 두 메뉴만 언급하고 필드 복사 규칙을 명시하지 않는다.
@@ -308,7 +363,7 @@ export function createArticleService({ articleModel, db, historyModel, distribut
 
   return {
     create, update, getById, query, search, applyAction, deriveArticle, queryHistory,
-    getHistorySnapshot,
+    getHistorySnapshot, distributionTick,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };
 }
