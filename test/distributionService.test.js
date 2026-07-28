@@ -11,6 +11,7 @@ import { createArticleModel } from '../src/models/articleModel.js';
 import { createArticleHistoryModel } from '../src/models/articleHistoryModel.js';
 import { createDistributionTargetModel } from '../src/models/distributionTargetModel.js';
 import { createDistributionService } from '../src/services/distributionService.js';
+import { createSpoolWriter } from '../src/services/spoolWriter.js';
 
 const NOW = '2026-07-28T05:00:00.000Z';
 const ARTICLE_ID = 'AKR20260728000000001';
@@ -239,4 +240,65 @@ test('이력 기록 실패는 배부를 되돌리지 않는다', async () => {
   assert.equal(r.ok, true);
   assert.equal(r.distributed.length, 1);
   assert.equal(contentsOf(db).distributedAt, NOW);
+});
+
+test('재배부: distributedAt은 최신 배부 시각으로 갱신되고 이력은 누적된다', async () => {
+  const { db, distributionTargetModel, articleModel, historyModel } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  const make = (stamp) => createDistributionService({
+    distributionTargetModel, articleModel, historyModel, spoolWriter: fakeWriter(), now: () => stamp,
+  });
+
+  await make('2026-07-28T05:00:00.000Z').distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(contentsOf(db).distributedAt, '2026-07-28T05:00:00.000Z');
+
+  await make('2026-07-28T09:30:00.000Z').distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(contentsOf(db).distributedAt, '2026-07-28T09:30:00.000Z', '최근 배부 시각으로 갱신한다');
+  // 과거 배부 사실은 이력에 남는다 — 정보 손실이 없다(ADR-008).
+  assert.deepEqual(
+    historyOf(db).map((h) => h.createdAt),
+    ['2026-07-28T05:00:00.000Z', '2026-07-28T09:30:00.000Z'],
+  );
+});
+
+test('레거시 행의 잘못된 spoolDir는 실제 writer가 거부해 failed로 격리된다(경로 조작 방어)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({
+    article: { articleId: ARTICLE_ID, title: '제목' },
+    contents: { articleId: ARTICLE_ID, status: 'DPS' },
+  });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  // 서비스 검증을 우회해 저장된 값(구버전 데이터·직접 DB 편집)을 모사한다.
+  distributionTargetModel.insert({ name: '수상한 대상', kind: 'press', spoolDir: '../../etc', active: 'Y' });
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+
+  const fsCalls = [];
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    // 실제 spoolWriter를 쓰되 FS 조작만 주입한다 — 경로 재검증이 실제로 동작하는지 확인.
+    spoolWriter: createSpoolWriter({
+      rootDir: '/spool/out',
+      mkdir: async (...a) => { fsCalls.push(['mkdir', ...a]); },
+      writeFile: async (...a) => { fsCalls.push(['writeFile', ...a]); },
+      rename: async (...a) => { fsCalls.push(['rename', ...a]); },
+      now: () => NOW,
+    }),
+    now: () => NOW,
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.failed.length, 1);
+  assert.equal(r.failed[0].reason, 'invalid-spool-dir');
+  assert.equal(r.distributed.length, 1, '정상 수신처 배부는 계속된다');
+  // 스풀 루트 밖으로 나가는 경로는 어떤 FS 호출에도 나타나지 않는다.
+  for (const call of fsCalls) {
+    assert.equal(String(call[1]).startsWith('/spool/out/kbs'), true, JSON.stringify(call));
+  }
 });
