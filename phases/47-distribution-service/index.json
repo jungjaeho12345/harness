@@ -2,9 +2,26 @@
   "project": "기사 작성기",
   "phase": "47-distribution-service",
   "steps": [
-    { "step": 0, "name": "spool-writer", "status": "pending" },
-    { "step": 1, "name": "distribution-service", "status": "pending" },
-    { "step": 2, "name": "send-hook", "status": "pending" },
-    { "step": 3, "name": "wiring-docs", "status": "pending" }
+    {
+      "step": 0,
+      "name": "spool-writer",
+      "status": "completed",
+      "summary": "배부 스풀 writer(ADR-008 (1) 파일 스풀 outbound) 완료. 변경 파일 2: 소스 1(src/services/spoolWriter.js 신규 — createSpoolWriter({rootDir, mkdir, writeFile, rename, now})가 write({spoolDir, articleId, article, contents}) 하나만 노출. ① rootDir 미설정 시 spool-disabled, ② sanitizeSpoolDir 재검증(DB 저장값도 불신 — 경로 합성 직전이 마지막 방어 지점) invalid-spool-dir, ③ articleId /^[A-Za-z0-9_-]{1,64}$/ 화이트리스트 invalid-article-id, ④ mkdir(recursive) → 같은 디렉토리 임시파일(.<name>.tmp) writeFile → rename 원자적 게시, ⑤ 실패 전량 spool-write-failed로 반환(throw 0 — 한 수신처 실패가 다른 수신처·송고를 막지 않는다는 step1 전제). 외부 반출 페이로드 shape·필드 allowlist를 이 모듈이 단일 출처로 소유 — CONTENTS_FIELDS 18개 + Article.markupVersion + 서버 stamp distributedAt, internalComment·lockYN·locker*·lockedAt·미지 컬럼은 미노출. 파일명 <articleId>_<compactStamp>.json으로 재배부 시 이전 배부본 미덮어씀) + 테스트 1(test/spoolWriter.test.js 신규 9건 — mkdir/writeFile/rename 가짜 주입으로 실제 FS 미접촉). TDD: 사전 red(ERR_MODULE_NOT_FOUND) 확인 후 green. ADR-008 준수: fetch/setInterval/setTimeout/EventSource/SQL 0건. AC 그린: npm test 498 pass·fail 0(기준선 489 대비 +9 무회귀), npm run lint clean."
+    },
+    {
+      "step": 1,
+      "name": "distribution-service",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "send-hook",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "wiring-docs",
+      "status": "pending"
+    }
   ]
 }
