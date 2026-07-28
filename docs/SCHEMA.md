@@ -9,6 +9,7 @@
 - 타입은 Article/Contents는 VARCHAR, User는 TEXT로 설정한다 (추가된 컬럼은 VARCHAR).
 - 스키마 변경은 기존 데이터를 삭제하지 않고 컬럼을 추가하는 방식(멱등 마이그레이션)으로만 적용한다.
 - DB에 있는 내용은 절대 삭제하지 않는다.
+- 시점 배부 tick(48-distribution-tick, ADR-008 (3))은 신규 테이블·컬럼을 추가하지 않는다 — 배부 완결 전이는 기존 ArticleHistory 행(eventType='distribute')만 근거로 판정하고, 결과 역시 기존 ArticleHistory 행(eventType='status', action='distributeComplete')으로 남는다.
 
 ## PK
 - Article과 Contents는 기사아이디(articleId)를 primary key로 설정한다.
@@ -47,7 +48,9 @@ ContentsVO에 대한 명세서
 - 공통정보 컬럼으로 공동작성(coAuthor), 지역(region), 속성(attribute), 키워드(keyword), 내부코멘트(internalComment), 외부코멘트(externalComment), 첨부파일(attachmentFile), 자료파일(referenceFile)이 있다.
 - 시간 컬럼은 ISO-8601 UTC 문자열로 저장한다.
 - 배부시간(distributedAt)은 배부(스풀 기록) 실행 시각이다 — 배부가 실행될 때마다 가장 최근 시각으로 갱신하고, 개별 배부 이벤트는 ArticleHistory에 append-only로 남는다(ADR-008: 스풀 기록 시각 = 배부 지시 완료, 발송 완료가 아니다).
+- ArticleHistory의 eventType='status', action='distributeComplete' 행은 엠바고 배부 완결로 EPS→DPS 전이된 사실을 기록한다(actor는 배부 완결을 트리거한 tick 실행자).
 - 기사상태(status)는 기사 생애주기 값 RDS, DPS, RRH, RRK, DDH, DDK, DPD, EPS, EEK, EEH를 가진다 (전이 규칙은 news.md 기사 생애주기를 따른다). DPD는 DPS 기사의 삭제 승인 상태값이다(행 삭제가 아니라 상태값 전이 — DB 비파괴). EPS는 엠바고가 설정된 기사를 송고할 때의 상태(송고 대기)이고, EEK/EEH는 EPS 기사를 KILL/보류한 상태값이다.
+- status의 EPS→DPS 전이 주체는 송고(applyAction)와 배부 완결(completeEmbargoDistribution) 두 경로뿐이다.
 - 기사아이디는 'AKR' + YYYYMMDD + 난수 9자리 규칙으로 생성한다 (중복이면 난수를 다시 생성한다).
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
 

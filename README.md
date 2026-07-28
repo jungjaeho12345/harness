@@ -50,6 +50,13 @@ npm run dev        # 프론트엔드 개발 서버 (Vite, :5173)
 
 미디어 검색 키가 없으면 검색은 오류 대신 빈 결과를 반환한다.
 
+## 운영 API — 배부 tick
+
+- `POST /api/distribution/tick` — Z 전용, 외부 운영 cron이 주기 호출한다. 요청 본문 없음. 응답 `{ ok, evaluated, distributed, transitioned, failed }`.
+- 응답 코드: `401`(무세션) / `403`(비Z) / `400`(spool-disabled — `DIST_SPOOL_DIR` 미설정) / `409`(busy — 이전 tick 실행 중, 다음 호출에서 재시도).
+- 인증은 세션 기반이다 — 서버는 쿠키를 우선 읽고 없으면 `x-session-id` 헤더를 쓴다(`readSessionToken`). 외부 cron은 Z 계정으로 로그인해 얻은 세션ID를 `x-session-id` 헤더로 전송하며, 세션은 1시간 idle 만료이므로(ADR-004) 호출이 인증 실패하면 재로그인해 세션을 갱신해야 한다.
+- 앱에는 스케줄러가 없으므로 tick 호출 주기가 곧 시점 배부의 정시성이다(ADR-008 트레이드오프).
+
 ## 테스트 / 검증
 
 ```bash

@@ -37,7 +37,10 @@
     {
       "step": 4,
       "name": "docs-sync",
-      "status": "pending"
+      "status": "completed",
+      "started_at": "2026-07-28T15:28:21+0900",
+      "summary": "소스 동작 변경 없이 문서만 현행화: docs/ARCHITECTURE.md에 distributionTickService(단일 실행 게이트, 앱 내 타이머 없음) 항목과 배부 tick 데이터 흐름 블록·SSE 신호 출처(update=distributionService.onDistributed, status=tick 라우트) 1줄을 추가. docs/SCHEMA.md에 ArticleHistory의 eventType='status'/action='distributeComplete' 서술, status EPS→DPS 전이 주체가 applyAction과 completeEmbargoDistribution 두 경로뿐이라는 서술, 이번 phase 신규 테이블/컬럼 0(기존 ArticleHistory 행만 근거)이라는 서술을 추가. README.md에 신규 '운영 API — 배부 tick' 절을 추가(POST /api/distribution/tick 응답 shape·401/403/400/409 코드, readSessionToken이 쿠키 우선·x-session-id 폴백이라는 세션 인증 메모, ADR-004 1시간 idle 만료, 앱 무타이머로 tick 호출 주기가 정시성을 좌우한다는 ADR-008 트레이드오프). .env.example은 신규 환경변수 없음 확인만 하고 무변경. AC 전량 green(백엔드 586, 웹 1927, lint 0, build clean), git diff는 문서 3파일 + phase index.json만(src/·server/ 무변경, schema.js 무변경, DELETE FROM/DROP 신규 0건, receiverConfigModel.js 기존 1건 그대로), test/distribution-tick-api.test.js에 401/403/409(busy) 계약 테스트 기존 확인.",
+      "completed_at": "2026-07-28T15:34:00+0900"
     }
   ],
   "created_at": "2026-07-28T15:00:01+0900"

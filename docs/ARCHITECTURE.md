@@ -13,7 +13,7 @@ server/
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter)
+  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · distributionTick · spoolWriter). distributionTick: 시점 배부 tick(외부 호출 pull). 앱 내 타이머 없음. 프로세스 내 단일 실행 게이트로 중첩 호출을 거절(busy)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)
@@ -50,7 +50,12 @@ test/                   # 백엔드 테스트 (node --test)
          → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
          → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
          → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
+
+[배부/시점] 외부 cron → POST /api/distribution/tick(Z 세션) → EPS 후보 조회
+         → 도래한 kind만 배부(요구 집합 ∩ 도래 − 기배부) → 요구 배부 완결 시 EPS→DPS 전이
+         → SSE 무효화 신호
 ```
+- SSE 신호 출처: 배부 신호(`'update'`)는 `distributionService.onDistributed`가 단일 출처이고, 상태 전이 신호(`'status'`)는 tick 라우트(`POST /api/distribution/tick`)가 발행한다.
 
 ## 상태 관리
 - **서버 상태**: `news.db`(SQLite)가 단일 진실 공급원. 클라이언트는 캐시하지 않고 필요 시 재조회한다.
