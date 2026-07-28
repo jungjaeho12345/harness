@@ -11,7 +11,8 @@
     {
       "step": 1,
       "name": "distribution-service",
-      "status": "pending"
+      "status": "completed",
+      "summary": "배부 실행 서비스 완료. 변경 파일 2: 소스 1(src/services/distributionService.js 신규 — createDistributionService({distributionTargetModel, articleModel, historyModel, spoolWriter, now})가 distribute(articleId, {kinds, actorUserId}) 하나만 노출(tick/타이머 진입점 없음). ① spoolWriter 미주입 시 spool-disabled, ② kinds는 KINDS=['press','nonpress'] 화이트리스트 교집합(비배열·빈배열·미지 값은 무동작 {ok:true,distributed:[],failed:[]}), ③ 기사 부재 not-found(파일 쓰기 0), ④ kind별 distributionTargetModel.query({kind, active:'Y'})로 활성 대상만 선정(비활성 제외), ⑤ 수신처별 spoolWriter.write({spoolDir, articleId, article, contents}) — 페이로드 조립 없이 DB 행을 그대로 전달(파일 shape 단일 출처는 spoolWriter), ⑥ 부분 실패 격리(try/catch + res.ok 분기 → distributed[]/failed[]로 보고, throw 0), ⑦ kind에서 성공 1건 이상일 때만 ArticleHistory에 eventType='distribute'·action=kind 1행 append(거짓 기록 금지 — 이 행이 phase 48 tick의 '이미 배부됨' 판정 근거), ⑧ 전체 성공 1건 이상일 때만 articleModel.update(id, {contents:{distributedAt: now()}}) present-only 갱신(status·sentAt·본문 불변). 이력 기록 실패는 try/catch로 격리(배부 미회수). 시점 판정(엠바고 시각 비교)·EPS→DPS 전이는 미구현 — phase 48 소관임을 파일 상단 주석에 명시) + 테스트 1(test/distributionService.test.js 신규 12건 — in-memory DB + 실제 모델 + 가짜 spoolWriter). TDD: 사전 red 확인 후 green. ADR-008 준수: node:fs·fetch·setInterval·setTimeout·DELETE FROM·DROP 0건(grep). DB 비파괴 잠금: 배부 전후 Article/Contents/DistributionTarget 행 수 동일 + 기존 송고 이력 보존 + 배부 이력이 송고이력 필터(eventType='status'&&action='send')에 미포함. AC 그린: npm test 510 pass·fail 0(step0 498 대비 +12 무회귀), npm run lint clean."
     },
     {
       "step": 2,
