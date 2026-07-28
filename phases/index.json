@@ -261,6 +261,11 @@
       "status": "completed",
       "completed_at": "2026-07-28T11:56:33+0900",
       "note": "배부 3부작의 두 번째 phase(즉시 배부) — ADR-008 기반. 범위는 송고 시점 즉시 배부까지: (0) spoolWriter(주입형 FS·원자적 rename·경로 재검증·외부 반출 필드 allowlist), (1) distributionService(활성 대상 선정→스풀 쓰기→Contents.distributedAt 갱신→ArticleHistory kind별 이력, 부분 실패 격리·거짓 기록 금지), (2) 송고 훅(distributionKindsForSend — 엠바고 없음 DPS→press+nonpress / 2차만 EPS→press 즉시 / 1차·1+2차 EPS→없음, 동기 반환 계약 유지·배부 실패가 송고를 되돌리지 않음), (3) DIST_SPOOL_DIR 결선(미설정 시 배부 비활성)+문서 현행화. 시점 배부(POST /api/distribution/tick)·EPS→DPS 완결 전이·배부 UI/재전송은 phase 48/MVP-4 — 이 phase에 혼입 없음(앱 타이머·egress 0). 리뷰 게이트에서 high 1건(배부 실패 무음 삼킴) 수정 후 통과."
+    },
+    {
+      "dir": "48-distribution-tick",
+      "status": "pending",
+      "note": "배부 3부작의 세 번째 phase(시점 배부) — ADR-008 (3)(5). 범위는 tick pull + 엠바고 완결 전이: (0) embargoTick 순수 판정 모듈(dueDistributionKinds·isEmbargoComplete — 1차/2차/1+2차 required·due 규칙, 시각은 주입 now와 Date.parse 비교, 타이머 0), (1) articleService.distributionTick(EPS 조회→due kind 배부→ArticleHistory distribute 이력 kind 기준 완결 판정→present-only EPS→DPS 전이+status:embargoComplete 이력, 멱등·기사별 격리), (2) POST /api/distribution/tick(Z 세션 또는 DISTRIBUTION_TOKEN 시스템 게이트)+배부 완료 SSE 무효화 재발행(onDistributed 콜백 — 송고 즉시배부의 비동기 distributedAt 갱신 신호 포함)+문서 현행화. 실패 재전송·배부 UI는 MVP-4 제외. 앱 타이머·egress 0, DB 비파괴(present-only status·append-only 이력)."
     }
   ]
 }

@@ -1,0 +1,9 @@
+{
+  "project": "기사 작성기",
+  "phase": "48-distribution-tick",
+  "steps": [
+    { "step": 0, "name": "tick-decision", "status": "completed", "summary": "시점 배부 판정 순수 모듈 완료. 신규 src/services/embargoTick.js — dueDistributionKinds(contents, distributedKinds, nowISO)와 isEmbargoComplete(contents, distributedKinds) 2개 export. 규칙: press required⇔embargoAt 설정, nonpress required⇔secondEmbargoAt 설정(2차만 기사의 press는 송고 즉시배부분이라 required 아님). due=required∧시각도래(Date.parse(when)<=Date.parse(now), NaN이면 false)∧미배부. complete=required 전부 배부이력에 있음(비-엠바고는 false — 오전이 방지). distributedKinds는 Set/배열 둘 다 허용. now 주입 필수(타이머 0, ADR-008). 신규 test/embargoTick.test.js 15건. 전체 542 pass/0 fail, lint clean." },
+    { "step": 1, "name": "distribution-tick", "status": "pending" },
+    { "step": 2, "name": "tick-route-sse", "status": "pending" }
+  ]
+}
