@@ -17,7 +17,8 @@
     {
       "step": 2,
       "name": "send-hook",
-      "status": "pending"
+      "status": "completed",
+      "summary": "송고 시점 즉시 배부 훅 완료. 변경 파일 2: 소스 1(src/services/articleService.js — ① 순수 헬퍼 distributionKindsForSend(status, contents) export 신설: DPS→['press','nonpress'](ADR-008 (4)), EPS이면서 embargoAt 없음+secondEmbargoAt 있음→['press'](news.md '2차 엠바고... 송고시 바로 언론사에 배부'), 그 외(1차·1+2차 EPS, R의 RDS 유지 등)→[](시점 배부는 phase 48 tick). 시각 비교 로직 없음. ② createArticleService에 선택 의존성 distributionService 추가(미주입 시 훅 비활성 — 하위호환), ③ applyAction의 이력 기록 직후 action==='send' && kinds.length>0일 때만 fire-and-forget 호출 — Promise.resolve(...).catch(()=>{}) + try/catch로 비동기 reject·동기 throw 모두 격리해 송고 전이·이력을 되돌리지 않는다. applyAction은 동기 반환 계약 유지(라우트·기존 테스트가 await 없이 호출). 판정은 DB 반영 최종 status + DB 엠바고 컬럼으로만(ADR-004) + 테스트 1(test/articleSendDistribution.test.js 신규 10건 — 가짜 distributionService 주입). TDD: 사전 red 3건(핵심 판정 케이스) 확인 후 green. 계약 잠금: 거부된 송고((끝) 마커 없음·EPS send 등 정의 외 전이) 미배부, hold/kill/approveDelete 미배부, DPS 재송고·DDH→DPS 배부, 배부 실패(fail/reject) 시 status DPS·status 이력 1건 유지, 미주입 시 distributedAt null, 반환값에 .then 부재. AC 그린: npm test 520 pass·fail 0(step1 510 대비 +10 무회귀), npm run lint clean."
     },
     {
       "step": 3,
