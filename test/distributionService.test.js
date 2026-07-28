@@ -29,7 +29,7 @@ function fakeWriter({ failFor = new Set() } = {}) {
   };
 }
 
-function setup({ writer = fakeWriter(), targets = [], withArticle = true } = {}) {
+function setup({ writer = fakeWriter(), targets = [], withArticle = true, onDistributed } = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const articleModel = createArticleModel(db);
@@ -52,7 +52,7 @@ function setup({ writer = fakeWriter(), targets = [], withArticle = true } = {})
   }
 
   const service = createDistributionService({
-    distributionTargetModel, articleModel, historyModel, spoolWriter: writer, now: () => NOW,
+    distributionTargetModel, articleModel, historyModel, spoolWriter: writer, now: () => NOW, onDistributed,
   });
   return { db, service, writer, articleModel, historyModel, distributionTargetModel };
 }
@@ -353,4 +353,102 @@ test('onFailure가 throw해도 배부와 기록은 정상 완료된다', async (
   assert.equal(r.ok, true);
   assert.equal(r.distributed.length, 1);
   assert.equal(contentsOf(db).distributedAt, NOW);
+});
+
+// --- onDistributed(선택): 배부가 실제로 일어났음을 알리는 seam (phase 48 — SSE 무효화 재발행의 근원) ---
+// 송고 훅은 fire-and-forget이라 반환값을 보지 않는다 → 배부 완료 시점을 아는 유일한 지점이 이 서비스다.
+
+test('onDistributed: 배부 성공 시 수신처 수와 무관하게 정확히 1회 호출된다', async () => {
+  const seen = [];
+  const { service } = setup({
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+      { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+    ],
+    onDistributed: (info) => seen.push(info),
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  assert.equal(seen.length, 1, 'SSE 무효화 신호는 배부 1회당 1개면 충분하다');
+  assert.equal(seen[0].articleId, ARTICLE_ID);
+  assert.deepEqual(seen[0].kinds, ['press', 'nonpress']);
+  assert.equal(seen[0].count, 3);
+});
+
+test('onDistributed: payload에 본문·contents·스풀 경로를 담지 않는다(ADR-005 무효화 신호)', async () => {
+  const seen = [];
+  const { service } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+    onDistributed: (info) => seen.push(info),
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['articleId', 'count', 'kinds']);
+  const serialized = JSON.stringify(seen[0]);
+  assert.equal(serialized.includes('본문'), false);
+  assert.equal(serialized.includes('kbs'), false, '스풀 경로는 신호에 담지 않는다');
+});
+
+test('onDistributed: 전량 실패면 호출되지 않는다(알릴 변경이 없다)', async () => {
+  const seen = [];
+  const { service, db } = setup({
+    writer: fakeWriter({ failFor: new Set(['kbs']) }),
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+    onDistributed: (info) => seen.push(info),
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.distributed.length, 0);
+  assert.equal(seen.length, 0);
+  assert.equal(contentsOf(db).distributedAt, null, 'distributedAt이 안 바뀌었으므로 알릴 것도 없다');
+});
+
+test('onDistributed: 무동작 경로(빈 kinds·미지 kind·not-found·spool-disabled)에서는 호출 0회', async () => {
+  const seen = [];
+  const push = (info) => seen.push(info);
+
+  const a = setup({ targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }], onDistributed: push });
+  await a.service.distribute(ARTICLE_ID, { kinds: [] });
+  await a.service.distribute(ARTICLE_ID, { kinds: ['all'] });
+  assert.equal(seen.length, 0);
+
+  const b = setup({ withArticle: false, targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }], onDistributed: push });
+  const notFound = await b.service.distribute('AKR-없음', { kinds: ['press'] });
+  assert.equal(notFound.reason, 'not-found');
+  assert.equal(seen.length, 0);
+
+  const disabled = createDistributionService({ onDistributed: push });
+  const r = await disabled.distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(r.reason, 'spool-disabled');
+  assert.equal(seen.length, 0);
+});
+
+test('onDistributed: 호출은 distributedAt 기록 이후다(신호가 쓰기를 앞지르지 않는다)', async () => {
+  let seenAtCallback;
+  const { service, db } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+    onDistributed: () => { seenAtCallback = contentsOf(db).distributedAt; },
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(seenAtCallback, NOW, '콜백 시점에 이미 distributedAt이 DB에 있어야 재조회가 최신값을 본다');
+});
+
+test('onDistributed가 throw해도 배부 결과는 정상 반환된다(격리)', async () => {
+  const { service, db } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+    onDistributed: () => { throw new Error('알림 실패'); },
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+  assert.equal(historyOf(db).filter((h) => h.eventType === 'distribute').length, 1);
 });

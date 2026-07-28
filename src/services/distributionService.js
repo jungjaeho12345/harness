@@ -16,6 +16,9 @@ const KINDS = ['press', 'nonpress'];
 
 // onFailure(선택): 수신처 1곳의 스풀 기록 실패를 표면화한다(ftpWatcher.onError와 동형).
 //   배부 호출자는 fire-and-forget이라 반환값을 보지 않으므로, 이 콜백이 없으면 미발송이 무음으로 사라진다.
+// onDistributed(선택): 배부가 실제로 일어났음(= Contents.distributedAt이 바뀌었음)을 알린다.
+//   송고 훅은 반환 Promise를 버리므로(articleService) 라우트가 완료 시점을 모른다 — 두 배부 경로
+//   (송고 훅·tick pull)가 모두 지나는 이 지점만이 SSE 무효화 신호를 낼 수 있는 단일 지점이다(ADR-005).
 export function createDistributionService({
   distributionTargetModel,
   articleModel,
@@ -23,11 +26,17 @@ export function createDistributionService({
   spoolWriter,
   now = () => new Date().toISOString(),
   onFailure,
+  onDistributed,
 }) {
   // 실패 알림 자체가 배부를 깨뜨리지 않도록 격리한다.
   function notifyFailure(info) {
     if (!onFailure) return;
     try { onFailure(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
+  }
+  // 성공 알림도 동일하게 격리한다(구독자 예외가 배부 결과를 바꾸지 않는다).
+  function notifyDistributed(info) {
+    if (!onDistributed) return;
+    try { onDistributed(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
   }
   // 이력 기록은 부가 기록이다 — 실패해도 이미 끝난 배부를 되돌리지 않는다(articleService.record와 동형).
   function record(rec) {
@@ -93,6 +102,10 @@ export function createDistributionService({
     // present-only 업데이트라 status·sentAt·본문 등 다른 컬럼은 건드리지 않는다(DB 비파괴).
     if (distributed.length > 0) {
       articleModel.update(articleId, { contents: { distributedAt: now() } });
+      // 알림은 DB 반영 **이후**에 낸다 — 신호가 쓰기를 앞지르면 클라이언트 재조회가 옛 distributedAt을 다시 그린다.
+      // 수신처 수와 무관하게 1회만 낸다(무효화 신호는 한 번이면 충분하고, N회면 재조회가 N번 발생한다).
+      // payload는 식별자·요약뿐이다 — 본문/contents/스풀 경로를 담지 않는다(ADR-005: 신호에 행 데이터 없음).
+      notifyDistributed({ articleId, kinds: [...new Set(distributed.map((d) => d.kind))], count: distributed.length });
     }
 
     return { ok: true, distributed, failed };
