@@ -58,18 +58,24 @@ export function createDistributionTickService({
       }
     }
 
+    // 전이 판정은 **다시 읽은 최신 행**으로 한다 — 목록 스냅샷으로 판정하면 안 된다.
+    // 스풀 쓰기(await) 동안 HTTP 핸들러가 끼어들어 데스크가 KILL/보류(EPS→EEK/EEH)했을 수 있는데,
+    // 스냅샷의 'EPS'를 믿으면 킬된 기사를 DPS로 되살린다(회수 불가한 생애주기 오염).
+    const fresh = articleModel.getById(articleId)?.contents;
+    if (!fresh) return;
+
     // 완결 판정 — 배부 직후의 이력을 다시 읽어 판정한다.
     const rows = historyRowsOf(articleId);
-    if (!isEmbargoComplete(contents, rows)) {
+    if (!isEmbargoComplete(fresh, rows)) {
       // 아직 완결이 아닌 기사는 무엇이 빠졌는지 드러낸다(운영자가 원인을 알 수 있어야 한다 —
       // 예: 2차 엠바고 기사에서 송고 시 언론사 배부가 실패해 press 이력이 없는 경우).
       const done = new Set(distributedKinds(rows));
-      out.incomplete.push({ articleId, missing: requiredKinds(contents).filter((k) => !done.has(k)) });
+      out.incomplete.push({ articleId, missing: requiredKinds(fresh).filter((k) => !done.has(k)) });
       return;
     }
 
     // 전이 규칙은 lifecycle이 단일 출처다. EPS가 아니면(EEH/EEK 등) 여기서 거부된다.
-    const next = embargoCompleteTransition(contents.status);
+    const next = embargoCompleteTransition(fresh.status);
     if (!next.ok) return;
 
     // present-only 갱신 — status만 쓴다. sentAt·sender·distributedAt·본문은 건드리지 않는다(DB 비파괴).
@@ -78,7 +84,7 @@ export function createDistributionTickService({
       articleId,
       eventType: 'status',
       action: 'embargoComplete',
-      fromStatus: contents.status,
+      fromStatus: fresh.status,
       toStatus: next.status,
       actorUserId,
     });
@@ -103,9 +109,11 @@ export function createDistributionTickService({
       checkedCount += 1;
       try {
         await processArticle(contents, nowIso, actorUserId, out);
-      } catch (e) {
+      } catch {
         // 한 기사의 실패가 나머지 기사의 엠바고를 통째로 밀리게 하면 안 된다.
-        out.failed.push({ articleId: contents.articleId, kind: null, reason: e?.message ?? 'tick-failed' });
+        // 사유는 고정 문자열만 싣는다 — 예외 메시지에는 스풀 경로 등 내부 정보가 섞인다(마스킹 규율).
+        // 상세는 배부 실패 로그(logService.warn)가 이미 식별자·사유 형태로 남긴다.
+        out.failed.push({ articleId: contents.articleId, kind: null, reason: 'tick-failed' });
       }
     }
 

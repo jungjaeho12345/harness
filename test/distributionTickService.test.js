@@ -378,3 +378,62 @@ test('여러 기사 혼재: 도래·미도래·완결 대기가 한 tick에서 �
     ['BOTH:nonpress', 'LATER:press'],
   );
 });
+
+// --- 리뷰 반영: 배부 await 중 상태가 바뀌는 경합(TOCTOU) ---
+// tick은 EPS 목록을 스냅샷으로 읽고, 스풀 쓰기(await) 동안 HTTP 핸들러가 끼어들 수 있다.
+// 그 사이 데스크가 KILL/보류하면 스냅샷의 'EPS'로 전이 판정을 하면 안 된다(킬된 기사 부활 금지).
+
+test('배부 중 데스크가 KILL하면 완결 전이하지 않는다(스냅샷 status로 판정 금지)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  // 배부(await) 도중 다른 요청이 EPS→EEK로 바꾼 상황을 재현한다.
+  const distributionService = {
+    async distribute(articleId, { kinds }) {
+      articleModel.update(articleId, { contents: { status: 'EEK' } });
+      for (const kind of kinds) {
+        historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: T1 });
+      }
+      return { ok: true, distributed: kinds.map((k) => ({ targetId: 1, kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService, now: () => BETWEEN,
+  });
+
+  const r = await service.tick();
+
+  assert.equal(statusOf(db, 'AKR1'), 'EEK', 'KILL된 기사를 DPS로 되살리면 안 된다');
+  assert.deepEqual(r.completed, []);
+  assert.equal(historyOf(db, 'AKR1').some((h) => h.action === 'embargoComplete'), false);
+});
+
+test('배부 중 기사가 사라져도 tick이 깨지지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  const distributionService = {
+    async distribute(articleId, { kinds }) {
+      // 기사 조회가 비는 상황(이론적 경계)을 흉내낸다 — 행 삭제가 아니라 조회 실패 경로 방어 확인.
+      db.prepare('UPDATE Contents SET articleId = ? WHERE articleId = ?').run('OTHER', articleId);
+      for (const kind of kinds) {
+        historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: T1 });
+      }
+      return { ok: true, distributed: kinds.map((k) => ({ targetId: 1, kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService, now: () => BETWEEN,
+  });
+
+  const r = await service.tick();
+
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.completed, []);
+});
