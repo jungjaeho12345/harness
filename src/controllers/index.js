@@ -68,7 +68,7 @@ export function createControllers(db, {
       // 송고 훅은 fire-and-forget이라 반환값을 보지 않는다 — 미발송을 로그로 표면화한다.
       // 기사/수신처 식별자와 사유만 담는다(본문·페이로드 금지 — 마스킹 규율).
       onFailure: ({ articleId, targetId, kind, reason }) => {
-        logService?.warn(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
+        logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
     })
     : undefined;
