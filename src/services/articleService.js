@@ -78,6 +78,22 @@ export function distributionKindsForSend(status, contents = {}) {
   return [];
 }
 
+// EPS 기사의 "요구 배부 집합" — news.md 엠바고 규칙(256~263행)에서 그대로 도출한 판정표.
+// 이 함수가 "엠바고 설정 → 요구 배부 kind" 매핑의 단일 출처다(phase 48 tick 서비스가 재사용한다).
+//   1차만    → ['press']            : 1차 시각에 언론사 배부. 비언론사 배부 규정 없음.
+//   2차만    → ['press','nonpress'] : 송고 시 이미 press 완료(distributionKindsForSend), 2차 시각에 nonpress.
+//   1+2차    → ['press','nonpress'] : 1차 시각 press, 2차 시각 nonpress.
+//   둘 다 없음 → []                  : EPS 진입 조건 자체가 성립하지 않는 데이터 이상 — 전이하지 않는다.
+// "설정됨" 판정은 truthy(빈 문자열·null·undefined는 미설정) — applyAction의 embargoSet 판정과 동일 규칙.
+// 순서는 항상 ['press','nonpress'] 고정. 순수 함수 — DB 접근·시각 비교·로그 없음.
+export function requiredDistributionKinds(contents = {}) {
+  const hasFirst = !!contents.embargoAt;
+  const hasSecond = !!contents.secondEmbargoAt;
+  if (hasFirst && !hasSecond) return ['press'];
+  if (hasSecond) return ['press', 'nonpress'];
+  return [];
+}
+
 // distributionService(선택): 미주입이면 배부 훅이 비활성이며 송고는 기존과 동일하게 동작한다.
 export function createArticleService({ articleModel, db, historyModel, distributionService }) {
   // 이력 기록 헬퍼 — 부가 기록이므로 본 기능(편집/전이)을 막지 않는다.
@@ -306,9 +322,48 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: false, reason: 'not-holder' };
   }
 
+  // EPS 기사의 요구 배부 집합(requiredDistributionKinds)이 전부 배부 완료됐을 때만 EPS→DPS로 전이한다
+  // (ADR-008 (5)). 유일한 호출자는 phase 48 tick 서비스 — "지금이 엠바고 시각인가" 시점 판정은 여기서 하지 않는다.
+  // 판정 입력은 DB 값만 쓴다(호출자가 넘긴 status/kinds는 받지 않는다 — ADR-004).
+  function completeEmbargoDistribution(articleId, { actorUserId = null } = {}) {
+    const row = articleModel.getById(articleId);
+    if (!row || !row.contents) return { ok: false, reason: 'not-found' };
+
+    const status = row.contents.status;
+    if (status !== 'EPS') return { ok: true, status, transitioned: false };
+
+    const required = requiredDistributionKinds(row.contents);
+    if (required.length === 0) return { ok: true, status, transitioned: false, reason: 'no-embargo' };
+
+    // "이미 배부됨" 판정 근거는 ArticleHistory의 eventType='distribute' 행뿐이다(distributionService.record).
+    // 이력 조회 실패(throw)는 격리해 전이 금지로 수렴한다 — tick 루프를 깨지 않는다.
+    let historyRows = [];
+    if (historyModel) {
+      try { historyRows = historyModel.queryByArticle(articleId); }
+      catch { historyRows = []; }
+    }
+    const distributedSet = new Set(
+      historyRows.filter((r) => r.eventType === 'distribute').map((r) => r.action),
+    );
+    const distributed = required.filter((k) => distributedSet.has(k));
+    // historyModel 미주입이면 완결 판정 근거가 없다 — 안전측으로 전이하지 않는다.
+    const allDone = !!historyModel && required.every((k) => distributedSet.has(k));
+
+    if (!allDone) return { ok: true, status, transitioned: false, required, distributed };
+
+    // present-only 1건 — sentAt/sender/distributedAt/본문은 건드리지 않는다(DB 비파괴).
+    articleModel.update(articleId, { contents: { status: 'DPS' } });
+    record({
+      articleId, eventType: 'status', action: 'distributeComplete',
+      fromStatus: 'EPS', toStatus: 'DPS', actorUserId,
+    });
+    return { ok: true, status: 'DPS', transitioned: true, required, distributed };
+  }
+
   return {
     create, update, getById, query, search, applyAction, deriveArticle, queryHistory,
     getHistorySnapshot,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
+    completeEmbargoDistribution,
   };
 }

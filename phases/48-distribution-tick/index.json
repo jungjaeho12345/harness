@@ -2,10 +2,33 @@
   "project": "기사 작성기",
   "phase": "48-distribution-tick",
   "steps": [
-    { "step": 0, "name": "embargo-completion", "status": "pending" },
-    { "step": 1, "name": "tick-service", "status": "pending" },
-    { "step": 2, "name": "tick-route", "status": "pending" },
-    { "step": 3, "name": "distribute-notify", "status": "pending" },
-    { "step": 4, "name": "docs-sync", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "embargo-completion",
+      "status": "completed",
+      "started_at": "2026-07-28T15:00:01+0900",
+      "summary": "articleService.js에 순수 헬퍼 requiredDistributionKinds(contents)(엠바고 설정→요구 배부 kind 판정표, news.md 엠바고 규칙 단일 출처)와 createArticleService 내부 completeEmbargoDistribution(articleId,{actorUserId})(ArticleHistory의 eventType='distribute' 이력만 근거로 요구 배부 집합이 전부 충족됐을 때만 EPS→DPS 전이, 멱등·동기·present-only update)를 추가. 신규 테스트 test/articleEmbargoCompletion.test.js 16건 전부 green, 기존 543건 무회귀, lint 경고 0."
+    },
+    {
+      "step": 1,
+      "name": "tick-service",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "tick-route",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "distribute-notify",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "docs-sync",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-07-28T15:00:01+0900"
 }
