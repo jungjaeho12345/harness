@@ -2,7 +2,12 @@
   "project": "기사 작성기",
   "phase": "48-distribution-tick",
   "steps": [
-    { "step": 0, "name": "embargo-rules", "status": "pending" },
+    {
+      "step": 0,
+      "name": "embargo-rules",
+      "status": "completed",
+      "summary": "엠바고 시점 배부 순수 규칙 계층 완료. 변경 파일 3: 소스 2(src/services/embargoSchedule.js 신규 — DISTRIBUTION_KINDS/requiredKinds/dueKinds/distributedKinds/pendingKinds/isEmbargoComplete. ① 시각 비교는 Date.parse epoch(사전식 문자열 비교 금지 — 포맷 혼재 시 순서 역전으로 엠바고 전 반출), ② 파싱 불가·빈 문자열·비문자열·now 불량은 모두 '도래 아님'으로 보수 수렴, ③ 2차만 설정 기사의 press는 dueKinds에서 제외(송고 훅이 이미 배부 — 중복 반출 금지)하되 requiredKinds에는 포함(완결의 사실 요건), ④ distributedKinds는 eventType='distribute' 행의 action만 DISTRIBUTION_KINDS allowlist로 수용(status/edit 이력 미혼입, 미지 action 무시), ⑤ pendingKinds=due−distributed로 tick 멱등성 확보, ⑥ isEmbargoComplete는 시각이 아니라 이력만으로 판정(ADR-008 (5)), 엠바고 없는 기사는 항상 false. I/O·타이머 0. src/services/lifecycle.js — embargoCompleteTransition(status) 추가: EPS만 {ok:true,status:'DPS'}, EEH·EEK 포함 그 외 전부 forbidden-transition. 기존 transition/DESK_TABLE/initialStatus 불변) + 테스트 1(test/embargoSchedule.test.js 신규 26건 — news.md 엠바고 규칙표 4행을 그대로 케이스화 + 경계(같은 시각)·불량 입력·인자 불변·기존 lifecycle 계약 회귀). TDD: 사전 red(ERR_MODULE_NOT_FOUND) 확인 후 green. AC 그린: npm test 553 pass·fail 0(기준선 527 대비 +26 무회귀), npm run lint clean."
+    },
     { "step": 1, "name": "distribute-notify", "status": "pending" },
     { "step": 2, "name": "tick-service", "status": "pending" },
     { "step": 3, "name": "tick-wiring", "status": "pending" },
