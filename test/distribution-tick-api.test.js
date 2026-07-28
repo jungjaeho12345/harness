@@ -255,6 +255,84 @@ test('POST /api/distribution/tick: body role:Z 스푸핑은 세션 없이 통하
   } finally { await ctx.close(); }
 });
 
+// --- 신호 횟수 회귀(phase 48 step3) ---
+// 배부('update') 신호의 단일 출처는 distributionService.onDistributed다(controllers/index.js 결선).
+// 여기서는 HTTP 없이 controllers를 직접 구동해 onChange 스파이 호출 횟수만 센다(수신처 수 증폭 없음,
+// 라우트 계층 중복 발행 없음 — 라우트는 'status'만 발행한다). Z 세션은 실제 sessionService 로그인으로 발급한다
+// (distribution-targets-api.test.js 관례).
+function setupTickControllers({ onChange } = {}) {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    sessionService, env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, spoolFs, onChange,
+  });
+  return { db, controllers, spoolFs };
+}
+
+async function zSession(db, controllers, userId = 'admin') {
+  seedUser(db, { userId, name: userId, role: 'Z', department: '사회부', password: 'pw' });
+  const { sessionId } = await controllers.auth.login(userId, 'pw');
+  return sessionId;
+}
+
+// RDS로 만든 뒤 D 송고로 EPS 진입(과거 1차 엠바고) — HTTP 경유 없이 controllers만 사용한다.
+function createEpsArticleViaControllers(controllers, embargoAt) {
+  const c = controllers.article.create({
+    title: '제목', markupVersion: END_MARKUP, author: 'kim', department: '사회부', embargoAt,
+  });
+  assert.equal(c.ok, true);
+  const a = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  assert.equal(a.status, 'EPS');
+  return c.articleId;
+}
+
+test('신호 횟수 회귀: EPS 1건(수신처 2곳) tick 1회 → onChange 총 1회 update(수신처 수만큼 늘지 않는다)', async () => {
+  const calls = [];
+  const { db, controllers } = setupTickControllers({ onChange: (kind) => calls.push(kind) });
+  const zsid = await zSession(db, controllers);
+  assert.equal(controllers.distributionTarget.create(zsid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' }).ok, true);
+  assert.equal(controllers.distributionTarget.create(zsid, { name: 'MBC', kind: 'press', spoolDir: 'mbc' }).ok, true);
+  const articleId = createEpsArticleViaControllers(controllers, PAST_EMBARGO);
+
+  const r = await controllers.distribution.tick(zsid);
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(r.distributed[0].articleId, articleId);
+
+  assert.deepEqual(calls, ['update']);
+});
+
+test('신호 횟수 회귀: EPS 2건이 모두 배부되는 tick 1회 → onChange 2회(기사당 1회, 그 이상 아님)', async () => {
+  const calls = [];
+  const { db, controllers } = setupTickControllers({ onChange: (kind) => calls.push(kind) });
+  const zsid = await zSession(db, controllers);
+  assert.equal(controllers.distributionTarget.create(zsid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' }).ok, true);
+  createEpsArticleViaControllers(controllers, PAST_EMBARGO);
+  createEpsArticleViaControllers(controllers, PAST_EMBARGO);
+
+  const r = await controllers.distribution.tick(zsid);
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 2);
+
+  assert.deepEqual(calls, ['update', 'update']);
+});
+
+test('신호 횟수 회귀: 배부 대상 0건인 tick 1회 → onChange 0회', async () => {
+  const calls = [];
+  const { db, controllers } = setupTickControllers({ onChange: (kind) => calls.push(kind) });
+  const zsid = await zSession(db, controllers);
+  // 수신처는 있지만 배부 대상(EPS 기사) 자체가 없다.
+  assert.equal(controllers.distributionTarget.create(zsid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' }).ok, true);
+
+  const r = await controllers.distribution.tick(zsid);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.distributed, []);
+
+  assert.deepEqual(calls, []);
+});
+
 test('POST /api/distribution/tick: body.now는 판정에 영향을 주지 않는다 (미래 엠바고는 여전히 미배부)', async () => {
   const spoolFs = fakeSpoolFs();
   const ctx = await start({ env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, spoolFs });

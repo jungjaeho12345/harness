@@ -31,6 +31,8 @@ import { createSpoolWriter } from '../services/spoolWriter.js';
 //   테스트가 실제 파일시스템을 건드리지 않게 하기 위한 seam이다. 미주입이면 node:fs/promises가 쓰인다.
 // logService(선택): 배부 실패처럼 fire-and-forget 경로에서 사라질 사실을 표면화하는 데만 쓴다
 //   (HTTP 계층의 logService와 같은 인스턴스를 부트스트랩이 넘긴다). 미주입이면 조용히 생략한다.
+// onChange(선택, phase 48 step3): SSE 무효화 신호 발행 훅. 합성 루트(server/index.js)가 HTTP 계층의
+//   신호 브로드캐스트 함수로 결선한다 — 컨트롤러/서비스는 app/Express를 모른다(ADR-006). 미주입이면 no-op(하위호환).
 export function createControllers(db, {
   sessionService,
   env = process.env,
@@ -38,6 +40,7 @@ export function createControllers(db, {
   lockoutPolicy = {},
   spoolFs,
   logService,
+  onChange = () => {},
 } = {}) {
   // 모델 결선.
   const userModel = createUserModel(db);
@@ -71,6 +74,8 @@ export function createControllers(db, {
       onFailure: ({ articleId, targetId, kind, reason }) => {
         logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
+      // 배부('update') 신호의 단일 출처(phase 48 step3) — 기사 단위 1회, 본문/스풀 경로는 담지 않는다.
+      onDistributed: () => onChange('update'),
     })
     : undefined;
 

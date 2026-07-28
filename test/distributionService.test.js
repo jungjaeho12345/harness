@@ -331,6 +331,108 @@ test('실패는 onFailure로 표면화된다 — 무음 삼킴 금지(fire-and-f
   assert.equal(seen[0].reason, 'spool-write-failed');
 });
 
+// --- onDistributed(phase 48 step3) — SSE 무효화 신호('update') 단일 출처의 콜백 격리 관례 ---
+test('onDistributed: 성공 배부 1회 호출 — kinds 배열(수신처 2곳이어도 1번)', async () => {
+  const seen = [];
+  const { db } = setup({
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  const service = createDistributionService({
+    distributionTargetModel: createDistributionTargetModel(db),
+    articleModel: createArticleModel(db),
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onDistributed: (info) => seen.push(info),
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true);
+  assert.equal(seen.length, 1, '수신처 수(2곳)와 무관하게 배부 1회당 1번');
+  assert.equal(seen[0].articleId, ARTICLE_ID);
+  assert.deepEqual(seen[0].kinds, ['press']);
+});
+
+test('onDistributed: 배부 성공 0건(대상 없음/전부 실패)이면 호출되지 않는다', async () => {
+  const seen = [];
+  const { db: db1 } = setup({ targets: [] });
+  const noTargets = createDistributionService({
+    distributionTargetModel: createDistributionTargetModel(db1),
+    articleModel: createArticleModel(db1),
+    historyModel: createArticleHistoryModel(db1),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onDistributed: (info) => seen.push(info),
+  });
+  await noTargets.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+  assert.equal(seen.length, 0, '대상 없음');
+
+  const { db: db2 } = setup({ targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }] });
+  const allFail = createDistributionService({
+    distributionTargetModel: createDistributionTargetModel(db2),
+    articleModel: createArticleModel(db2),
+    historyModel: createArticleHistoryModel(db2),
+    spoolWriter: fakeWriter({ failFor: new Set(['kbs']) }),
+    now: () => NOW,
+    onDistributed: (info) => seen.push(info),
+  });
+  await allFail.distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(seen.length, 0, '전부 실패');
+});
+
+test('onDistributed 미주입: 기존 동작과 완전히 동일하다(하위호환)', async () => {
+  const { service, db } = setup({ targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }] });
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'], actorUserId: 'desk1' });
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+});
+
+test('onDistributed가 throw해도 distribute 반환값과 distributedAt·이력 기록은 영향받지 않는다', async () => {
+  const { db } = setup({ targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }] });
+  const service = createDistributionService({
+    distributionTargetModel: createDistributionTargetModel(db),
+    articleModel: createArticleModel(db),
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onDistributed: () => { throw new Error('신호 발행 실패'); },
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'], actorUserId: 'desk1' });
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+  assert.equal(historyOf(db).length, 1);
+});
+
+test('onDistributed 콜백 인자에 본문/스풀 경로가 넘어가지 않는다(articleId, kinds 외 키 없음)', async () => {
+  const seen = [];
+  const { db } = setup({
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+    ],
+  });
+  const withCb = createDistributionService({
+    distributionTargetModel: createDistributionTargetModel(db),
+    articleModel: createArticleModel(db),
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onDistributed: (info) => seen.push(info),
+  });
+  const r = await withCb.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  assert.equal(r.ok, true);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['articleId', 'kinds']);
+});
+
 test('onFailure가 throw해도 배부와 기록은 정상 완료된다', async () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);

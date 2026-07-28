@@ -371,6 +371,52 @@ test('createControllers: DIST_SPOOL_DIR 미설정이면 배부가 비활성이�
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
 });
 
+// --- onChange 결선(phase 48 step3) — 배부 신호('update')의 단일 출처 ---
+test('createControllers: 배부가 성공하면 onChange가 \'update\'로 호출된다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const changes = [];
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' },
+    sessionService,
+    spoolFs,
+    onChange: (kind) => changes.push(kind),
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  const a = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(a.status, 'DPS');
+  assert.deepEqual(changes, ['update']);
+});
+
+test('createControllers: onChange 미주입이어도 배부가 정상 동작한다(기본값 no-op)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs,
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  const a = controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
+  await flushSpool();
+
+  assert.equal(a.status, 'DPS');
+  const row = db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId);
+  assert.notEqual(row.distributedAt, null);
+});
+
 test('createControllers: 배부 실패는 logService.warn으로 표면화된다(식별자·사유만)', async () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
