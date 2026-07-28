@@ -264,8 +264,9 @@
     },
     {
       "dir": "48-distribution-tick",
-      "status": "pending",
-      "note": "배부 3부작의 세 번째 phase(시점 배부) — ADR-008 (3)(5) 기반. 범위: (0) 엠바고 순수 규칙(embargoSchedule + lifecycle.embargoCompleteTransition), (1) distributionService onDistributed 알림 seam, (2) distributionTickService(EPS 대상 선정→도래 kind 배부→이력 기반 완결 판정→EPS→DPS 전이, 멱등), (3) runDistributionTick 인가(Z) + 컨트롤러 결선, (4) POST /api/distribution/tick 라우트 + 배부 완료 SSE 무효화 재발행 + 문서. 실패 재전송·배부 UI는 MVP-4 — 혼입 금지. 앱 내 타이머·네트워크 egress 0(외부 운영 루틴이 tick을 pull 호출)."
+      "status": "completed",
+      "completed_at": "2026-07-28T19:10:00+0900",
+      "note": "배부 3부작의 세 번째 phase(시점 배부) — ADR-008 (3)(5) 기반. 범위: (0) 엠바고 순수 규칙(embargoSchedule + lifecycle.embargoCompleteTransition), (1) distributionService onDistributed 알림 seam, (2) distributionTickService(EPS 대상 선정→도래 kind 배부→이력 기반 완결 판정→EPS→DPS 전이, 멱등), (3) runDistributionTick 인가(Z) + 컨트롤러 결선, (4) POST /api/distribution/tick 라우트 + 배부 완료 SSE 무효화 재발행 + 문서. 실패 재전송·배부 UI는 MVP-4 — 혼입 금지. 앱 내 타이머·네트워크 egress 0(외부 운영 루틴이 tick을 pull 호출). 계획 검토 게이트에서 revise 1회(완결 판정이 배부 pending에 종속돼 영구 EPS 고착 가능 + 완결 전이만 있는 tick의 SSE 신호 누락) 반영 후 approve. 코드리뷰 게이트에서 high 1건(배부 await 중 KILL/보류된 기사가 스냅샷 status 판정으로 DPS 부활 — TOCTOU) 수정 후 통과. 최종: npm test 604 pass·fail 0(기준선 527 대비 +77), npm run test:web 1927 pass·fail 0(web 무변경), lint·build clean."
     }
   ]
 }
