@@ -323,3 +323,58 @@ test('요약: 확인 건수·배부·완결·미완결·실패를 호출자에�
   assert.deepEqual(r.incomplete, [{ articleId: 'PARTIAL', missing: ['nonpress'] }]);
   assert.deepEqual(r.failed, []);
 });
+
+// --- 테스트 단계 보강: 운영 오설정·경계 시각 ---
+
+test('수신처가 0개면 배부 사실이 없으므로 EPS를 유지하고 미완결로 보고한다(설정 오류 표면화)', async () => {
+  // distributionService는 대상이 없어도 ok:true/빈 결과를 준다 — 이력이 없으니 완결이 아니다.
+  const { service, articleModel, db } = setup({ now: BETWEEN, distributionOpts: { fail: true } });
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  const r = await service.tick();
+
+  assert.equal(statusOf(db, 'AKR1'), 'EPS', '아무 데도 안 나갔는데 DPS로 올리면 거짓이다');
+  assert.deepEqual(r.incomplete, [{ articleId: 'AKR1', missing: ['press'] }]);
+});
+
+test('경계 시각: 엠바고 시각과 정확히 같은 순간에 배부된다', async () => {
+  const { service, distributionService, articleModel } = setup({ now: T1 });
+  addArticle(articleModel, 'AKR1', { embargoAt: T1 });
+
+  await service.tick();
+
+  assert.deepEqual(distributionService.calls.at(-1).kinds, ['press']);
+});
+
+test('파싱 불가한 엠바고 값은 배부되지 않는다(판정 불가 → 보수적으로 보류)', async () => {
+  const { service, distributionService, articleModel, db } = setup({ now: AFTER });
+  addArticle(articleModel, 'AKR1', { embargoAt: '즉시' });
+  addArticle(articleModel, 'AKR2', { embargoAt: '2026/07/28 05:00 KST말고' });
+
+  const r = await service.tick();
+
+  assert.equal(distributionService.calls.length, 0);
+  assert.equal(statusOf(db, 'AKR1'), 'EPS');
+  assert.equal(statusOf(db, 'AKR2'), 'EPS');
+  assert.deepEqual(r.completed, []);
+});
+
+test('여러 기사 혼재: 도래·미도래·완결 대기가 한 tick에서 각각 올바르게 처리된다', async () => {
+  const { service, articleModel, historyModel, db } = setup({ now: BETWEEN });
+  addArticle(articleModel, 'DUE', { embargoAt: T1 });                       // 1차 도래 → 배부+완결
+  addArticle(articleModel, 'LATER', { embargoAt: T2 });                     // 미도래
+  addArticle(articleModel, 'BOTH', { embargoAt: T1, secondEmbargoAt: T2 }); // 1차만 도래 → 미완결
+  addArticle(articleModel, 'HEAL', { embargoAt: T1 });                      // 이력만 있고 전이 밀림
+  historyModel.insert({ articleId: 'HEAL', eventType: 'distribute', action: 'press', createdAt: T1 });
+
+  const r = await service.tick();
+
+  assert.equal(r.checkedCount, 4);
+  assert.deepEqual(r.completed.sort(), ['DUE', 'HEAL']);
+  assert.equal(statusOf(db, 'LATER'), 'EPS');
+  assert.equal(statusOf(db, 'BOTH'), 'EPS');
+  assert.deepEqual(
+    r.incomplete.map((i) => `${i.articleId}:${i.missing.join('+')}`).sort(),
+    ['BOTH:nonpress', 'LATER:press'],
+  );
+});
