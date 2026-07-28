@@ -264,7 +264,8 @@
     },
     {
       "dir": "48-distribution-tick",
-      "status": "pending",
+      "status": "completed",
+      "completed_at": "2026-07-28T00:00:00+0900",
       "note": "배부 3부작의 세 번째 phase(시점 배부) — ADR-008 (3)(5). 범위는 tick pull + 엠바고 완결 전이: (0) embargoTick 순수 판정 모듈(dueDistributionKinds·isEmbargoComplete — 1차/2차/1+2차 required·due 규칙, 시각은 주입 now와 Date.parse 비교, 타이머 0), (1) articleService.distributionTick(EPS 조회→due kind 배부→ArticleHistory distribute 이력 kind 기준 완결 판정→present-only EPS→DPS 전이+status:embargoComplete 이력, 멱등·기사별 격리), (2) POST /api/distribution/tick(Z 세션 또는 DISTRIBUTION_TOKEN 시스템 게이트)+배부 완료 SSE 무효화 재발행(onDistributed 콜백 — 송고 즉시배부의 비동기 distributedAt 갱신 신호 포함)+문서 현행화. 실패 재전송·배부 UI는 MVP-4 제외. 앱 타이머·egress 0, DB 비파괴(present-only status·append-only 이력)."
     }
   ]
