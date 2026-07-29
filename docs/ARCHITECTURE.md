@@ -13,7 +13,7 @@ server/
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter)
+  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter · embargoSchedule · distributionTick)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)
@@ -50,6 +50,14 @@ test/                   # 백엔드 테스트 (node --test)
          → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
          → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
          → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
+
+[배부 tick] 외부 운영 cron → POST /api/distribution/tick (Z 계정 세션 전용, 바디 미사용)
+         → controllers.distribution.runTick → distributionTickService
+         → EPS 기사 조회 → embargoSchedule로 도래 kind 판정(오프셋 포함 ISO만 도래로 인정)
+         → distributionService(스풀 기록, 이력 기반 멱등) → ArticleHistory 기반 완결 판정
+         → 요건 충족 시 EPS→DPS 전이 + ArticleHistory(eventType='status', action='embargoComplete')
+         → 배부/전이가 1건 이상이면 SSE 'distribute' 무효화 신호(0건이면 미발행)
+         (앱에는 타이머·네트워크 egress가 없다 — 주기 실행은 외부 cron의 pull, ADR-008 (3))
 ```
 
 ## 상태 관리

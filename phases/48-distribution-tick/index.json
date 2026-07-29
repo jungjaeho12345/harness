@@ -23,7 +23,8 @@
     {
       "step": 3,
       "name": "tick-route-docs",
-      "status": "pending"
+      "status": "completed",
+      "summary": "transport 결선+문서: server/index.js에 POST /api/distribution/tick 추가(얇은 transport ADR-006) — req.body 미참조, controllers.distribution.runTick(readSessionToken(req)) 단일 호출, 실패는 fail()로 매핑. STATUS_BY_REASON additive: spool-disabled:503, tick-in-progress:409(기존 값 불변, invalid-clock은 400 fallback). 로깅은 건수만(마스킹)+미완결 warn(articleId/missing kind만). SSE 재발행은 distributed>0||completed>0일 때만 notifyChange('distribute')(0건 미발행 ADR-005, 신호는 kind뿐 행데이터 없음) — phase47 '배부 후 목록 즉시 갱신 안 됨' 인수인계 종결. 문서 현행화: ARCHITECTURE.md(services에 embargoSchedule·distributionTick, [배부 tick] 데이터흐름 블록), SCHEMA.md(EPS→DPS 시스템전이·embargoComplete·distribute 이력 서술, 스키마 무변경), README.md(운영 절 배부 tick+엠바고 오프셋 ISO 주의). test/distribution-tick-api.test.js 신규 9건(미인증401·비Z403·Z200 shape·바디무시·권한상승차단·미설정503+누출차단·E2E스풀1건/DPS/이력/멱등·SSE 발행&0건미발행·GET404). npm test 586 pass(+9), test:web 1927 무회귀, lint 0/build clean, grep(tick 타이머·egress 0 / web diff 0 / req.body near tick 0)."
     }
   ]
 }

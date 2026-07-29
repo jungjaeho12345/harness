@@ -97,6 +97,9 @@ const STATUS_BY_REASON = {
   'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
+  // 배부 tick(ADR-008 (3)) — additive. 기존 값은 불변.
+  'spool-disabled': 503, // 배부 미설정(DIST_SPOOL_DIR 없음) — 서버가 아직 이 기능을 제공하지 않음.
+  'tick-in-progress': 409, // 이전 tick 실행 중 — cron 중복 호출.
 };
 
 function fail(res, result, fallback = 400) {
@@ -435,6 +438,30 @@ export function createApp({
     try {
       const r = controllers.distributionTarget.deactivate(readSessionToken(req), Number(req.params.id));
       return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  // --- 시점/엠바고 배부 tick (Z/시스템 전용 — 게이트는 controllers.distribution이 강제, ADR-008 (3)) ---
+  // 외부 운영 cron이 주기 호출하는 pull 엔드포인트다. 앱에는 타이머가 없다.
+  // 요청 바디는 읽지 않는다 — 대상/시각/actor/role 주입 차단(ADR-004). 세션 토큰만 사용한다.
+  app.post('/api/distribution/tick', async (req, res, next) => {
+    try {
+      const r = await controllers.distribution.runTick(readSessionToken(req));
+      if (!r.ok) return fail(res, r); // spool-disabled:503 / tick-in-progress:409 / invalid-clock:400(fallback) 등.
+      // 로깅: 건수만(마스킹 — 본문·제목·스풀 경로·payload 금지). 로그는 Z에게 SSE로 스트리밍된다.
+      logService.info(
+        `distribution tick checked=${r.checked} distributed=${r.distributed.length} `
+        + `completed=${r.completed.length} incomplete=${r.incomplete.length}`,
+      );
+      for (const item of r.incomplete) {
+        if (item.missing && item.missing.length > 0) {
+          logService.warn(`distribution tick incomplete articleId=${item.articleId} missing=${item.missing.join(',')}`);
+        }
+      }
+      // SSE 재발행: 배부/전이가 1건 이상일 때만(ADR-005 — 0건이면 미발행: cron 주기마다 전 클라 재조회 방지).
+      // 페이로드는 무효화 신호(kind)뿐 — 기사 행 데이터를 싣지 않는다.
+      if (r.distributed.length > 0 || r.completed.length > 0) app.notifyChange('distribute');
+      return res.json(r);
     } catch (e) { next(e); }
   });
 
