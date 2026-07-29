@@ -261,6 +261,11 @@
       "status": "completed",
       "completed_at": "2026-07-28T11:56:33+0900",
       "note": "배부 3부작의 두 번째 phase(즉시 배부) — ADR-008 기반. 범위는 송고 시점 즉시 배부까지: (0) spoolWriter(주입형 FS·원자적 rename·경로 재검증·외부 반출 필드 allowlist), (1) distributionService(활성 대상 선정→스풀 쓰기→Contents.distributedAt 갱신→ArticleHistory kind별 이력, 부분 실패 격리·거짓 기록 금지), (2) 송고 훅(distributionKindsForSend — 엠바고 없음 DPS→press+nonpress / 2차만 EPS→press 즉시 / 1차·1+2차 EPS→없음, 동기 반환 계약 유지·배부 실패가 송고를 되돌리지 않음), (3) DIST_SPOOL_DIR 결선(미설정 시 배부 비활성)+문서 현행화. 시점 배부(POST /api/distribution/tick)·EPS→DPS 완결 전이·배부 UI/재전송은 phase 48/MVP-4 — 이 phase에 혼입 없음(앱 타이머·egress 0). 리뷰 게이트에서 high 1건(배부 실패 무음 삼킴) 수정 후 통과."
+    },
+    {
+      "dir": "48-distribution-tick",
+      "status": "pending",
+      "note": "배부 3부작의 마지막 phase(시점/엠바고 배부 tick) — ADR-008 (3)(5) 기반. 범위: (0) embargoSchedule 순수 규칙 모듈(epoch 기반 도래 판정·오프셋 없는/파싱 불가 값은 절대 도래 아님·2차만 기사의 press는 tick 대상 제외·완결 요건/미충족 kind 산출), (1) distributionTickService(EPS 대상 조회→도래 kind만 distributionService 배부→ArticleHistory distribute 이력 기반 완결 판정→EPS→DPS 전이 + action='embargoComplete' append, 멱등·single-flight·TOCTOU 재조회로 EEH/EEK 부활 금지, 의존성 전량 주입), (2) authorization.runDistributionTick(['Z']) + controllers.distribution.runTick(sessionId 단일 인자 — 대상/시각/actor 주입 차단), (3) POST /api/distribution/tick(바디 미사용, 미설정 503·중복 409) + notifyChange('distribute') SSE 재발행 + ARCHITECTURE/SCHEMA/README 현행화. 앱 내 타이머·네트워크 egress 0(외부 cron pull), DB 행 삭제 0(present-only 전이·append-only 이력), 스키마 변경 없음, web/** 무접촉(배부 UI는 MVP-4)."
     }
   ]
 }
