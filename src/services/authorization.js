@@ -7,6 +7,7 @@ const CAPABILITIES = {
   manageUsers: ['Z'],          // 사용자(USER) CRUD — Z 전용
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
   manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
+  runDistributionTick: ['Z'],  // 시점 배부 tick 실행 — Z/시스템 전용 (ADR-008 (3))
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
 };
 
@@ -64,5 +65,18 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, op, payload };
   }
 
-  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget };
+  // 시점 배부 tick 실행 인가 — Z 전용. actor는 세션에서만 도출한다(ADR-004).
+  // userId를 반환하는 이유: 컨트롤러가 이를 actorUserId로 tick 서비스에 넘겨 이력에 남기기 위함이다.
+  // 클라이언트가 보낸 값은 절대 쓰지 않는다.
+  function runDistributionTick(sessionId) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'runDistributionTick');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, userId: me.userId };
+  }
+
+  return {
+    assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget, runDistributionTick,
+  };
 }

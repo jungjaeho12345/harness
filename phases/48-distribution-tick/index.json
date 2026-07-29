@@ -17,7 +17,8 @@
     {
       "step": 2,
       "name": "tick-authz",
-      "status": "pending"
+      "status": "completed",
+      "summary": "인가 계층: authorization.js에 CAPABILITIES.runDistributionTick=['Z'](도메인 9→10) + 게이트 runDistributionTick(sessionId)→touchSession→unauthenticated/forbidden→{ok,role,userId}(actor는 세션 userId만, ADR-004). 컨트롤러 결선: distributionTickService는 distributionService 활성 분기에서만 생성, distribution.runTick(sessionId) 단일인자 진입점 노출(도메인 9→10). 순서=인가 게이트 먼저→통과 후 spool-disabled 검사(비-Z/미인증에 설정상태 누출 차단). 컨트롤러 HTTP/express/req.body 참조 0건. test: authorization.test.js +5(Z통과·비Z forbidden·미인증·assertAuthorized 회귀), controllers.test.js 도메인키 10 단언+runTick 4케이스(spool+Z ok checked:0 / 미설정 spool-disabled / 비Z forbidden 우선 / 미인증). npm test 577 pass(+8), lint 0. server/index.js·web·step0/1 산출물 diff 0."
     },
     {
       "step": 3,

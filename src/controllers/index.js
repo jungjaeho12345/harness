@@ -24,6 +24,7 @@ import { createTranslate } from '../services/translate.js';
 import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
 import { createDistributionService } from '../services/distributionService.js';
+import { createDistributionTickService } from '../services/distributionTickService.js';
 import { createSpoolWriter } from '../services/spoolWriter.js';
 
 // spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
@@ -70,6 +71,14 @@ export function createControllers(db, {
       onFailure: ({ articleId, targetId, kind, reason }) => {
         logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
+    })
+    : undefined;
+
+  // 시점/엠바고 배부 tick 엔진 — 스풀(distributionService)이 활성일 때만 만든다.
+  // 도메인 엔진은 세션/HTTP를 모른다(ADR-006) — 인가는 컨트롤러 진입점에서 건다.
+  const distributionTickService = distributionService
+    ? createDistributionTickService({
+      articleModel, historyModel: articleHistoryModel, distributionService,
     })
     : undefined;
 
@@ -145,6 +154,19 @@ export function createControllers(db, {
     deactivate: (sessionId, id) => distributionTargetService.deactivate(sessionId, id),
   };
 
+  // 시점/엠바고 배부 tick — 외부 운영 cron이 pull한다(ADR-008 (3)). 인자는 세션 토큰 하나뿐이다.
+  // 대상 기사·시각·kind를 인자로 받지 않는다: 주입 가능하면 엠바고 통제가 무너진다(시각=서버 시계, 대상=DB status).
+  const distribution = {
+    async runTick(sessionId) {
+      // 인가 게이트를 먼저 통과시킨다 — actor는 검증된 세션 userId에서만 도출한다(ADR-004).
+      const gate = authorization.runDistributionTick(sessionId);
+      if (!gate.ok) return gate;
+      // 인가 후에 스풀 가용성을 본다 — 미인증/비-Z에게 서버 설정 상태를 알려주지 않는다.
+      if (!distributionTickService) return { ok: false, reason: 'spool-disabled' };
+      return distributionTickService.runTick({ actorUserId: gate.userId });
+    },
+  };
+
   const collection = {
     receive: (sourceId, payload) => collectionService.receive(sourceId, payload),
     pull: (sourceId) => collectionService.pull(sourceId),
@@ -155,5 +177,7 @@ export function createControllers(db, {
     search: (q) => photoService.search(q),
   };
 
-  return { auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget };
+  return {
+    auth, user, article, media, translation, receiverConfig, collection, photo, distributionTarget, distribution,
+  };
 }

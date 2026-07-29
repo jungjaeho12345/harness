@@ -101,3 +101,43 @@ test('editDps: DPS가 아니면 not-dps, 없는 기사는 not-found, 모르는 �
   assert.equal(authz.editDps(d, 'AKR000', 'revise').reason, 'not-found');
   assert.equal(authz.editDps(d, articleId, 'bogus').reason, 'unknown-action');
 });
+
+test('runDistributionTick: Z 세션만 통과하고 actor(userId)를 세션에서 도출한다 (ADR-008 (3))', () => {
+  const { authz, sessionService } = setup();
+  const z = sessionFor(sessionService, 'Z', 'sys-cron');
+
+  const res = authz.runDistributionTick(z);
+  assert.equal(res.ok, true);
+  assert.equal(res.role, 'Z');
+  assert.equal(res.userId, 'sys-cron', 'actor는 검증된 세션의 userId에서만 도출한다');
+});
+
+test('runDistributionTick: 비-Z(R/D)는 forbidden', () => {
+  const { authz, sessionService } = setup();
+  const r = sessionFor(sessionService, 'R', 'reporter');
+  const d = sessionFor(sessionService, 'D', 'desk');
+
+  const rr = authz.runDistributionTick(r);
+  assert.equal(rr.ok, false);
+  assert.equal(rr.reason, 'forbidden');
+
+  const dr = authz.runDistributionTick(d);
+  assert.equal(dr.ok, false);
+  assert.equal(dr.reason, 'forbidden');
+});
+
+test('runDistributionTick: 세션 없음/잘못된 토큰은 unauthenticated', () => {
+  const { authz } = setup();
+  const res = authz.runDistributionTick('bad-session');
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'unauthenticated');
+  assert.equal(authz.runDistributionTick(undefined).reason, 'unauthenticated');
+});
+
+test('assertAuthorized: runDistributionTick capability는 Z만, 비-Z/미정의는 거부 (회귀)', () => {
+  const { authz } = setup();
+  assert.equal(authz.assertAuthorized('Z', 'runDistributionTick').ok, true);
+  assert.equal(authz.assertAuthorized('D', 'runDistributionTick').ok, false);
+  assert.equal(authz.assertAuthorized('R', 'runDistributionTick').ok, false);
+  assert.equal(authz.assertAuthorized('Z', 'unknownCap').reason, 'unknown-capability');
+});

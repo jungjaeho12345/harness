@@ -37,12 +37,13 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 10개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
+    ['article', 'auth', 'collection', 'distribution', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
   );
+  assert.equal(typeof controllers.distribution.runTick, 'function', 'distribution.runTick');
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
   }
@@ -383,4 +384,60 @@ test('createControllers: 배부 실패는 logService.warn으로 표면화된다(
   assert.match(warns[0], /^distribution failed articleId=AKR\d+ targetId=1 kind=press reason=spool-write-failed$/);
   // 실패했으므로 배부 시각도 기록되지 않는다(거짓 기록 금지).
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
+});
+
+// --- 시점 배부 tick 결선 (phase 48, ADR-008 (3)) ---
+// 인가는 Z/시스템 전용, actor는 검증된 세션 userId에서만 도출한다(ADR-004). 인자는 세션 토큰 하나뿐이다.
+function tickSetup({ spool = true } = {}) {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const env = spool ? { ...ENV, DIST_SPOOL_DIR: '/spool/out' } : ENV;
+  const controllers = createControllers(db, { env, sessionService, spoolFs });
+  return { db, controllers };
+}
+
+test('distribution.runTick: 스풀 설정 + Z 세션은 tick을 실행한다(대상 없으면 checked:0)', async () => {
+  const { db, controllers } = tickSetup({ spool: true });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+
+  const r = await controllers.distribution.runTick(sessionId);
+  assert.equal(r.ok, true);
+  assert.equal(r.checked, 0);
+});
+
+test('distribution.runTick: 스풀 미설정 + Z 세션은 spool-disabled', async () => {
+  const { db, controllers } = tickSetup({ spool: false });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+
+  const r = await controllers.distribution.runTick(sessionId);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'spool-disabled');
+});
+
+test('distribution.runTick: 비-Z(R/D)는 forbidden이고, 스풀 미설정 환경에서도 인가가 먼저다(설정 누출 방지)', async () => {
+  // 스풀 미설정 — 인가가 먼저 실패하면 spool-disabled(설정 상태)가 새어나가면 안 된다.
+  const { db, controllers } = tickSetup({ spool: false });
+  seedUser(db, { userId: 'rep', role: 'R', password: 'pw' });
+  seedUser(db, { userId: 'desk', role: 'D', password: 'pw' });
+  const rsid = (await controllers.auth.login('rep', 'pw')).sessionId;
+  const dsid = (await controllers.auth.login('desk', 'pw')).sessionId;
+
+  const rr = await controllers.distribution.runTick(rsid);
+  assert.equal(rr.ok, false);
+  assert.equal(rr.reason, 'forbidden', '비-Z에게 spool-disabled를 노출하지 않는다');
+
+  const dr = await controllers.distribution.runTick(dsid);
+  assert.equal(dr.ok, false);
+  assert.equal(dr.reason, 'forbidden');
+});
+
+test('distribution.runTick: 세션 없음은 unauthenticated', async () => {
+  const { controllers } = tickSetup({ spool: true });
+  const r = await controllers.distribution.runTick('no-such-session');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unauthenticated');
 });
