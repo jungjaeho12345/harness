@@ -5,7 +5,8 @@
     {
       "step": 0,
       "name": "embargo-schedule",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/services/embargoSchedule.js 순수 규칙 모듈(import 0건) — parseInstant/isDue/requiredKinds/dueKinds/missingKinds/isComplete. epoch(Date.parse) 기반 도래 판정, 오프셋 없는/파싱 불가 값은 fail-safe로 절대 도래 아님(사전식 함정 회귀 잠금), 존재 판정은 관대·시각 파싱은 엄격, 2차만 기사의 press는 requiredKinds 제외(중복 반출 금지), required=[]면 isComplete 항상 false. test/embargoSchedule.test.js 26건 green."
     },
     {
       "step": 1,
