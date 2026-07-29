@@ -10,6 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../src/db/schema.js';
 import { createArticleModel } from '../src/models/articleModel.js';
 import { createArticleHistoryModel } from '../src/models/articleHistoryModel.js';
+import { createDistributionTargetModel } from '../src/models/distributionTargetModel.js';
+import { createDistributionService } from '../src/services/distributionService.js';
 import { createDistributionTickService } from '../src/services/distributionTickService.js';
 
 const NOW = '2026-07-28T05:00:00.000Z';
@@ -341,6 +343,80 @@ test('DB 비파괴: 행 수 불변·기존 이력 보존(이력은 증가만)', 
     historyRows(db, A1).filter((h) => h.eventType === 'status' && h.action === 'send').length,
     1,
     '기존 송고 이력 보존',
+  );
+});
+
+// 15) 활성 대상 0개 자가치유: 엠바고는 도래했으나 활성 press 수신처가 0개인 EPS 기사.
+//   실제 distributionService는 {ok:true, distributed:[], failed:[]}(둘 다 빈 배열)을 돌려주고 이력을 남기지 않는다.
+//   tick은 예외 없이 EPS를 유지하고 거짓 완결(DPS)을 만들지 않는다 — 운영자가 수신처를 등록하면 다음 tick이 자연히 배부한다.
+//   (기존 #10은 failed가 비어있지 않은 실패 변형만 덮는다 — 여기선 실패도 0인 '대상 없음' 정상 경로를 실제 서비스로 검증한다.)
+test('활성 대상 0개: 실제 distributionService로 도래해도 EPS 유지·거짓 완결 없음(자가치유)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  const targetModel = createDistributionTargetModel(db);
+  // 활성 press 수신처는 등록하지 않는다(대상 0개). spoolWriter는 호출되면 안 된다.
+  let writeCalls = 0;
+  const spoolWriter = { write: async () => { writeCalls += 1; return { ok: true, file: '/x' }; } };
+  const realDist = createDistributionService({
+    distributionTargetModel: targetModel, articleModel, historyModel, spoolWriter, now: () => NOW,
+  });
+  insertEps(articleModel, { articleId: A1, embargoAt: PAST });
+
+  const service = createDistributionTickService({
+    articleModel, historyModel, distributionService: realDist, now: () => NOW,
+  });
+  const r = await service.runTick({ actorUserId: 'sys' });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.checked, 1);
+  assert.equal(writeCalls, 0, '활성 수신처가 없으면 스풀 쓰기 0');
+  assert.deepEqual(distActions(db, A1), [], '배부 이력 미기록 → 완결 근거 없음');
+  assert.equal(statusOf(db, A1), 'EPS', '거짓 완결로 DPS 전이하지 않는다');
+  assert.deepEqual(r.completed, [], '완결 0');
+  assert.deepEqual(r.distributed, [], '실제 반출 0');
+  assert.deepEqual(r.incomplete, [{ articleId: A1, missing: ['press'] }], 'EPS에 남아 표면화');
+  // embargoComplete 시스템 전이 이력이 생기지 않았다.
+  assert.equal(
+    historyRows(db, A1).filter((h) => h.eventType === 'status' && h.action === 'embargoComplete').length,
+    0,
+  );
+});
+
+// 16) TOCTOU(배부 위임 중 KILL): 루프 진입 시점엔 EPS라 배부(이력 기록)는 진행되지만,
+//   distribute 위임 도중 데스크가 KILL(EEK)하면 전이 직전 재확인 가드에서 전이를 거부한다 → DPS 부활 금지.
+//   (#9는 query 시점에 KILL해 루프 진입 getById에서 걸러진다 — 여기선 전이 직전 재확인 가드(둘째 getById)를 친다.)
+test('TOCTOU(배부 중 KILL): 이력은 남아도 전이 직전 재확인에서 DPS로 부활하지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  insertEps(articleModel, { articleId: A1, embargoAt: PAST, secondEmbargoAt: PAST }); // 둘 다 도래 → 완결 요건 충족
+
+  // 배부는 정상 기록하되, 반환 직전에 데스크 KILL(EEK)이 끼어든 상황을 재현한다.
+  const dist = {
+    calls: [],
+    async distribute(articleId, { kinds, actorUserId }) {
+      this.calls.push({ articleId, kinds });
+      for (const k of kinds) historyModel.insert({ articleId, eventType: 'distribute', action: k, actorUserId, createdAt: NOW });
+      db.prepare("UPDATE Contents SET status = 'EEK' WHERE articleId = ?").run(articleId);
+      return { ok: true, distributed: kinds.map((k) => ({ kind: k })), failed: [] };
+    },
+  };
+  const service = createDistributionTickService({ articleModel, historyModel, distributionService: dist, now: () => NOW });
+
+  const r = await service.runTick({ actorUserId: 'sys' });
+
+  assert.equal(r.ok, true);
+  assert.equal(dist.calls.length, 1, '루프 진입 시점엔 EPS라 배부는 진행된다');
+  assert.deepEqual(distActions(db, A1), ['press', 'nonpress'], '실제 스풀 기록 이력은 남는다');
+  assert.equal(statusOf(db, A1), 'EEK', '전이 직전 재확인이 EEK를 보고 DPS 부활을 거부한다');
+  assert.deepEqual(r.completed, [], '완결 전이 0');
+  assert.equal(
+    historyRows(db, A1).filter((h) => h.eventType === 'status' && h.action === 'embargoComplete').length,
+    0,
+    'embargoComplete 시스템 전이 이력이 생기지 않는다',
   );
 });
 
