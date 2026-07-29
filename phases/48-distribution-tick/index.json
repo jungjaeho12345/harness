@@ -11,7 +11,8 @@
     {
       "step": 1,
       "name": "tick-service",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/services/distributionTickService.js — createDistributionTickService.runTick({actorUserId}) 도메인 엔진(HTTP/세션/타이머 무지, 의존성 주입). EPS만 query→기사별 getById 재조회(TOCTOU 차단)→embargoSchedule.dueKinds 도래 판정→이력(eventType='distribute') 기반 멱등 배부(distributionService 위임)→배부 후 이력 재조회로 isComplete/missingKinds 판정→완결 시 전이 직전 EPS 재확인 후 present-only status:'DPS' update + eventType='status'/action='embargoComplete' append. 진입가드 spool-disabled·single-flight(tick-in-progress, finally 해제)·invalid-clock. 기사단위 try/catch 격리, 미완결 incomplete{missing} 표면화. lifecycle 전이표 무수정. test/distributionTickService.test.js 16건 green(도래분만·멱등·TOCTOU·이력기반완결·실패incomplete·single-flight·DB비파괴 등). npm test 569 pass(+16), lint 0, grep 타이머/egress/삭제 0건."
     },
     {
       "step": 2,
