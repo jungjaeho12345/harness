@@ -24,20 +24,21 @@ export function visibleMenus(identity) {
 
 // 메뉴별 조회 필터 (news.md 기사 조회페이지).
 // 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK
-// / KILL기사: RRK·DDK·EEK / 엠바고 관리: EPS.
+// / KILL기사: RRK·DDK·EEK / 엠바고 관리: DES·EPS(배부 전 대기 + 배부 진행).
 // 부서 다중 선택(departments)은 개인별 수정을 제외한 모든 메뉴에서 지원하며, 기본값은 '전체'(부서 미지정)다.
 export function buildMenuFilter(menu, identity, departments) {
   const depts = (departments && departments.length) ? departments : null; // null/[] = '전체'(부서 미지정)
   switch (menu) {
     case 'killArticles': {
-      // KILL 결과 상태: R의 RRK, D/Z의 DDK, EPS의 EEK. 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴).
+      // KILL 결과 상태: R의 RRK, D/Z의 DDK, DES·EPS의 EEK. 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴).
       const f = { status: ['RRK', 'DDK', 'EEK'] };
       if (depts) f.departments = depts;
       return f;
     }
     case 'embargoMgmt': {
-      // 엠바고 송고 대기(EPS) 목록. 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴).
-      const f = { status: ['EPS'] };
+      // 엠바고 배부 전 대기(DES) + 배부 진행(EPS) 목록(phase48 step5, 스펙 A.4 — 레거시 EPS 행 유지).
+      // 부서 멀티셀렉트로 좁힐 수 있다(deptSend 패턴). 순서 ['DES','EPS'] 고정(서버 IN이라 의미 동일).
+      const f = { status: ['DES', 'EPS'] };
       if (depts) f.departments = depts;
       return f;
     }

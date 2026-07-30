@@ -24,6 +24,10 @@ describe('statusBadge — UI_GUIDE 상태 배지 색', () => {
     expect(statusBadge('EPS')).toEqual({ label: 'EPS', bg: '#4f46e5', fg: '#fff' });
     expect(statusBadge('EPS').bg).not.toBe('#e8e8e8'); // 회색 폴백이 아님
   });
+  it('DES는 인디고 밝은 톤(엠바고 배부 전 대기, EPS 계열) — 폴백 아님 (phase48 step5)', () => {
+    expect(statusBadge('DES')).toEqual({ label: 'DES', bg: '#6366f1', fg: '#fff' });
+    expect(statusBadge('DES').bg).not.toBe('#e8e8e8'); // 회색 폴백이 아님
+  });
   it('알 수 없는 상태는 회색 폴백', () => {
     expect(statusBadge('???')).toEqual({ label: '???', bg: '#e8e8e8', fg: '#555' });
   });

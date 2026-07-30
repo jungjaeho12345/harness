@@ -50,7 +50,7 @@ export function buildContextMenuItems(menu, article = {}, identity = {}) {
     // 고침/포털고침·삭제요청·재송·후속/계속·매핑·번역 등 전이/편집 액션은 부적절하므로 노출하지 않는다.
     items = [detail, HISTORY, SEND_HISTORY, copyBody, copyTitle];
   } else if (menu === 'embargoMgmt') {
-    // 엠바고 관리: EPS 기사를 조회하고 편집(1·2차 엠바고 시간 포함)할 수 있다(news.md 엠바고 규칙).
+    // 엠바고 관리: DES·EPS 기사를 조회하고 편집(1·2차 엠바고 시간 포함)할 수 있다(news.md 엠바고 규칙).
     // 편집은 기존 edit 진입(enterEditor 'edit')을 재사용한다(deptSend의 items.push(edit) 패턴) — 잠금·인가는 서버가 강제(ADR-004).
     // EPS는 DPS 고침/송고 대기 상태가 아니므로 고침/포털고침·삭제요청·재송·후속/계속·매핑 등 전이/부적절 액션은 노출하지 않는다.
     items = [detail, HISTORY, SEND_HISTORY, copyBody, copyTitle];
