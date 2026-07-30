@@ -1,0 +1,37 @@
+{
+  "project": "기사 작성기",
+  "phase": "48-distribution-tick",
+  "steps": [
+    {
+      "step": 0,
+      "name": "embargo-policy",
+      "status": "completed",
+      "summary": "src/services/embargoPolicy.js 신설(순수 판정 모듈, 타이머·fetch·fs·DB 0) + test/embargoPolicy.test.js 31케이스. EMBARGO_DISTRIBUTABLE_STATUSES=['DES','EPS','DPS'] 동결 export, requiredKinds/distributedKinds/unparsableEmbargoFields/dueKinds/embargoStatusFor 계약 고정. 핵심 결정: now는 ISO-8601 UTC 문자열 전용(숫자 epoch ms 거부 → [] 반환, 무음 미배부 가드 테스트로 잠금), 파싱 불가 엠바고 값은 '미도래'로 취급하고 unparsableEmbargoFields로 표면화, 반환 순서는 항상 [press, nonpress] 고정(이력 id DESC 무관), 배부 가능 상태 밖(RDS·RRH·RRK·DDH·DDK·EEK·EEH·DPD)은 무조건 [], embargoStatusFor는 DES/EPS에서만 계산하고 EPS→DES 역행·동일값 쓰기는 null, 엠바고 미설정 DES/EPS의 자동 승격 없음. 결선 없음(호출자는 step2·step3). AC: node --test test/embargoPolicy.test.js 31/31 green, npm test 558/554/4(기존 실패 4건 동일·신규 0), lint clean."
+    },
+    {
+      "step": 1,
+      "name": "lifecycle-des",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "send-des",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "tick-service",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "tick-route",
+      "status": "pending"
+    },
+    {
+      "step": 5,
+      "name": "web-des",
+      "status": "pending"
+    }
+  ]
+}
