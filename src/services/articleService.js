@@ -5,6 +5,7 @@
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
+import { distributedKinds, embargoStatusFor } from './embargoPolicy.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -68,15 +69,22 @@ function sanitizeFileRefFields(contents) {
 
 // 송고 성공 시 "지금 즉시" 배부할 대상 종류를 정한다 — news.md "엠바고 규칙" + ADR-008 (4)의 직역.
 //   엠바고 없음 → DPS      : 언론사 + 비언론사 전체 즉시 배부
-//   2차 엠바고만 → EPS     : 송고 시 바로 언론사(press). 비언론사는 2차 시각에(phase 48 tick)
-//   1차 / 1+2차 → EPS      : 즉시 배부 없음 — 1차 시각에 언론사, 2차 시각에 비언론사(phase 48 tick)
+//   2차 엠바고만 → DES     : 송고 시 바로 언론사(press). 비언론사는 2차 시각에(phase 48 tick)
+//   1차 / 1+2차 → DES      : 즉시 배부 없음 — 1차 시각에 언론사, 2차 시각에 비언론사(phase 48 tick)
 //   그 외(R의 RDS 유지 등) : 배부 없음
+// 송고 직후 상태는 DES뿐이다(EPS는 배부가 실제 실행된 뒤 syncEmbargoStatus가 만든다) — EPS 분기를 두면
+// 두 상태가 같은 의미인 것처럼 오독된다. 레거시 EPS 행은 lifecycle에 EPS.send가 없어 여기까지 오지 못한다.
 // "지금이 엠바고 시각인가"는 여기서 판단하지 않는다(시점 판정은 tick의 책임 — 시각 비교 금지).
 export function distributionKindsForSend(status, contents = {}) {
   if (status === 'DPS') return ['press', 'nonpress'];
-  if (status === 'EPS' && !contents.embargoAt && contents.secondEmbargoAt) return ['press'];
+  if (status === 'DES' && !contents.embargoAt && contents.secondEmbargoAt) return ['press'];
   return [];
 }
+
+// 송고 시 DES(엠바고 배부 대기)로 진입할 수 있는 이전 상태 — news.md·사용자 확정 스펙의 진입 경로뿐이다.
+// DPS 재송고(고침/포털고침 후 재송)를 포함하지 않는 이유: 이미 배부 이력이 있는 기사를 DES로 되돌리면
+// tick의 "미배부" 판정에 걸리지 않아 영구 DES 고착이 된다(복구 수단 없음).
+const DES_ENTRY_STATUSES = new Set(['RDS', 'DDH']);
 
 // distributionService(선택): 미주입이면 배부 훅이 비활성이며 송고는 기존과 동일하게 동작한다.
 export function createArticleService({ articleModel, db, historyModel, distributionService }) {
@@ -145,14 +153,17 @@ export function createArticleService({ articleModel, db, historyModel, distribut
       return { ok: false, reason: 'no-end-marker' };
     }
 
-    // 엠바고 송고 진입(RDS→EPS): "데스크 미송고에서 송고시" 엠바고 시간이 설정돼 있으면 DPS 대신 EPS.
-    // transition은 순수하게 유지하고(RDS+D/Z+send=DPS), 여기서만 후처리한다(news.md 엠바고 규칙).
+    // 엠바고 송고 진입(RDS·DDH → DES): 데스크(D/Z)가 엠바고 시간이 설정된 기사를 송고하면 DPS 대신 DES.
+    // transition은 순수하게 유지하고(RDS/DDH + D/Z + send = DPS), 여기서만 후처리한다(news.md 엠바고 규칙).
+    // DDH 경로를 포함하는 이유: 보류된 엠바고 기사도 송고 순간은 "엠바고 배부 대기"다 —
+    // 빠지면 엠바고 기사가 DPS로 떨어져 press·nonpress 전량이 즉시 배부된다(엠바고 누수).
     // 엠바고 유형(1/2/1+2차)은 두 시간 컬럼 조합으로 도출되므로 별도 컬럼 없이 set 여부만 본다(DB 비파괴).
+    // 판정은 DB에 저장된 값으로만 한다(클라이언트 값 불신 — ADR-004).
     let finalStatus = result.status;
     const embargoSet = !!(row.contents.embargoAt || row.contents.secondEmbargoAt);
-    if (action === 'send' && row.contents.status === 'RDS'
+    if (action === 'send' && DES_ENTRY_STATUSES.has(row.contents.status)
       && (role === 'D' || role === 'Z') && result.status === 'DPS' && embargoSet) {
-      finalStatus = 'EPS';
+      finalStatus = 'DES';
     }
 
     const contents = { status: finalStatus };
@@ -180,11 +191,45 @@ export function createArticleService({ articleModel, db, historyModel, distribut
       if (kinds.length > 0) {
         try {
           Promise.resolve(distributionService.distribute(articleId, { kinds, actorUserId: userId ?? null }))
+            .then((res) => {
+              // 승격 근거는 distributed(실제 스풀 기록 성공 목록)뿐이다.
+              // res.ok만 보면 { ok:true, distributed:[], failed:[...] }(전 수신처 쓰기 실패)에도 승격이 일어나
+              // 배부되지 않은 기사가 완결 처리된다. { ok:false, reason }에는 distributed 자체가 없다.
+              if (!res || res.ok !== true || !Array.isArray(res.distributed) || res.distributed.length === 0) return;
+              const doneKinds = [...new Set(res.distributed.map((d) => d && d.kind).filter(Boolean))];
+              syncEmbargoStatus(articleId, { extraKinds: doneKinds, actorUserId: userId ?? null });
+            })
             .catch(() => { /* 배부 실패는 송고를 막지 않는다(발송 결과는 앱이 알지 못한다 — ADR-008) */ });
         } catch { /* 동기 throw도 동일하게 격리한다 */ }
       }
     }
     return { ok: true, status: finalStatus };
+  }
+
+  // 배부 사실을 기사 상태에 반영한다(DES→EPS→DPS). 호출자는 송고 훅과 엠바고 tick(phase 48)이다.
+  // transition()을 거치지 않는 이유: 전이표는 role×action 표인데 여기엔 role도 action도 없다 —
+  // 사람의 액션이 아니라 "이미 일어난 배부"의 반영이다. 대신 허용 범위는 embargoPolicy.embargoStatusFor가
+  // DES/EPS에서만 계산하도록 좁혀 강제한다(RDS·DPS·EEK·EEH·DPD 등은 절대 건드리지 않는다).
+  // extraKinds: 방금 성공한 배부의 kind 힌트 — distributionService의 이력 기록은 실패를 삼키므로
+  //   이력만 읽으면 승격이 누락될 수 있다. 반대로 힌트만 보면 tick의 self-heal이 무력해진다 → 합집합.
+  function syncEmbargoStatus(articleId, { extraKinds = [], actorUserId = null } = {}) {
+    const row = articleModel.getById(articleId);
+    if (!row || !row.contents) return { ok: false, reason: 'not-found' };
+
+    const fromStatus = row.contents.status;
+    const history = historyModel ? historyModel.queryByArticle(articleId) : [];
+    const distributed = [...new Set([
+      ...distributedKinds(history),
+      ...(Array.isArray(extraKinds) ? extraKinds : []),
+    ])];
+
+    const next = embargoStatusFor({ status: fromStatus, contents: row.contents, distributed });
+    if (!next) return { ok: true, status: fromStatus }; // 바꿀 필요 없음 — 쓰기 0건.
+
+    // present-only 업데이트: status만 쓴다(sentAt·sender·본문·잠금은 절대 함께 쓰지 않는다 — DB 비파괴).
+    articleModel.update(articleId, { contents: { status: next } });
+    record({ articleId, eventType: 'status', action: 'embargo', fromStatus, toStatus: next, actorUserId });
+    return { ok: true, status: next };
   }
 
   // 후속기사작성(followUp)/계속기사작성(continue) — 원본을 바탕으로 "새 기사"를 작성한다.
@@ -307,7 +352,7 @@ export function createArticleService({ articleModel, db, historyModel, distribut
   }
 
   return {
-    create, update, getById, query, search, applyAction, deriveArticle, queryHistory,
+    create, update, getById, query, search, applyAction, syncEmbargoStatus, deriveArticle, queryHistory,
     getHistorySnapshot,
     acquireEditLock, releaseEditLock, forceReleaseEditLock, assertLockHolder,
   };

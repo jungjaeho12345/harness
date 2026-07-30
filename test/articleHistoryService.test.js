@@ -50,21 +50,21 @@ test('history: 전이 성공 시에만 eventType=status 이력이 기록된다',
   assert.equal(rows[0].actorUserId, 'desk');
 });
 
-test('history: 엠바고 RDS 송고(EPS 진입) 이력 toStatus는 EPS다', () => {
+test('history: 엠바고 RDS 송고(DES 진입) 이력 toStatus는 DES다', () => {
   const { service } = setup();
   const { articleId } = service.create({
     title: '제목', markupVersion: markup('본문', true), author: 'kim',
     embargoAt: '2026-06-25T09:00:00.000Z',
   });
   const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
-  assert.deepEqual(r, { ok: true, status: 'EPS' });
+  assert.deepEqual(r, { ok: true, status: 'DES' });
 
   const rows = service.queryHistory(articleId);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].eventType, 'status');
   assert.equal(rows[0].action, 'send');
   assert.equal(rows[0].fromStatus, 'RDS');
-  assert.equal(rows[0].toStatus, 'EPS');
+  assert.equal(rows[0].toStatus, 'DES');
   assert.equal(rows[0].actorUserId, 'desk');
 });
 

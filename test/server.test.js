@@ -156,26 +156,27 @@ test('action: D 송고는 DPS, 삭제승인은 DPD로 전이한다', async () =>
   } finally { await ctx.close(); }
 });
 
-test('action: 엠바고 설정된 RDS를 D가 송고하면 EPS, EPS 기사 KILL→EEK·보류→EEH', async () => {
+test('action: 엠바고 설정된 RDS를 D가 송고하면 DES, DES 기사 KILL→EEK·보류→EEH', async () => {
   const ctx = await start();
   try {
     seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
     const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
 
-    const mkEps = async () => {
+    // 이 환경은 DIST_SPOOL_DIR 미설정이라 배부 훅이 비활성이다 — 승격 없이 DES에 머문다.
+    const mkDes = async () => {
       const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
         sid, body: { title: 't', markupVersion: END_MARKUP, embargoAt: '2026-06-25T09:00:00.000Z' },
       })).body;
       const sent = await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
-      assert.equal(sent.body.status, 'EPS');
+      assert.equal(sent.body.status, 'DES');
       return articleId;
     };
 
-    const killId = await mkEps();
+    const killId = await mkDes();
     const killed = await api(ctx.base, 'POST', `/api/articles/${killId}/action`, { sid, body: { action: 'kill' } });
     assert.equal(killed.body.status, 'EEK');
 
-    const holdId = await mkEps();
+    const holdId = await mkDes();
     const held = await api(ctx.base, 'POST', `/api/articles/${holdId}/action`, { sid, body: { action: 'hold' } });
     assert.equal(held.body.status, 'EEH');
 
