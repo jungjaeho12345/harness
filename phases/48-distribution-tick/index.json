@@ -35,7 +35,8 @@
     {
       "step": 5,
       "name": "web-des",
-      "status": "pending"
+      "status": "completed",
+      "summary": "프론트 DES 노출 — web/src만 7파일(소스 2 + 주석 1 + 테스트 4), 백엔드·web/dist 무접촉. statusBadge.js STATUS_BADGES에 DES 추가(bg #6366f1/fg #fff — EPS #4f46e5와 같은 인디고 족보의 밝은 톤, news.md RDS->DES->EPS 근거 헤더 주석화; 기존 10개 토큰 값 무변경 — EPS 라인은 '배부 진행' 주석만 보강). useViewController.js buildMenuFilter embargoMgmt를 { status: ['DES','EPS'] }로 확대(순서 고정, EPS 유지 — 레거시 행 마이그레이션 없음 A.5; Model 계약 3면이 이미 배열 지원이라 contract/fakeModel/httpModel 무변경), 25-27행 주석 'DES·EPS(배부 전 대기 + 배부 진행)' + 33행 'DES·EPS의 EEK' 동시 갱신(killArticles 필터 값은 그대로 — DES KILL 결과도 EEK). ContextMenu.jsx는 주석 1줄만 현행화(embargoMgmt 분기는 메뉴 기준이라 코드 무변경). 테스트: statusBadge DES 폴백-아님 단언(+1), embargoMgmt 필터 deepEqual 2건 DES·EPS화, ListPage 조회 필터 갱신 + 우클릭 편집 진입 DES/EPS 파라미터화(+1), ContextMenu embargoMgmt 항목 집합을 DES·EPS×R/D/Z로 잠금. tick UI 결선 없음(외부 cron 전용 — step4 인계 준수). AC: npm run test:web 86파일/1929 전부 green(기준선 1927 대비 +2, red 4건 선확인 후 구현), build·lint clean, npm test 614/610/4(기존 경로 구분자 실패 4건 그대로 — 백엔드 무접촉 증명), 회귀 5개 메뉴 필터 단언 전부 유지."
     }
   ]
 }
