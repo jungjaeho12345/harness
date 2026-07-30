@@ -29,7 +29,8 @@
     {
       "step": 4,
       "name": "tick-route",
-      "status": "pending"
+      "status": "completed",
+      "summary": "POST /api/distribution/tick 결선(Z/시스템 전용, 도메인 로직 신규 0줄) — authorization에 runDistributionTick capability(['Z']) + 게이트 함수(반환에 userId 포함 → tick의 actorUserId stamp로 감사 추적 유지), controllers에 선택 파라미터 now(ISO-8601 문자열 시계 seam) 추가·distributionService 존재 시에만 createDistributionTickService 결선(onError는 logService.warn으로 표면화)·별도 도메인 distribution.tick 노출(게이트 **먼저** → 미가용이면 spool-disabled: 비-Z에게 설정 상태 비노출, 도메인 키 9→10), server 라우트는 body 무참조(ADR-004)·async try/catch(next)·r.distributed.length>0일 때만 notifyChange('status')·STATUS_BY_REASON에 'spool-disabled':503, bootstrap 주석 현행화(외부 cron이 Z 세션으로 pull, setInterval 추가 금지 — 코드 타이머 0건 grep 확인). 테스트: test/distribution-tick-api.test.js 신규 6케이스(401/비-Z 403은 body role:'Z' 위조 상태로 통과/503/200+스풀 쓰기+같은 시각 재호출 멱등+배부 시에만 SSE 신호/실패 응답 JSON.stringify에 spoolDir·스풀 루트·수신처 폴더·.json 경로 0건/GET 404) + controllers.test.js 40-45 도메인 deepEqual 10개 갱신·tick e2e(1+2차 DES→EPS press만 배부·멱등)·spool-disabled 쓰기 0건·게이트 우선 3케이스. ARCHITECTURE.md services 목록(embargoPolicy·distributionTick)과 [배부]/[tick] 흐름(RDS→DES→EPS→DPS) 현행화. AC: node --test 2파일 30중 29 green(잔여 1건은 기존 경로 구분자 실패 목록 1번), npm test 614/610/4(기존 4건 그대로·신규 0), lint clean. step5 참고: tick은 외부 cron 전용이라 웹 결선 불필요 — 웹은 DES 상태 노출(라벨·필터)만 하면 된다."
     },
     {
       "step": 5,
