@@ -97,6 +97,8 @@ const STATUS_BY_REASON = {
   'unknown-mode': 400,
   'unknown-capability': 400,
   unregistered: 403,
+  // 배부 미설정(DIST_SPOOL_DIR 없음)은 클라이언트 잘못이 아니라 서버 기능 미가용이다.
+  'spool-disabled': 503,
 };
 
 function fail(res, result, fallback = 400) {
@@ -436,6 +438,20 @@ export function createApp({
       const r = controllers.distributionTarget.deactivate(readSessionToken(req), Number(req.params.id));
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }
+  });
+
+  // --- 엠바고 시점 배부 tick (Z 전용 — 게이트는 authorization.runDistributionTick, ADR-008 (3)) ---
+  // 앱에 타이머를 두지 않는다: 외부 운영 cron이 **Z 세션의 x-session-id/쿠키**로 이 엔드포인트를 주기 호출한다(pull).
+  // 부수효과(실제 배부)가 있으므로 GET으로는 열지 않는다 — 브라우저 프리페치/크롤러가 배부를 트리거하면 안 된다.
+  // body는 읽지 않는다: 파라미터가 없고, role·시각·대상 목록을 클라이언트에서 받으면 엠바고가 무력화된다(ADR-004).
+  app.post('/api/distribution/tick', async (req, res, next) => {
+    try {
+      const r = await controllers.distribution.tick(readSessionToken(req));
+      if (!r.ok) return fail(res, r);
+      // 실제 배부가 있었을 때만 무효화 신호 — 목록의 상태 배지가 갱신돼야 한다(변경 0건이면 재조회 낭비).
+      if (Array.isArray(r.distributed) && r.distributed.length > 0) app.notifyChange('status');
+      return res.json(r);
+    } catch (e) { next(e); } // async 라우트의 rejection은 Express 4가 잡지 못한다 — 반드시 next로 넘긴다.
   });
 
   // --- 기사 조회/검색 ---
@@ -849,7 +865,9 @@ function bootstrap() {
 
   // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).
   // 여기서 디렉토리를 미리 만들지 않는다: 생성은 실제 배부 시점의 spoolWriter 책임이다.
-  // 시점 배부(tick)는 phase 48 — 앱에 타이머/주기 실행은 두지 않는다.
+  // 시점 배부(tick)는 앱에 타이머/주기 실행을 두지 않는다(ADR-008 (3)) —
+  // 외부 운영 cron이 Z 세션으로 POST /api/distribution/tick 을 주기 호출해 실행한다(pull).
+  // setInterval/워커/스케줄러를 여기에 추가하지 마라: 다중 인스턴스에서 중복 배부가 된다.
   if (process.env.DIST_SPOOL_DIR) {
     logService.info(`distribution spool root ${process.env.DIST_SPOOL_DIR}`);
   }
