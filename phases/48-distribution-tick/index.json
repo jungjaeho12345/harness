@@ -11,7 +11,8 @@
     {
       "step": 1,
       "name": "lifecycle-des",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/services/lifecycle.js DESK_TABLE에 DES 행 additive 추가(`DES: { kill: 'EEK', hold: 'EEH' }`) — news.md `RDS->DES->EPS`. 핵심 결정: DES 허용 액션은 EPS와 동일(D/Z의 KILL→EEK·보류→EEH), send/approveDelete 키 미정의로 거부, REPORTER_TABLE 무변경(R은 DES 전 액션 불가), initialStatus/transition 구조 무변경(표 한 행 추가로 종결). 기존 EPS 행·기존 테스트 12행 전부 보존 — 레거시 EPS 행의 전이 계약 불변, 데이터 마이그레이션/백필 없음, status는 CHECK 없는 VARCHAR이라 스키마 변경도 없음. test/lifecycle.test.js에 허용 4행(DES×D/Z×kill/hold) + 거부 7행(send·approveDelete·R 전량) 추가. docs/SCHEMA.md는 기존 상태값 문장을 건드리지 않고 DES 정의 1줄만 append(삭제 라인 0). DES 생산자는 step2, 웹 노출은 step5 — 이 step 시점엔 DES 행이 생기지 않는 의도된 중간 상태. AC: node --test test/lifecycle.test.js 71/71 green, npm test 569/565/4(기존 실패 4건 그대로·신규 0), lint clean, diff 3파일 17추가 0삭제."
     },
     {
       "step": 2,
