@@ -23,7 +23,8 @@
     {
       "step": 3,
       "name": "tick-service",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/services/distributionTickService.js 신설(신규 모듈 1개 + 테스트 1개, 기존 파일 무수정) — createDistributionTickService({articleModel, historyModel, distributionService, articleService, now=()=>new Date().toISOString(), onError}) → { run }. run({actorUserId}) → { ok:true, at, scanned, distributed:[{articleId,kinds,status}], failed:[{articleId,targetId,kind,reason}], invalid:[{articleId,field}] }; distributionService 미주입 → {ok:false,reason:'spool-disabled'}, 조회 자체 실패 → {ok:false,reason:'tick-failed'}(throw 없음 — 라우트 500 방지). 핵심 결정: 시계는 실행당 1회(const at = now())·ISO-8601 문자열 계약, 후보 = articleModel.query({status:[...EMBARGO_DISTRIBUTABLE_STATUSES]}) ∩ requiredKinds>0(레거시 DPS 픽업 대가로 DPS 전량 스캔 의도적 수용, 규모는 scanned로 노출), 순차 await 처리(Promise.all 금지 — in-flight 카운터 테스트로 잠금), 미배부 판정은 append-only distribute 이력(멱등 자연 성립), 상태 결정은 전량 articleService.syncEmbargoStatus 위임(articleModel.update·distributedAt 직접 쓰기 0건 — grep 검증), 승격 근거는 res.distributed의 성공 kind만(거짓 완결 금지), due=0이고 DES/EPS면 self-heal syncEmbargoStatus(쓰기 0건 가능), 파싱 불가 엠바고는 invalid로 표면화. 보안 위생: failed는 projectFailure 화이트리스트 투영({articleId,targetId,kind,reason})으로 spoolDir·file 경로 차단, 기사 단위 예외는 고정 토큰 'tick-failed'만 응답에 담고 원인은 주입형 onError(옵션, distributionService.onFailure 동형)로 로그. ADR-008 준수: setInterval/setTimeout/fetch/node:fs/node:sqlite/prepare(/DELETE/DROP 코드 0건(주석 언급만). 테스트 23케이스(node:test, in-memory DB + 실제 articleModel/historyModel/articleService + 가짜 distributionService(실물처럼 성공 kind만 이력 insert); distributedAt 계약은 실제 distributionService + 실제 spoolWriter(fs 주입)로 T1→T2 갱신 검증, 경로 문자열 단언 없음(플랫폼 무관)). 변이 검증 4종(투영 제거·상태 allowlist 제거·요청 kind로 승격·raw 에러 사유) 전부 red. AC: node --test test/distributionTickService.test.js 23/23 green, npm test 605/601/4(기존 경로 구분자 실패 4건 그대로·신규 0), lint clean, diff 2파일(신규만)."
     },
     {
       "step": 4,
