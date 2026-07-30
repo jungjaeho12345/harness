@@ -463,6 +463,27 @@ test('now 기본값은 ISO-8601 UTC 문자열이다(숫자 시계는 전 기사�
   assert.deepEqual(dist.calls.map((c) => c.articleId), [id]);
 });
 
+test('시계 계약 위반(파싱 불가 now): 아무것도 배부하지 않고 DB도 그대로다(안전 기본값 — 조기 배부 방지)', async () => {
+  const h = harness();
+  // 과거에 이미 도래한 엠바고 — 정상 시계라면 배부됐어야 하는 기사다.
+  const id = h.addArticle({ status: 'DES', embargoAt: '2020-01-01T00:00:00.000Z' });
+  const dist = fakeDistribution({ historyModel: h.historyModel });
+  const before = h.counts();
+
+  // 시계가 ISO-8601 문자열 계약을 어기면(고장·설정 오류) "지금"을 알 수 없다 —
+  // 실시간 폴백으로 배부를 강행하지 않고 전량 미배부로 떨어져야 한다(embargoPolicy 안전 기본값의 결선 검증).
+  const r = await tickWith(h, { distributionService: dist, now: () => '시계 고장' }).run({ actorUserId: 'system' });
+
+  assert.equal(r.ok, true, 'run은 throw하지 않는다');
+  assert.equal(r.at, '시계 고장', '실행 시각은 가공 없이 그대로 보고된다(운영자가 고장을 볼 수 있게)');
+  assert.equal(r.scanned, 1, '후보 스캔 자체는 이뤄진다');
+  assert.deepEqual(r.distributed, []);
+  assert.deepEqual(r.failed, []);
+  assert.equal(dist.calls.length, 0, '잘못된 시계로는 어떤 기사도 외부로 내보내지 않는다');
+  assert.equal(h.statusOf(id), 'DES');
+  assert.deepEqual(h.counts(), before, 'self-heal도 쓸 게 없으면 쓰기 0건');
+});
+
 test('self-heal: 배부 이력은 있는데 승격이 누락된 기사를 재정합한다(도래분 없음)', async () => {
   const h = harness();
   // 1차만 설정 + press 배부 이력 존재 → 이미 완결(DPS)이어야 하는데 DES로 남은 기사.
