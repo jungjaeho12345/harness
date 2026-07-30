@@ -14,6 +14,9 @@ const DESK_TABLE = {
   DPS: { send: 'DPS', hold: 'DDH', approveDelete: 'DPD' }, // DPS는 재송고만, 바로 KILL 불가
   DDH: { send: 'DPS', kill: 'DDK' },                       // 이미 보류이므로 hold 없음
   EPS: { kill: 'EEK', hold: 'EEH' },                       // 엠바고 송고 대기 — send 없음(재송고 미정의)
+  // news.md "엠바고 기사는 RDS->DES->EPS 가 기본 생애주기가 된다" — DES는 엠바고 배부 전 대기.
+  // DES 허용 액션은 EPS와 동일하다(KILL→EEK, 보류→EEH). send/approveDelete는 미정의(거부).
+  DES: { kill: 'EEK', hold: 'EEH' },
 };
 
 // R(기자)는 RDS 기사만 다룰 수 있고, approveDelete는 불가하다.

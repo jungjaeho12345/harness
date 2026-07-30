@@ -31,6 +31,11 @@ const ALLOWED = [
   ['EPS', 'D', 'hold', 'EEH'],
   ['EPS', 'Z', 'kill', 'EEK'],
   ['EPS', 'Z', 'hold', 'EEH'],
+  // DES(엠바고 배부 전 대기, news.md `RDS->DES->EPS`) — 허용 액션은 EPS와 동일하다.
+  ['DES', 'D', 'kill', 'EEK'],
+  ['DES', 'D', 'hold', 'EEH'],
+  ['DES', 'Z', 'kill', 'EEK'],
+  ['DES', 'Z', 'hold', 'EEH'],
 ];
 
 for (const [status, role, action, next] of ALLOWED) {
@@ -67,6 +72,14 @@ const DENIED = [
   ['EPS', 'R', 'kill'],
   ['EPS', 'R', 'hold'],
   ['EPS', 'R', 'send'],
+  // DES도 kill/hold만 — 재송고(send)·삭제승인은 미정의(거부), R은 DES 전체 불가
+  ['DES', 'D', 'send'],
+  ['DES', 'Z', 'send'],
+  ['DES', 'D', 'approveDelete'],
+  ['DES', 'Z', 'approveDelete'],
+  ['DES', 'R', 'kill'],
+  ['DES', 'R', 'hold'],
+  ['DES', 'R', 'send'],
   // 터미널 상태는 전이 없음
   ['RRH', 'D', 'send'],
   ['RRK', 'D', 'send'],
