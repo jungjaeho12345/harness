@@ -17,7 +17,8 @@
     {
       "step": 2,
       "name": "send-des",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/services/articleService.js 한 모듈만 수정 — 송고 후처리의 EPS 치환을 DES 치환으로 교체하고 진입 경로를 RDS·DDH 양쪽으로 확대(DES_ENTRY_STATUSES=Set{'RDS','DDH'}; DPS 재송고는 제외 — 배부 이력 있는 기사가 DES로 되돌아가면 tick 미배부 판정에 안 걸려 영구 고착). distributionKindsForSend의 기준 상태를 EPS→DES로 옮기고 EPS 분기 삭제(EPS.send가 lifecycle에 없어 죽은 분기). syncEmbargoStatus(articleId,{extraKinds,actorUserId}) 신설 — distributed = distributedKinds(이력) ∪ extraKinds 합집합으로 embargoPolicy.embargoStatusFor를 호출하고 null이 아닐 때만 present-only status 쓰기 + eventType='status'/action='embargo' 이력 1건; 상태 결정은 embargoPolicy 단일 출처(articleService에 직접 status 결정 없음), transition() 미경유 이유 주석화(role·action 없는 사실 반영). 송고 훅 결선: distribute resolve 후 `res?.ok===true && Array.isArray(res.distributed) && res.distributed.length>0`일 때만 성공 kind로 승격(res.ok만 보는 완화 금지 — 전 수신처 쓰기 실패 시 거짓 완결). applyAction 동기 반환 계약·실패 격리(.catch) 유지. 가짜 배부 서비스를 실물 반환 shape과 동형으로 보강(성공=kind별 non-empty distributed, 신규 allFailed 모드={ok:true,distributed:[],failed:[...]}). 반전 단언: RDS 엠바고 송고 EPS→DES, 2차만 송고 EPS→DES(+flush 후 EPS 승격), 1차/1+2차 EPS→DES 유지, DDH 엠바고 송고 DPS→DES(phase 47 누수 수정 증거), KILL/보류·재송고 거부 픽스처 DES화 + 레거시 EPS 케이스 신설, 이력 toStatus EPS→DES, server.test 응답 DES. 신규 커버리지: syncEmbargoStatus 8케이스(이력 self-heal/힌트 단독/합집합 완결/present-only·행수 불변/멱등 쓰기0/엠바고 미설정 쓰기0/DES·EPS 밖 불변/not-found), DDH 3조합, 엠바고 기사 3실패모드 DES 유지. DB 비파괴: 행 삭제·백필·일괄 UPDATE 0, 레거시 EPS 행 그대로. AC: node --test 3파일 65/65 green, npm test 582/578/4(기존 경로 구분자 실패 4건 그대로·신규 0), lint clean, diff 5파일(소스 1)."
     },
     {
       "step": 3,
