@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "49-mini-backlog-cleanup",
   "steps": [
-    { "step": 0, "name": "test-path-portability", "status": "pending" },
+    { "step": 0, "name": "test-path-portability", "status": "completed", "summary": "테스트 3파일(spoolWriter·distributionService·controllers)의 POSIX 경로 하드코딩 기대값을 node:path join/sep/basename 기반으로 교정(가려진 실패 2건 포함, 프로덕션 무변경) — 백엔드 기준선 620/620 green으로 상향" },
     { "step": 1, "name": "dps-resend-kinds", "status": "pending" },
     { "step": 2, "name": "distribute-status-guard", "status": "pending" },
     { "step": 3, "name": "transform-align", "status": "pending" },
