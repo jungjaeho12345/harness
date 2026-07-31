@@ -3,7 +3,7 @@
   "phase": "49-mini-backlog-cleanup",
   "steps": [
     { "step": 0, "name": "test-path-portability", "status": "completed", "summary": "테스트 3파일(spoolWriter·distributionService·controllers)의 POSIX 경로 하드코딩 기대값을 node:path join/sep/basename 기반으로 교정(가려진 실패 2건 포함, 프로덕션 무변경) — 백엔드 기준선 620/620 green으로 상향" },
-    { "step": 1, "name": "dps-resend-kinds", "status": "pending" },
+    { "step": 1, "name": "dps-resend-kinds", "status": "completed", "summary": "distributionKindsForSend(status, contents, distributed) 확장 — 엠바고 설정 DPS 재송고는 배부 이력에 있는 kind만 재배부(requiredKinds/distributedKinds 단일 출처, 시각 비교 없음). 이력 조회는 송고 훅 try 안에서 수행하고 실패·미주입은 already=[] 폴백(엠바고 기사 kinds=[] 안전측, 엠바고 미설정 기사는 기존대로 전체 배부). 테스트 8건 추가로 628/628 green" },
     { "step": 2, "name": "distribute-status-guard", "status": "pending" },
     { "step": 3, "name": "transform-align", "status": "pending" },
     { "step": 4, "name": "sort-align", "status": "pending" },
