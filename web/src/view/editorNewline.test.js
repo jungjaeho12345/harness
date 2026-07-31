@@ -128,6 +128,46 @@ describe('editorNewline — overwriteExtendLength (서로게이트-safe 확장 �
   });
 });
 
+// phase49 step5 — 캐럿이 서로게이트 페어 "내부"(low 서로게이트 위치 = high 바로 뒤)면 덮어쓰기 차단.
+// 반쪽(low)만 대체되면 lone high 서로게이트가 남아 본문이 깨진 코드유닛을 품게 된다 → 삽입 폴백으로 안전 저하.
+// phase45 step2(페어 "앞" offset의 2유닛 확장)와 짝을 이루는 반대편 엣지. 'a😀b'의 인덱스: 0='a', 1=high, 2=low, 3='b'.
+describe('editorNewline — shouldOverwriteNextChar (서로게이트 페어 내부 차단)', () => {
+  it('페어 내부(offset=low 서로게이트, 직전=high)는 false — 반쪽 대체 방지(핵심)', () => {
+    expect(shouldOverwriteNextChar('a😀b', 2)).toBe(false); // text[2]=low, text[1]=high → 페어 내부
+    expect(shouldOverwriteNextChar('😀b', 1)).toBe(false); // 문자열 시작 이모지의 내부
+  });
+
+  it('페어 앞(offset=high 시작)은 기존대로 true이고 확장 길이는 2(회귀 가드)', () => {
+    expect(shouldOverwriteNextChar('a😀b', 1)).toBe(true); // 이모지 앞 — phase45 step2 경로
+    expect(overwriteExtendLength('a😀b', 1)).toBe(2); // 페어 전체(2 코드유닛) 대체
+  });
+
+  it('페어 뒤(일반 글자)는 true', () => {
+    expect(shouldOverwriteNextChar('a😀b', 3)).toBe(true); // text[3]='b'
+  });
+
+  it('lone low 서로게이트(직전이 high 아님)는 기존대로 true — 페어가 아니므로 반쪽 대체 문제 없음', () => {
+    expect(shouldOverwriteNextChar('a\uDC00b', 1)).toBe(true); // 직전 'a'는 high 아님
+    expect(shouldOverwriteNextChar('\uDC00b', 0)).toBe(true); // 문자열 시작의 lone low(직전 없음)
+  });
+
+  it('lone high 서로게이트 위치도 기존대로 true(확장 1 — 안전 폴백 유지)', () => {
+    expect(shouldOverwriteNextChar('a\uD83Db', 1)).toBe(true); // text[1]=lone high(뒤가 low 아님)
+    expect(overwriteExtendLength('a\uD83Db', 1)).toBe(1);
+  });
+
+  it('BMP 회귀 — 한글·영문·기호에서 기존 true/false 판정 불변', () => {
+    expect(shouldOverwriteNextChar('가나다', 1)).toBe(true); // 한글(BMP)
+    expect(shouldOverwriteNextChar('a!b', 1)).toBe(true); // 기호
+    expect(shouldOverwriteNextChar('ab\ncd', 2)).toBe(false); // 줄 끝('\n')
+    expect(shouldOverwriteNextChar('abc', 3)).toBe(false); // offset >= length
+    const text = '본문\n(끝)';
+    expect(shouldOverwriteNextChar(text, text.indexOf('(끝)'))).toBe(false); // "(끝)" 마커 이후
+    expect(shouldOverwriteNextChar('abc', -1)).toBe(false); // 음수
+    expect(shouldOverwriteNextChar('abc', 1.5)).toBe(false); // 비정수
+  });
+});
+
 describe('editorNewline — insertTextIntoBlocks (Enter 분할 / 여러 줄 삽입)', () => {
   // 텍스트-only 기준 캐럿: lineIndex번째 텍스트 블록의 줄 안 offset(절대 텍스트 오프셋)으로 환산.
   const caretAt = (blocks, lineIndex, inLine) => {
