@@ -96,6 +96,115 @@ describe('editorEditOps — sortParagraph (문단 정렬)', () => {
   });
 });
 
+describe('editorEditOps — sortDocument align 승계 (pair-following: 줄=텍스트+정렬 한 쌍)', () => {
+  it('moves align with its text value when lines are reordered (쌍 이동)', () => {
+    const blocks = [textBlock('zebra', 'center'), textBlock('apple', 'right')];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([textBlock('apple', 'right'), textBlock('zebra', 'center')]);
+    expect(r.blocks[0].align).toBe('right');
+    expect(r.blocks[1].align).toBe('center');
+  });
+
+  it('does not add a spurious align key when sorting unaligned lines', () => {
+    const r = sortDocument([textBlock('나'), textBlock('가')]);
+    expect(r.changed).toBe(true);
+    for (const b of r.blocks) expect('align' in b).toBe(false);
+  });
+
+  it('keeps each value paired with its own align (or no align) in mixed input (혼합)', () => {
+    const blocks = [textBlock('다', 'justify'), textBlock('가'), textBlock('나', 'left')];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([textBlock('가'), textBlock('나', 'left'), textBlock('다', 'justify')]);
+    expect('align' in r.blocks[0]).toBe(false);
+  });
+
+  it('preserves the "(끝)" marker align through re-normalization on a real sort (4-a)', () => {
+    const blocks = [textBlock('z'), textBlock('a'), textBlock(END_MARKER, 'center')];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(true);
+    expect(r.blocks.map((b) => b.text)).toEqual(['a', 'z', END_MARKER]);
+    expect(r.blocks[2].align).toBe('center');
+  });
+
+  it('keeps marker align and changed:false on already-sorted input (4-a 후반)', () => {
+    const blocks = [textBlock('a'), textBlock(END_MARKER, 'center')];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual([textBlock('a'), textBlock(END_MARKER, 'center')]);
+    expect(r.blocks[1].align).toBe('center');
+  });
+
+  it('inherits align of a malformed mid-document marker when re-normalized to final (4-b)', () => {
+    const blocks = [textBlock('z'), textBlock(END_MARKER, 'right'), textBlock('a')];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([textBlock('a'), textBlock('z'), textBlock(END_MARKER, 'right')]);
+    expect(r.blocks[2].align).toBe('right');
+  });
+
+  it('does not add a spurious align key to an unaligned marker (4-c)', () => {
+    const blocks = [textBlock('z'), textBlock('a'), textBlock(END_MARKER)];
+    const r = sortDocument(blocks);
+    expect(r.changed).toBe(true);
+    const marker = r.blocks[r.blocks.length - 1];
+    expect(marker.text).toBe(END_MARKER);
+    expect('align' in marker).toBe(false);
+  });
+});
+
+describe('editorEditOps — sortParagraph align 승계 (pair-following: 줄=텍스트+정렬 한 쌍)', () => {
+  it('moves align with its text value inside the caret paragraph (쌍 이동)', () => {
+    const blocks = [textBlock('나', 'center'), textBlock('가', 'right')];
+    const r = sortParagraph(blocks, 0);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([textBlock('가', 'right'), textBlock('나', 'center')]);
+  });
+
+  it('leaves other-paragraph lines and their aligns untouched (문단 밖 불변)', () => {
+    const blocks = [
+      textBlock('나'), textBlock('가', 'left'), textBlock(''),
+      textBlock('다', 'center'), textBlock('나', 'right'),
+    ];
+    const r = sortParagraph(blocks, 0);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([
+      textBlock('가', 'left'), textBlock('나'), textBlock(''),
+      textBlock('다', 'center'), textBlock('나', 'right'),
+    ]);
+  });
+
+  it('does not add a spurious align key when sorting an unaligned paragraph', () => {
+    const r = sortParagraph([textBlock('나'), textBlock('가')], 0);
+    expect(r.changed).toBe(true);
+    for (const b of r.blocks) expect('align' in b).toBe(false);
+  });
+
+  it('keeps a single-line paragraph (with align) unchanged — changed:false', () => {
+    const blocks = [textBlock('나', 'center'), textBlock(''), textBlock('가')];
+    const r = sortParagraph(blocks, 0);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual(blocks);
+  });
+
+  it('preserves relative order (and aligns) of equal-text lines — stable, changed:false (9)', () => {
+    const blocks = [textBlock('같음', 'left'), textBlock('같음', 'right')];
+    const r = sortParagraph(blocks, 0);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual([textBlock('같음', 'left'), textBlock('같음', 'right')]);
+  });
+
+  it('rewrites same-text slots whose align differs — duplicate text + 재배치 (9-a)', () => {
+    const blocks = [textBlock('b'), textBlock('a', 'left'), textBlock('a', 'right')];
+    const r = sortParagraph(blocks, 0);
+    expect(r.changed).toBe(true);
+    expect(r.blocks).toEqual([textBlock('a', 'left'), textBlock('a', 'right'), textBlock('b')]);
+    expect(r.blocks[1].align).toBe('right');
+    expect('align' in r.blocks[2]).toBe(false);
+  });
+});
+
 describe('editorEditOps — deleteWordAt (단어 지우기)', () => {
   it('deletes only the word at the caret column (주변 공백 유지)', () => {
     const blocks = [textBlock('안녕 세상 테스트'), textBlock('둘째')];
