@@ -10,7 +10,9 @@
 //   - 2차 엠바고 시각 → 비언론사(nonpress), 단 송고 시 바로 언론사(press)  ← 송고 훅의 책임(여기 아님)
 //   - 1+2차 → 1차 시각에 press, 2차 시각에 nonpress
 
-// 엠바고 tick이 배부를 허용하는 상태. DES(배부 전 대기)·EPS(배부 진행)·DPS(완결·레거시)뿐이다.
+// 배부 가능 상태 — 송고 훅(articleService)·tick(distributionTickService)·배부 실행(distributionService의
+// 쓰기 직전 TOCTOU 가드)이 공유하는 **단일 출처**다(tick 전용 스캔 필터가 아니다 — 복제 금지).
+// DES(배부 전 대기)·EPS(배부 진행)·DPS(완결·레거시)뿐이다.
 // CRITICAL: RDS(미송고)·RRH·RRK·DDH·DDK(보류/킬)·EEK·EEH(엠바고 킬/보류)·DPD(삭제 승인)는 전부 제외다.
 // 외부 수신처로 한 번 나간 기사는 회수 수단이 없으므로, 이 게이트가 유일한 방어선이다.
 export const EMBARGO_DISTRIBUTABLE_STATUSES = Object.freeze(['DES', 'EPS', 'DPS']);

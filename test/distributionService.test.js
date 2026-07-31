@@ -334,6 +334,181 @@ test('실패는 onFailure로 표면화된다 — 무음 삼킴 금지(fire-and-f
   assert.equal(seen[0].reason, 'spool-write-failed');
 });
 
+// ── TOCTOU 상태 가드(step 49-2) ──────────────────────────────────────────
+// 수신처 2곳 이상이면 앞 쓰기의 await 동안 KILL(EEK)·보류(EEH)·삭제 승인(DPD)이 끼어들 수 있다.
+// 레이스는 주입한 writer의 write 안에서 DB를 갱신해 **결정적으로** 재현한다(타이머·랜덤 금지).
+
+// n번째 write 완료 시 부수효과(예: 상태 전이)를 실행하는 가짜 writer. onWrite는 늦은 바인딩(hooks)으로
+// 받는다 — setup()이 만드는 articleModel을 부수효과에서 써야 하기 때문(선후 순환 회피).
+function hookedWriter(hooks = {}) {
+  const calls = [];
+  return {
+    calls,
+    async write(args) {
+      calls.push(args);
+      if (hooks.onWrite) hooks.onWrite(args, calls.length);
+      return { ok: true, file: `/spool/${args.spoolDir}/${args.articleId}.json` };
+    },
+  };
+}
+
+test('상태 가드: 수신처 사이에 KILL(EEK)로 전이되면 남은 수신처 쓰기를 중단한다', async () => {
+  const hooks = {};
+  const writer = hookedWriter(hooks);
+  const { service, articleModel, distributionTargetModel } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  // 첫 수신처 스풀 쓰기 도중 데스크가 엠바고 킬 — 두 번째 수신처 직전 재확인에 걸려야 한다.
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { status: 'EEK' } });
+  };
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true, '반환 shape은 불변 — 부분 성공은 배부 성립이다');
+  assert.equal(writer.calls.length, 1, '두 번째 수신처로는 쓰지 않는다');
+  assert.equal(r.distributed.length, 1);
+  assert.equal(r.distributed[0].spoolDir, 'kbs');
+  const mbc = distributionTargetModel.query({ kind: 'press', active: 'Y' }).find((t) => t.spoolDir === 'mbc');
+  assert.deepEqual(r.failed, [
+    { articleId: ARTICLE_ID, targetId: mbc.id, kind: 'press', spoolDir: 'mbc', reason: 'status-changed' },
+  ], '처리 못 한 수신처는 기존 failed shape 그대로 status-changed로 남는다');
+});
+
+test('상태 가드: kind 사이 전이(DPD)면 다음 kind는 시작하지 않고 targetId:null로 보고한다', async () => {
+  const hooks = {};
+  const writer = hookedWriter(hooks);
+  const { service, articleModel, db } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+    ],
+  });
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { status: 'DPD' } });
+  };
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  assert.equal(r.ok, true);
+  assert.deepEqual(writer.calls.map((c) => c.spoolDir), ['kbs'], 'nonpress 쓰기는 일어나지 않는다');
+  // 시작도 못 한 kind를 failed에 남기지 않으면 tick이 no-active-target으로 오보한다
+  // (tick은 distributed∪failed에 등장한 kind만 "처리됨"으로 본다 — 회귀 가드).
+  const nulls = r.failed.filter((f) => f.targetId === null);
+  assert.deepEqual(nulls, [
+    { articleId: ARTICLE_ID, targetId: null, kind: 'nonpress', reason: 'status-changed' },
+  ], '아예 시작도 못 한 kind는 targetId:null 항목 정확히 1건으로 남는다');
+  assert.equal(historyOf(db).filter((h) => h.action === 'nonpress').length, 0, 'nonpress 이력은 생기지 않는다');
+});
+
+test('상태 가드: 중단 전에 성공한 쓰기는 사실로 남는다(distributedAt·이력 미회수)', async () => {
+  const hooks = {};
+  const writer = hookedWriter(hooks);
+  const { service, articleModel, db } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { status: 'EEK' } });
+  };
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  // 스풀 파일은 이미 나갔다 — 되돌리면 tick의 멱등 근거(append-only 이력)가 깨진다.
+  assert.equal(contentsOf(db).distributedAt, NOW, '성공한 쓰기의 배부 시각은 그대로 기록된다');
+  assert.deepEqual(
+    historyOf(db).map((h) => `${h.eventType}:${h.action}`),
+    ['distribute:press'],
+    '성공한 kind의 배부 이력은 1건 남는다',
+  );
+  assert.equal(contentsOf(db).status, 'EEK', '가드는 status를 쓰지 않는다 — 읽기 전용');
+});
+
+test('상태 가드: 페이로드는 최초 스냅샷을 유지한다(재조회는 status 판정 전용)', async () => {
+  const hooks = {};
+  const writer = hookedWriter(hooks);
+  const { service, articleModel } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  // 첫 쓰기 도중 제목이 바뀌어도(allowlist 안 상태 유지) 두 번째 수신처에는 같은 스냅샷이 나간다.
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { title: '바뀐 제목' } });
+  };
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.distributed.length, 2, '상태가 allowlist 안이면 배부는 계속된다');
+  assert.equal(writer.calls.length, 2);
+  assert.equal(writer.calls[1].contents.title, '제목', '한 배치는 같은 본문을 내보낸다 — 정정 추적 가능성');
+});
+
+test('상태 가드: 정상 경로(DPS/DES/EPS)는 전혀 막지 않는다 — 수신처 3곳 전부 배부', async () => {
+  for (const status of ['DPS', 'DES', 'EPS']) {
+    const writer = fakeWriter();
+    const { service, articleModel } = setup({
+      writer,
+      targets: [
+        { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+        { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+        { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+      ],
+    });
+    articleModel.update(ARTICLE_ID, { contents: { status } });
+
+    const r = await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+    assert.equal(r.ok, true, `status=${status}`);
+    assert.equal(r.distributed.length, 3, `status=${status}: 전 수신처에 배부된다`);
+    assert.deepEqual(r.failed, [], `status=${status}`);
+    assert.equal(writer.calls.length, 3, `status=${status}`);
+  }
+});
+
+test('상태 가드: 중단으로 건너뛴 항목도 onFailure로 표면화된다(무음 삼킴 금지)', async () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  distributionTargetModel.insert({ name: 'MBC', kind: 'press', spoolDir: 'mbc', active: 'Y' });
+  distributionTargetModel.insert({ name: '포털', kind: 'nonpress', spoolDir: 'portal', active: 'Y' });
+
+  const hooks = {};
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: hookedWriter(hooks),
+    now: () => NOW,
+    onFailure: (info) => seen.push(info),
+  });
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { status: 'EEK' } });
+  };
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  // 처리 못 한 수신처(mbc) + 시작도 못 한 kind(nonpress) — 두 종류 전부 보고된다.
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].spoolDir, 'mbc');
+  assert.equal(seen[0].reason, 'status-changed');
+  assert.deepEqual(seen[1], { articleId: ARTICLE_ID, targetId: null, kind: 'nonpress', reason: 'status-changed' });
+});
+
 test('onFailure가 throw해도 배부와 기록은 정상 완료된다', async () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
