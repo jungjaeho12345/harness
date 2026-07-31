@@ -202,6 +202,50 @@ describe('editorFind — "(끝)" 종료 마커 보존 (매치가 마커 블록 �
   });
 });
 
+describe('editorFind — 정렬(align) 승계 (바꾸기 시 정렬 유실 금지)', () => {
+  it('replaceOne: 치환된 줄의 align을 유지하고 캐럿 계산은 불변이다', () => {
+    const r = replaceOne([textBlock('hello world', 'center')], 'world', 'earth');
+    expect(r.replaced).toBe(true);
+    expect(r.blocks[0].text).toBe('hello earth');
+    expect(r.blocks[0].align).toBe('center');
+    expect(r.matchStart).toBe(6);
+    expect(r.caretOffset).toBe(6 + 'earth'.length); // 기존 계산 그대로(matchStart + repl.length)
+  });
+
+  it('replaceOne: 미정렬 줄 치환 결과에는 align 키가 생기지 않는다(스퍼리어스 금지)', () => {
+    const r = replaceOne([textBlock('hello world')], 'world', 'earth');
+    expect(r.blocks[0].text).toBe('hello earth');
+    expect('align' in r.blocks[0]).toBe(false);
+  });
+
+  it('replaceAll: 치환된 줄만 align을 승계하고 미정렬 줄에는 키가 없다', () => {
+    const r = replaceAll([textBlock('a a', 'right'), textBlock('a')], 'a', 'b');
+    expect(r.count).toBe(3); // 기존 카운트 기준 그대로
+    expect(r.blocks[0]).toEqual(textBlock('b b', 'right'));
+    expect(r.blocks[1].text).toBe('b');
+    expect('align' in r.blocks[1]).toBe(false);
+  });
+
+  it('마커 가드 회귀: 정렬된 "(끝)" 블록은 어느 쪽에서도 치환되지 않고 align도 잃지 않는다', () => {
+    const input = [textBlock(END_MARKER, 'center')];
+    const one = replaceOne(input, '끝', '끗');
+    expect(one.replaced).toBe(false);
+    expect(one.blocks[0]).toEqual(textBlock(END_MARKER, 'center'));
+    const all = replaceAll(input, '끝', '끗');
+    expect(all.count).toBe(0);
+    expect(all.blocks[0]).toEqual(textBlock(END_MARKER, 'center'));
+  });
+
+  it('replaceAll: 매치 없는 정렬 줄과 임베드는 그대로 유지된다', () => {
+    const embed = embedBlock({ embedType: 'image', src: 'x' });
+    const r = replaceAll([textBlock('foo', 'right'), embed, textBlock('bar', 'justify')], 'foo', 'X');
+    expect(r.count).toBe(1);
+    expect(r.blocks[0]).toEqual(textBlock('X', 'right'));
+    expect(r.blocks[1]).toEqual({ ...embed, type: 'embed' });
+    expect(r.blocks[2]).toEqual(textBlock('bar', 'justify')); // 매치 없는 정렬 줄 불변
+  });
+});
+
 describe('editorFind — plan-reviewer edge cases', () => {
   // (a) 첫 Ctrl+F 직후 빈 query 상태에서 매치 0개 — 다이얼로그 초기 상태(query='')에서 카운트/하이라이트가 비어야 한다.
   it('yields zero matches for an initial empty query state (just after Ctrl+F)', () => {

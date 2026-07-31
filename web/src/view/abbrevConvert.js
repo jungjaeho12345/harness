@@ -55,6 +55,7 @@ export function expandAbbrev(text, pairs) {
 
 // 블록 배열의 각 "텍스트 블록"에 expandAbbrev를 적용한 새 블록 배열을 반환. 임베드·"(끝)" 블록은 불변.
 // 반환: { blocks, changed } — changed는 어느 블록이라도 text가 바뀌었는지(부모 no-op 판정용).
+// 확장된 줄의 정렬(align) 필드는 승계한다(무 align 블록은 키 미생성 — textBlock 계약).
 export function expandAbbrevInBlocks(blocks, pairs) {
   const list = normalizeBlocks(blocks); // 새 배열/새 객체 — 입력 mutate 금지.
   let changed = false;
@@ -63,7 +64,7 @@ export function expandAbbrevInBlocks(blocks, pairs) {
     const next = expandAbbrev(block.text, pairs);
     if (next === block.text) return block;
     changed = true;
-    return textBlock(next);
+    return textBlock(next, block.align);
   });
   return { blocks: out, changed };
 }

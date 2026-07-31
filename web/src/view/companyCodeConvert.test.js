@@ -72,3 +72,34 @@ describe('convertCompanyCodeInBlocks — 블록 변환', () => {
     expect(changed).toBe(false);
   });
 });
+
+describe('convertCompanyCodeInBlocks — 정렬(align) 승계', () => {
+  it('정렬된 줄이 변환되면 align을 유지한다', () => {
+    const { blocks, changed } = convertCompanyCodeInBlocks([textBlock('삼성전자 주가', 'center')]);
+    expect(changed).toBe(true);
+    expect(blocks[0].text).toBe('삼성전자(005930) 주가');
+    expect(blocks[0].align).toBe('center');
+  });
+
+  it('미정렬 줄 변환 결과에는 align 키가 생기지 않는다(스퍼리어스 금지)', () => {
+    const { blocks } = convertCompanyCodeInBlocks([textBlock('삼성전자 주가')]);
+    expect(blocks[0].text).toBe('삼성전자(005930) 주가');
+    expect('align' in blocks[0]).toBe(false);
+  });
+
+  it('변환이 일어나지 않은 정렬 줄은 원본 그대로 유지된다(align 포함)', () => {
+    const { blocks, changed } = convertCompanyCodeInBlocks([textBlock('일반 텍스트', 'right')]);
+    expect(changed).toBe(false);
+    expect(blocks[0]).toEqual(textBlock('일반 텍스트', 'right'));
+  });
+
+  it('임베드·정렬된 "(끝)" 블록은 불변(기존 계약 회귀 가드 + align 무손실)', () => {
+    const embed = embedBlock({ embedType: 'image', src: 'x' });
+    const { blocks } = convertCompanyCodeInBlocks([
+      textBlock('삼성전자', 'center'), embed, textBlock('(끝)', 'center'),
+    ]);
+    expect(blocks[0]).toEqual(textBlock('삼성전자(005930)', 'center'));
+    expect(blocks[1]).toEqual({ ...embed, type: 'embed' });
+    expect(blocks[2]).toEqual(textBlock('(끝)', 'center'));
+  });
+});

@@ -54,6 +54,7 @@ export function nextMatchIndex(matches, fromOffset, { forward = true } = {}) {
 
 // 매치 오프셋이 속한 텍스트-줄과 줄안 컬럼을 구해 그 텍스트 블록의 text에서만 치환한다.
 // (blocksToText는 텍스트 블록만 개행으로 잇는다 — lineAtOffset의 lineIndex는 곧 텍스트-줄 0-base 인덱스.)
+// 치환된 줄의 정렬(align) 필드는 승계한다(소스는 교체 전 원본 list[blockIndex]).
 function replaceAtMatch(list, text, match, replacement) {
   const { lineIndex, start: lineStart } = lineAtOffset(text, match.start);
   const blockIndex = textLineToBlockIndex(list, lineIndex);
@@ -65,7 +66,7 @@ function replaceAtMatch(list, text, match, replacement) {
   const repl = String(replacement ?? '');
   const newText = old.slice(0, col) + repl + old.slice(col + (match.end - match.start));
   const next = list.slice();
-  next[blockIndex] = textBlock(newText);
+  next[blockIndex] = textBlock(newText, list[blockIndex].align);
   return next;
 }
 
@@ -98,6 +99,7 @@ export function replaceOne(blocks, query, replacement, { caseSensitive = false, 
 
 // 모든 매치를 치환한 새 블록 배열 + count. 한 텍스트 블록 안의 여러 매치도 모두 치환한다.
 // 임베드·블록 순서·개수 불변. 매치 0개/빈 query → { blocks:<원본 정규화>, count:0 }.
+// 치환된 줄의 정렬(align) 필드는 승계한다(무 align 블록은 키 미생성 — textBlock 계약).
 export function replaceAll(blocks, query, replacement, { caseSensitive = false } = {}) {
   const list = normalizeBlocks(blocks);
   if (query === null || query === undefined || query === '') return { blocks: list, count: 0 };
@@ -117,7 +119,7 @@ export function replaceAll(blocks, query, replacement, { caseSensitive = false }
       cursor = m.end;
     }
     out += b.text.slice(cursor);
-    return textBlock(out);
+    return textBlock(out, b.align);
   });
   return { blocks: next, count };
 }
