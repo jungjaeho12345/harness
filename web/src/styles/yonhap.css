@@ -232,6 +232,13 @@ a { color: var(--yh-blue); }
   color: var(--yh-gray-dark);
 }
 
+/* 엠바고 datetime-local 피커 — readOnly가 브라우저별로 무시돼 매핑 모드에서 disabled로 잠근다.
+   read-only 입력과 같은 룩으로 통일한다(공통정보 잠금 시각 일관성). */
+.yh-field input:disabled {
+  background: var(--yh-gray-bg);
+  color: var(--yh-gray-dark);
+}
+
 /* 탭 */
 .yh-tabs {
   display: flex;
