@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { basename, join, sep } from 'node:path';
 import { createSpoolWriter } from '../src/services/spoolWriter.js';
 
 // 호출을 기록하는 가짜 FS. fail 집합에 든 op는 reject한다.
@@ -20,10 +21,14 @@ function fakeFs({ fail = new Set() } = {}) {
 
 const NOW = '2026-07-28T01:02:03.456Z';
 
+// 입력은 POSIX 문자열 그대로 둔다 — 프로덕션이 이 입력을 OS 규약(join)으로 합성하는지가 검증 대상이다.
+// 기대값은 반드시 join()으로 계산해 Windows/POSIX 양쪽에서 통과하게 한다.
+const SPOOL_ROOT = '/spool/out';
+
 function make(overrides = {}) {
   const fs = fakeFs(overrides.fsOptions);
   const writer = createSpoolWriter({
-    rootDir: '/spool/out',
+    rootDir: SPOOL_ROOT,
     mkdir: fs.mkdir,
     writeFile: fs.writeFile,
     rename: fs.rename,
@@ -66,7 +71,7 @@ test('spoolWriter: 수신처 폴더를 recursive mkdir 후 임시 파일에 쓰�
 
   assert.equal(r.ok, true);
   assert.equal(fs.calls.mkdir.length, 1);
-  assert.equal(fs.calls.mkdir[0][0], '/spool/out/kbs');
+  assert.equal(fs.calls.mkdir[0][0], join(SPOOL_ROOT, 'kbs'));
   assert.deepEqual(fs.calls.mkdir[0][1], { recursive: true });
 
   // 임시 파일 → rename(원자적 게시). 부분 기록 파일을 외부 전송기가 집어가지 못하게 한다.
@@ -77,7 +82,8 @@ test('spoolWriter: 수신처 폴더를 recursive mkdir 후 임시 파일에 쓰�
   assert.equal(renameFrom, tmpPath);
   assert.equal(renameTo, r.file);
   assert.notEqual(tmpPath, renameTo, '임시 파일명과 최종 파일명이 같으면 원자적 게시가 아니다');
-  assert.match(tmpPath, /^\/spool\/out\/kbs\//);
+  assert.equal(String(tmpPath).startsWith(join(SPOOL_ROOT, 'kbs') + sep), true, `수신처 폴더 하위여야 함: ${tmpPath}`);
+  assert.match(basename(tmpPath), /^\..+\.tmp$/, '임시 파일명은 .으로 시작하고 .tmp로 끝난다');
   assert.equal(fs.calls.writeFile[0][2], 'utf8');
 });
 
@@ -86,12 +92,12 @@ test('spoolWriter: 파일명은 <articleId>_<timestamp>.json 이며 재배부해
   await writer.write({ spoolDir: 'kbs', articleId: ARTICLE.articleId, article: ARTICLE, contents: CONTENTS });
   assert.equal(
     fs.calls.rename[0][1],
-    `/spool/out/kbs/${ARTICLE.articleId}_20260728T010203456Z.json`,
+    join(SPOOL_ROOT, 'kbs', `${ARTICLE.articleId}_20260728T010203456Z.json`),
   );
 
   // 다른 시각에 다시 배부하면 다른 파일명 — 이전 배부본이 남는다(외부 전송기가 아직 안 가져갔을 수 있다).
   const second = createSpoolWriter({
-    rootDir: '/spool/out', mkdir: fs.mkdir, writeFile: fs.writeFile, rename: fs.rename,
+    rootDir: SPOOL_ROOT, mkdir: fs.mkdir, writeFile: fs.writeFile, rename: fs.rename,
     now: () => '2026-07-28T01:02:04.000Z',
   });
   const r2 = await second.write({ spoolDir: 'kbs', articleId: ARTICLE.articleId, article: ARTICLE, contents: CONTENTS });

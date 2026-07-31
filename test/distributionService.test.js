@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../src/db/schema.js';
 import { createArticleModel } from '../src/models/articleModel.js';
@@ -15,6 +16,8 @@ import { createSpoolWriter } from '../src/services/spoolWriter.js';
 
 const NOW = '2026-07-28T05:00:00.000Z';
 const ARTICLE_ID = 'AKR20260728000000001';
+// 입력은 POSIX 문자열 그대로, 기대값은 join()으로 — Windows/POSIX 양쪽에서 통과해야 한다.
+const SPOOL_ROOT = '/spool/out';
 
 // 호출을 기록하는 가짜 스풀 writer. failFor에 든 spoolDir는 실패로 응답한다.
 function fakeWriter({ failFor = new Set() } = {}) {
@@ -282,7 +285,7 @@ test('레거시 행의 잘못된 spoolDir는 실제 writer가 거부해 failed�
     historyModel: createArticleHistoryModel(db),
     // 실제 spoolWriter를 쓰되 FS 조작만 주입한다 — 경로 재검증이 실제로 동작하는지 확인.
     spoolWriter: createSpoolWriter({
-      rootDir: '/spool/out',
+      rootDir: SPOOL_ROOT,
       mkdir: async (...a) => { fsCalls.push(['mkdir', ...a]); },
       writeFile: async (...a) => { fsCalls.push(['writeFile', ...a]); },
       rename: async (...a) => { fsCalls.push(['rename', ...a]); },
@@ -299,7 +302,7 @@ test('레거시 행의 잘못된 spoolDir는 실제 writer가 거부해 failed�
   assert.equal(r.distributed.length, 1, '정상 수신처 배부는 계속된다');
   // 스풀 루트 밖으로 나가는 경로는 어떤 FS 호출에도 나타나지 않는다.
   for (const call of fsCalls) {
-    assert.equal(String(call[1]).startsWith('/spool/out/kbs'), true, JSON.stringify(call));
+    assert.equal(String(call[1]).startsWith(join(SPOOL_ROOT, 'kbs')), true, JSON.stringify(call));
   }
 });
 

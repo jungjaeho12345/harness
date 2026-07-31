@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { basename, join, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import bcrypt from 'bcryptjs';
 import { createSchema } from '../src/db/schema.js';
@@ -311,13 +312,16 @@ function fakeSpoolFs() {
 // 배부 훅은 fire-and-forget이라 마이크로태스크 큐를 비운 뒤 단언한다.
 const flushSpool = () => new Promise((resolve) => setImmediate(resolve));
 
+// 입력은 POSIX 문자열 그대로, 기대값은 join()으로 — Windows/POSIX 양쪽에서 통과해야 한다.
+const SPOOL_ROOT = '/spool/out';
+
 test('createControllers: DIST_SPOOL_DIR 설정 시 송고가 활성 수신처 스풀에 배부된다', async () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const spoolFs = fakeSpoolFs();
   const sessionService = createSessionService();
   const controllers = createControllers(db, {
-    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' }, sessionService, spoolFs,
+    env: { ...ENV, DIST_SPOOL_DIR: SPOOL_ROOT }, sessionService, spoolFs,
   });
   seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
   const { sessionId } = await controllers.auth.login('admin', 'pw');
@@ -328,9 +332,11 @@ test('createControllers: DIST_SPOOL_DIR 설정 시 송고가 활성 수신처 �
   await flushSpool();
 
   assert.equal(a.status, 'DPS');
-  assert.equal(spoolFs.calls.mkdir[0][0], '/spool/out/kbs');
+  assert.equal(spoolFs.calls.mkdir[0][0], join(SPOOL_ROOT, 'kbs'));
   assert.equal(spoolFs.calls.rename.length, 1);
-  assert.match(spoolFs.calls.rename[0][1], /^\/spool\/out\/kbs\/AKR\d{8}\d{9}_.*\.json$/);
+  const spoolFile = spoolFs.calls.rename[0][1];
+  assert.equal(String(spoolFile).startsWith(join(SPOOL_ROOT, 'kbs') + sep), true, `수신처 폴더 하위여야 함: ${spoolFile}`);
+  assert.match(basename(spoolFile), /^AKR\d{8}\d{9}_.*\.json$/);
   // 배부 사실이 DB에 기록된다(배부시간 + 이력).
   const row = db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId);
   assert.notEqual(row.distributedAt, null);
