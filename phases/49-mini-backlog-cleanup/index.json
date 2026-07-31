@@ -1,0 +1,27 @@
+{
+  "project": "기사 작성기",
+  "phase": "49-mini-backlog-cleanup",
+  "steps": [
+    { "step": 0, "name": "test-path-portability", "status": "pending" },
+    { "step": 1, "name": "dps-resend-kinds", "status": "pending" },
+    { "step": 2, "name": "distribute-status-guard", "status": "pending" },
+    { "step": 3, "name": "transform-align", "status": "pending" },
+    { "step": 4, "name": "sort-align", "status": "pending" },
+    { "step": 5, "name": "overwrite-surrogate-guard", "status": "pending" },
+    { "step": 6, "name": "save-title-contract", "status": "pending" },
+    { "step": 7, "name": "http-error-normalize", "status": "pending" },
+    { "step": 8, "name": "mgmt-error-feedback", "status": "pending" }
+  ],
+  "excluded": [
+    {
+      "candidate": "D-9(a) tick invalid 보고의 스냅샷 기준 (distributionTickService.js:139)",
+      "verdict": "제외",
+      "rationale": "실코드 확인 결과 보고 전용이며 배부 판정에 영향이 없다. unparsableEmbargoFields(contents)는 스캔 스냅샷으로 계산되지만, 실제 배부는 due>0일 때 fresh read로 재판정하고(L145~159) invalid 배열은 응답 요약에만 실린다. fresh 기준으로 옮기려면 due=0 경로에도 재조회를 넣거나 보고 시점을 재구성해야 해서, 얻는 것(스캔~배부 사이 수 밀리초 동안 운영자가 엠바고 오타를 고친 경우의 보고 정확도)에 비해 tick 루프의 분기 복잡도가 커진다. 무해한 지연 보고이며 다음 tick에서 자동 정정된다."
+    },
+    {
+      "candidate": "D-9(b) single-flight 워치독 부재 (distributionTickService.js:85~107)",
+      "verdict": "제외",
+      "rationale": "single-flight 자체는 이미 구현돼 있고(running 플래그 + finally 해제 + skipped:'in-progress' 보고), 플래그가 영구 고착되려면 await한 Promise가 영원히 settle되지 않아야 한다. 워치독을 붙이려면 setTimeout이 필요한데, 이 모듈은 ADR-008 (3)에 따라 '타이머 0건'이 검증된 불변식이다(phase 48 step3가 grep으로 잠갔다) — 타이머 도입은 기획 지침(앱 내 타이머 금지)의 정면 위반이다. 겹침은 응답의 skipped 토큰으로 외부 cron이 관측할 수 있고, 프로세스 재시작이 최종 복구 수단이다."
+    }
+  ]
+}
