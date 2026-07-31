@@ -303,6 +303,34 @@ test('2차 엠바고만 설정된 레거시 DPS + press 이력 → press에만 �
   assert.deepEqual(distributionService.calls[0].kinds, ['press']);
 });
 
+test('도래한(과거) 엠바고 DPS 재송고도 시각을 보지 않는다 — 이력 기준만(미배부 확장 금지)', async () => {
+  // FUTURE 케이스(위)는 "미도래여도 이력이 있으면 배부"를 잠근다. 이 테스트는 반대 방향 —
+  // 시각이 이미 지났어도 송고 훅이 시각 비교로 배부를 넓히면 안 된다(미배부 kind 배부는 tick 단일 책임).
+  // 구현에 embargoAt <= now 류 비교가 들어가면 아래 두 케이스가 red가 된다.
+  const PAST_1ST = '2020-01-01T00:00:00.000Z';
+  const PAST_2ND = '2020-01-02T00:00:00.000Z';
+  for (const [seeded, expected] of [[[], []], [['press'], ['press']]]) {
+    const distributionService = fakeDistribution();
+    const { service, articleId, historyModel } = setup({
+      distributionService,
+      contents: { status: 'DPS', embargoAt: PAST_1ST, secondEmbargoAt: PAST_2ND },
+    });
+    seedDistributed(historyModel, articleId, seeded);
+
+    const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+    await flush();
+
+    const label = `이력 ${JSON.stringify(seeded)}`;
+    assert.deepEqual(r, { ok: true, status: 'DPS' }, label);
+    if (expected.length === 0) {
+      assert.equal(distributionService.calls.length, 0, `${label} — 시각이 지났어도 즉시 배부 금지(tick 책임)`);
+    } else {
+      assert.equal(distributionService.calls.length, 1, label);
+      assert.deepEqual(distributionService.calls[0].kinds, expected, `${label} — 시각 경과로 nonpress를 넓히면 안 된다`);
+    }
+  }
+});
+
 test('historyModel 미주입 + 엠바고 설정 DPS 재송고 → 배부 호출 0회(안전 기본값)', async () => {
   const distributionService = fakeDistribution();
   const db = new DatabaseSync(':memory:');
