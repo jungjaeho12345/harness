@@ -270,7 +270,8 @@
     },
     {
       "dir": "49-mini-backlog-cleanup",
-      "status": "pending",
+      "status": "completed",
+      "completed_at": "2026-07-31T14:41:42+0900",
       "note": "phase 44~48 리뷰가 백로그로 넘긴 비차단 항목 일괄 해소. 실코드 대조 triage 후 채택 9 step(레이어별 분리): (0) test-path-portability — Windows에서 실패하던 스풀 경로 단언 4건을 node:path join 기대값으로 크로스 플랫폼화(프로덕션 무변경, 이후 백엔드 기준선이 620/620 green으로 상향), (1) dps-resend-kinds — 엠바고 설정된 DPS 재송고가 이력 없는 kind까지 즉시 배부하던 누수를 '이미 배부된 kind만'으로 좁힘(시각 비교는 여전히 tick 책임), (2) distribute-status-guard — 수신처 사이 KILL/보류/삭제 TOCTOU 창을 쓰기 직전 상태 재확인으로 차단(성공분은 보존·중단분은 status-changed로 보고), (3) transform-align — 기업코드·약어·간체번체 + editorFind(replaceOne·replaceAll) 4파일 5곳의 align 유실 승계 수정, (4) sort-align — sortDocument/sortParagraph align 유실 + '(끝)' 마커 재정규화 align 승계 수정, 의미론은 pair-following(줄=텍스트+정렬)으로 확정(phase 45가 보류한 설계 결정, sameBlocks는 무수정), (5) overwrite-surrogate-guard — 캐럿이 서로게이트 페어 내부일 때 반쪽 대체 차단(순수 게이트에서 삽입 폴백), (6) save-title-contract — 저장/송고 오버라이드를 { body, title } 객체로 바꿔 컨트롤러→뷰 import 역행 제거 + 신규 초안 스냅샷의 stale title 동반 수정, (7) http-error-normalize — httpModel.request가 reject하지 않고 network-error/invalid-response로 정규화, (8) mgmt-error-feedback — dist/rcv/user 3화면 조회·쓰기 실패 인라인 표시(role=alert). 제외 2: tick invalid 보고의 스냅샷 기준(보고 전용·무해)·single-flight 워치독(타이머 도입은 ADR-008 위반) — index.json excluded에 근거. 실행은 backend 패스(step0~2) → web 패스(step3~8) 두 묶음으로 나눈다(패스 내 순서 고정, 패스 간 파일 중복 없음). news.md는 수정 대상 아님."
     }
   ]
