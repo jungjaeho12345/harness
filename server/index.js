@@ -99,6 +99,8 @@ const STATUS_BY_REASON = {
   unregistered: 403,
   // 배부 미설정(DIST_SPOOL_DIR 없음)은 클라이언트 잘못이 아니라 서버 기능 미가용이다.
   'spool-disabled': 503,
+  // tick의 후보 조회 자체가 실패한 서버 장애 — 4xx(폴백 400)로 보고하면 운영 cron이 클라이언트 잘못으로 오인한다.
+  'tick-failed': 500,
 };
 
 function fail(res, result, fallback = 400) {

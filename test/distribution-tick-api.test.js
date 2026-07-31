@@ -230,6 +230,24 @@ test('POST /api/distribution/tick: 실패 항목에 서버 파일시스템 경�
   } finally { await ctx.close(); }
 });
 
+test('POST /api/distribution/tick: 후보 조회 자체가 실패하는 서버 장애는 500 tick-failed다(4xx 아님)', async () => {
+  const ctx = await start();
+  try {
+    seedTarget(ctx.db);
+    seedDueArticle(ctx.db);
+    const zsid = await loginAs(ctx, 'Z', 'admin');
+    // 로그인(세션 확보) 후 DB 연결을 잃은 서버 장애를 재현한다 — 세션은 메모리라 인가 게이트는 통과하고,
+    // tick의 후보 조회에서 처음 DB를 만나 실패한다({ ok:false, reason:'tick-failed' }, throw 없음).
+    ctx.db.close();
+
+    const r = await tick(ctx, { sid: zsid });
+    assert.equal(r.status, 500, '서버 장애를 4xx로 보고하면 운영 cron이 클라이언트 잘못으로 오인한다');
+    assert.deepEqual(r.body, { ok: false, reason: 'tick-failed' });
+    assert.deepEqual(ctx.spoolFs.calls.writeFile, [], '조회가 실패하면 스풀에 쓰지 않는다');
+    assert.deepEqual(ctx.signals, []);
+  } finally { await ctx.close(); }
+});
+
 test('POST /api/distribution/tick: GET으로는 노출하지 않는다(부수효과 연산)', async () => {
   const ctx = await start();
   try {

@@ -423,6 +423,126 @@ test('조회 자체가 실패해도 throw하지 않는다(라우트가 500으로
   assert.deepEqual(r, { ok: false, reason: 'tick-failed' });
 });
 
+// ── 동시 변경 재검증(TOCTOU)·중복 실행 방지 ──────────────────────────────
+
+test('TOCTOU: 스캔 후 배부 전에 KILL(EEK)된 기사는 스풀로 나가지 않고 사유가 요약에 남는다', async () => {
+  const h = harness();
+  const a1 = h.addArticle({ status: 'DES', embargoAt: T1 });
+  const a2 = h.addArticle({ status: 'DES', embargoAt: T1 });
+  // 선행 기사 배부의 await 동안 나머지 한 건이 KILL된다 — 스캔 스냅샷은 아직 DES다(리뷰어 재현 시나리오).
+  let killedId = null;
+  let survivorId = null;
+  const dist = fakeDistribution({
+    historyModel: h.historyModel,
+    behavior: async ({ articleId }) => {
+      if (killedId === null) {
+        survivorId = articleId;
+        killedId = articleId === a1 ? a2 : a1;
+        h.articleModel.update(killedId, { contents: { status: 'EEK' } });
+      }
+      return { ok: true, distributed: [{ targetId: 1, kind: 'press' }], failed: [] };
+    },
+  });
+
+  const r = await tickWith(h, { distributionService: dist, now: () => T1 }).run({ actorUserId: 'system' });
+
+  assert.equal(dist.calls.length, 1, 'KILL된 기사는 배부 지시조차 나가지 않는다');
+  assert.deepEqual(dist.calls.map((c) => c.articleId), [survivorId]);
+  assert.deepEqual(r.distributed, [{ articleId: survivorId, kinds: ['press'], status: 'DPS' }]);
+  assert.deepEqual(
+    r.failed,
+    [{ articleId: killedId, targetId: null, kind: null, reason: 'status-changed' }],
+    '무음 스킵 금지 — 요약에 고정 사유로 남는다(식별자·사유만)',
+  );
+  assert.equal(h.statusOf(killedId), 'EEK', 'KILL 상태는 건드리지 않는다');
+  assert.deepEqual(
+    h.historyOf(killedId).filter((x) => x.eventType === 'distribute'),
+    [],
+    'KILL된 기사에는 배부 이력도 남지 않는다',
+  );
+});
+
+test('TOCTOU: 스캔 후 엠바고가 미래로 수정된 기사는 최신 contents로 재평가되어 배부하지 않는다', async () => {
+  const h = harness();
+  const a1 = h.addArticle({ status: 'DES', embargoAt: T1 });
+  const a2 = h.addArticle({ status: 'DES', embargoAt: T1 });
+  let deferredId = null;
+  const dist = fakeDistribution({
+    historyModel: h.historyModel,
+    behavior: async ({ articleId }) => {
+      if (deferredId === null) {
+        deferredId = articleId === a1 ? a2 : a1;
+        h.articleModel.update(deferredId, { contents: { embargoAt: T2 } });
+      }
+      return { ok: true, distributed: [{ targetId: 1, kind: 'press' }], failed: [] };
+    },
+  });
+
+  const r = await tickWith(h, { distributionService: dist, now: () => T1 }).run({});
+
+  assert.equal(dist.calls.length, 1, '미도래로 되돌아간 기사는 배부하지 않는다');
+  assert.deepEqual(r.failed, [], '상태는 여전히 유효하므로 실패가 아니다 — 다음 tick이 다시 판정한다');
+  assert.equal(h.statusOf(deferredId), 'DES');
+});
+
+test('single-flight: run() 동시 호출은 한쪽만 스캔하고 다른 쪽은 in-progress로 즉시 반환한다(중복 배부 금지)', async () => {
+  const h = harness();
+  const id = h.addArticle({ status: 'DES', embargoAt: T1 });
+  const dist = fakeDistribution({
+    historyModel: h.historyModel,
+    // 배부 이력이 남기 전에 이벤트 루프를 넘긴다 — 두 번째 run의 스캔이 "미배부"를 보는 창(리뷰어 재현).
+    behavior: async () => {
+      await new Promise((resolve) => { setImmediate(resolve); });
+      return { ok: true, distributed: [{ targetId: 1, kind: 'press' }], failed: [] };
+    },
+  });
+  const tick = tickWith(h, { distributionService: dist, now: () => T1 });
+
+  const [r1, r2] = await Promise.all([tick.run({ actorUserId: 'system' }), tick.run({ actorUserId: 'system' })]);
+
+  assert.equal(dist.calls.length, 1, '스풀 1개·이력 1행 — 중복 배부 없음');
+  assert.deepEqual(r1.distributed, [{ articleId: id, kinds: ['press'], status: 'DPS' }]);
+  assert.equal(r2.ok, true);
+  assert.equal(r2.scanned, 0);
+  assert.equal(r2.skipped, 'in-progress');
+  assert.deepEqual(r2.distributed, []);
+  assert.deepEqual(r2.failed, []);
+  assert.equal(h.historyOf(id).filter((x) => x.eventType === 'distribute').length, 1);
+
+  // 진행 중 표시는 실행이 끝나면 해제된다 — 후속 run은 정상 스캔한다(멱등이라 재배부는 없다).
+  const r3 = await tick.run({});
+  assert.equal(r3.skipped, undefined);
+  assert.equal(r3.scanned, 1);
+  assert.deepEqual(r3.distributed, []);
+});
+
+test('활성 수신처 0곳: 성공도 실패도 0인 kind는 no-active-target으로 failed에 남는다(무기록 금지)', async () => {
+  const h = harness();
+  const id = h.addArticle({ status: 'DES', embargoAt: T1, secondEmbargoAt: T2 });
+  const dist = fakeDistribution({
+    historyModel: h.historyModel,
+    now: () => T2,
+    // press는 활성 수신처가 있어 성공, nonpress는 활성 수신처 0곳 — 실물 반환 shape 그대로
+    // (distributionService는 수신처가 없는 kind를 distributed/failed 어디에도 남기지 않는다).
+    behavior: () => ({
+      ok: true,
+      distributed: [{ targetId: 1, kind: 'press', spoolDir: 'out/kbs', file: 'x' }],
+      failed: [],
+    }),
+  });
+
+  const r = await tickWith(h, { distributionService: dist, now: () => T2 }).run({ actorUserId: 'system' });
+
+  assert.deepEqual(dist.calls[0].kinds, ['press', 'nonpress']);
+  assert.deepEqual(r.distributed, [{ articleId: id, kinds: ['press'], status: 'EPS' }]);
+  assert.deepEqual(
+    r.failed,
+    [{ articleId: id, targetId: null, kind: 'nonpress', reason: 'no-active-target' }],
+    '도래했는데 수신처 0곳인 kind가 요약에서 무음으로 사라지면 안 된다(경로 비노출 유지)',
+  );
+  assert.equal(h.statusOf(id), 'EPS', '성공한 press만 승격 근거가 된다');
+});
+
 // ── 순서·시계·위임 ───────────────────────────────────────────────────────
 
 test('후보는 순차로 처리한다(동시 실행 금지 — 상태/이력 쓰기 경합 방지)', async () => {
