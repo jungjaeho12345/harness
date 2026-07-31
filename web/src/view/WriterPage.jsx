@@ -586,18 +586,19 @@ export function WriterPage() {
 
   // 자동 기업코드 변환(환경설정 edit.companyCode==='auto') — 명시 저장(saveDocument)·송고/보류(onAction) 직전에만 호출한다.
   // 자동저장 타이머·타이핑 커밋에는 절대 넣지 않는다(사용자 모르게 본문 변경 금지 — news.md 사용자 확정). 최신 blocks(렌더
-  // 클로저=현재 커밋 본문)에서 변환하고, changed일 때만 commitBody로 화면 반영+undo 단계를 만든 뒤 변환 본문 문자열을
-  // 반환한다. 호출부는 이 반환값을 save/submit 오버라이드로 넘긴다 — commitBody의 setState가 같은 tick에 tabsRef에
-  // 반영되지 않아(effect 지연) save/submit이 stale 본문을 읽으므로(phase 20·36), 변환 본문을 명시 전달해야 확실히 영속된다.
-  // 변화 없음(멱등 재저장 포함)·매핑·manual 모드면 null(호출부는 기존 저장 경로 유지).
-  const autoCompanyCodeBody = () => {
+  // 클로저=현재 커밋 본문)에서 변환하고, changed일 때만 commitBody로 화면 반영+undo 단계를 만든 뒤 { body, title }
+  // 오버라이드를 반환한다. 호출부는 이 반환값을 save/submit 오버라이드·초안 스냅샷으로 넘긴다 — commitBody의 setState가
+  // 같은 tick에 tabsRef에 반영되지 않아(효과 지연) save/submit이 stale 본문을 읽으므로(phase 20·36), 변환 본문을 명시
+  // 전달해야 확실히 영속된다. title도 여기(뷰)서 bodyTitle 단일 출처로 파생해 항상 body와 한 쌍으로 만든다(phase49 step6 —
+  // 컨트롤러는 제목 파생 규칙을 모른다). 변화 없음(멱등 재저장 포함)·매핑·manual 모드면 null(호출부는 기존 저장 경로 유지).
+  const autoCompanyCodeOverride = () => {
     if (isMapping) return null;
     if (loadEditorPrefs().edit.companyCode !== 'auto') return null;
     const r = convertCompanyCodeInBlocks(blocks);
     if (!r.changed) return null;
     const nextBody = serialize(r.blocks);
     commitBody(nextBody); // 화면 반영 + undo(멱등이라 이미 태깅된 본문은 changed:false로 여기 도달 안 함).
-    return nextBody;
+    return { body: nextBody, title: bodyTitle(nextBody) }; // 항상 body·title 한 쌍(반쪽 오버라이드 금지 — toSaveDto 계약).
   };
 
   // 도구>간체↔번체 변환 — 방향 다이얼로그 버튼(간체→번체/번체→간체)이 호출. 등록 표(SIMP_TRAD_PAIRS)로 본문
@@ -792,12 +793,13 @@ export function WriterPage() {
   // 초안 key는 tab.articleId || tab.id(신규=tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
   const saveDocument = async () => {
     const tab = activeTab;
-    const autoBody = autoCompanyCodeBody(); // auto 모드면 변환+commitBody 후 변환 본문, 아니면 null.
+    const auto = autoCompanyCodeOverride(); // auto 모드면 변환+commitBody 후 { body, title } 오버라이드, 아니면 null.
     if (tab.articleId) {
-      const r = await save(autoBody);                          // 기존 → PUT(전이/unlock 없음). 변환 본문은 오버라이드로 영속(null=기존 본문).
+      const r = await save(auto);                              // 기존 → PUT(전이/unlock 없음). 변환 본문·제목은 오버라이드로 영속(null=기존 필드).
       window.alert(r && r.ok ? '저장되었습니다.' : '저장에 실패했습니다.');
     } else {
-      const draftFields = autoBody ? { ...tab.fields, body: autoBody } : { ...tab.fields }; // 초안에도 변환 본문(신규).
+      // 초안에도 변환 본문+제목 한 쌍(신규) — body만 바꾸면 title이 변환 전 값으로 남는 자기모순 스냅샷이 된다.
+      const draftFields = auto ? { ...tab.fields, body: auto.body, title: auto.title } : { ...tab.fields };
       saveDraft(tab.articleId || tab.id, draftFields, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
       window.alert('임시 저장했습니다. (송고 전에는 DB에 생성되지 않으며, 파일>복구로 되살릴 수 있습니다.)');
     }
@@ -1450,8 +1452,8 @@ export function WriterPage() {
     // 전이 직전 탭 키를 잡아둔다 — 성공 후 초안을 무효화(빈 새 기사 탭에서 복구 시 송고/제출 내용 부활 방지).
     const key = activeTab.articleId || activeTab.id;
     const histTabId = activeTab.id; // 리셋 대상 탭 id(resetTabToBlank가 유지) — key와 대칭으로 await 전 캡처.
-    const autoBody = autoCompanyCodeBody(); // 송고/보류 직전 자동 변환(auto 모드) — commitBody(화면·undo) 후 오버라이드로 전달(null=기존 본문).
-    const r = await submit(action, autoBody);
+    const auto = autoCompanyCodeOverride(); // 송고/보류 직전 자동 변환(auto 모드) — commitBody(화면·undo) 후 { body, title } 오버라이드로 전달(null=기존 필드).
+    const r = await submit(action, auto);
     // 히스토리도 함께 폐기 — 안 지우면 빈 새 기사 탭에서 undo가 방금 송고한 본문을 되살린다(문서-로컬 이월).
     // 다음 렌더의 lazy 시드가 blank body로 베이스라인을 다시 만든다.
     if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }

@@ -615,17 +615,18 @@ describe('useWriteController', () => {
   });
 });
 
-// phase43 step4 — save/submit 선택적 bodyOverride(자동 기업코드 변환이 변환 본문을 명시 전달하는 통로).
+// phase43 step4 — save/submit 선택적 오버라이드(자동 기업코드 변환이 변환 본문을 명시 전달하는 통로).
+// phase49 step6에서 계약이 { body, title } 객체로 바뀌었다 — 뷰가 bodyTitle(단일 출처)로 제목을 파생해 함께 넘긴다.
 // 미전달 시 기존 동작(tab.fields.body) 그대로(하위호환). 프로덕션 news.db 미바인딩(in-memory fake만).
-describe('useWriteController — save/submit bodyOverride (phase43)', () => {
+describe('useWriteController — save/submit 오버라이드 (phase43)', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  it('save(bodyOverride) — 오버라이드 본문을 markupVersion으로 싣는다', async () => {
+  it('save({ body, title }) — 오버라이드 body를 markupVersion으로 싣는다', async () => {
     const { result, model } = setup({ articles: [{ ...FULL }] });
     const save = vi.spyOn(model, 'saveArticle');
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
 
-    await act(async () => { await result.current.save('삼성전자(005930)'); });
+    await act(async () => { await result.current.save({ body: '삼성전자(005930)', title: '삼성전자(005930)' }); });
     expect(save.mock.calls[0][0].markupVersion).toBe('삼성전자(005930)');
   });
 
@@ -639,22 +640,22 @@ describe('useWriteController — save/submit bodyOverride (phase43)', () => {
     expect(save.mock.calls[0][0].markupVersion).toBe('원본본문');
   });
 
-  it('submit(action, bodyOverride) — 편집 경로에서 오버라이드 본문으로 PUT한다', async () => {
+  it('submit(action, { body, title }) — 편집 경로에서 오버라이드 body로 PUT한다', async () => {
     const { result, model } = setup({ articles: [{ ...FULL }] });
     const save = vi.spyOn(model, 'saveArticle');
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
 
-    await act(async () => { await result.current.submit('hold', '카카오(035720)'); });
+    await act(async () => { await result.current.submit('hold', { body: '카카오(035720)', title: '카카오(035720)' }); });
     expect(save.mock.calls[0][0].markupVersion).toBe('카카오(035720)');
   });
 
-  it('submit(action, bodyOverride) — 신규(create) 경로에서도 오버라이드 본문으로 저장한다', async () => {
+  it('submit(action, { body, title }) — 신규(create) 경로에서도 오버라이드 body로 저장한다', async () => {
     const { result, model } = setup({});
     const save = vi.spyOn(model, 'saveArticle');
     act(() => { result.current.updateField('title', '제목'); });
     act(() => { result.current.updateField('body', '삼성전자'); });
 
-    await act(async () => { await result.current.submit('send', '삼성전자(005930)'); });
+    await act(async () => { await result.current.submit('send', { body: '삼성전자(005930)', title: '삼성전자(005930)' }); });
     expect(save).toHaveBeenCalled();
     expect(save.mock.calls[0][0].markupVersion).toBe('삼성전자(005930)');
     expect(save.mock.calls[0][2]).toBe('send'); // 신규는 action도 함께 전달(기존 계약)
@@ -672,28 +673,31 @@ describe('useWriteController — save/submit bodyOverride (phase43)', () => {
 });
 
 // phase45 step1 — auto 기업코드 변환(edit.companyCode==='auto') 저장/송고 시 title 1회 지연 수정.
-// 본문 첫 줄(=헤드라인=제목)이 종목코드로 태깅되면, bodyOverride가 markupVersion만 최신화하고
+// 본문 첫 줄(=헤드라인=제목)이 종목코드로 태깅되면, 오버라이드가 markupVersion만 최신화하고
 // title은 stale tab.fields.title에서 취해 이번 저장 1회 코드 미반영이던 결함을 고친다(다음 저장 self-heal).
-// 수정: bodyOverride!=null일 때 dto.title을 그 오버라이드 본문에서 bodyTitle로 재파생(단일 출처 재사용).
-describe('useWriteController — bodyOverride title 재파생 (phase45)', () => {
+// phase49 step6: 제목 파생은 전적으로 뷰(bodyTitle 단일 출처)가 하고, 컨트롤러는 { body, title } 오버라이드로
+// 받은 title을 dto에 싣기만 한다(컨트롤러의 ../view/ import 제거 — 의존 방향 View ← Controller ← Model).
+describe('useWriteController — 오버라이드 title 적용 (phase45)', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  it('save(bodyOverride) — 오버라이드 본문 첫 줄에서 title을 재파생한다(stale title 아님)', async () => {
+  it('save({ body, title }) — 오버라이드 title을 dto.title로 싣는다(stale title 아님)', async () => {
     const { result, model } = setup({});
     const save = vi.spyOn(model, 'saveArticle');
     // stale 상태: 제목/본문 모두 코드 태깅 前(삼성전자).
     act(() => { result.current.updateField('title', '삼성전자'); });
     act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
 
-    // 자동 기업코드 변환 본문(헤드라인 코드 태깅)을 오버라이드로 저장.
-    await act(async () => { await result.current.save('삼성전자(005930)\n본문\n(끝)'); });
+    // 자동 기업코드 변환 본문(헤드라인 코드 태깅) + 뷰가 파생한 제목을 오버라이드로 저장.
+    await act(async () => {
+      await result.current.save({ body: '삼성전자(005930)\n본문\n(끝)', title: '삼성전자(005930)' });
+    });
 
     const dto = save.mock.calls[0][0];
     expect(dto.markupVersion).toBe('삼성전자(005930)\n본문\n(끝)');
-    expect(dto.title).toBe('삼성전자(005930)'); // stale '삼성전자'가 아니라 오버라이드 본문에서 재파생
+    expect(dto.title).toBe('삼성전자(005930)'); // stale '삼성전자'가 아니라 오버라이드 title
   });
 
-  it('submit(action, bodyOverride) — 편집 PUT dto.title도 오버라이드 본문에서 재파생', async () => {
+  it('submit(action, { body, title }) — 편집 PUT dto.title도 오버라이드 title', async () => {
     const { result, model } = setup({ articles: [{ ...FULL }] });
     const save = vi.spyOn(model, 'saveArticle');
     await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
@@ -701,7 +705,9 @@ describe('useWriteController — bodyOverride title 재파생 (phase45)', () => 
     act(() => { result.current.updateField('title', '삼성전자'); });
     act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
 
-    await act(async () => { await result.current.submit('send', '삼성전자(005930)\n본문\n(끝)'); });
+    await act(async () => {
+      await result.current.submit('send', { body: '삼성전자(005930)\n본문\n(끝)', title: '삼성전자(005930)' });
+    });
 
     const dto = save.mock.calls[save.mock.calls.length - 1][0];
     expect(dto.markupVersion).toBe('삼성전자(005930)\n본문\n(끝)');
@@ -745,5 +751,95 @@ describe('useWriteController — bodyOverride title 재파생 (phase45)', () => 
 
     const dto = save.mock.calls[save.mock.calls.length - 1][0];
     expect(dto.title).toBe('제목'); // 재파생 안 함 — 사용자 title 보존
+  });
+});
+
+// phase49 step6 — 저장 오버라이드 { body, title } 계약. 제목 파생은 뷰(bodyTitle 단일 출처)가 하고 컨트롤러는
+// 받은 쌍을 dto에 싣기만 한다. 계약 위반은 "전부 아니면 전무"로 수렴한다: 객체가 아닌 오버라이드(옛 문자열 계약)는
+// 통째로 무시하고, body 없는 title-only도 title을 싣지 않는다 — 반쪽 적용(본문만/제목만 교체)이 가장 발견하기
+// 어려운 무음 실패라서다. title=''은 유효한 제목(본문 첫 줄이 빈 줄)이므로 반드시 통과한다(truthy 체크 금지).
+describe('useWriteController — 오버라이드 { body, title } 계약 위반 판정 (phase49 step6)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  it('save({ body }) — title 미전달이면 markupVersion만 교체하고 dto.title은 tab.fields.title 유지(문서화된 폴백)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '내가 쓴 제목'); });
+    act(() => { result.current.updateField('body', '원본 본문'); });
+
+    await act(async () => { await result.current.save({ body: '변환된 본문' }); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('변환된 본문'); // body는 교체
+    expect(dto.title).toBe('내가 쓴 제목'); // title은 폴백(tab.fields.title)
+  });
+
+  it('save(문자열) — 옛 계약(문자열 오버라이드)은 전량 무시된다(body·title 모두 tab.fields 그대로)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '삼성전자'); });
+    act(() => { result.current.updateField('body', '삼성전자\n본문'); });
+
+    // 문자열을 body로 슬쩍 받아들이면 본문만 바뀌고 제목은 stale인 반쪽 적용이 된다 — 아예 "오버라이드 없음"으로.
+    await act(async () => { await result.current.save('삼성전자(005930)\n본문'); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('삼성전자\n본문'); // 문자열 오버라이드 미적용
+    expect(dto.title).toBe('삼성전자'); // title도 그대로
+  });
+
+  it('submit(action, 문자열) — submit 경로에서도 문자열 오버라이드는 전량 무시된다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('title', '삼성전자'); });
+    act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
+
+    await act(async () => { await result.current.submit('hold', '삼성전자(005930)\n본문\n(끝)'); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('삼성전자\n본문\n(끝)');
+    expect(dto.title).toBe('삼성전자');
+  });
+
+  it('save({ title }) — body 없는 title-only 오버라이드는 title도 적용하지 않는다(전부 아니면 전무)', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '원래 제목'); });
+    act(() => { result.current.updateField('body', '원래 본문'); });
+
+    // 본문은 stale인데 제목만 바뀌면 저장 기사가 자기모순(제목 ≠ 본문 첫 줄)이 된다 — title도 무시.
+    await act(async () => { await result.current.save({ title: '새 제목' }); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('원래 본문');
+    expect(dto.title).toBe('원래 제목'); // title-only는 미적용
+  });
+
+  it("save({ body, title: '' }) — 빈 문자열 title은 유효한 제목으로 실린다(!= null 판정, truthy 금지)", async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '이전 제목'); });
+    act(() => { result.current.updateField('body', '본문'); });
+
+    // 본문 첫 줄이 빈 줄이면 뷰가 파생한 제목은 '' — truthy 체크면 stale '이전 제목'이 남는다.
+    await act(async () => { await result.current.save({ body: '\n본문', title: '' }); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('\n본문');
+    expect(dto.title).toBe(''); // ''도 그대로 실린다
+  });
+
+  it('오버라이드 경로에서도 dto에 role이 실리지 않고(ADR-004) 편집 탭이면 articleId가 실린다(기존 계약 불변)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    await act(async () => { await result.current.save({ body: '변환 본문', title: '변환 본문' }); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.role).toBeUndefined(); // role은 서버 세션에서 도출(ADR-004)
+    expect(dto.articleId).toBe('AKR1'); // 편집 탭 → PUT(articleId 포함)
+    expect(dto.body).toBeUndefined(); // body 키는 보내지 않는다(markupVersion만 — 기존 계약)
   });
 });

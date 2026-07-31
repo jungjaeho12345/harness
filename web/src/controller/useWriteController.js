@@ -8,7 +8,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
 import { PENDING_EDIT_KEY } from './useViewController.js';
-import { bodyTitle } from '../view/writerBody.js';
 
 const TABS_KEY = 'yh.writer.tabs';
 
@@ -57,16 +56,20 @@ function pick(src, keys) {
 
 // 탭 편집 필드 → 서버 영속 dto. 본문은 서버가 저장하는 키(markupVersion)로 싣고 body 키는 보내지 않는다
 // (server ARTICLE_FIELDS와 일치 — body로 보내면 본문이 통째로 유실된다). role은 어디서도 싣지 않는다(ADR-004).
-// bodyOverride(선택) — 자동 기업코드 변환(phase43)이 저장/송고 직전에 변환한 본문을 명시 전달할 때 사용한다.
-// commitBody의 setState는 같은 tick에 tabsRef에 반영되지 않아(effect 지연) save/submit이 stale 본문을 읽으므로,
-// 변환 본문을 오버라이드로 직접 싣는다. 미전달(undefined/null)이면 기존 동작(tab.fields.body) 그대로 — 하위호환.
-// 오버라이드가 주어지면 title도 그 오버라이드 본문에서 재파생한다(phase45): 자동 기업코드 변환이 헤드라인(본문 첫 줄
-// =제목)을 코드 태깅해도 tab.fields.title은 같은 tick에 stale하므로, bodyTitle(단일 출처)로 오버라이드 본문에서
-// 제목을 다시 도출해 이번 저장 1회 지연(title 미반영)을 막는다. 오버라이드 없는 경로는 tab.fields.title 그대로.
-function toSaveDto(tab, bodyOverride) {
+// override(선택): 뷰가 저장/송고 직전에 만든 본문 교체 값. shape은 { body, title }(phase43·45·49).
+//   body  — markupVersion으로 실린다. commitBody의 setState는 같은 tick에 tabsRef에 반영되지 않아(effect 지연)
+//           save/submit이 stale 본문을 읽으므로, 자동 기업코드 변환 본문은 오버라이드로 직접 싣는다.
+//   title — 그 본문에서 뷰가 bodyTitle(단일 출처)로 파생한 제목. 미전달이면 tab.fields.title 유지(문서화된 폴백).
+// 제목 파생은 뷰의 bodyTitle 단일 출처가 담당한다 — 컨트롤러는 뷰를 import하지 않는다(의존 방향 View ← Controller ← Model).
+// 계약 위반은 "전부 아니면 전무"로 수렴한다: 객체가 아닌 오버라이드(옛 문자열 계약 등)는 통째로 무시하고
+// (문자열을 body로 받아들이면 본문만 바뀌고 제목은 stale인 무음 반쪽 적용이 된다), body 없는 title-only도
+// title을 싣지 않는다(본문 stale + 제목만 교체 = 자기모순 기사). title=''은 유효한 제목(본문 첫 줄이 빈 줄)이므로
+// != null 판정만 쓴다(truthy 체크 금지).
+function toSaveDto(tab, override) {
   const { body, ...rest } = tab.fields;
-  const dto = { ...rest, markupVersion: bodyOverride ?? body };
-  if (bodyOverride != null) dto.title = bodyTitle(bodyOverride);
+  const ov = override && typeof override === 'object' ? override : null;
+  const dto = { ...rest, markupVersion: ov?.body ?? body };
+  if (ov && ov.body != null && ov.title != null) dto.title = ov.title;
   if (tab.articleId) dto.articleId = tab.articleId;
   return dto;
 }
@@ -281,10 +284,11 @@ export function useWriteController() {
   }, []);
 
   // 저장 — 신규는 생성(POST), 편집은 잠금 보유자 부분 수정(PUT). Model이 articleId 유무로 분기한다.
-  const save = useCallback(async (bodyOverride) => {
+  // override(선택): 뷰가 만든 { body, title } 오버라이드(toSaveDto 계약 참조).
+  const save = useCallback(async (override) => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId);
+    const r = await model.saveArticle(toSaveDto(tab, override), tab.clientId);
     if (r && r.ok && r.articleId && !tab.articleId) {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
@@ -318,19 +322,20 @@ export function useWriteController() {
 
   // 송고/보류/KILL/삭제승인. 신규(편집 컨텍스트 아님)는 전이 없이 RDS로 저장만 한다(news.md).
   // 편집 컨텍스트는 현재 편집 내용을 저장(PUT)한 뒤 생애주기 전이 → 성공 시 잠금 해제 + 빈 새 기사 탭으로 전환.
-  const submit = useCallback(async (action, bodyOverride) => {
+  // override(선택): 뷰가 만든 { body, title } 오버라이드(toSaveDto 계약 참조).
+  const submit = useCallback(async (action, override) => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
 
     if (!tab.articleId) {
       // 신규(create)는 누른 의도 action(send/hold)을 함께 넘긴다 — 서버 initialStatus가 Z+hold만 DDH로,
       // 그 외/송고는 RDS로 저장한다(전이 없음). 편집 경로(아래)는 action을 PUT에 싣지 않는다.
-      const r = await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId, action);
+      const r = await model.saveArticle(toSaveDto(tab, override), tab.clientId, action);
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }
 
-    await model.saveArticle(toSaveDto(tab, bodyOverride), tab.clientId);
+    await model.saveArticle(toSaveDto(tab, override), tab.clientId);
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});

@@ -7464,6 +7464,29 @@ describe('WriterPage — 자동 기업코드 변환(edit.companyCode=auto)', () 
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0][0].markupVersion).toBe(original); // 원문 그대로(매핑=변환 없음)
   });
+
+  // phase49 step6 — 신규(articleId 無) 초안 저장의 stale title 수정: 초안 스냅샷의 body와 title이
+  // 같은(변환된) 본문 기준이어야 한다. 오버라이드 { body, title } 계약으로 뷰가 title을 함께 만든다.
+  it('auto + 파일>저장(신규 탭): 초안 body·title이 함께 변환 본문 기준으로 저장된다(stale title 없음)', async () => {
+    setCompanyCode('auto');
+    const { model, container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭(articleId 없음)
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    // 두 줄('삼성전자' 헤드라인 + '본문') 입력 — readEditorBlocks가 line div 단위로 두 텍스트 블록을 읽는다.
+    const editor = container.querySelector('.yh-editor');
+    editor.innerHTML = '<div class="yh-editor__line">삼성전자</div><div class="yh-editor__line">본문</div>';
+    fireEvent.input(editor);
+
+    await clickFileItem('저장');
+
+    expect(save).not.toHaveBeenCalled(); // 신규는 POST 금지 — 로컬 초안만(송고 전 DB 오염 방지, 기존 계약)
+    const store = JSON.parse(localStorage.getItem('yh.editorDrafts')) || {};
+    const keys = Object.keys(store);
+    expect(keys).toHaveLength(1); // 활성(신규) 탭 1개의 초안만
+    const draft = store[keys[0]].data;
+    expect(blocksToText(deserialize(draft.body))).toBe('삼성전자(005930)\n본문'); // 변환 본문 영속
+    expect(draft.title).toBe('삼성전자(005930)'); // 변환 전 '삼성전자'(stale 스냅샷)가 아님
+  });
 });
 
 // phase44 step2 — 상태표시줄 삽입/수정(overwrite) 토글. Insert 키로 삽입<->수정을 토글하고 상태표시줄이 표시한다.
