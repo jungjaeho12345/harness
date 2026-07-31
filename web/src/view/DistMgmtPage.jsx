@@ -21,6 +21,10 @@ const REASON_MESSAGE = {
   'invalid-spool-dir': '스풀 폴더명을 확인해 주세요(소문자 영문·숫자로 시작, 영문·숫자와 - _ 만, 1~64자).',
   'duplicate-spool-dir': '이미 사용 중인 스풀 폴더명입니다. 다른 이름을 입력해 주세요.',
   'invalid-active': '활성 값은 Y 또는 N만 가능합니다.',
+  // 전역 에러 핸들러·httpModel 정규화 토큰(step7) — 화면 공통 안내 문구.
+  'internal-error': '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+  'network-error': '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  'invalid-response': '서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
 };
 
 function reasonMessage(reason) {
@@ -34,7 +38,16 @@ export function DistMgmtPage() {
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // 진입 시 조회 실패도 표시한다 — 이 refresh만 조회 실패 메시지를 띄운다. 쓰기 핸들러의 내부
+  // 재조회 결과는 관찰하지 않는다(관찰하면 성공한 재조회가 쓰기 실패 메시지를 지우는 회귀가 생긴다).
+  useEffect(() => {
+    let alive = true; // 언마운트(cleanup) 후 setState 금지.
+    (async () => {
+      const r = await refresh();
+      if (alive && (!r || r.ok !== true)) setError(reasonMessage(r && r.reason));
+    })();
+    return () => { alive = false; };
+  }, [refresh]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const editing = editingId !== null;

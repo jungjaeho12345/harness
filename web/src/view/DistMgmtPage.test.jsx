@@ -17,8 +17,10 @@ const seedRows = () => ([
   },
 ]);
 
-function setup(seed = { distributionTargets: seedRows() }, identity = { userId: 'boss', role: 'Z' }) {
+// prepare(model): render 전에 model 메서드를 mock할 때 쓴다(마운트 시 조회 실패 재현 등).
+function setup(seed = { distributionTargets: seedRows() }, identity = { userId: 'boss', role: 'Z' }, prepare) {
   const model = createFakeModel(seed);
+  prepare?.(model);
   const utils = render(
     <AppContext.Provider value={{ model, identity, navigate: vi.fn(), replace: vi.fn(), setSession: vi.fn() }}>
       <DistMgmtPage />
@@ -180,6 +182,10 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
       ['invalid-kind', '유형'],
       ['invalid-spool-dir', '스풀 폴더'],
       ['invalid-active', '활성'],
+      // step8: 전역 에러 핸들러·httpModel 정규화 토큰도 안내 문구로 매핑한다.
+      ['internal-error', '서버 오류'],
+      ['network-error', '연결하지 못했습니다'],
+      ['invalid-response', '서버 응답'],
     ];
     for (const [reason, needle] of reasons) {
       const { model, unmount } = setup({ distributionTargets: [] });
@@ -207,5 +213,29 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
     await userEvent.click(within(screen.getByTestId('dist-row-7')).getByRole('button', { name: '비활성' }));
 
     await waitFor(() => expect(screen.getByTestId('dist-error')).toHaveTextContent('권한'));
+  });
+
+  // --- step8: 조회 실패 표시 + 쓰기 실패 메시지 타이밍 회귀 가드 ---
+
+  it('진입 시 목록 조회가 실패하면 에러 영역에 네트워크 문구를 띄운다', async () => {
+    setup({ distributionTargets: [] }, undefined, (m) => {
+      vi.spyOn(m, 'queryDistributionTargets').mockResolvedValue({ ok: false, reason: 'network-error' });
+    });
+    await waitFor(() => expect(screen.getByTestId('dist-error')).toHaveTextContent('서버에 연결하지 못했습니다'));
+  });
+
+  it('쓰기 실패 메시지는 컨트롤러 내부 재조회가 성공해도 남는다(타이밍 회귀 가드)', async () => {
+    // createTarget은 실패, 컨트롤러가 내부적으로 부르는 목록 조회는 성공({ ok:true, items }) —
+    // 성공한 내부 재조회가 쓰기 실패 메시지를 지우면 안 된다.
+    const { model } = setup();
+    vi.spyOn(model, 'createDistributionTarget').mockResolvedValue({ ok: false, reason: 'forbidden' });
+    await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: '생성' }));
+
+    expect(await screen.findByTestId('dist-error')).toHaveTextContent('권한');
+    // 내부 재조회는 성공했고(목록 표시 유지) 실패 메시지는 그대로 남는다.
+    expect(screen.getByText('가나일보')).toBeInTheDocument();
+    expect(screen.getByTestId('dist-error')).toHaveTextContent('권한');
   });
 });
