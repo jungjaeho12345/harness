@@ -264,7 +264,8 @@
     },
     {
       "dir": "48-distribution-tick",
-      "status": "pending",
+      "status": "completed",
+      "completed_at": "2026-07-31T09:09:03+0900",
       "note": "배부 3부작의 마지막 phase(MVP-3 시점 배부) — ADR-008 (3)(5) + 사용자 확정 스펙(2026-07-28). 범위 둘: (A) DES 상태 신설 — 엠바고 기사 생애주기를 RDS→DES(배부 전 대기)→EPS(첫 배부 후)→DPS(배부 완결)로 완성하고, 현행 EPS 치환(RDS 한정)을 DES 치환·RDS+DDH 경로로 교체해 phase 47 리뷰가 지적한 'DDH 송고 엠바고 기사가 DPS로 새는 구멍'을 막는다. 기존 EPS 행은 마이그레이션 없이 그대로 보존(DB 비파괴). (B) POST /api/distribution/tick(Z 세션 전용 pull, 외부 cron 호출) — 도래(embargoAt/secondEmbargoAt <= now)+미배부(ArticleHistory eventType='distribute' action 기준) 스캔 후 press/nonpress 배부와 상태 승격. 대상 상태는 DES·EPS·DPS(레거시 포함)로 한정하고 미송고(RDS·DDH 등)·EEK·EEH·DPD는 제외. step 6개: (0) embargoPolicy 순수 판정 모듈, (1) lifecycle DES 전이표+SCHEMA 문서, (2) articleService DES 치환·송고 훅·syncEmbargoStatus, (3) distributionTickService 도메인 엔진, (4) 인가 capability+컨트롤러 결선+라우트+ARCHITECTURE 갱신, (5) web 배지·엠바고 관리 필터(DES·EPS). 앱 내 타이머/네트워크 egress 도입 금지, distributionService·spoolWriter 무수정 재사용(kinds:['nonpress'] 단독 호출은 이미 지원)."
     }
   ]
