@@ -13,7 +13,7 @@ server/
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
-  services/             # 비즈니스 로직 (article · lifecycle · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · spoolWriter)
+  services/             # 비즈니스 로직 (article · lifecycle · embargoPolicy · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · distributionTick · spoolWriter)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
   controllers/          # 서비스 오케스트레이션 (createControllers)
 web/                    # 프론트엔드 (Vite root)
@@ -44,12 +44,18 @@ test/                   # 백엔드 테스트 (node --test)
          → SSE(/api/stream) → httpModel.subscribe → Controller가 "무효화 신호" 수신
          → 자기 필터로 재조회 → View 갱신   (행 데이터를 push받지 않음)
 
-[배부]   송고 성공(articleService.applyAction) → 엠바고 판정으로 배부 종류 결정
-         (엠바고 없음 DPS → 언론사+비언론사 / 2차 엠바고만 EPS → 언론사 / 1차·1+2차 EPS → 시점 배부는 tick)
+[배부]   송고 성공(articleService.applyAction) → 엠바고 판정(embargoPolicy)으로 배부 종류 결정
+         (엠바고 없음 → 즉시 언론사+비언론사 → DPS / 2차 엠바고만 → 언론사 즉시 배부 → EPS
+          / 1차·1+2차 → DES로 배부 대기, 시점 배부는 tick — 엠바고 생애주기 RDS→DES→EPS→DPS)
          → distributionService → 활성 DistributionTarget별 spoolWriter
          → DIST_SPOOL_DIR/<spoolDir>/<articleId>_<시각>.json (임시 파일 → rename)
          → Contents.distributedAt 갱신 + ArticleHistory(eventType='distribute', action=kind)
          → 외부 전송기가 스풀을 읽어 발송   (앱은 네트워크 egress·타이머 없음 — ADR-008)
+
+[tick]   외부 운영 cron → POST /api/distribution/tick(Z 세션 — 앱 내 타이머 없음, ADR-008 (3))
+         → distributionTickService(도래+미배부 스캔 — embargoPolicy.dueKinds, 이력 기준 멱등)
+         → distributionService → spoolWriter(위 [배부]와 동일 경로)
+         → articleService.syncEmbargoStatus(DES→EPS→DPS 승격) → 배부 발생 시에만 SSE 'status' 무효화
 ```
 
 ## 상태 관리

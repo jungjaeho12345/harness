@@ -41,10 +41,11 @@ describe('buildMenuFilter', () => {
     expect(buildMenuFilter('killArticles', me, null)).toEqual({ status: ['RRK', 'DDK', 'EEK'] });
     expect(buildMenuFilter('killArticles', me, ['정치', '경제'])).toEqual({ status: ['RRK', 'DDK', 'EEK'], departments: ['정치', '경제'] });
   });
-  it('embargo mgmt → EPS만, 부서 다중 선택 지원', () => {
-    // 엠바고 관리도 부서 멀티셀렉트로 좁힐 수 있다(기본 '전체'=부서 키 없음, deptSend 패턴).
-    expect(buildMenuFilter('embargoMgmt', me, null)).toEqual({ status: ['EPS'] });
-    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['EPS'], departments: ['정치'] });
+  it('embargo mgmt → DES·EPS(배부 전 대기 + 배부 진행), 부서 다중 선택 지원', () => {
+    // 엠바고 관리는 배부 전 대기(DES)와 배부 진행(EPS)을 함께 조회·편집한다(phase48 step5, 스펙 A.4).
+    // 부서 멀티셀렉트로 좁힐 수 있다(기본 '전체'=부서 키 없음, deptSend 패턴). 순서는 ['DES','EPS'] 고정.
+    expect(buildMenuFilter('embargoMgmt', me, null)).toEqual({ status: ['DES', 'EPS'] });
+    expect(buildMenuFilter('embargoMgmt', me, ['정치'])).toEqual({ status: ['DES', 'EPS'], departments: ['정치'] });
   });
 });
 

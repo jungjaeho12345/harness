@@ -37,11 +37,11 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
+test('createControllers: 10개 도메인과 메서드를 결선한다', () => {
   const { controllers } = setup();
   assert.deepEqual(
     Object.keys(controllers).sort(),
-    ['article', 'auth', 'collection', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
+    ['article', 'auth', 'collection', 'distribution', 'distributionTarget', 'media', 'photo', 'receiverConfig', 'translation', 'user'],
   );
   for (const m of ['login', 'logout', 'manageUsers', 'editDps', 'session']) {
     assert.equal(typeof controllers.auth[m], 'function', `auth.${m}`);
@@ -67,6 +67,8 @@ test('createControllers: 9개 도메인과 메서드를 결선한다', () => {
     assert.equal(typeof controllers.distributionTarget[m], 'function', `distributionTarget.${m}`);
   }
   assert.equal(controllers.distributionTarget.remove, undefined, 'remove 경로는 없어야 한다');
+  // 엠바고 시점 배부(ADR-008 (3)) — 배부 대상 CRUD와 다른 책임이므로 별도 도메인이다.
+  assert.equal(typeof controllers.distribution.tick, 'function');
   assert.equal(typeof controllers.collection.receive, 'function');
 });
 
@@ -353,6 +355,93 @@ test('createControllers: DIST_SPOOL_DIR 미설정이면 배부가 비활성이�
   assert.equal(a.status, 'DPS');
   assert.deepEqual(spoolFs.calls.writeFile, [], '스풀 루트 미설정이면 파일을 쓰지 않는다');
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
+});
+
+// --- 엠바고 시점 배부 tick 결선 (phase 48, ADR-008 (3)) ---
+// 주입 now는 **ISO-8601 UTC 문자열**을 돌려주는 함수다(숫자 epoch ms를 주면 embargoPolicy가
+// 안전 기본값으로 전 기사를 미도래 처리해 배부가 조용히 0건이 된다).
+test('distribution.tick: 도래한 1차 엠바고를 press로 배부하고 DES→EPS로 승격한다(1+2차)', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: { ...ENV, DIST_SPOOL_DIR: '/spool/out' },
+    sessionService,
+    spoolFs,
+    now: () => '2026-07-30T09:30:00.000Z', // 1차 도래 후 · 2차 이전
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+  controllers.distributionTarget.create(sessionId, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
+  controllers.distributionTarget.create(sessionId, { name: '기관', kind: 'nonpress', spoolDir: 'org' });
+
+  // 1+2차 엠바고 기사를 송고 → DES(배부 대기, 즉시 배부 없음).
+  const c = controllers.article.create({
+    title: '제목',
+    markupVersion: END_MARKUP,
+    author: 'kim',
+    embargoAt: '2026-07-30T09:00:00.000Z',
+    secondEmbargoAt: '2026-07-30T18:00:00.000Z',
+  });
+  assert.equal(controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' }).status, 'DES');
+  await flushSpool();
+  assert.deepEqual(spoolFs.calls.rename, [], '송고 시점에는 배부하지 않는다(1차 엠바고 대기)');
+
+  const r = await controllers.distribution.tick(sessionId);
+  assert.equal(r.ok, true);
+  assert.equal(r.at, '2026-07-30T09:30:00.000Z');
+  assert.equal(r.scanned, 1);
+  // 2차는 미도래 → press만 배부되고 상태는 EPS(부분 배부).
+  assert.deepEqual(r.distributed, [{ articleId: c.articleId, kinds: ['press'], status: 'EPS' }]);
+  assert.deepEqual(r.failed, []);
+  assert.equal(spoolFs.calls.rename.length, 1, 'press 수신처 1곳에만 쓴다');
+  assert.equal(db.prepare('SELECT status FROM Contents WHERE articleId = ?').get(c.articleId).status, 'EPS');
+  const hist = db.prepare("SELECT action FROM ArticleHistory WHERE articleId = ? AND eventType = 'distribute'").all(c.articleId);
+  assert.deepEqual(hist.map((h) => h.action), ['press']);
+
+  // 멱등 — 같은 시각의 재호출은 재배부하지 않는다(이력 기준 판정).
+  const again = await controllers.distribution.tick(sessionId);
+  assert.deepEqual(again.distributed, []);
+  assert.equal(spoolFs.calls.rename.length, 1);
+});
+
+test('distribution.tick: DIST_SPOOL_DIR 미설정이면 spool-disabled이고 파일을 쓰지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  const controllers = createControllers(db, {
+    env: ENV, sessionService, spoolFs, now: () => '2026-07-30T09:30:00.000Z',
+  });
+  seedUser(db, { userId: 'admin', role: 'Z', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('admin', 'pw');
+
+  const r = await controllers.distribution.tick(sessionId);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'spool-disabled');
+  assert.deepEqual(spoolFs.calls.writeFile, []);
+  assert.deepEqual(spoolFs.calls.mkdir, []);
+});
+
+test('distribution.tick: 인가 게이트가 먼저다 — 비-Z/미인증에는 설정 상태조차 알리지 않는다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const spoolFs = fakeSpoolFs();
+  const sessionService = createSessionService();
+  // 스풀 미설정 환경이지만, 비-Z에게는 spool-disabled 대신 forbidden이 나와야 한다.
+  const controllers = createControllers(db, { env: ENV, sessionService, spoolFs });
+  seedUser(db, { userId: 'kim', role: 'R', password: 'pw' });
+  const { sessionId } = await controllers.auth.login('kim', 'pw');
+
+  const r = await controllers.distribution.tick(sessionId);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'forbidden');
+
+  const anon = await controllers.distribution.tick(undefined);
+  assert.equal(anon.ok, false);
+  assert.equal(anon.reason, 'unauthenticated');
+  assert.deepEqual(spoolFs.calls.writeFile, []);
 });
 
 test('createControllers: 배부 실패는 logService.warn으로 표면화된다(식별자·사유만)', async () => {

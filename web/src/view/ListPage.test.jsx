@@ -52,13 +52,14 @@ describe('ListPage', () => {
     expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
   });
 
-  it('엠바고 관리 메뉴 버튼을 보여주고(6번째 탭), 선택 시 EPS를 조회하며 부서 셀렉터가 있다', async () => {
+  it('엠바고 관리 메뉴 버튼을 보여주고(6번째 탭), 선택 시 DES·EPS를 조회하며 부서 셀렉터가 있다', async () => {
     const { model } = setup({ articles: [] });
     expect(screen.getByRole('button', { name: '엠바고 관리' })).toBeInTheDocument();
     const spy = vi.spyOn(model, 'queryArticles');
     await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
     // 진입 시 기본 '전체'(부서 미지정) — status만으로 조회하고, 부서 멀티셀렉트로 좁힐 수 있다.
-    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['EPS'] }));
+    // 배부 전 대기(DES) + 배부 진행(EPS)을 함께 조회한다(phase48 step5).
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['DES', 'EPS'] }));
     expect(await screen.findByTestId('dept-selector')).toBeInTheDocument();
   });
 
@@ -87,20 +88,24 @@ describe('ListPage', () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RRK', 'DDK', 'EEK'], departments: ['정치'] }));
   });
 
-  it('엠바고 관리 EPS 행 우클릭 편집 → 잠금 획득 후 writer.do로 편집 진입한다(edit 모드)', async () => {
-    const { model, navigate, container } = setup({ articles: [{ articleId: 'AKR-EPS', title: 't', status: 'EPS', lockYN: 'N' }] });
-    const lock = vi.spyOn(model, 'lockArticle');
+  // DES(배부 전 대기)·EPS(배부 진행) 어느 행이든 편집 진입이 동작해야 한다(phase48 step5 파라미터화).
+  for (const status of ['DES', 'EPS']) {
+    it(`엠바고 관리 ${status} 행 우클릭 편집 → 잠금 획득 후 writer.do로 편집 진입한다(edit 모드)`, async () => {
+      const articleId = `AKR-${status}`;
+      const { model, navigate, container } = setup({ articles: [{ articleId, title: 't', status, lockYN: 'N' }] });
+      const lock = vi.spyOn(model, 'lockArticle');
 
-    await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
-    await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+      await userEvent.click(screen.getByRole('button', { name: '엠바고 관리' }));
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
 
-    fireEvent.contextMenu(bodyRows(container)[0]);
-    await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
+      fireEvent.contextMenu(bodyRows(container)[0]);
+      await userEvent.click(screen.getByRole('menuitem', { name: '편집' }));
 
-    // edit 모드 진입(enterEditor 'edit'): 잠금 획득(revise lock) 후 writer.do로 이동.
-    await waitFor(() => expect(lock).toHaveBeenCalledWith('AKR-EPS', 'revise'));
-    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR-EPS' });
-  });
+      // edit 모드 진입(enterEditor 'edit'): 잠금 획득(revise lock) 후 writer.do로 이동.
+      await waitFor(() => expect(lock).toHaveBeenCalledWith(articleId, 'revise'));
+      expect(navigate).toHaveBeenCalledWith('writer.do', { articleId });
+    });
+  }
 
   it('데스크 미송고에서도 부서 Select(기본 전체)를 보여주고, 열면 체크박스가 나온다', async () => {
     setup({

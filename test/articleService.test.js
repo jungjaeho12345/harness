@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../src/db/schema.js';
 import { createArticleModel } from '../src/models/articleModel.js';
+import { createArticleHistoryModel } from '../src/models/articleHistoryModel.js';
 import { createArticleService } from '../src/services/articleService.js';
 
 function setup() {
@@ -11,6 +12,16 @@ function setup() {
   const articleModel = createArticleModel(db);
   const service = createArticleService({ articleModel, db });
   return { db, articleModel, service };
+}
+
+// syncEmbargoStatus는 배부 이력을 읽으므로 historyModel이 필요하다.
+function setupWithHistory() {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  const service = createArticleService({ articleModel, db, historyModel });
+  return { db, articleModel, historyModel, service };
 }
 
 const END = '(끝)';
@@ -151,28 +162,29 @@ test('applyAction: R이 RDS 기사를 송고("(끝)" 포함)하면 RDS를 유지
   assert.equal(articleModel.getById(articleId).contents.status, 'RDS');
 });
 
-test('applyAction: 엠바고 설정된 RDS 기사를 D가 송고하면 EPS로 진입한다 (sender/sentAt 기록)', () => {
+test('applyAction: 엠바고 설정된 RDS 기사를 D가 송고하면 DES로 진입한다 (sender/sentAt 기록)', () => {
   const { service, articleModel } = setup();
   const { articleId } = service.create({
     title: '제목', markupVersion: markup('본문', true), author: 'kim',
     embargoAt: '2026-06-25T09:00:00.000Z',
   });
   const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
-  assert.deepEqual(r, { ok: true, status: 'EPS' });
+  assert.deepEqual(r, { ok: true, status: 'DES' });
   const c = articleModel.getById(articleId).contents;
-  assert.equal(c.status, 'EPS');
+  assert.equal(c.status, 'DES');
   assert.equal(c.sender, 'desk');
   assert.ok(c.sentAt, 'sentAt이 기록된다');
 });
 
-test('applyAction: 2차 엠바고만 설정돼도 RDS→EPS, Z 송고도 동일', () => {
+test('applyAction: 2차 엠바고만 설정돼도 RDS→DES, Z 송고도 동일', () => {
+  // 이 setup은 distributionService 미주입이라 배부 훅이 비활성이다 — DES→EPS 승격도 일어나지 않는다.
   const { service, articleModel } = setup();
   const a = service.create({
     title: '제목', markupVersion: markup('본문', true), author: 'kim',
     secondEmbargoAt: '2026-06-26T09:00:00.000Z',
   });
-  assert.deepEqual(service.applyAction(a.articleId, 'Z', 'send', { userId: 'admin' }), { ok: true, status: 'EPS' });
-  assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
+  assert.deepEqual(service.applyAction(a.articleId, 'Z', 'send', { userId: 'admin' }), { ok: true, status: 'DES' });
+  assert.equal(articleModel.getById(a.articleId).contents.status, 'DES');
 });
 
 test('applyAction: 엠바고 미설정 RDS 기사를 D가 송고하면 DPS를 유지한다 (회귀 보존)', () => {
@@ -182,7 +194,7 @@ test('applyAction: 엠바고 미설정 RDS 기사를 D가 송고하면 DPS를 �
   assert.equal(articleModel.getById(empty.articleId).contents.status, 'DPS');
 });
 
-test('applyAction: 엠바고 설정된 RDS라도 R 송고는 RDS 유지 (EPS 진입은 D/Z 한정)', () => {
+test('applyAction: 엠바고 설정된 RDS라도 R 송고는 RDS 유지 (DES 진입은 D/Z 한정)', () => {
   const { service, articleModel } = setup();
   const { articleId } = service.create({
     title: '제목', markupVersion: markup('본문', true), author: 'kim',
@@ -192,7 +204,7 @@ test('applyAction: 엠바고 설정된 RDS라도 R 송고는 RDS 유지 (EPS 진
   assert.equal(articleModel.getById(articleId).contents.status, 'RDS');
 });
 
-test('applyAction: 엠바고 설정된 DDH 기사를 D가 송고해도 DPS 유지 (EPS는 RDS 송고 한정)', () => {
+test('applyAction: 엠바고 설정된 DDH 기사를 D가 송고해도 DES로 진입한다 (DDH 경로 누수 방어)', () => {
   const { service, articleModel } = setup();
   // D 최초 보류 → DDH, 엠바고 설정.
   const { articleId } = service.create({
@@ -200,37 +212,79 @@ test('applyAction: 엠바고 설정된 DDH 기사를 D가 송고해도 DPS 유�
     embargoAt: '2026-06-25T09:00:00.000Z',
   }, { role: 'D', action: 'hold' });
   assert.equal(articleModel.getById(articleId).contents.status, 'DDH');
+  assert.deepEqual(service.applyAction(articleId, 'D', 'send', { userId: 'desk' }), { ok: true, status: 'DES' });
+  assert.equal(articleModel.getById(articleId).contents.status, 'DES');
+});
+
+test('applyAction: 엠바고 설정된 DPS 기사의 재송고는 DPS를 유지한다 (DES 되돌림 금지)', () => {
+  // 이미 배부 이력이 있는 기사를 DES로 되돌리면 tick의 "미배부" 판정에 걸리지 않아 영구 고착된다.
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk' }); // RDS → DPS(엠바고 미설정)
+  service.update(articleId, { embargoAt: '2026-06-25T09:00:00.000Z' });
   assert.deepEqual(service.applyAction(articleId, 'D', 'send', { userId: 'desk' }), { ok: true, status: 'DPS' });
   assert.equal(articleModel.getById(articleId).contents.status, 'DPS');
 });
 
-test('applyAction: EPS 기사를 D가 KILL하면 EEK, 보류하면 EEH', () => {
+test('applyAction: DES 기사를 D가 KILL하면 EEK, 보류하면 EEH', () => {
   const { service, articleModel } = setup();
-  const mkEps = () => {
+  const mkDes = () => {
     const a = service.create({
       title: '제목', markupVersion: markup('본문', true), author: 'kim',
       embargoAt: '2026-06-25T09:00:00.000Z',
     });
-    service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → EPS
-    assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
+    service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → DES
+    assert.equal(articleModel.getById(a.articleId).contents.status, 'DES');
     return a.articleId;
   };
-  const killId = mkEps();
+  const killId = mkDes();
   assert.deepEqual(service.applyAction(killId, 'D', 'kill', { userId: 'desk' }), { ok: true, status: 'EEK' });
   assert.equal(articleModel.getById(killId).contents.status, 'EEK');
 
-  const holdId = mkEps();
+  const holdId = mkDes();
   assert.deepEqual(service.applyAction(holdId, 'D', 'hold', { userId: 'desk' }), { ok: true, status: 'EEH' });
   assert.equal(articleModel.getById(holdId).contents.status, 'EEH');
 });
 
-test('applyAction: EPS 기사 재송고(send)는 거부하고 status를 유지한다', () => {
+test('applyAction: 레거시 EPS 행도 KILL→EEK·보류→EEH가 유지된다 (마이그레이션 없음)', () => {
+  // 기존 EPS 행은 DES로 바꾸지 않는다(사용자 확정 스펙 A.5) — 모델로 직접 주입해 레거시 행을 재현한다.
+  const { service, articleModel } = setup();
+  const mkLegacyEps = () => {
+    const a = service.create({
+      title: '제목', markupVersion: markup('본문', true), author: 'kim',
+      embargoAt: '2026-06-25T09:00:00.000Z',
+    });
+    articleModel.update(a.articleId, { contents: { status: 'EPS' } });
+    return a.articleId;
+  };
+  const killId = mkLegacyEps();
+  assert.deepEqual(service.applyAction(killId, 'D', 'kill', { userId: 'desk' }), { ok: true, status: 'EEK' });
+  assert.equal(articleModel.getById(killId).contents.status, 'EEK');
+
+  const holdId = mkLegacyEps();
+  assert.deepEqual(service.applyAction(holdId, 'D', 'hold', { userId: 'desk' }), { ok: true, status: 'EEH' });
+  assert.equal(articleModel.getById(holdId).contents.status, 'EEH');
+});
+
+test('applyAction: DES 기사 재송고(send)는 거부하고 status를 유지한다', () => {
   const { service, articleModel } = setup();
   const a = service.create({
     title: '제목', markupVersion: markup('본문', true), author: 'kim',
     embargoAt: '2026-06-25T09:00:00.000Z',
   });
-  service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → EPS
+  service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // RDS → DES
+  const r = service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // DES + send = 거부
+  assert.equal(r.ok, false);
+  assert.equal(articleModel.getById(a.articleId).contents.status, 'DES');
+});
+
+test('applyAction: 레거시 EPS 기사 재송고(send)도 거부하고 status를 유지한다', () => {
+  const { service, articleModel } = setup();
+  const a = service.create({
+    title: '제목', markupVersion: markup('본문', true), author: 'kim',
+    embargoAt: '2026-06-25T09:00:00.000Z',
+  });
+  articleModel.update(a.articleId, { contents: { status: 'EPS' } });
   const r = service.applyAction(a.articleId, 'D', 'send', { userId: 'desk' }); // EPS + send = 거부
   assert.equal(r.ok, false);
   assert.equal(articleModel.getById(a.articleId).contents.status, 'EPS');
@@ -259,6 +313,105 @@ test('applyAction: 존재하지 않는 기사는 not-found', () => {
   const r = service.applyAction('AKR000', 'D', 'send', { sessionId: 's1' });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'not-found');
+});
+
+// ── syncEmbargoStatus — 배부 사실을 상태에 반영한다(사람의 액션이 아니므로 transition을 거치지 않는다) ──
+
+// 엠바고 기사를 만들고 지정한 상태로 둔다(전이 경로와 무관하게 픽스처를 고정한다).
+function seedEmbargo(ctx, contents, status) {
+  const { articleId } = ctx.service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim', ...contents });
+  ctx.articleModel.update(articleId, { contents: { status, sender: 'desk', sentAt: '2026-07-28T00:00:00.000Z' } });
+  return articleId;
+}
+const distHist = (ctx, articleId, kind) => ctx.historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: '2026-07-28T01:00:00.000Z' });
+
+test('syncEmbargoStatus: 배부 이력만으로 승격한다(extraKinds 없이 — tick의 self-heal 경로)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  distHist(ctx, articleId, 'press');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId), { ok: true, status: 'EPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'EPS');
+});
+
+test('syncEmbargoStatus: 이력이 아직 없어도 extraKinds 힌트로 승격한다(이력 기록 실패 보정)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'] }), { ok: true, status: 'EPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'EPS');
+});
+
+test('syncEmbargoStatus: 이력 ∪ extraKinds 합집합으로 완결을 판정한다 (1+2차 → DPS)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, {
+    embargoAt: '2026-07-29T00:00:00.000Z', secondEmbargoAt: '2026-07-30T00:00:00.000Z',
+  }, 'EPS');
+  distHist(ctx, articleId, 'press');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['nonpress'] }), { ok: true, status: 'DPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DPS');
+});
+
+test('syncEmbargoStatus: status만 쓰고 송고자/송고시간·본문·행 수는 건드리지 않는다(present-only)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  const before = ctx.articleModel.getById(articleId);
+  const counts = () => ({
+    contents: ctx.db.prepare('SELECT COUNT(*) AS n FROM Contents').get().n,
+    article: ctx.db.prepare('SELECT COUNT(*) AS n FROM Article').get().n,
+  });
+  const countsBefore = counts();
+
+  ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'], actorUserId: 'tick' });
+
+  const after = ctx.articleModel.getById(articleId);
+  assert.equal(after.contents.status, 'EPS');
+  assert.equal(after.contents.sender, before.contents.sender);
+  assert.equal(after.contents.sentAt, before.contents.sentAt);
+  assert.equal(after.contents.editedAt, before.contents.editedAt);
+  assert.equal(after.article.markupVersion, before.article.markupVersion);
+  assert.deepEqual(counts(), countsBefore);
+});
+
+test('syncEmbargoStatus: 상태가 실제로 바뀔 때만 이력 1건을 남긴다(멱등 재호출은 쓰기 0건)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'], actorUserId: 'tick' }), { ok: true, status: 'EPS' });
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'], actorUserId: 'tick' }), { ok: true, status: 'EPS' });
+
+  const rows = ctx.service.queryHistory(articleId).filter((r) => r.eventType === 'status');
+  assert.equal(rows.length, 1);
+  assert.deepEqual(
+    [rows[0].action, rows[0].fromStatus, rows[0].toStatus, rows[0].actorUserId],
+    ['embargo', 'DES', 'EPS', 'tick'],
+  );
+});
+
+test('syncEmbargoStatus: 엠바고 미설정 기사는 쓰기 0건이다(자동 승격 없음)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, {}, 'DES');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press', 'nonpress'] }), { ok: true, status: 'DES' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DES');
+  assert.equal(ctx.service.queryHistory(articleId).filter((r) => r.eventType === 'status').length, 0);
+});
+
+test('syncEmbargoStatus: DES/EPS가 아닌 상태는 절대 바꾸지 않는다', () => {
+  for (const status of ['RDS', 'DPS', 'EEK', 'EEH', 'DPD']) {
+    const ctx = setupWithHistory();
+    const articleId = seedEmbargo(ctx, { embargoAt: '2026-07-29T00:00:00.000Z' }, status);
+
+    assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'] }), { ok: true, status }, status);
+    assert.equal(ctx.articleModel.getById(articleId).contents.status, status, status);
+    assert.equal(ctx.service.queryHistory(articleId).filter((r) => r.eventType === 'status').length, 0, status);
+  }
+});
+
+test('syncEmbargoStatus: 존재하지 않는 기사는 not-found', () => {
+  const ctx = setupWithHistory();
+  assert.deepEqual(ctx.service.syncEmbargoStatus('AKR000'), { ok: false, reason: 'not-found' });
 });
 
 // ── 파일참조 가드 — 첨부/자료 파일은 /uploads 상대경로 또는 https:// 만 저장 (서버 심화 방어, ADR-004) ──

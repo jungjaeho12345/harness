@@ -7,6 +7,7 @@ const CAPABILITIES = {
   manageUsers: ['Z'],          // 사용자(USER) CRUD — Z 전용
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
   manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
+  runDistributionTick: ['Z'],  // 엠바고 시점 배부 tick 실행 — Z/시스템 전용 (ADR-008 (3))
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
 };
 
@@ -64,5 +65,19 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, op, payload };
   }
 
-  return { assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget };
+  // Z 전용 게이트 — 엠바고 시점 배부 tick 실행 (ADR-008 (3)).
+  // 외부 운영 cron은 새 인증 수단이 아니라 **Z 세션**으로 호출한다(API 키/공유 시크릿 없음).
+  // userId를 함께 돌려주는 이유: tick이 배부·상태 이력의 actorUserId로 stamp해야 감사 추적이 끊기지 않는다.
+  function runDistributionTick(sessionId) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'runDistributionTick');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, userId: me.userId };
+  }
+
+  return {
+    assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget,
+    runDistributionTick,
+  };
 }
