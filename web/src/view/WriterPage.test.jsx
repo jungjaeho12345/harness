@@ -306,12 +306,16 @@ describe('WriterPage — 매핑 모드(mode:mapping)', () => {
     expect(editor.getAttribute('contenteditable')).toBe('false');
   });
 
-  it('공통정보 메타 입력(작성자/엠바고/2차엠바고)도 readOnly로 잠긴다', async () => {
+  it('공통정보 메타 입력(작성자/엠바고/2차엠바고)도 잠긴다 — 작성자 readOnly, 엠바고 피커는 disabled', async () => {
     const { container } = await openMapping([textBlock('헤드라인'), textBlock('본문내용')]);
-    for (const id of ['meta-author', 'meta-embargo', 'meta-embargo2']) {
+    const author = container.querySelector('#meta-author');
+    expect(author).toBeTruthy();
+    expect(author.readOnly).toBe(true);
+    // datetime-local은 readOnly 속성이 브라우저별로 무시될 수 있어 매핑 모드에서는 disabled로 잠근다.
+    for (const id of ['meta-embargo', 'meta-embargo2']) {
       const input = container.querySelector(`#${id}`);
       expect(input).toBeTruthy();
-      expect(input.readOnly).toBe(true);
+      expect(input.disabled).toBe(true);
     }
   });
 
@@ -879,11 +883,12 @@ describe('WriterPage — 매핑(mapping) 임베드 전용 제한 편집', () => 
     expect(save.mock.calls[0][0].markupVersion).toBe(original);
   });
 
-  it('공통정보 입력란(작성자/엠바고/2차엠바고)이 readOnly다', async () => {
+  it('공통정보 입력란이 잠긴다 — 작성자 readOnly, 엠바고/2차엠바고 피커는 disabled', async () => {
     await openMapping([textBlock('제목'), textBlock('본문')]);
     expect(screen.getByLabelText('작성자')).toHaveAttribute('readonly');
-    expect(screen.getByLabelText('엠바고 시간')).toHaveAttribute('readonly');
-    expect(screen.getByLabelText('2차 엠바고 시간')).toHaveAttribute('readonly');
+    // datetime-local은 readOnly 속성이 브라우저별로 무시될 수 있어 매핑 모드에서는 disabled로 잠근다.
+    expect(screen.getByLabelText('엠바고 시간')).toBeDisabled();
+    expect(screen.getByLabelText('2차 엠바고 시간')).toBeDisabled();
   });
 
   it('이미지 검색 결과를 클릭하면 임베드가 본문에 추가된다', async () => {
@@ -7685,5 +7690,90 @@ describe('WriterPage — 수정(overwrite) 모드 덮어쓰기 타이핑', () =>
     fireEvent.keyDown(box(container), { key: 'x' });
     expect(sel.isCollapsed).toBe(false);
     expect(sel.getRangeAt(0).toString()).toBe('a'); // BMP는 1 코드유닛
+  });
+});
+
+// 엠바고 datetime-local 피커 — 자유 텍스트 입력을 브라우저 내장 캘린더+시간 UI로 교체.
+// 계약: 필드 상태(f.embargoAt/f.secondEmbargoAt)는 항상 ISO-8601 UTC 문자열(SCHEMA.md — phase 48 tick의
+// 시각 비교·EPS/DES 치환이 의존). 로컬 변환은 embargoDateInput 헬퍼(표시 계층)에서만 — 저장 dto에는 로컬
+// 포맷이 실리면 안 된다. 기대값은 로컬 Date 생성자로 만들어 실행 타임존에 무관하게 성립한다.
+describe('WriterPage — 엠바고 datetime-local 피커', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 엠바고 값을 가진 기사로 편집 진입 — 필드는 model.getArticle(seed 행) 값으로 채워진다.
+  async function openEdit(extra = {}) {
+    const body = serialize([textBlock('제목'), textBlock('본문')]);
+    const utils = setup({
+      identity: { role: 'R', name: '김기자' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body, ...extra }] },
+    });
+    await waitFor(() => expect(actionBtn('보류')).toBeInTheDocument());
+    return utils;
+  }
+
+  // 보류 저장으로 서버에 실리는 dto를 낚아채는 헬퍼 — 필드 상태(ISO 계약)를 저장 경로에서 검증한다.
+  async function holdAndGetDto(model) {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const save = vi.spyOn(model, 'saveArticle');
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    return save.mock.calls[save.mock.calls.length - 1][0];
+  }
+
+  it('엠바고/2차 엠바고 입력이 datetime-local 타입이고 편집 모드에서는 활성이다', async () => {
+    const { container } = await openEdit();
+    for (const id of ['meta-embargo', 'meta-embargo2']) {
+      const input = container.querySelector(`#${id}`);
+      expect(input).toBeTruthy();
+      expect(input.type).toBe('datetime-local');
+      expect(input.disabled).toBe(false);
+    }
+  });
+
+  it('ISO UTC 값은 로컬 "YYYY-MM-DDTHH:mm"로 표시된다(표시 변환)', async () => {
+    const iso = new Date(2026, 6, 31, 14, 30).toISOString(); // 로컬 2026-07-31 14:30
+    const iso2 = new Date(2026, 7, 1, 9, 5).toISOString(); // 로컬 2026-08-01 09:05
+    const { container } = await openEdit({ embargoAt: iso, secondEmbargoAt: iso2 });
+    expect(container.querySelector('#meta-embargo').value).toBe('2026-07-31T14:30');
+    expect(container.querySelector('#meta-embargo2').value).toBe('2026-08-01T09:05');
+  });
+
+  it('피커로 고른 로컬 값은 ISO UTC로 저장된다(라운드트립 — dto에 로컬 포맷 미유출)', async () => {
+    const { container, model } = await openEdit();
+    fireEvent.change(container.querySelector('#meta-embargo'), { target: { value: '2026-07-31T14:30' } });
+    fireEvent.change(container.querySelector('#meta-embargo2'), { target: { value: '2026-08-01T09:05' } });
+    // 컨트롤드 라운드트립 — 상태(ISO)를 다시 로컬로 그려도 고른 값 그대로다.
+    expect(container.querySelector('#meta-embargo').value).toBe('2026-07-31T14:30');
+    expect(container.querySelector('#meta-embargo2').value).toBe('2026-08-01T09:05');
+
+    const dto = await holdAndGetDto(model);
+    expect(dto.embargoAt).toBe(new Date(2026, 6, 31, 14, 30).toISOString());
+    expect(dto.secondEmbargoAt).toBe(new Date(2026, 7, 1, 9, 5).toISOString());
+    expect(dto.embargoAt.endsWith('Z')).toBe(true); // ISO UTC(SCHEMA.md 계약)
+  });
+
+  it("피커를 비우면 ''로 저장된다(엠바고 해제 — 기존 계약 유지)", async () => {
+    const iso = new Date(2026, 6, 31, 14, 30).toISOString();
+    const { container, model } = await openEdit({ embargoAt: iso });
+    fireEvent.change(container.querySelector('#meta-embargo'), { target: { value: '' } });
+    expect(container.querySelector('#meta-embargo').value).toBe('');
+    const dto = await holdAndGetDto(model);
+    expect(dto.embargoAt).toBe('');
+  });
+
+  it('파싱 불가 레거시 값은 빈 피커로 표시하되, 피커를 건드리기 전 저장에서는 원값을 보존한다', async () => {
+    const legacy = '오후 3시 엠바고'; // 자유 텍스트 입력 시절 잔재
+    const { container, model } = await openEdit({ embargoAt: legacy });
+    expect(container.querySelector('#meta-embargo').value).toBe(''); // 피커는 빈 표시
+    const dto = await holdAndGetDto(model);
+    expect(dto.embargoAt).toBe(legacy); // 변경 전 저장 — 원값 파괴 금지
+  });
+
+  it('파싱 불가 레거시 값도 피커로 고르면 ISO UTC로 대체된다(변경 시에만 덮어씀)', async () => {
+    const { container, model } = await openEdit({ embargoAt: '오후 3시 엠바고' });
+    fireEvent.change(container.querySelector('#meta-embargo'), { target: { value: '2026-07-31T14:30' } });
+    const dto = await holdAndGetDto(model);
+    expect(dto.embargoAt).toBe(new Date(2026, 6, 31, 14, 30).toISOString());
   });
 });

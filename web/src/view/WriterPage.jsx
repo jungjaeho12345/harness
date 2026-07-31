@@ -71,6 +71,7 @@ import { lineAtOffset } from './editorCaret.js';
 import { insertGlyphAtCaret } from './editorGlyph.js';
 import { compileGlyphKeymap, matchGlyphKeymap } from './editorGlyphKeymap.js';
 import { insertDateAtCaret } from './editorDate.js';
+import { isoToLocalInput, localInputToIso } from './embargoDateInput.js';
 import { applyDateFormat, kstIsoString } from './listFormat.js';
 import {
   makeImageEmbed, makeVideoEmbed, makeArticleEmbed,
@@ -1909,13 +1910,19 @@ function CommonInfo({ tab, updateField, model, readOnly = false, activeTabRef, o
           <label htmlFor="meta-attribute">속성</label>
           <input id="meta-attribute" value={f.attribute} readOnly aria-haspopup="dialog" onClick={() => openMeta('attribute')} />
         </div>
+        {/* 엠바고/2차 엠바고 — datetime-local 피커(브라우저 내장 캘린더+시간, 의존성 0). 필드 상태는 항상
+            ISO-8601 UTC 문자열(SCHEMA.md — phase 48 tick의 시각 비교·EPS/DES 치환이 의존)이고, 로컬 변환은
+            embargoDateInput 헬퍼(표시 계층)에서만 한다. 파싱 불가 레거시 값(자유 텍스트 잔재)은 빈 피커로
+            보이지만 onChange 전까지 원값을 보존한다(변경 시에만 덮어씀). 빈 피커 → '' = 엠바고 해제.
+            datetime-local은 readOnly가 브라우저별로 무시될 수 있어 매핑 모드에서는 disabled로 잠근다
+            (첨부파일 input의 disabled={readOnly} 관례와 동형). */}
         <div className="yh-field">
           <label htmlFor="meta-embargo">엠바고 시간</label>
-          <input id="meta-embargo" value={f.embargoAt} readOnly={readOnly} onChange={(e) => updateField('embargoAt', e.target.value)} />
+          <input id="meta-embargo" type="datetime-local" value={isoToLocalInput(f.embargoAt)} disabled={readOnly} onChange={(e) => updateField('embargoAt', localInputToIso(e.target.value))} />
         </div>
         <div className="yh-field">
           <label htmlFor="meta-embargo2">2차 엠바고 시간</label>
-          <input id="meta-embargo2" value={f.secondEmbargoAt} readOnly={readOnly} onChange={(e) => updateField('secondEmbargoAt', e.target.value)} />
+          <input id="meta-embargo2" type="datetime-local" value={isoToLocalInput(f.secondEmbargoAt)} disabled={readOnly} onChange={(e) => updateField('secondEmbargoAt', localInputToIso(e.target.value))} />
         </div>
         <div className="yh-field yh-field--wide">
           <label htmlFor="meta-keyword">키워드</label>
