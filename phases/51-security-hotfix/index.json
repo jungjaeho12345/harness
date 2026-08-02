@@ -14,7 +14,12 @@
       "status": "completed",
       "summary": "저장(PUT) 인가를 검증 세션 신원과 대조하도록 강화(ADR-004). articleService.assertLockHolder(articleId, { clientId, userId, sessionId })가 lockYN='Y' → lockerClientId===clientId → userId·lockerUserId 존재 → lockerUserId===userId 순으로 판정하고 모든 실패를 not-holder로 수렴시킨다(보유자 비노출, 사유 토큰·403 계약 불변). userId 미전달/빈 값·lockerUserId NULL 레거시 잠금 행은 거부(하위호환 폴백 없음), sessionId는 인자로만 받고 판정에 쓰지 않는다(acquireEditLock sameUserReLogin과 같은 관용도 — 재로그인 편집물 유실 방지, 주석·eslint-disable로 의도 명시). server/index.js PUT 라우트는 sessionOf(req)의 { sid, me }만으로 신원을 넘긴다(body/헤더 파생 0건). acquireEditLock/releaseEditLock/forceReleaseEditLock·모델·DB·web 무변경. 테스트 +6: editLock 5건(다른 사용자 거부·userId 미전달 거부·재로그인 sessionId 불일치 허용·레거시 NULL 거부·not-found/미잠금), controllers 위임 갱신, server.test e2e 1건(D가 tab-d 잠금 → R이 같은 tab-d로 PUT → 403 not-holder + 제목·본문 무변경, 이어서 D 정상 저장 200). npm test 655/655 green(기준선 649), lint clean. 변이 검증: lockerUserId 대조 절 제거 → 정확히 4건(editLock 3 + server e2e 1) red."
     },
-    { "step": 2, "name": "cycle-boundary-policy", "status": "pending" },
+    {
+      "step": 2,
+      "name": "cycle-boundary-policy",
+      "status": "completed",
+      "summary": "배부 사이클 경계 판정을 순수 모듈에만 추가(소비처 결선은 step3 — 프로덕션 동작 변화 0건). src/services/embargoPolicy.js에 CYCLE_SCOPED_STATUSES=Object.freeze(['DES','EPS'])(DPS 제외 — phase 49 정정본 계약 보호)와 cycleDistributedKinds({status, historyRows}) 추가. 경계 = eventType==='status'&&action==='send' 중 Number.isInteger(id) 최댓값(latestSendId — 정렬·createdAt 비의존, 값 스캔이라 입력 무변형). 경계 밖 상태·경계 미확정(유효 send 0건)은 distributedKinds(rows) 전체 이력 폴백(안전측 — [] 폴백 금지). CRITICAL 안전측: 사이클 필터가 `!Number.isInteger(r.id) || r.id > boundaryId`라 id 결손 distribute 행은 이번 사이클로 센다(순진한 `r.id > boundaryId`는 undefined>n=false로 덜 세어 조기 배부 방향). kind 필터·순서는 distributedKinds/KINDS 재사용(하드코딩 복제 0건), distributedKinds 동작 무변경(주석으로 의미 분리: 역사상 어디로 나갔나 vs 이번 사이클). 테스트 +14(test/embargoPolicy.test.js): 레거시 폴백·핵심 회귀(distribute→send 순서면 DES/EPS는 [], DPS는 ['press'])·사이클 내 배부·혼합/중복·다중 send 최댓값·정렬 3종 비의존·send id 전멸 폴백(7)·혼재 유효경계 우선(7-a)·id 결손 distribute 포함(7-b, badId 5종)·방어(인자없음/비배열/[null,3,{}])·입력 불변. npm test 669/669 green(기준선 655), lint clean, diff 2파일. 변이 검증 4종 전부 red 확인: 최소 send 경계→케이스5, DPS 추가→3건, 순진한 `r.id > boundaryId`→7-b, 경계 미확정 [] 폴백→2건."
+    },
     { "step": 3, "name": "cycle-boundary-wiring", "status": "pending" },
     { "step": 4, "name": "sse-token-query", "status": "pending" }
   ],
