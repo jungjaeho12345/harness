@@ -2,7 +2,12 @@
   "project": "기사 작성기",
   "phase": "51-security-hotfix",
   "steps": [
-    { "step": 0, "name": "lock-token-projection", "status": "pending" },
+    {
+      "step": 0,
+      "name": "lock-token-projection",
+      "status": "completed",
+      "summary": "활성 세션 토큰 응답 노출 차단. 신설 src/services/contentsProjection.js(순수 모듈 — PRIVATE_CONTENTS_COLS=['lockerSessionId','lockerClientId'] 단일 출처, toPublicContents는 원본 무변형 사본 반환)를 articleService의 읽기 3경로(getById/query/search)에만 적용했다. DB 컬럼·articleModel·잠금 판정(acquireEditLock sameUserReLogin 등)은 무변경(DB 비파괴), 라우트/컨트롤러 개별 삭제 0건. 테스트 +13: test/contentsProjection.test.js(골든 키 — PRAGMA table_info(Contents)로 컬럼 도출, 하드코딩 없음), test/response-secrets.test.js(D가 잠근 기사를 R 세션으로 14개 라우트 전수 호출 → 토큰·키 이름 0건, 잠금 표시 계약 lockYN/lockerUserId/lockedAt 보존), articleService 투영·takeover 회귀 4건. npm test 649/649 green(기준선 636), lint clean, web/ 변경 0건. 변이 검증: query 투영 제거→GET /api/articles red, PRIVATE 목록 축소→골든 키 red."
+    },
     { "step": 1, "name": "save-lock-authz", "status": "pending" },
     { "step": 2, "name": "cycle-boundary-policy", "status": "pending" },
     { "step": 3, "name": "cycle-boundary-wiring", "status": "pending" },
