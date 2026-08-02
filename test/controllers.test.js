@@ -189,8 +189,10 @@ test('article 편집 잠금: acquire/assert/release를 서비스에 위임한다
 
   // 보유자는 편집 탭(clientId)이다 — 보유 탭만 assert/release 가능.
   assert.equal(controllers.article.acquireEditLock(c.articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' }).ok, true);
-  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c1' }).ok, true);
-  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c2' }).ok, false);
+  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c1', userId: 'kim', sessionId: 's1' }).ok, true);
+  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c2', userId: 'kim', sessionId: 's1' }).ok, false);
+  // opts를 그대로 서비스에 넘기므로 세션 신원 대조도 컨트롤러 경유로 동작한다(다른 사용자 → not-holder).
+  assert.equal(controllers.article.assertLockHolder(c.articleId, { clientId: 'c1', userId: 'lee', sessionId: 's2' }).reason, 'not-holder');
 
   // 다른 사용자의 획득은 실패하고 누가 잠갔는지 노출하지 않는다.
   const other = controllers.article.acquireEditLock(c.articleId, { userId: 'lee', sessionId: 's2', clientId: 'c2' });

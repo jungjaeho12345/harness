@@ -366,15 +366,27 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true };
   }
 
-  // 해당 편집 탭(clientId)이 잠금 보유자인지 — 편집 저장 권한 검증에 쓴다.
+  // 해당 편집 탭(clientId)이 잠금 보유자인지 — 편집 저장(PUT) 인가에 쓴다.
   // 보유 탭만 저장할 수 있다(같은 세션의 2번째 탭은 저장 차단).
-  function assertLockHolder(articleId, { clientId } = {}) {
+  // CRITICAL(ADR-004): clientId는 클라이언트가 만든 탭 식별자일 뿐이다. 저장 인가는 반드시
+  //   "검증된 세션의 userId"와 잠금 행의 lockerUserId를 함께 대조한다(문자열 하나로 인가하지 않는다).
+  //   userId를 넘기지 않으면 거부한다 — "미전달이면 통과" 폴백은 인가를 조용히 여는 취약점 그 자체다.
+  // sessionId는 판정에 쓰지 않는다 — acquireEditLock의 sameUserReLogin과 같은 관용도(같은 사용자의
+  //   재로그인 허용)를 유지하기 위함이다. 세션 일치를 강제하면 세션이 갱신됐는데 탭이 잠금을 재획득하지
+  //   못한 편집자의 저장이 거부돼 편집물이 유실된다. (인자는 계약·감사·후속 강화의 접점으로 남긴다.)
+  // 실패 사유는 모두 not-holder로 수렴한다 — 누가 잠갔는지는 응답에 담지 않는다.
+  // eslint-disable-next-line no-unused-vars -- sessionId는 계약상 받되 판정에 쓰지 않는다(위 주석 참조).
+  function assertLockHolder(articleId, { clientId, userId, sessionId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
-    if (c.lockYN === 'Y' && c.lockerClientId === clientId) return { ok: true };
-    return { ok: false, reason: 'not-holder' };
+    const denied = { ok: false, reason: 'not-holder' };
+    if (c.lockYN !== 'Y') return denied;
+    if (c.lockerClientId !== clientId) return denied; // 탭 규칙(같은 사용자의 2번째 탭 차단).
+    if (!userId || !c.lockerUserId) return denied; // 신원 미상(레거시 잠금 행 포함) → 거부.
+    if (c.lockerUserId !== userId) return denied; // 남의 탭 문자열을 알아도 사람이 다르면 거부.
+    return { ok: true };
   }
 
   return {

@@ -78,12 +78,57 @@ test('acquireEditLock: 30분 무갱신(stale) 잠금은 다음 시도자가 가�
   assert.equal(c.lockerClientId, 'c2');
 });
 
-test('assertLockHolder: 보유 탭(clientId)만 true', () => {
+test('assertLockHolder: 보유 탭(clientId) + 검증 세션 사용자만 true', () => {
   const { service, articleId } = setup();
   service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
-  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1' }).ok, true);
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: 'kim', sessionId: 's1' }).ok, true);
   // 같은 세션이라도 다른 탭(clientId)은 보유자가 아니다 → 저장 차단.
-  assert.equal(service.assertLockHolder(articleId, { clientId: 'c2' }).ok, false);
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c2', userId: 'kim', sessionId: 's1' }).ok, false);
+});
+
+test('assertLockHolder: 남의 clientId를 알아도 다른 사용자의 저장은 거부한다(ADR-004)', () => {
+  const { service, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  // 공격자가 잠금 보유 탭 문자열을 알아도, 검증 세션의 userId가 다르면 저장 인가는 열리지 않는다.
+  const r = service.assertLockHolder(articleId, { clientId: 'c1', userId: 'lee', sessionId: 's2' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'not-holder');
+  // 거부 응답에 누가 잠갔는지 담지 않는다(보유자 비노출).
+  assert.equal(r.lockerUserId, undefined, '잠근 사용자 비노출');
+  assert.equal(r.lockerSessionId, undefined, '잠근 세션 비노출');
+  assert.equal(r.lockerClientId, undefined, '잠근 탭 비노출');
+});
+
+test('assertLockHolder: userId를 넘기지 않으면 거부한다(하위호환 폴백 금지)', () => {
+  const { service, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  // 호출자가 신원 인자를 빠뜨리면 조용히 인가가 열리는 폴백이 있어선 안 된다.
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1' }).reason, 'not-holder');
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: '' }).reason, 'not-holder');
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: null }).reason, 'not-holder');
+});
+
+test('assertLockHolder: 같은 사용자가 재로그인해 sessionId가 달라도 보유 탭이면 저장할 수 있다', () => {
+  const { service, articleModel, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  // 세션만 갱신되고(재로그인) 탭이 잠금을 재획득하지 못한 상태 — 편집물 유실 방지를 위해 허용한다.
+  assert.equal(articleModel.getById(articleId).contents.lockerSessionId, 's1');
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: 'kim', sessionId: 's2' }).ok, true);
+});
+
+test('assertLockHolder: lockerUserId가 비어 있는 레거시 잠금 행은 거부한다', () => {
+  const { service, articleModel, articleId } = setup();
+  // 과거(신원 미기록) 잠금 행 재현 — 편집 재진입으로 잠금을 다시 획득하면 복구된다(DB는 고치지 않는다).
+  articleModel.setLock(articleId, {
+    lockerUserId: null, lockerSessionId: null, lockerClientId: 'c1', lockedAt: new Date().toISOString(),
+  });
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: 'kim', sessionId: 's1' }).reason, 'not-holder');
+});
+
+test('assertLockHolder: 없는 기사는 not-found, 잠기지 않은 기사는 not-holder', () => {
+  const { service, articleId } = setup();
+  assert.equal(service.assertLockHolder('999999', { clientId: 'c1', userId: 'kim', sessionId: 's1' }).reason, 'not-found');
+  assert.equal(service.assertLockHolder(articleId, { clientId: 'c1', userId: 'kim', sessionId: 's1' }).reason, 'not-holder');
 });
 
 test('releaseEditLock: 보유 탭(clientId)은 해제할 수 있고 비보유 탭은 해제할 수 없다', () => {
