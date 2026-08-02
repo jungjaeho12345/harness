@@ -10,8 +10,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EMBARGO_DISTRIBUTABLE_STATUSES,
+  CYCLE_SCOPED_STATUSES,
   requiredKinds,
   distributedKinds,
+  cycleDistributedKinds,
   unparsableEmbargoFields,
   dueKinds,
   embargoStatusFor,
@@ -116,6 +118,167 @@ test('distributedKinds: 빈 배열·비배열 입력은 []를 돌려준다(throw
 test('distributedKinds: 이력이 최신순(id DESC)이어도 반환 순서는 [press, nonpress]로 고정된다', () => {
   const rows = [distributeRow('nonpress', 9), distributeRow('press', 4)];
   assert.deepEqual(distributedKinds(rows), ['press', 'nonpress']);
+});
+
+// ─── cycleDistributedKinds: 배부 사이클 경계 ───────────────────────────────
+// 이력은 append-only라 과거 사이클의 배부 기록이 영원히 남는다. 보류(DDH) 후 엠바고를 다시 설정해
+// 재송고한 기사는 새 사이클에서 한 번도 배부되지 않았는데도 전체 이력 기준으로는 "이미 배부됨"이 된다
+// (엠바고 배부 무음 누락 + 즉시 DPS 승격). 경계 = 가장 최근 송고 이력(status/send)의 id다.
+// CRITICAL 안전 방향: 경계를 확신할 수 없으면 항상 "더 넓게 센다"(= 배부를 줄인다). 반대 방향의
+// 오류는 엠바고 시각 전 배부이며, 외부로 한 번 나간 기사는 회수 수단이 없다.
+
+// 송고 이력 1행 — 사이클 경계의 근거(articleService.applyAction이 배부 훅보다 먼저 insert한다).
+function sendRow(id, toStatus = 'DES') {
+  return {
+    id,
+    articleId: 'AKR20260730123456789',
+    eventType: 'status',
+    action: 'send',
+    fromStatus: 'RDS',
+    toStatus,
+    actorUserId: 'desk1',
+    createdAt: T1,
+    hasSnapshot: 1,
+  };
+}
+
+test('CYCLE_SCOPED_STATUSES: DES·EPS 두 상태뿐이며 동결돼 있다(DPS 포함 금지)', () => {
+  // DPS(완결·레거시)에 경계를 적용하면 재송고 정정본 계약(phase 49)이 무너지고
+  // tick이 이미 배부된 수신처로 중복 배부한다 — 회수 불가.
+  assert.deepEqual([...CYCLE_SCOPED_STATUSES], ['DES', 'EPS']);
+  assert.equal(Object.isFrozen(CYCLE_SCOPED_STATUSES), true);
+  assert.equal(CYCLE_SCOPED_STATUSES.includes('DPS'), false);
+});
+
+test('cycleDistributedKinds: 송고 이력이 없는 레거시 기사는 전체 이력을 센다(안전측 폴백)', () => {
+  // 케이스 1 — syncEmbargoStatus 픽스처처럼 배부 이력만 있는 데이터가 실제로 존재한다.
+  const rows = [distributeRow('press', 1)];
+  for (const status of ['DES', 'EPS', 'DPS']) {
+    assert.deepEqual(cycleDistributedKinds({ status, historyRows: rows }), ['press'], `status=${status}`);
+  }
+});
+
+test('cycleDistributedKinds: 재송고 이전 사이클의 배부는 세지 않는다(phase 49 회귀의 핵심)', () => {
+  // 케이스 2 — [distribute/press(1), send(2)]: press 배부는 이전 엠바고 시각에 대한 배부였다.
+  const rows = [distributeRow('press', 1), sendRow(2)];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'EPS', historyRows: rows }), []);
+  // DPS는 경계 미적용 — "역사상 어디로 나갔나"가 정정본 대상 판정의 근거다.
+  assert.deepEqual(cycleDistributedKinds({ status: 'DPS', historyRows: rows }), ['press']);
+});
+
+test('cycleDistributedKinds: 경계 밖 상태(DPS·RDS·EEK·undefined)는 distributedKinds와 동일하다', () => {
+  const rows = [distributeRow('press', 1), sendRow(2), distributeRow('nonpress', 3)];
+  const all = distributedKinds(rows);
+  assert.deepEqual(all, ['press', 'nonpress']);
+  for (const status of ['DPS', 'RDS', 'RRH', 'DDH', 'EEK', 'EEH', 'DPD', 'des', undefined, null]) {
+    assert.deepEqual(cycleDistributedKinds({ status, historyRows: rows }), all, `status=${String(status)}`);
+  }
+});
+
+test('cycleDistributedKinds: 경계 뒤(id가 큰) 배부는 이번 사이클로 센다', () => {
+  // 케이스 3
+  const rows = [sendRow(1), distributeRow('press', 2)];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), ['press']);
+});
+
+test('cycleDistributedKinds: 경계 앞뒤가 섞이면 뒤쪽만 센다(순서·중복 없음)', () => {
+  // 케이스 4
+  const rows = [distributeRow('press', 1), sendRow(2), distributeRow('nonpress', 3)];
+  assert.deepEqual(cycleDistributedKinds({ status: 'EPS', historyRows: rows }), ['nonpress']);
+  const dup = [
+    distributeRow('press', 1), sendRow(2),
+    distributeRow('nonpress', 3), distributeRow('nonpress', 5), distributeRow('press', 4),
+  ];
+  assert.deepEqual(cycleDistributedKinds({ status: 'EPS', historyRows: dup }), ['press', 'nonpress']);
+});
+
+test('cycleDistributedKinds: 송고가 여러 건이면 마지막(가장 큰 id) 송고가 경계다', () => {
+  // 케이스 5 — 가장 오래된 send를 경계로 삼으면 ['nonpress']가 되어 조기 배부 방향으로 틀린다.
+  const rows = [distributeRow('press', 1), sendRow(2), distributeRow('nonpress', 3), sendRow(4)];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), []);
+  assert.deepEqual(
+    cycleDistributedKinds({ status: 'DES', historyRows: [...rows, distributeRow('press', 5)] }),
+    ['press'],
+  );
+});
+
+test('cycleDistributedKinds: 입력 정렬(오름/내림/무작위)에 결과가 의존하지 않는다', () => {
+  // 케이스 6 — queryByArticle은 id DESC로 주지만 판정은 값(id)으로만 한다.
+  const asc = [distributeRow('press', 1), sendRow(2), distributeRow('nonpress', 3)];
+  const desc = [...asc].reverse();
+  const shuffled = [asc[1], asc[2], asc[0]];
+  for (const [label, rows] of [['asc', asc], ['desc', desc], ['shuffled', shuffled]]) {
+    assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), ['nonpress'], label);
+  }
+});
+
+test('cycleDistributedKinds: send 행의 id가 전부 정수가 아니면 경계를 못 정해 전체 이력을 센다', () => {
+  // 케이스 7 — 경계 후보 전멸 시 폴백은 반드시 "전체 이력"이다([] 폴백은 조기 배부로 이어진다).
+  const noId = [{ eventType: 'status', action: 'send' }, distributeRow('press', 1)];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: noId }), ['press']);
+  for (const badId of ['2', 2.5, NaN, null, undefined, { v: 2 }]) {
+    const rows = [{ ...sendRow(1), id: badId }, distributeRow('press', 1)];
+    assert.deepEqual(
+      cycleDistributedKinds({ status: 'DES', historyRows: rows }),
+      ['press'],
+      `send id=${String(badId)}`,
+    );
+  }
+});
+
+test('cycleDistributedKinds: 유효 send가 하나라도 있으면 그 경계를 쓴다(id 결손 send는 후보 제외)', () => {
+  // 케이스 7-a
+  const rows = [distributeRow('press', 1), sendRow(2), { eventType: 'status', action: 'send' }];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), []);
+});
+
+test('cycleDistributedKinds: id를 알 수 없는 distribute 행은 이번 사이클로 센다(안전측 방향)', () => {
+  // 케이스 7-b — 순진한 `row.id > boundaryId`는 undefined > 2 === false라 이 행을 빼버린다.
+  // 빼는 방향은 "이미 배부됨"을 좁혀 조기 배부로 이어지므로 금지다. 모르면 항상 센다.
+  const rows = [sendRow(2), { eventType: 'distribute', action: 'press' }];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), ['press']);
+  for (const badId of ['3', 3.5, NaN, null, { v: 3 }]) {
+    assert.deepEqual(
+      cycleDistributedKinds({ status: 'EPS', historyRows: [sendRow(2), distributeRow('nonpress', badId)] }),
+      ['nonpress'],
+      `distribute id=${String(badId)}`,
+    );
+  }
+});
+
+test('cycleDistributedKinds: 인자 없음·비배열·비정상 원소에도 throw하지 않는다', () => {
+  // 케이스 8
+  assert.deepEqual(cycleDistributedKinds(), []);
+  assert.deepEqual(cycleDistributedKinds({}), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES' }), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: null }), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: 'garbage' }), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: { 0: distributeRow('press') } }), []);
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: [null, 3, {}] }), []);
+  assert.deepEqual(
+    cycleDistributedKinds({ status: 'DES', historyRows: [null, 3, {}, sendRow(1), distributeRow('press', 2)] }),
+    ['press'],
+  );
+});
+
+test('cycleDistributedKinds: 알 수 없는 action·비배부 이벤트는 배부 실적으로 세지 않는다', () => {
+  const rows = [
+    sendRow(1),
+    distributeRow('portal', 2),
+    { id: 3, eventType: 'edit', action: 'save' },
+    { id: 4, eventType: 'distribute' },
+  ];
+  assert.deepEqual(cycleDistributedKinds({ status: 'DES', historyRows: rows }), []);
+});
+
+test('cycleDistributedKinds: 입력 배열·원소를 변형하지 않는다(순수 함수)', () => {
+  // 케이스 9 — 정렬로 경계를 찾으면 호출자의 이력 목록 순서가 깨진다.
+  const rows = [distributeRow('nonpress', 5), sendRow(4), distributeRow('press', 1), sendRow(2)];
+  const before = structuredClone(rows);
+  cycleDistributedKinds({ status: 'DES', historyRows: rows });
+  cycleDistributedKinds({ status: 'DPS', historyRows: rows });
+  assert.deepEqual(rows, before);
 });
 
 // ─── dueKinds: 도래 판정 ───────────────────────────────────────────────────
@@ -282,6 +445,7 @@ test('embargoPolicy: 인자로 받은 객체·배열을 변형하지 않는다(�
   requiredKinds(contents);
   unparsableEmbargoFields(contents);
   distributedKinds(rows);
+  cycleDistributedKinds({ status: 'DES', historyRows: rows });
   dueKinds({ status: 'EPS', contents, distributed, now: AFTER });
   embargoStatusFor({ status: 'EPS', contents, distributed });
 
