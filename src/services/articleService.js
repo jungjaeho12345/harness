@@ -6,6 +6,7 @@ import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
 import { requiredKinds, distributedKinds, embargoStatusFor } from './embargoPolicy.js';
+import { toPublicContents } from './contentsProjection.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -135,17 +136,27 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true, changes };
   }
 
+  // --- 읽기 경로: Contents 행이 응답으로 나가는 단일 투영 지점이다 ---
+  // 아래 3개 함수(getById/query/search)만 클라이언트로 나가는 행을 만든다. 세션 토큰(lockerSessionId)·
+  // 편집 탭 식별자(lockerClientId) 제거는 여기서만 한다 — 라우트/컨트롤러에서 개별 삭제 금지
+  // (새 라우트에서 반드시 누락된다). 제거 목록의 단일 출처는 contentsProjection.PRIVATE_CONTENTS_COLS다.
+  // 내부 판정 경로(acquireEditLock·assertLockHolder·applyAction·syncEmbargoStatus·deriveArticle)는
+  // articleModel.getById를 직접 부르므로 이 투영의 영향을 받지 않는다(잠금 takeover 판정 보존).
+
   // 단건 조회 — 본문(Article.markupVersion)을 포함한 { article, contents }(없으면 null). 읽기 전용.
   function getById(articleId) {
-    return articleModel.getById(articleId);
+    const row = articleModel.getById(articleId);
+    if (!row) return null;
+    return { ...row, contents: toPublicContents(row.contents) };
   }
 
   function query(filters) {
-    return articleModel.query(filters);
+    return articleModel.query(filters).map((contents) => toPublicContents(contents));
   }
 
+  // Article 행에는 잠금 컬럼이 없다(스키마) — 같은 투영을 통과시켜 검색 응답도 동일 규율 아래 둔다.
   function search(q) {
-    return articleModel.searchByText(q);
+    return articleModel.searchByText(q).map((row) => toPublicContents(row));
   }
 
   // 생애주기 액션 적용 — transition으로 다음 status를 구하고 갱신한다.

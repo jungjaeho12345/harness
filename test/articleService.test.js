@@ -493,3 +493,72 @@ test('update: 파일참조 미전달이면 기존 값을 보존한다 (DB 비파
   assert.equal(c.attachmentFile, '/uploads/a.pdf', '미전달 파일 필드는 건드리지 않는다');
   assert.equal(c.region, '부산');
 });
+
+// --- 읽기 경로 응답 투영 (phase 51 step0) ---
+// 서비스의 읽기 3경로(getById/query/search)가 응답용 투영을 통과시키고,
+// 모델(잠금 판정의 단일 출처)은 잠금 컬럼을 그대로 돌려주는지 잠근다.
+
+test('getById/query: 응답 투영에서 lockerSessionId·lockerClientId를 제거한다(모델은 무변경)', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 'sess-secret', clientId: 'tab-1' }).ok, true);
+
+  const one = service.getById(articleId).contents;
+  assert.equal(one.lockerSessionId, undefined, '세션 토큰 비노출');
+  assert.equal(one.lockerClientId, undefined, '편집 탭 식별자 비노출');
+  assert.equal(one.lockYN, 'Y', '잠금 표시 계약은 유지');
+  assert.equal(one.lockerUserId, 'kim');
+  assert.ok(one.lockedAt);
+
+  const listed = service.query({ articleId })[0];
+  assert.equal(listed.lockerSessionId, undefined);
+  assert.equal(listed.lockerClientId, undefined);
+  assert.equal(listed.lockYN, 'Y');
+  assert.equal(listed.lockerUserId, 'kim');
+
+  // 모델은 잠금 판정의 단일 출처다 — 여기서는 값이 그대로 남아 있어야 한다.
+  const raw = articleModel.getById(articleId).contents;
+  assert.equal(raw.lockerSessionId, 'sess-secret');
+  assert.equal(raw.lockerClientId, 'tab-1');
+});
+
+test('getById: 투영은 원본 행을 변형하지 않고, 없는 기사는 그대로 null이다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 'sess-secret', clientId: 'tab-1' });
+
+  service.getById(articleId);
+  service.query({});
+  assert.equal(
+    articleModel.getById(articleId).contents.lockerSessionId, 'sess-secret',
+    '투영 후에도 DB/모델 행은 그대로',
+  );
+  assert.equal(service.getById('NOPE'), null);
+});
+
+test('재로그인 takeover 판정(lockerSessionId 비교)은 응답 투영과 무관하게 동작한다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  service.getById(articleId); // 응답 투영이 잠금 판정 입력을 오염시키지 않는다.
+
+  // 같은 사용자·다른 세션(재로그인) → takeover 성공.
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's2', clientId: 'c2' }).ok, true);
+  const c = articleModel.getById(articleId).contents;
+  assert.equal(c.lockerSessionId, 's2');
+  assert.equal(c.lockerClientId, 'c2');
+
+  // 같은 세션의 다른 탭은 여전히 차단.
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's2', clientId: 'c3' }).ok, false);
+});
+
+test('search: Article 행에도 같은 투영을 적용해 토큰 키가 실리지 않는다', () => {
+  const { service } = setup();
+  service.create({ title: '투영검색', author: 'kim', markupVersion: markup('투영검색 본문') });
+  const items = service.search('투영검색');
+  assert.ok(items.length > 0);
+  for (const item of items) {
+    assert.equal(item.lockerSessionId, undefined);
+    assert.equal(item.lockerClientId, undefined);
+  }
+});
