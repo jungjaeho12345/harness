@@ -1,6 +1,9 @@
 // httpModel — Model 계약(ADR-003)의 실제 REST/SSE 배선. 모든 transport(fetch/EventSource)는
 // 이 파일 안에만 있다. View/Controller는 절대 직접 fetch/EventSource를 호출하지 않는다.
 //
+// 계약: request는 reject하지 않는다 — 모든 실패는 { ok:false, reason }으로 정규화된다.
+// (호출자는 { ok, reason }만 다루면 되고, 네트워크 단절/비JSON 응답도 서버 실패와 같은 shape으로 흐른다.)
+//
 // 인증의 1차 수단은 서버가 발급한 HttpOnly 세션 쿠키(step3)다. 요청은 credentials:'include'로
 // 보내 브라우저가 쿠키를 자동 전송하게 한다. HttpOnly라 JS는 쿠키를 읽지 않으며, F5(새로고침)
 // 신원 복원은 서버 /api/session이 담당한다(쿠키 자동 전송 → user 반환).
@@ -9,6 +12,11 @@
 // 응답 shape은 server/index.js(step8) 라우트와 1:1로 맞춘다.
 
 const SESSION_STORAGE_KEY = 'yh.sessionId';
+
+// request() 실패 정규화 토큰 — 서버 사유(unauthenticated/forbidden/…)와 충돌하지 않는 클라이언트 전용 값.
+// export하지 않는다(뷰는 문자열 리터럴로 매핑한다 — 계약 표면 최소화).
+const NETWORK_ERROR = 'network-error';
+const INVALID_RESPONSE = 'invalid-response';
 
 // 클립보드(Ctrl+V) 이미지 File은 file.name이 비어 있고 확장자가 없어 서버 확장자 화이트리스트에서
 // invalid-file로 거부된다. MIME → 이미지 확장자 맵(서버 UPLOAD_EXT_ALLOWLIST의 이미지 항목과 정합).
@@ -91,8 +99,22 @@ export function createHttpModel({ base = '' } = {}) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    const res = await fetch(`${base}${path}${buildQuery(query)}`, init);
-    return res.json();
+    let res;
+    try {
+      res = await fetch(`${base}${path}${buildQuery(query)}`, init);
+    } catch {
+      // 서버에 닿지 못함(네트워크 단절·CORS·DNS). 호출자는 { ok, reason }만 다루므로
+      // 서버 실패 응답과 같은 shape으로 정규화한다(reject 금지 — 계약, 모듈 상단 주석).
+      return { ok: false, reason: NETWORK_ERROR };
+    }
+    try {
+      // JSON 파싱이 성공하면 상태코드와 무관하게 본문 그대로 반환한다 — 서버가 살아 있으면
+      // 500에도 { ok:false, reason } JSON을 준다(server/index.js 전역 에러 핸들러). 재해석 금지.
+      return await res.json();
+    } catch {
+      // 서버 밖(프록시/게이트웨이)에서 깨진 비JSON 응답(HTML 오류 페이지·빈 본문) — 본문을 신뢰할 수 없다.
+      return { ok: false, reason: INVALID_RESPONSE };
+    }
   }
 
   return {

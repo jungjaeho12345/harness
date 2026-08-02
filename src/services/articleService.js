@@ -5,7 +5,7 @@
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
-import { distributedKinds, embargoStatusFor } from './embargoPolicy.js';
+import { requiredKinds, distributedKinds, embargoStatusFor } from './embargoPolicy.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -69,14 +69,22 @@ function sanitizeFileRefFields(contents) {
 
 // 송고 성공 시 "지금 즉시" 배부할 대상 종류를 정한다 — news.md "엠바고 규칙" + ADR-008 (4)의 직역.
 //   엠바고 없음 → DPS      : 언론사 + 비언론사 전체 즉시 배부
+//   엠바고 설정 → DPS      : (레거시 DDH 경로 잔존 행 / 완결 후 고침의 재송고) 이미 배부된 kind에만
+//                            정정본을 보낸다 — 미도래분은 tick의 책임. 시각 비교는 여전히 하지 않는다.
 //   2차 엠바고만 → DES     : 송고 시 바로 언론사(press). 비언론사는 2차 시각에(phase 48 tick)
 //   1차 / 1+2차 → DES      : 즉시 배부 없음 — 1차 시각에 언론사, 2차 시각에 비언론사(phase 48 tick)
 //   그 외(R의 RDS 유지 등) : 배부 없음
 // 송고 직후 상태는 DES뿐이다(EPS는 배부가 실제 실행된 뒤 syncEmbargoStatus가 만든다) — EPS 분기를 두면
 // 두 상태가 같은 의미인 것처럼 오독된다. 레거시 EPS 행은 lifecycle에 EPS.send가 없어 여기까지 오지 못한다.
 // "지금이 엠바고 시각인가"는 여기서 판단하지 않는다(시점 판정은 tick의 책임 — 시각 비교 금지).
-export function distributionKindsForSend(status, contents = {}) {
-  if (status === 'DPS') return ['press', 'nonpress'];
+// distributed: 이 기사에서 이미 배부된 kind 목록(= embargoPolicy.distributedKinds(이력)). 조회는 호출자 책임.
+// 엠바고 설정 판정은 embargoPolicy.requiredKinds가 단일 출처다(!!contents.embargoAt 식 재구현 금지).
+export function distributionKindsForSend(status, contents = {}, distributed = []) {
+  if (status === 'DPS') {
+    if (requiredKinds(contents).length === 0) return ['press', 'nonpress'];
+    const done = Array.isArray(distributed) ? distributed : [];
+    return ['press', 'nonpress'].filter((kind) => done.includes(kind));
+  }
   if (status === 'DES' && !contents.embargoAt && contents.secondEmbargoAt) return ['press'];
   return [];
 }
@@ -187,9 +195,16 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     //  - 배부 실패가 송고(상태 전이)를 되돌리지 않는다 — 스풀 쓰기 실패로 기사가 묶이면 복구 수단이 없다.
     // 엠바고 판정은 DB에 반영된 최종 status와 DB의 엠바고 컬럼으로만 한다(클라이언트 값 불신 — ADR-004).
     if (action === 'send' && distributionService) {
-      const kinds = distributionKindsForSend(finalStatus, row.contents);
-      if (kinds.length > 0) {
-        try {
+      try {
+        // 이력 조회 실패·미주입은 "아는 배부 이력 없음([])"으로 폴백한다.
+        // → 엠바고가 설정된 DPS 재송고에서는 곧바로 kinds=[](배부 없음)가 되어 안전 기본값이 성립한다.
+        // 엠바고 미설정 기사는 distributed를 참조하지 않으므로 조회 장애가 일반 배부를 막지 않는다.
+        let already = [];
+        try { if (historyModel) already = distributedKinds(historyModel.queryByArticle(articleId)); }
+        catch { already = []; }
+
+        const kinds = distributionKindsForSend(finalStatus, row.contents, already);
+        if (kinds.length > 0) {
           Promise.resolve(distributionService.distribute(articleId, { kinds, actorUserId: userId ?? null }))
             .then((res) => {
               // 승격 근거는 distributed(실제 스풀 기록 성공 목록)뿐이다.
@@ -200,8 +215,8 @@ export function createArticleService({ articleModel, db, historyModel, distribut
               syncEmbargoStatus(articleId, { extraKinds: doneKinds, actorUserId: userId ?? null });
             })
             .catch(() => { /* 배부 실패는 송고를 막지 않는다(발송 결과는 앱이 알지 못한다 — ADR-008) */ });
-        } catch { /* 동기 throw도 동일하게 격리한다 */ }
-      }
+        }
+      } catch { /* 배부 지시 실패(동기 throw)는 송고를 막지 않는다(기존 격리 정책) */ }
     }
     return { ok: true, status: finalStatus };
   }

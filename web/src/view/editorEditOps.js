@@ -2,7 +2,7 @@
 // editorShortcuts.js의 transformTextLine/deleteLineAt와 동일 계층(DOM/transport 비의존).
 // 정책(news.md L161·165~169): "(끝)" 마커는 정렬 대상에서 제외하고 항상 최종 블록으로 유지
 // (insertContinueMarker/insertEmbedAfterLine의 마커 재정규화 동형), 임베드는 정렬 대상이 아니며
-// 자리를 옮기지 않는다(텍스트 값만 텍스트-블록 슬롯에 순서대로 되쓴다). 단어 삭제는 마커 줄이면 no-op
+// 자리를 옮기지 않는다(텍스트 값·정렬 쌍만 텍스트-블록 슬롯에 순서대로 되쓴다). 단어 삭제는 마커 줄이면 no-op
 // — 부분 삭제가 마커를 '끝)' 같은 손상 조각으로 만들어 송고 자격을 조용히 깨는 것을 막는다(editorFind 가드 동형).
 // 한줄 지우기 헬퍼는 여기 만들지 않는다 — deleteLineAt(Ctrl+D)이 단일 출처이며, 마커 줄 통째 삭제는
 // news.md "(끝)을 지우면 입력이 재개된다"에 따라 허용된다(결선은 step 4).
@@ -31,6 +31,7 @@ function sameBlocks(a, b) {
 }
 
 // 문서 전체 텍스트 줄 값을 localeCompare 오름차순 정렬한다(안정 정렬 — 동일 값 상대 순서 보존, 빈 줄도 '' 값으로 함께).
+// align은 텍스트 값을 따라 이동한다(줄=텍스트+정렬 한 쌍) — phase 45 step0이 보류한 설계 결정을 phase 49 step4에서 확정.
 // "(끝)" 마커·임베드는 정렬 대상 제외. 임베드는 제자리 유지, 마커는 최종 블록으로 재정규화
 // (입력이 malformed로 마커가 중간에 있어도 최종 보장). 반환 { blocks, changed }.
 export function sortDocument(blocks) {
@@ -40,19 +41,21 @@ export function sortDocument(blocks) {
   for (let i = 0; i < list.length; i += 1) {
     if (isTextBlock(list[i]) && !isEndMarkerBlock(list[i])) {
       slots.push(i);
-      values.push(list[i].text);
+      values.push({ text: list[i].text, align: list[i].align });
     }
   }
-  const sorted = values.slice().sort((a, b) => a.localeCompare(b));
+  const sorted = values.slice().sort((a, b) => a.text.localeCompare(b.text));
   const next = list.slice();
-  for (let k = 0; k < slots.length; k += 1) next[slots[k]] = textBlock(sorted[k]);
-  const hasEnd = next.some(isEndMarkerBlock);
+  for (let k = 0; k < slots.length; k += 1) next[slots[k]] = textBlock(sorted[k].text, sorted[k].align);
+  // 마커 재정규화 — 문서 순서상 첫 마커의 align도 승계한다(재정규화가 정렬을 지우지 않게). 텍스트는 정규 END_MARKER로 되쓴다.
+  const prevMarker = next.find(isEndMarkerBlock);
   const ordered = next.filter((b) => !isEndMarkerBlock(b));
-  if (hasEnd) ordered.push(textBlock(END_MARKER));
+  if (prevMarker) ordered.push(textBlock(END_MARKER, prevMarker.align));
   return { blocks: ordered, changed: !sameBlocks(ordered, list) };
 }
 
 // caretLineIndex(텍스트-줄 인덱스)가 속한 문단 내부의 텍스트 줄 값만 localeCompare 오름차순 정렬한다.
+// align은 텍스트 값을 따라 이동한다(줄=텍스트+정렬 한 쌍 — sortDocument와 동일 규칙, phase 49 step4 확정).
 // 문단 정의는 paragraphBoundsAt(빈 줄 경계 — editorStats.paragraphIndex 동일). 범위 안 마커 줄은
 // 정렬 대상에서 제외하고 위치 보존(정상 문서에선 문단과 마커가 겹치지 않지만 방어). 임베드는
 // blocksToText에서 이미 빠져 문단 계산·정렬에 무관(불변). 반환 { blocks, changed }.
@@ -65,17 +68,19 @@ export function sortParagraph(blocks, caretLineIndex) {
   for (let ln = startLine; ln <= endLine; ln += 1) {
     if (String(linesArr[ln]).trim() === END_MARKER) continue;
     slotLines.push(ln);
-    values.push(linesArr[ln]);
+    const bi = textLineToBlockIndex(list, ln);
+    values.push({ text: linesArr[ln], align: bi >= 0 ? list[bi].align : undefined });
   }
   if (values.length <= 1) return { blocks: list, changed: false }; // 단일 줄 문단/빈 줄 — 정렬 대상 1개 이하.
-  const sorted = values.slice().sort((a, b) => a.localeCompare(b));
+  const sorted = values.slice().sort((a, b) => a.text.localeCompare(b.text));
   const next = list.slice();
   let changed = false;
   for (let k = 0; k < slotLines.length; k += 1) {
     const bi = textLineToBlockIndex(next, slotLines[k]);
     if (bi < 0) continue; // 방어적: 매핑 실패 슬롯은 건드리지 않는다.
-    if (next[bi].text !== sorted[k]) {
-      next[bi] = textBlock(sorted[k]);
+    // 텍스트 OR 정렬이 다르면 되쓴다 — 동일 텍스트 줄 사이에서도 align은 실제로 이동하므로 텍스트만 보고 skip 금지.
+    if (next[bi].text !== sorted[k].text || next[bi].align !== sorted[k].align) {
+      next[bi] = textBlock(sorted[k].text, sorted[k].align);
       changed = true;
     }
   }

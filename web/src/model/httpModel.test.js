@@ -573,6 +573,74 @@ describe('createHttpModel', () => {
     expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
     expect(instances[0].url).not.toContain('session=');
   });
+
+  // request()는 reject하지 않는다 — 모든 실패를 서버 실패 응답과 같은 shape({ ok:false, reason })으로
+  // 정규화한다. 화면은 { ok, reason }만 다루므로 reject는 unhandled rejection + 무반응 UI가 된다(step7).
+  describe('failure normalization — request never rejects', () => {
+    it('resolves { ok:false, reason:"network-error" } when fetch itself rejects (server unreachable)', async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      const model = createHttpModel({ base: BASE });
+      const r = await model.queryDistributionTargets();
+      // 두 키만 — status/url/에러 메시지·스택을 싣지 않는다(에러 원문 유출·shape 확장 금지).
+      expect(r).toEqual({ ok: false, reason: 'network-error' });
+    });
+
+    it('resolves { ok:false, reason:"invalid-response" } when the body is not JSON (proxy HTML error page)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => { throw new SyntaxError('Unexpected token <'); },
+      });
+      const model = createHttpModel({ base: BASE });
+      const r = await model.queryDistributionTargets();
+      expect(r).toEqual({ ok: false, reason: 'invalid-response' });
+    });
+
+    it('returns a JSON failure body untouched — normalization never overwrites server reasons (403 forbidden)', async () => {
+      // 서버가 살아 있으면 항상 JSON({ ok:false, reason })을 준다 — 상태코드로 사유를 재작성하지 않는다.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ ok: false, reason: 'forbidden' }),
+      });
+      const model = createHttpModel({ base: BASE });
+      const r = await model.queryDistributionTargets();
+      expect(r).toEqual({ ok: false, reason: 'forbidden' });
+    });
+
+    it('returns a JSON success body untouched (regression)', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ id: 1, name: 'KBS' }] }));
+      const model = createHttpModel({ base: BASE });
+      const r = await model.queryDistributionTargets();
+      expect(r).toEqual({ ok: true, items: [{ id: 1, name: 'KBS' }] });
+    });
+
+    it('login normalized to network-error never stores a session id (no side effect)', async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      const model = createHttpModel({ base: BASE });
+      const r = await model.login('kim', 'pw');
+      expect(r).toEqual({ ok: false, reason: 'network-error' });
+      expect(sessionStorage.getItem('yh.sessionId')).toBeNull();
+    });
+
+    it('still assembles the request exactly as before when fetch fails (path/method/headers/credentials)', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-f', user: {} }));
+      const model = createHttpModel({ base: BASE });
+      await model.login('a', 'b'); // sid-f 보관 → 이후 요청에 x-session-id 폴백 첨부.
+
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      const r = await model.applyAction('AKR1', 'send');
+      expect(r).toEqual({ ok: false, reason: 'network-error' });
+
+      const [url, init] = callAt(1);
+      expect(url).toBe(`${BASE}/api/articles/AKR1/action`);
+      expect(init.method).toBe('POST');
+      expect(init.credentials).toBe('include');
+      expect(init.headers['x-session-id']).toBe('sid-f');
+      expect(init.headers['Content-Type']).toBe('application/json');
+      expect(JSON.parse(init.body)).toEqual({ action: 'send' });
+    });
+  });
 });
 
 describe('resolveUploadFilename', () => {

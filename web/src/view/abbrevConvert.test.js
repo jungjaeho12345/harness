@@ -140,3 +140,30 @@ describe('expandAbbrevInBlocks — 블록 단위 약어 치환', () => {
     expect(out[0]).not.toBe(original[0]);
   });
 });
+
+describe('expandAbbrevInBlocks — 정렬(align) 승계', () => {
+  it('정렬된 줄의 약어 확장 후 align을 유지한다', () => {
+    const { blocks, changed } = expandAbbrevInBlocks(
+      [textBlock('정부 발표', 'right')],
+      [{ short: '정부', long: 'X' }],
+    );
+    expect(changed).toBe(true);
+    expect(blocks[0].text).toBe('X 발표');
+    expect(blocks[0].align).toBe('right');
+  });
+
+  it('미정렬 줄 확장 결과에는 align 키가 생기지 않는다(스퍼리어스 금지)', () => {
+    const { blocks } = expandAbbrevInBlocks([textBlock('정부 발표')], [{ short: '정부', long: 'X' }]);
+    expect(blocks[0].text).toBe('X 발표');
+    expect('align' in blocks[0]).toBe(false);
+  });
+
+  it('확장이 일어나지 않은 정렬 줄은 원본 그대로 유지된다(align 포함)', () => {
+    const { blocks, changed } = expandAbbrevInBlocks(
+      [textBlock('일반 문장', 'center')],
+      [{ short: '정부', long: 'X' }],
+    );
+    expect(changed).toBe(false);
+    expect(blocks[0]).toEqual(textBlock('일반 문장', 'center'));
+  });
+});

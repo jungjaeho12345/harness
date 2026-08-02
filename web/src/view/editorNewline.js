@@ -28,32 +28,37 @@ export function isInputBlocked(text, caretOffset) {
   return Number(caretOffset) >= idx;
 }
 
+// UTF-16 서로게이트 판정 헬퍼 — shouldOverwriteNextChar/overwriteExtendLength가 공유(마법 숫자 중복 방지).
+// astral 문자(이모지 등)는 high(0xD800~0xDBFF) + low(0xDC00~0xDFFF) 2 코드유닛 페어로 표현된다.
+const isHighSurrogate = (code) => code >= 0xD800 && code <= 0xDBFF;
+const isLowSurrogate = (code) => code >= 0xDC00 && code <= 0xDFFF;
+
 // 수정(overwrite) 모드에서 캐럿 바로 뒤 글자를 덮어쓸 대상인지 — 순수 판정(DOM 비의존).
 // text = blocksToText(blocks)(텍스트 블록만 '\n'으로 조인, 임베드 제외). offset = readCaret().offset(절대 텍스트 좌표).
 // true: text[offset]가 같은 줄 일반 글자(캐럿 뒤 1글자를 selection 확장해 네이티브 입력으로 대체). 아래는 전부 false(삽입 폴백):
 //   - offset이 정수가 아니거나 음수/문서 끝 초과(>= length) — 무효/문서 끝.
 //   - text[offset] === '\n' — 줄 끝(다음 줄·임베드 앞 침범 금지). 임베드는 blocksToText에서 제외되어 경계가 '\n'/문서 끝으로 나타난다.
 //   - isInputBlocked(text, offset) — "(끝)" 마커 시작 이상(입력 차단 계약 재사용). 마커 직전은 '\n'(마커 자기 줄)이라 위에서 이미 차단.
+//   - offset이 서로게이트 페어 내부(low 서로게이트이고 직전이 high) — 반쪽(low)만 대체되면 lone high가 남아
+//     본문에 깨진 코드유닛이 저장·전파되므로 차단. lone low(직전이 high 아님)는 페어가 아니라 허용(반쪽 대체 문제 없음).
 export function shouldOverwriteNextChar(text, offset) {
   const s = String(text ?? '');
   if (!Number.isInteger(offset) || offset < 0 || offset >= s.length) return false;
   if (s[offset] === '\n') return false;
   if (isInputBlocked(s, offset)) return false;
+  if (offset > 0 && isLowSurrogate(s.charCodeAt(offset)) && isHighSurrogate(s.charCodeAt(offset - 1))) return false;
   return true;
 }
 
 // 수정(overwrite) 모드에서 캐럿 뒤 "한 문자(코드포인트)"를 덮어쓸 때 확장할 UTF-16 코드유닛 수(1 또는 2).
 // text[offset]가 high 서로게이트이고 text[offset+1]가 low 서로게이트면 2(astral 문자=이모지 온전히 대체), 아니면 1.
 // convertSimpTrad의 코드포인트 단위 순회와 동형(서로게이트 페어 인지). 무효/범위 밖/lone 서로게이트는 1(안전 기본).
+// 페어 내부 offset(low 위치)은 게이트(shouldOverwriteNextChar)에서 이미 걸러져 여기 도달하지 않는다.
 export function overwriteExtendLength(text, offset) {
   const s = String(text ?? '');
   const i = Number(offset);
   if (!Number.isInteger(i) || i < 0 || i >= s.length) return 1;
-  const hi = s.charCodeAt(i);
-  if (hi >= 0xD800 && hi <= 0xDBFF && i + 1 < s.length) {
-    const lo = s.charCodeAt(i + 1);
-    if (lo >= 0xDC00 && lo <= 0xDFFF) return 2;
-  }
+  if (isHighSurrogate(s.charCodeAt(i)) && i + 1 < s.length && isLowSurrogate(s.charCodeAt(i + 1))) return 2;
   return 1;
 }
 

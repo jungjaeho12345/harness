@@ -60,7 +60,14 @@ function setup({ distributionService, contents = {}, body = BODY } = {}) {
 
   const { articleId } = service.create({ title: '제목', markupVersion: body, author: 'r1', ...contents });
   if (contents.status) articleModel.update(articleId, { contents: { status: contents.status } });
-  return { db, service, articleId, articleModel };
+  return { db, service, articleId, articleModel, historyModel };
+}
+
+// 실제 배부와 동일한 근거 행(eventType='distribute', action=kind)을 이력에 직접 심는다.
+function seedDistributed(historyModel, articleId, kinds) {
+  for (const kind of kinds) {
+    historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: '2026-07-28T00:00:00.000Z' });
+  }
 }
 
 // 훅은 fire-and-forget이므로 마이크로태스크 큐를 한 바퀴 비운 뒤 단언한다.
@@ -206,6 +213,200 @@ test('DPS 재송고와 DDH→DPS 송고도 press·nonpress로 배부한다', asy
     assert.deepEqual(r, { ok: true, status: 'DPS' }, status);
     assert.deepEqual(distributionService.calls[0].kinds, ['press', 'nonpress'], status);
   }
+});
+
+// ─── DPS 재송고 × 엠바고 설정(step 49-1) ─────────────────────────────────────
+// "DPS인데 엠바고가 설정돼 있다"(phase 47 이전 DDH 경로 레거시 / 완결 후 고침 편집 잔존)의
+// 재송고는 이미 배부된 kind에만 정정본을 보낸다 — 미배부 kind는 tick이 도래 시각에 배부한다.
+// 시각 비교는 여기서 하지 않는다(tick 단일 책임).
+
+const FUTURE_1ST = '2999-01-01T00:00:00.000Z';
+const FUTURE_2ND = '2999-01-02T00:00:00.000Z';
+
+test('엠바고 없는 DPS 재송고는 이력 유무와 무관하게 press·nonpress 전체 배부(회귀 가드)', async () => {
+  for (const seeded of [[], ['press']]) {
+    const distributionService = fakeDistribution();
+    const { service, articleId, historyModel } = setup({ distributionService, contents: { status: 'DPS' } });
+    seedDistributed(historyModel, articleId, seeded);
+
+    const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+    await flush();
+
+    const label = JSON.stringify(seeded);
+    assert.deepEqual(r, { ok: true, status: 'DPS' }, label);
+    assert.equal(distributionService.calls.length, 1, label);
+    assert.deepEqual(distributionService.calls[0].kinds, ['press', 'nonpress'], label);
+  }
+});
+
+test('엠바고 설정 + 배부 이력 0건인 DPS(레거시) 재송고 → 배부 호출 0회(누수 차단)', async () => {
+  const distributionService = fakeDistribution();
+  const { service, articleId, db } = setup({
+    distributionService,
+    contents: { status: 'DPS', embargoAt: FUTURE_1ST, secondEmbargoAt: FUTURE_2ND },
+  });
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 0, '미배부 kind는 tick의 책임 — 즉시 배부 금지');
+  assert.equal(statusOf(db, articleId), 'DPS');
+  assert.deepEqual(statusHistory(db, articleId), [['send', 'DPS', 'DPS']], 'status 이력은 send 1건만');
+});
+
+test('엠바고 설정 DPS 재송고 — press만 배부됐던 기사는 press에만 정정본을 보낸다(부분 배부)', async () => {
+  const distributionService = fakeDistribution();
+  const { service, articleId, historyModel } = setup({
+    distributionService,
+    contents: { status: 'DPS', embargoAt: FUTURE_1ST, secondEmbargoAt: FUTURE_2ND },
+  });
+  seedDistributed(historyModel, articleId, ['press']);
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 1);
+  assert.deepEqual(distributionService.calls[0].kinds, ['press'], 'nonpress는 미배부 — 포함 금지');
+});
+
+test('엠바고 설정 DPS 재송고 — press·nonpress 모두 배부 완결된 기사는 전체에 정정본(완결 후 정정본)', async () => {
+  const distributionService = fakeDistribution();
+  const { service, articleId, historyModel } = setup({
+    distributionService,
+    contents: { status: 'DPS', embargoAt: FUTURE_1ST, secondEmbargoAt: FUTURE_2ND },
+  });
+  seedDistributed(historyModel, articleId, ['press', 'nonpress']);
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 1);
+  assert.deepEqual(distributionService.calls[0].kinds, ['press', 'nonpress']);
+});
+
+test('2차 엠바고만 설정된 레거시 DPS + press 이력 → press에만 재배부', async () => {
+  const distributionService = fakeDistribution();
+  const { service, articleId, historyModel } = setup({
+    distributionService,
+    contents: { status: 'DPS', secondEmbargoAt: FUTURE_2ND },
+  });
+  seedDistributed(historyModel, articleId, ['press']);
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 1);
+  assert.deepEqual(distributionService.calls[0].kinds, ['press']);
+});
+
+test('도래한(과거) 엠바고 DPS 재송고도 시각을 보지 않는다 — 이력 기준만(미배부 확장 금지)', async () => {
+  // FUTURE 케이스(위)는 "미도래여도 이력이 있으면 배부"를 잠근다. 이 테스트는 반대 방향 —
+  // 시각이 이미 지났어도 송고 훅이 시각 비교로 배부를 넓히면 안 된다(미배부 kind 배부는 tick 단일 책임).
+  // 구현에 embargoAt <= now 류 비교가 들어가면 아래 두 케이스가 red가 된다.
+  const PAST_1ST = '2020-01-01T00:00:00.000Z';
+  const PAST_2ND = '2020-01-02T00:00:00.000Z';
+  for (const [seeded, expected] of [[[], []], [['press'], ['press']]]) {
+    const distributionService = fakeDistribution();
+    const { service, articleId, historyModel } = setup({
+      distributionService,
+      contents: { status: 'DPS', embargoAt: PAST_1ST, secondEmbargoAt: PAST_2ND },
+    });
+    seedDistributed(historyModel, articleId, seeded);
+
+    const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+    await flush();
+
+    const label = `이력 ${JSON.stringify(seeded)}`;
+    assert.deepEqual(r, { ok: true, status: 'DPS' }, label);
+    if (expected.length === 0) {
+      assert.equal(distributionService.calls.length, 0, `${label} — 시각이 지났어도 즉시 배부 금지(tick 책임)`);
+    } else {
+      assert.equal(distributionService.calls.length, 1, label);
+      assert.deepEqual(distributionService.calls[0].kinds, expected, `${label} — 시각 경과로 nonpress를 넓히면 안 된다`);
+    }
+  }
+});
+
+test('historyModel 미주입 + 엠바고 설정 DPS 재송고 → 배부 호출 0회(안전 기본값)', async () => {
+  const distributionService = fakeDistribution();
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const service = createArticleService({ articleModel, db, distributionService });
+
+  const { articleId } = service.create({
+    title: '제목', markupVersion: BODY, author: 'r1', embargoAt: FUTURE_1ST, secondEmbargoAt: FUTURE_2ND,
+  });
+  articleModel.update(articleId, { contents: { status: 'DPS' } });
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 0, '이력을 모르면 배부하지 않는다');
+  assert.equal(statusOf(db, articleId), 'DPS');
+});
+
+test('이력 조회(queryByArticle) 예외는 격리된다 — 엠바고 DPS는 배부 0회, applyAction은 동기 ok 반환', async () => {
+  const distributionService = fakeDistribution();
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const realHistory = createArticleHistoryModel(db);
+  // insert는 정상(이력 기록 유지), queryByArticle만 throw하는 가짜 historyModel.
+  const historyModel = {
+    insert: (rec) => realHistory.insert(rec),
+    queryByArticle() { throw new Error('history query broken'); },
+    querySnapshotById: (...args) => realHistory.querySnapshotById(...args),
+  };
+  const service = createArticleService({ articleModel, db, historyModel, distributionService });
+
+  const { articleId } = service.create({
+    title: '제목', markupVersion: BODY, author: 'r1', embargoAt: FUTURE_1ST, secondEmbargoAt: FUTURE_2ND,
+  });
+  articleModel.update(articleId, { contents: { status: 'DPS' } });
+
+  // (a) throw 없이 동기 반환 — 송고는 이미 커밋됐으므로 500으로 보이면 안 된다.
+  let r;
+  assert.doesNotThrow(() => { r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' }); });
+  assert.equal(typeof r.then, 'undefined', '동기 반환 계약 유지');
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  await flush();
+
+  // (b) 조회 실패 폴백([]) → 엠바고 설정 DPS는 배부 없음(안전 기본값).
+  assert.equal(distributionService.calls.length, 0);
+  // (c) status 전이·이력 기록은 정상 수행.
+  assert.equal(statusOf(db, articleId), 'DPS');
+  assert.deepEqual(statusHistory(db, articleId), [['send', 'DPS', 'DPS']]);
+});
+
+test('이력 조회 예외에도 엠바고 없는 DPS 재송고 배부는 정상 동작한다(폴백이 일반 배부를 막지 않는다)', async () => {
+  const distributionService = fakeDistribution();
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const realHistory = createArticleHistoryModel(db);
+  const historyModel = {
+    insert: (rec) => realHistory.insert(rec),
+    queryByArticle() { throw new Error('history query broken'); },
+    querySnapshotById: (...args) => realHistory.querySnapshotById(...args),
+  };
+  const service = createArticleService({ articleModel, db, historyModel, distributionService });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: BODY, author: 'r1' });
+  articleModel.update(articleId, { contents: { status: 'DPS' } });
+
+  const r = service.applyAction(articleId, 'D', 'send', { userId: 'desk1' });
+  await flush();
+
+  assert.deepEqual(r, { ok: true, status: 'DPS' });
+  assert.equal(distributionService.calls.length, 1, '엠바고 미설정은 distributed를 참조하지 않는다');
+  assert.deepEqual(distributionService.calls[0].kinds, ['press', 'nonpress']);
+  assert.equal(statusOf(db, articleId), 'DPS');
 });
 
 test('배부 실패·예외는 송고 결과와 상태 전이·이력을 바꾸지 않는다', async () => {

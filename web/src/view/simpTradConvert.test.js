@@ -128,3 +128,24 @@ describe('convertSimpTradInBlocks — 블록 단위 간↔번 치환', () => {
     expect(out[0]).not.toBe(original[0]);
   });
 });
+
+describe('convertSimpTradInBlocks — 정렬(align) 승계', () => {
+  it('정렬된 줄의 간→번 변환 후 align을 유지한다', () => {
+    const { blocks, changed } = convertSimpTradInBlocks([textBlock('国学', 'justify')], 'toTrad');
+    expect(changed).toBe(true);
+    expect(blocks[0].text).toBe('國學');
+    expect(blocks[0].align).toBe('justify');
+  });
+
+  it('미정렬 줄 변환 결과에는 align 키가 생기지 않는다(스퍼리어스 금지)', () => {
+    const { blocks } = convertSimpTradInBlocks([textBlock('国')], 'toTrad');
+    expect(blocks[0].text).toBe('國');
+    expect('align' in blocks[0]).toBe(false);
+  });
+
+  it('변환이 일어나지 않은 정렬 줄은 원본 그대로 유지된다(align 포함)', () => {
+    const { blocks, changed } = convertSimpTradInBlocks([textBlock('한글 abc', 'center')], 'toTrad');
+    expect(changed).toBe(false);
+    expect(blocks[0]).toEqual(textBlock('한글 abc', 'center'));
+  });
+});

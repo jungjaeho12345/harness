@@ -676,6 +676,43 @@ test('distributedAt은 distributionService가 갱신한다 — 1차 후 T1, 2차
   assert.equal(JSON.stringify(r2).includes('portal'), false);
 });
 
+test('실물 결선: kind 사이 상태 전이 중단은 no-active-target이 아니라 status-changed로 보고된다', async () => {
+  const h = harness();
+  const id = h.addArticle({ status: 'DES', embargoAt: T1, secondEmbargoAt: T2 });
+  h.distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y', createdAt: T0, updatedAt: T0 });
+  h.distributionTargetModel.insert({ name: '포털', kind: 'nonpress', spoolDir: 'portal', active: 'Y', createdAt: T0, updatedAt: T0 });
+
+  // press 스풀 쓰기 await 도중 데스크가 삭제 승인(DPD) — 레이스를 결정적으로 재현.
+  const writer = {
+    calls: [],
+    async write(args) {
+      writer.calls.push(args.spoolDir);
+      if (writer.calls.length === 1) h.articleModel.update(id, { contents: { status: 'DPD' } });
+      return { ok: true, file: `/spool/${args.spoolDir}/${id}.json` };
+    },
+  };
+  const dist = createDistributionService({
+    distributionTargetModel: h.distributionTargetModel,
+    articleModel: h.articleModel,
+    historyModel: h.historyModel,
+    spoolWriter: writer,
+    now: () => T2,
+  });
+
+  const r = await tickWith(h, { distributionService: dist, now: () => T2 }).run({ actorUserId: 'system' });
+
+  assert.deepEqual(writer.calls, ['kbs'], 'nonpress 쓰기는 일어나지 않는다');
+  // 활성 수신처(portal)가 있는데 "수신처 0곳"으로 오보하면 운영자가 원인을 잘못 읽는다.
+  assert.equal(r.failed.some((f) => f.reason === 'no-active-target'), false);
+  assert.deepEqual(
+    r.failed.filter((f) => f.kind === 'nonpress'),
+    [{ articleId: id, targetId: null, kind: 'nonpress', reason: 'status-changed' }],
+  );
+  assert.equal(r.distributed.length, 1);
+  assert.deepEqual(r.distributed[0].kinds, ['press'], '중단 전 성공한 press 배부는 사실로 남는다');
+  assert.equal(h.statusOf(id), 'DPD', 'DPD는 불변 상태 — tick도 가드도 status를 되돌리지 않는다');
+});
+
 // ── DB 비파괴 ────────────────────────────────────────────────────────────
 
 test('DB 비파괴: 행 수·송고 이력·sentAt/sender/본문은 tick 후에도 그대로다', async () => {

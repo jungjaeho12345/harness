@@ -9,12 +9,36 @@ const BLANK = {
   userId: '', name: '', password: '', role: 'R', department: '', departmentCode: '', active: 'Y',
 };
 
+// 서버 거부 사유(Z 게이트·전역 에러 핸들러·httpModel 정규화 토큰) → 사용자 문구 (DistMgmtPage 동형).
+// CRITICAL: 사유 토큰만 문구로 매핑한다 — 비밀번호·서버 응답의 임의 필드는 절대 렌더하지 않는다.
+const REASON_MESSAGE = {
+  unauthenticated: '로그인이 필요합니다. 다시 로그인해 주세요.',
+  forbidden: '권한이 없습니다. 사용자 관리는 관리자(Z) 전용입니다.',
+  'internal-error': '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+  'network-error': '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  'invalid-response': '서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+};
+
+function reasonMessage(reason) {
+  return REASON_MESSAGE[reason] ?? `요청을 처리하지 못했습니다 (${reason}).`;
+}
+
 export function UserMgmtPage() {
   const { users, refresh, createUser, updateUser } = useUserMgmtController();
   const [form, setForm] = useState(BLANK);
   const [editing, setEditing] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // 진입 시 조회 실패도 표시한다 — 이 refresh만 조회 실패 메시지를 띄운다. 쓰기 핸들러의 내부
+  // 재조회 결과는 관찰하지 않는다(관찰하면 성공한 재조회가 쓰기 실패 메시지를 지우는 회귀가 생긴다).
+  useEffect(() => {
+    let alive = true; // 언마운트(cleanup) 후 setState 금지.
+    (async () => {
+      const r = await refresh();
+      if (alive && (!r || r.ok !== true)) setError(reasonMessage(r && r.reason));
+    })();
+    return () => { alive = false; };
+  }, [refresh]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -26,18 +50,23 @@ export function UserMgmtPage() {
       role: u.role ?? 'R', department: u.department ?? '',
       departmentCode: u.departmentCode ?? '', active: u.active ?? 'Y',
     });
+    setError('');
   };
+
+  const reset = () => { setForm(BLANK); setEditing(false); setError(''); };
 
   const onSubmit = async (e) => {
     e.preventDefault();
+    let r;
     if (editing) {
       const { userId, ...fields } = form;
-      await updateUser(userId, fields); // 빈 비밀번호는 컨트롤러가 제거.
+      r = await updateUser(userId, fields); // 빈 비밀번호는 컨트롤러가 제거.
     } else {
-      await createUser(form);
+      r = await createUser(form);
     }
-    setForm(BLANK);
-    setEditing(false);
+    if (r && r.ok) { reset(); return; }
+    // 실패 시 폼·편집 상태를 유지한다(고쳐서 재제출). 문구는 사유 토큰 매핑뿐 — 입력값 미포함.
+    setError(reasonMessage(r && r.reason));
   };
 
   return (
@@ -89,8 +118,9 @@ export function UserMgmtPage() {
         </div>
         <button type="submit" className="yh-btn yh-btn--primary">{editing ? '수정' : '생성'}</button>
         {editing && (
-          <button type="button" className="yh-btn" onClick={() => { setForm(BLANK); setEditing(false); }}>취소</button>
+          <button type="button" className="yh-btn" onClick={reset}>취소</button>
         )}
+        {error && <p role="alert" data-testid="user-error">{error}</p>}
       </form>
 
       <table className="yh-table">
