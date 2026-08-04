@@ -110,6 +110,31 @@ const READONLY_LABELS = [
 
 const ACTION_VERB = { send: '송고', hold: '보류', kill: 'KILL' };
 
+// 송고/보류/KILL 실패 안내 문구(53-6). 성공 시에는 어떤 메시지도 띄우지 않는다(news.md 149행 —
+// "요청이 성공하면 상태 메시지를 표시하지 않는다"). 실패에만 안내하는 이유: 컨트롤러가 저장(PUT) 실패 시
+// 전이·잠금 해제·탭 리셋을 전부 건너뛰므로(53-4) 실패가 화면상 "아무 일도 일어나지 않음"으로만 나타나
+// 사용자가 송고된 줄 알거나 같은 버튼을 반복해 누른다. 그래서 (1) 요청이 중단됐다는 사실과
+// (2) 편집 내용이 그대로 남아 있다는 사실을 함께 알린다(초안·히스토리는 실패 시 지우지 않는다).
+const SUBMIT_FAIL_KEEP = '편집 내용은 그대로 남아 있습니다.';
+
+// 사유 토큰은 참고 정보로만 괄호에 덧붙인다. 미상(null·undefined·비문자열·'')이면 아무것도 붙이지 않아
+// '(null)'/'(undefined)' 같은 내부 값이 문구로 새지 않게 한다(useWriteController.lockFailMessage와 같은 규율).
+function submitFailReasonSuffix(reason) {
+  return typeof reason === 'string' && reason !== '' ? ` (사유: ${reason})` : '';
+}
+
+// result는 컨트롤러 submit의 반환값 — 저장 실패는 { ok:false, reason:'save-failed', saveReason }(53-4 계약),
+// 전이 거부는 applyAction 결과 그대로({ ok:false, reason:'forbidden-transition' } 등), 모델 이상값이면 값 자체가
+// 없을 수도 있다. 저장 실패만 문구를 구분한다 — 그때는 서버에 편집분이 반영되지 않았고 재시도 대상이 저장이다.
+function submitFailMessage(action, result) {
+  const reason = result && result.reason;
+  if (reason === 'save-failed') {
+    return `저장에 실패해 ${ACTION_VERB[action]}하지 않았습니다. ${SUBMIT_FAIL_KEEP}`
+      + submitFailReasonSuffix(result.saveReason);
+  }
+  return `${ACTION_VERB[action]}에 실패했습니다. ${SUBMIT_FAIL_KEEP}${submitFailReasonSuffix(reason)}`;
+}
+
 // 편집>되돌리기/다시실행(37-editor-undo-redo) — 탭별 본문 히스토리 상한과 타이핑 코얼레싱 창.
 const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — body 문자열 × 100 × 열린 탭. 이미지는 업로드 경로라 base64 폭증 없음).
 const COALESCE_MS = 500; // 같은 탭 타이핑 연타를 하나의 undo 단계로 합치는 시간 창.
@@ -1462,7 +1487,10 @@ export function WriterPage() {
     const r = await submit(action, auto);
     // 히스토리도 함께 폐기 — 안 지우면 빈 새 기사 탭에서 undo가 방금 송고한 본문을 되살린다(문서-로컬 이월).
     // 다음 렌더의 lazy 시드가 blank body로 베이스라인을 다시 만든다.
-    if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }
+    if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); return; }
+    // 실패 — 저장 실패든 전이 거부든 상태는 전혀 바뀌지 않았다. 초안·히스토리·탭은 그대로 두고(편집분 복구
+    // 수단 보존) 사실만 알린다. 재시도는 사용자가 결정한다(자동 재시도 금지 — 53-4와 같은 이유).
+    window.alert(submitFailMessage(action, r));
   };
 
   // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
