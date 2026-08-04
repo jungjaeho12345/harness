@@ -308,6 +308,23 @@ function caretBlocked(root) {
   return !!caret && isInputBlocked(readEditorText(root), caret.offset);
 }
 
+// dataTransfer(드롭)에서 첫 이미지 파일을 찾는다 — files 우선, 없으면 items에서 getAsFile로 꺼낸다.
+// 판정 규칙은 handlePaste의 클립보드 이미지 판정과 같다(type이 'image/'로 시작).
+function findImageFile(dt) {
+  if (!dt) return null;
+  const files = dt.files ? Array.from(dt.files) : [];
+  const direct = files.find((f) => f && typeof f.type === 'string' && f.type.startsWith('image/'));
+  if (direct) return direct;
+  const items = dt.items ? Array.from(dt.items) : [];
+  for (const it of items) {
+    if (it && typeof it.type === 'string' && it.type.startsWith('image/') && typeof it.getAsFile === 'function') {
+      const f = it.getAsFile();
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
 // 삽입성 키 — 문자 입력과 Enter만. 삭제/이동/선택 키(Backspace/Delete/방향키/Ctrl·Meta 조합)는 제외한다(news.md: 삭제/이동/선택은 항상 허용).
 function isInsertionKey(e) {
   if (e.key === 'Enter') return true;
@@ -365,6 +382,7 @@ export function Editor({
   onKeyDown,
   onTextChange,
   onPasteImageFile,
+  onDropImageFile, // 이미지 파일 드롭 위임 — (file, caret). 없으면 드롭은 차단만 된다(환경설정 off).
   onCaretChange,
   pendingCaretLine = null,
   spellcheck = false,
@@ -562,6 +580,29 @@ export function Editor({
     }
   };
 
+  // 드래그앤드롭 — 네이티브 드롭은 전면 차단하고 이미지 파일만 상위로 위임한다(53-2 B 결함).
+  // 왜 전면 차단인가: 핸들러가 없으면 브라우저가 드롭 지점(마커 줄 안쪽 포함)에 텍스트/DOM을 그대로 떨구고
+  //   handleInput이 그것을 본문으로 커밋한다. 마커 줄이 '(끝)단어'가 되면 serializeBodyFromBlocks(trim 정확
+  //   비교)는 마커를 놓쳐 재정규화·정렬 제외·치환 가드가 전부 풀리는데, 송고 가드 hasEndMarker는 substring이라
+  //   그대로 통과한다 → 오염된 본문이 송고·배부된다(ADR-008: 송고 즉시 스풀 기록 — 되돌릴 수 없다).
+  // 왜 이미지만 위임하나: news.md 192행("이미지를 드래그앤 드롭이 허용된다. 기본값은 된다")이 정의하는 유일한
+  //   드롭 스펙이고, 위임 계약은 붙여넣기 이미지와 같다(raw File → 상위가 업로드→경로 임베드, ADR-003).
+  //   텍스트/HTML 드롭과 드래그 이동(drag-move)은 스펙에 없고 원본 범위 삭제 의미론이 필요해 결선하지 않는다.
+  // caretBlocked로 이미지 드롭을 막지 않는 이유는 handlePaste의 이미지 분기와 같다 — 임베드 삽입은
+  //   insertEmbedAfterLine이 "(끝)"을 항상 최종 블록으로 재정규화하므로 마커 무결성이 유지된다.
+  const handleDragOver = (e) => {
+    e.preventDefault(); // drop 이벤트 수신 보장 + 네이티브 삽입 준비(드롭 캐럿) 차단
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); // 어떤 데이터든 브라우저가 편집 div에 직접 떨구지 못하게 한다(조건 분기보다 먼저).
+    if (!onDropImageFile) return; // 드롭 위임 비활성(환경설정 off) — 차단만.
+    const file = findImageFile(e.dataTransfer);
+    if (!file) return; // 텍스트/HTML 등은 아무것도 하지 않는다(삽입 금지·콜백 없음).
+    const caret = readCaret(e.currentTarget); // 위임 전 동기 확보(이후 비동기 업로드 중 selection 소실 대비)
+    onDropImageFile(file, caret);
+  };
+
   const handleCompositionStart = (e) => {
     composingRef.current = true;
     if (caretBlocked(e.currentTarget)) e.preventDefault();
@@ -619,6 +660,8 @@ export function Editor({
       lang={lang}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onBlur={handleBlur}

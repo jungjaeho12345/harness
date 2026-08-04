@@ -1195,3 +1195,199 @@ describe('Editor — 편집 메뉴 선택 제스처(요소 앵커) + 선택 삭�
     expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1); // '(끝)A' 오염 없음
   });
 });
+
+// 53-2(B 결함): 편집 div에 onDrop/onDragOver가 없으면 브라우저가 드롭 지점(마커 줄 안쪽 포함)에 텍스트/DOM을
+// 그대로 떨구고 handleInput이 본문으로 커밋한다 → '(끝)단어'가 되면 serializeBodyFromBlocks(trim 정확 비교)는
+// 마커를 놓치는데 송고 가드 hasEndMarker(substring)는 통과해 오염된 본문이 송고·배부된다.
+// 정책: 네이티브 드롭 전면 차단 + 이미지 파일만 onDropImageFile(file, caret)로 위임(news.md 192행).
+describe('Editor — 드래그앤드롭 가드(네이티브 드롭 차단 + 이미지 파일만 위임)', () => {
+  const realFileReader = globalThis.FileReader;
+  afterEach(() => { globalThis.FileReader = realFileReader; });
+
+  function imageFile() {
+    return new File(['x'], 'pic.png', { type: 'image/png' });
+  }
+
+  // 드롭 이벤트 — dataTransfer를 붙여넣기 헬퍼(pasteImageEvent)와 동형으로 만든다.
+  // items를 주지 않으면 files에서 파생한다(브라우저 기본형).
+  function dropEvent(el, { files = [], items = null, text = 'dropped text' } = {}) {
+    const ev = createEvent.drop(el, {});
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: {
+        files,
+        items: items ?? files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })),
+        getData: () => text,
+      },
+    });
+    return ev;
+  }
+
+  // 이미지 없이 텍스트만 담긴 드롭(에디터 안팎에서 텍스트를 끌어다 놓는 경우).
+  function textDropEvent(el, text = 'dropped text') {
+    return dropEvent(el, { files: [], items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], text });
+  }
+
+  function lineTexts(container) {
+    return Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+  }
+
+  it('텍스트 드롭 → preventDefault로 차단되고 본문이 바뀌지 않는다(네이티브 삽입 금지)', () => {
+    const onTextChange = vi.fn();
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    const ev = textDropEvent(box);
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalledTimes(1);
+    expect(onTextChange).not.toHaveBeenCalled();
+    expect(onDropImageFile).not.toHaveBeenCalled();
+    expect(lineTexts(container)).toEqual(['hello world']);
+  });
+
+  it('"(끝)" 줄에 텍스트를 드롭해도 마커가 오염되지 않는다(\'(끝)단어\' 경로 차단)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('본문'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 1); // 마커 줄 안쪽
+
+    const ev = textDropEvent(box, '단어');
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    expect(onTextChange).not.toHaveBeenCalled();
+    expect(lineTexts(container)).toEqual(['본문', '(끝)']); // 마커 무손상
+  });
+
+  it('dragover에서 preventDefault를 호출한다(드롭 이벤트 수신 보장 + 네이티브 삽입 준비 차단)', () => {
+    const { container } = render(<Editor blocks={[textBlock('hello')]} onTextChange={() => {}} />);
+    const box = container.querySelector('.yh-editor');
+    expect(fireWithPreventSpy(box, 'dragOver')).toHaveBeenCalled();
+  });
+
+  it('이미지 파일 드롭 → preventDefault 1회 + onDropImageFile(raw File, caret) 1회(FileReader 미사용·onTextChange 없음)', () => {
+    // FileReader가 호출되면 즉시 실패(Editor가 base64를 만들지 않음을 보증 — phase 20 결정).
+    globalThis.FileReader = class { readAsDataURL() { throw new Error('Editor must not create base64'); } };
+    const onTextChange = vi.fn();
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드'), textBlock('본문')]} onTextChange={onTextChange} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    const ev = dropEvent(box, { files: [imageFile()] });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalledTimes(1);
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    const [file, caret] = onDropImageFile.mock.calls[0];
+    expect(file).toBeInstanceOf(File);
+    expect(file.type).toBe('image/png');
+    expect(caret).toMatchObject({ lineIndex: 0 });
+    expect(onTextChange).not.toHaveBeenCalled(); // 본문 반영은 상위(업로드→경로 임베드) 책임
+  });
+
+  it('files 없이 items만 있는 이미지 드롭도 getAsFile로 위임한다(붙여넣기 판정과 같은 규칙)', () => {
+    const onDropImageFile = vi.fn();
+    const file = imageFile();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드')]} onTextChange={() => {}} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    fireEvent(box, dropEvent(box, { files: [], items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] }));
+
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    expect(onDropImageFile.mock.calls[0][0]).toBe(file);
+  });
+
+  it('selection이 없으면 caret은 null로 넘어간다(삽입 위치 폴백은 상위 계약)', () => {
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드')]} onTextChange={() => {}} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    window.getSelection().removeAllRanges();
+
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    expect(onDropImageFile.mock.calls[0][1]).toBeNull();
+  });
+
+  it('onDropImageFile prop이 없으면(환경설정 off) 이미지 드롭도 차단만 된다(본문 불변)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('헤드')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    const ev = dropEvent(box, { files: [imageFile()] });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    expect(onTextChange).not.toHaveBeenCalled();
+    expect(lineTexts(container)).toEqual(['헤드']);
+  });
+
+  it('"(끝)" 줄에서도 이미지 드롭은 위임된다(임베드는 마커 앞 정규화 — 마커 차단은 텍스트만)', () => {
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]} onTextChange={() => {}} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 2);
+
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    expect(onDropImageFile.mock.calls[0][1]).toMatchObject({ lineIndex: 2 });
+  });
+
+  it('읽기전용(readOnly)에서도 네이티브 드롭은 차단된다(위임 대상 prop이 없으면 콜백 0회)', () => {
+    const { container } = render(<Editor blocks={[textBlock('헤드')]} readOnly />);
+    const box = container.querySelector('.yh-editor');
+
+    expect(fireWithPreventSpy(box, 'dragOver')).toHaveBeenCalled();
+    const ev = textDropEvent(box);
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    expect(lineTexts(container)).toEqual(['헤드']);
+  });
+
+  it('매핑(textEditable=false)에서도 이미지 드롭은 위임된다(임베드 삽입 허용 — onPasteImageFile과 같은 취급)', () => {
+    const onTextChange = vi.fn();
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('헤드')]}
+        textEditable={false}
+        onTextChange={onTextChange}
+        onDropImageFile={onDropImageFile}
+      />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    const ev = dropEvent(box, { files: [imageFile()] });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    expect(onTextChange).not.toHaveBeenCalled();
+  });
+});
