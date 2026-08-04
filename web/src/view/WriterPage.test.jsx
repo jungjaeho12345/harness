@@ -725,6 +725,207 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
   });
 });
 
+// 53-3(B 결함 결선): 편집>드래그앤드롭(edit.dragDrop, 기본 true — news.md 192행)을 Editor의 onDropImageFile prop에
+// 결선한다. on이면 드롭 이미지가 Ctrl+V와 완전히 같은 경로(pasteImageAtCaret: model.uploadFile → /uploads 경로 임베드)로
+// 들어가고, off면 prop 자체를 넘기지 않아 Editor가 차단만 한다(업로드·본문 변경 0). 게이트는 다른 편집 설정(columnLimit/
+// lineSpacing)과 동형 — 마운트 lazy-init + 마운트 effect 복원 + onPrefsClose(applied) 갱신(취소 시 불변).
+describe('WriterPage — 편집>드래그앤드롭(edit.dragDrop) 게이트 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  const imageFile = () => new File(['x'], 'pic.png', { type: 'image/png' });
+
+  // 드롭 이벤트 — Editor.test.jsx(step 2)와 동형 dataTransfer(files 우선, items 파생).
+  function dropEvent(el, { files = [], items = null, text = 'dropped text' } = {}) {
+    const ev = createEvent.drop(el, {});
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: {
+        files,
+        items: items ?? files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })),
+        getData: () => text,
+      },
+    });
+    return ev;
+  }
+
+  const textDropEvent = (el, text = 'dropped text') => dropEvent(el, {
+    files: [], items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], text,
+  });
+
+  function pasteImageEvent(el) {
+    const ev = createEvent.paste(el, {});
+    const file = imageFile();
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    });
+    return ev;
+  }
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  const blockTypes = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
+  ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
+
+  const lineTexts = (container) => Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+
+  // 편집 탭의 dragDrop만 저장(다른 카테고리는 기본값 유지) — columnLimit 저장 헬퍼와 동형.
+  const saveDragDrop = (dragDrop) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    edit: { ...loadEditorPrefs().edit, dragDrop },
+  });
+
+  async function openPrefsViaMenu() {
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it('기본 설정(dragDrop 미설정=true)에서 이미지 드롭 → 업로드 1회 + 반환 path로 임베드 삽입(붙여넣기와 같은 경로)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/drop.png' });
+    caretAtLine(container, 0); // 제목 줄
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0][0]).toBeInstanceOf(File);
+    // 캐럿 줄(제목) 뒤에 삽입 — 붙여넣기 케이스와 동일한 구조.
+    expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/drop.png');
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 없음
+    expect(lineTexts(container)).toContain('제목');
+    expect(lineTexts(container)).toContain('본문');
+  });
+
+  it('드롭으로 삽입된 이미지는 저장 본문(markupVersion)에 실린다(임시 DOM이 아니라 실제 본문 반영)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/saved.png' });
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 1);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(deserialize(dto.markupVersion).some(
+      (b) => b.type === 'embed' && b.embedType === 'image' && b.src === '/uploads/saved.png',
+    )).toBe(true);
+  });
+
+  it('dragDrop=false로 저장된 상태로 마운트하면 이미지 드롭이 차단만 된다(업로드 0회·본문 불변)', async () => {
+    saveDragDrop(false);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    const ev = dropEvent(box, { files: [imageFile()] });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled(); // 네이티브 드롭 차단은 설정과 무관하게 유지(step 2 가드)
+    expect(upload).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    expect(blockTypes(container)).toEqual(['text', 'text']);
+    expect(lineTexts(container)).toEqual(['제목', '본문']);
+  });
+
+  it("환경설정에서 드래그앤드롭을 끄고 '적용'하면 즉시 반영된다(드롭 차단 — columnLimit 동형 게이트)", async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/x.png' });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-dragDrop')); // 기본 on → off
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+    await waitFor(() => expect(loadEditorPrefs().edit.dragDrop).toBe(false));
+
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    expect(upload).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    expect(lineTexts(container)).toEqual(['제목', '본문']);
+  });
+
+  it("'취소'로 닫으면 드래그앤드롭 설정이 바뀌지 않는다(드롭 계속 동작 — 적용 시에만 갱신)", async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/keep.png' });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-dragDrop')); // 껐다가
+    fireEvent.click(screen.getByTestId('prefs-cancel')); // 취소
+    expect(loadEditorPrefs().edit.dragDrop).toBe(true); // 저장 불변
+
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/keep.png'));
+  });
+
+  it('텍스트 드롭은 dragDrop 설정과 무관하게 본문을 바꾸지 않는다(on/off 양쪽 — 마커 오염 경로 차단)', async () => {
+    // (1) 기본(on)
+    const on = await openWith([textBlock('본문'), textBlock('(끝)')]);
+    const uploadOn = vi.spyOn(on.model, 'uploadFile');
+    const boxOn = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(on.container, 1); // 마커 줄 안쪽
+    fireEvent(boxOn, textDropEvent(boxOn, '단어'));
+    expect(uploadOn).not.toHaveBeenCalled();
+    expect(lineTexts(on.container)).toEqual(['본문', '(끝)']);
+    on.unmount();
+
+    // (2) off
+    saveDragDrop(false);
+    const off = await openWith([textBlock('본문'), textBlock('(끝)')]);
+    const uploadOff = vi.spyOn(off.model, 'uploadFile');
+    const boxOff = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(off.container, 1);
+    fireEvent(boxOff, textDropEvent(boxOff, '단어'));
+    expect(uploadOff).not.toHaveBeenCalled();
+    expect(lineTexts(off.container)).toEqual(['본문', '(끝)']);
+  });
+
+  it('dragDrop=false여도 Ctrl+V 이미지 붙여넣기는 그대로 동작한다(설정 대상은 드롭뿐 — news.md 192행)', async () => {
+    saveDragDrop(false);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/paste.png' });
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/paste.png');
+  });
+});
+
 // 검색패널(이미지/영상/글기사) 임베드 — 마지막 커서 텍스트 줄 "뒤"에 삽입 + 빈 줄 + 커서를 빈 줄로 이동(edit 모드, news.md 156행).
 describe('WriterPage — 검색패널 임베드: 커서 줄 뒤 삽입 + 개행 + 커서 이동', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });

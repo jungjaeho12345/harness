@@ -247,6 +247,10 @@ export function WriterPage() {
   // editorBg와 동일 게이트: 마운트 적용 + onPrefsClose(applied) 갱신. Editor.jsx 내부는 미접촉(여백은 바깥 래퍼에서만).
   const [columnLimit, setColumnLimit] = useState(() => loadEditorPrefs().edit.columnLimit);
 
+  // 편집>드래그앤드롭(edit.dragDrop, 기본 true — news.md 192행) — Editor의 onDropImageFile 결선 게이트.
+  // columnLimit/lineSpacing과 동형 게이트: 마운트 lazy-init + 마운트 effect 복원 + onPrefsClose(applied) 갱신(취소 시 불변).
+  const [dragDrop, setDragDrop] = useState(() => loadEditorPrefs().edit.dragDrop);
+
   // 편집>줄간격(edit.lineSpacing) — 캔버스 래퍼(editor-canvas)에 CSS 변수(--yh-editor-line-height) 주입 →
   // 자식 .yh-editor/.yh-editor__line이 상속(columnLimit 동형 게이트). raw 저장값을 보관하고 정규화는 주입 시점에.
   const [lineSpacing, setLineSpacing] = useState(() => loadEditorPrefs().edit.lineSpacing);
@@ -280,6 +284,7 @@ export function WriterPage() {
     setEditorColors({ title: c.title, subtitle: c.subtitle, body: c.body });
     setEditorBg(c.background);
     setColumnLimit(loadEditorPrefs().edit.columnLimit); // 새로고침 후에도 컬럼제한 반영.
+    setDragDrop(loadEditorPrefs().edit.dragDrop); // 새로고침 후에도 드래그앤드롭 허용 여부 반영.
     setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 새로고침 후에도 줄간격 반영.
     setEditorFont(loadEditorPrefs().edit.editorFont); // 새로고침 후에도 툴바 글꼴 반영.
     setEditorFontSize(loadEditorPrefs().edit.editorFontSize); // 새로고침 후에도 툴바 글씨크기 반영.
@@ -295,6 +300,7 @@ export function WriterPage() {
       setEditorBg(loadEditorPrefs().colors.background);
       setAutosaveCfg(loadEditorPrefs().autosave); // 자동저장 간격/사용여부 변경을 타이머에 반영(재설정).
       setColumnLimit(loadEditorPrefs().edit.columnLimit); // 컬럼제한(좌우 여백) 변경 반영 — 취소 시 불변(editorBg와 동일 게이트).
+      setDragDrop(loadEditorPrefs().edit.dragDrop); // 드래그앤드롭 허용 변경 반영 — 취소 시 불변(동일 게이트).
       setLineSpacing(loadEditorPrefs().edit.lineSpacing); // 줄간격 변경 반영 — 취소 시 불변(동일 게이트).
       setLanguage(loadEditorPrefs().edit.language); // 언어 변경 반영 — 취소 시 불변(동일 게이트).
       setInputMode(loadEditorPrefs().edit.inputMode); // 입력모드 변경 반영 — 취소 시 불변(동일 게이트).
@@ -1553,6 +1559,12 @@ export function WriterPage() {
               onTextChange={isMapping ? undefined : onTextChange}
               onRemoveEmbed={onRemoveEmbed}
               onPasteImageFile={pasteImageAtCaret}
+              // 이미지 드롭(news.md 192행) — 붙여넣기와 같은 핸들러를 재사용한다. pasteImageAtCaret 안에
+              // 업로드 실패 안내·업로드 대기 중 탭 전환 방어(activeTabRef 재확인)·base64 미생성(ADR-003 model 경유)이
+              // 이미 들어 있어(phase 20 검증), 드롭 전용 경로를 새로 만들면 그 방어가 빠진 두 번째 경로가 생긴다.
+              // 환경설정 off면 prop을 아예 넘기지 않는다 → Editor는 네이티브 드롭을 차단만 한다(step 2 계약).
+              // 붙여넣기(onPasteImageFile)는 이 게이트에 묶지 않는다 — 설정 항목은 드래그앤드롭뿐이다.
+              onDropImageFile={dragDrop ? pasteImageAtCaret : undefined}
               // 가산적 결선 — lastCaretRef(검색패널 임베드 삽입 위치)는 유지하고 상태표시줄용 statusCaret만 추가한다.
               onCaretChange={(c) => { lastCaretRef.current = c; setStatusCaret(c); }}
               pendingCaretLine={pendingCaretLine}
