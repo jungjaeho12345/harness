@@ -734,9 +734,10 @@ export function createApp({
     try {
       const { me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
-      // 보유 탭(clientId)만 해제한다(비보유 탭 → not-holder).
+      // 보유 탭(clientId) + 보유자 본인만 해제한다(비보유 탭·다른 사용자 → not-holder).
+      // 신원(userId)은 오직 검증된 세션에서만 도출한다(ADR-004) — 헤더 clientId 하나로 인가하지 않는다.
       const clientId = req.get('x-edit-client');
-      const r = controllers.article.releaseEditLock(req.params.id, { clientId });
+      const r = controllers.article.releaseEditLock(req.params.id, { clientId, userId: me.userId });
       if (r.ok) app.notifyChange('lock');
       return r.ok ? res.json(r) : fail(res, r);
     } catch (e) { next(e); }

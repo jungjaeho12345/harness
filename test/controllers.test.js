@@ -225,7 +225,8 @@ test('article 편집 잠금: acquire/assert/release를 서비스에 위임한다
   assert.equal(other.reason, 'locked');
   assert.equal(other.lockerClientId, undefined);
 
-  assert.equal(controllers.article.releaseEditLock(c.articleId, { clientId: 'c1' }).ok, true);
+  // 해제도 세션 신원(userId)을 함께 대조한다 — 보유자 본인이므로 ok.
+  assert.equal(controllers.article.releaseEditLock(c.articleId, { clientId: 'c1', userId: 'kim' }).ok, true);
   // 강제 해제는 보유자와 무관하게 동작한다.
   controllers.article.acquireEditLock(c.articleId, { userId: 'lee', sessionId: 's2', clientId: 'c2' });
   assert.equal(controllers.article.forceReleaseEditLock(c.articleId).ok, true);

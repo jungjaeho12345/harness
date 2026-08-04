@@ -511,6 +511,47 @@ test('DPS 편집 진입 lock 획득은 D 전용, 비-DPS는 인증 사용자 누
   } finally { await ctx.close(); }
 });
 
+test('unlock: 남의 편집 탭(clientId)을 알아도 다른 사용자는 해제할 수 없다 [ADR-004]', async () => {
+  const ctx = await start();
+  const lockOf = (articleId) => ctx.db.prepare('SELECT lockYN FROM Contents WHERE articleId = ?').get(articleId).lockYN;
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const dsid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const rsid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid: rsid, body: { title: 't', markupVersion: '{}' } })).body;
+
+    // R이 자기 탭(tab-r)으로 잠금을 보유한다.
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid: rsid, clientId: 'tab-r' })).status, 200);
+
+    // D가 R의 탭 식별자를 그대로 흉내내 해제 시도 → 세션 신원이 다르므로 403 not-holder.
+    const steal = await api(ctx.base, 'POST', `/api/articles/${articleId}/unlock`, { sid: dsid, clientId: 'tab-r' });
+    assert.equal(steal.status, 403);
+    assert.equal(steal.body.reason, 'not-holder');
+    assert.equal(lockOf(articleId), 'Y', '거부된 해제는 잠금을 풀지 않는다');
+
+    // 강제 해제(D/Z 전용)는 그대로 동작한다 — 이번 강화의 표적이 아니다.
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/force-unlock`, { sid: dsid })).status, 200);
+    assert.equal(lockOf(articleId), 'N');
+  } finally { await ctx.close(); }
+});
+
+test('unlock: 보유자 본인은 자기 탭으로 해제할 수 있다(신원은 세션에서 도출)', async () => {
+  const ctx = await start();
+  const lockOf = (articleId) => ctx.db.prepare('SELECT lockYN FROM Contents WHERE articleId = ?').get(articleId).lockYN;
+  try {
+    seedUser(ctx.db, { userId: 'kim', role: 'R', department: '사회부', password: 'pw' });
+    const sid = (await login(ctx.base, 'kim', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid, body: { title: 't', markupVersion: '{}' } })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab-1' });
+
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/unlock`, { sid, clientId: 'tab-1' })).status, 200);
+    assert.equal(lockOf(articleId), 'N');
+    // 탭 닫기·pagehide 경로가 중복 호출한다 — 두 번째 해제도 멱등(200).
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/unlock`, { sid, clientId: 'tab-1' })).status, 200);
+  } finally { await ctx.close(); }
+});
+
 test('force-unlock: D/Z 전용 (R은 403)', async () => {
   const ctx = await start();
   try {

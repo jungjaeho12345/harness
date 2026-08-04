@@ -352,14 +352,24 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true };
   }
 
-  // 보유 탭(clientId)만 해제한다. 이미 해제된 잠금 해제는 멱등(ok).
-  function releaseEditLock(articleId, { clientId } = {}) {
+  // 보유자(검증 세션의 userId + 보유 탭 clientId)만 해제한다. 이미 해제된 잠금 해제는 멱등(ok).
+  // CRITICAL(ADR-004): assertLockHolder와 같은 규율 — clientId는 클라이언트가 만든 탭 문자열일 뿐이므로
+  //   해제 인가도 "검증된 세션의 userId"와 잠금 행의 lockerUserId를 대조한다. userId를 넘기지 않거나
+  //   lockerUserId가 비어 있는(레거시) 잠금 행은 거부한다 — "미전달·NULL이면 통과" 폴백은 아무나 남의
+  //   잠금을 푸는 구멍 그 자체다(해제 수단은 D/Z의 강제 해제와 30분 stale 재획득이 남아 있다).
+  // sessionId는 받지도 쓰지도 않는다 — acquireEditLock의 sameUserReLogin·assertLockHolder와 같은 관용도로
+  //   같은 사용자의 재로그인을 허용한다(세션 일치를 강제하면 탭이 잠금을 놓지 못해 stale 30분까지 남는다).
+  // 실패 사유는 모두 not-holder로 수렴한다 — 누가 잠갔는지는 응답에 담지 않는다.
+  function releaseEditLock(articleId, { clientId, userId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
-    if (c.lockYN !== 'Y') return { ok: true };
-    if (c.lockerClientId && c.lockerClientId !== clientId) return { ok: false, reason: 'not-holder' };
+    if (c.lockYN !== 'Y') return { ok: true }; // 멱등 — 탭 닫기·pagehide가 중복 호출한다.
+    const denied = { ok: false, reason: 'not-holder' };
+    if (!userId || !c.lockerUserId) return denied; // 신원 미상(레거시 잠금 행 포함) → 거부.
+    if (c.lockerUserId !== userId) return denied; // 남의 탭 문자열을 알아도 사람이 다르면 거부.
+    if (c.lockerClientId && c.lockerClientId !== clientId) return denied; // 탭 규칙(기존 계약 유지).
 
     articleModel.clearLock(articleId);
     return { ok: true };
