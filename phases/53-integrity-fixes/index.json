@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "53-integrity-fixes",
   "steps": [
-    { "step": 0, "name": "selection-range-model", "status": "pending" },
+    { "step": 0, "name": "selection-range-model", "status": "completed", "summary": "web/src/view/editorNewline.js에 순수 함수 replaceRangeInBlocks(blocks, range, text) 신설(반환 { blocks, caretLineIndex } — insertTextIntoBlocks와 동일 shape·좌표 계약). 규칙: 역방향 선택 swap·한쪽 null은 collapsed / 삭제 end를 첫 '(끝)' 줄 시작 이전으로 clamp(마커 줄과 그 뒤 블록 무변경, start는 clamp 안 함) / 범위 안 임베드는 삭제하지 않고 병합 줄 뒤에 상대 순서 보존 / align 승계(첫 줄=start 줄, 마지막 줄=end 줄, 중간 새 줄=start 줄, 단일 줄=start 줄). insertTextIntoBlocks는 시그니처 유지한 채 { start: caret, end: caret }로 위임(단일 출처). 게이트 정정 2건 반영: (1) 규칙 1-b의 '텍스트 블록 없음' 분기는 실코드(L94~95 next.push)대로 '블록 배열 끝(임베드 뒤) 덧붙임'으로 확정하고 [embed]+range:null 케이스로 잠금, (2) 'M 앞에 텍스트 줄이 없음'(빈 문서 Alt+Y = [text('(끝)')]) 분기는 마커 바로 앞에 새 텍스트 줄을 만들어 삽입 — '마지막 텍스트 줄' 폴백이면 '(끝)A' 오염이 되살아나므로. 폴백 caretLineIndex base = 삽입 대상 줄 인덱스(케이스 11에서 caretLineIndex===1 단언). 테스트 +23(editorNewline.test.js 29→52), 전체 web 2011→2034 green·백엔드 751 유지·lint/build clean. collapsed 동치성: 6종 fixture × 3종 텍스트로 insertTextIntoBlocks와 텍스트·caretLineIndex 동일 확인(의도적 예외는 '캐럿 미상 + 마커 있는 문서' 폴백 1건). 변이 검증 5종(clamp/폴백/임베드/swap/align) 전부 지정 케이스만 red 확인 후 원복." },
     { "step": 1, "name": "editor-selection-delete", "status": "pending" },
     { "step": 2, "name": "editor-drop-guard", "status": "pending" },
     { "step": 3, "name": "writer-drop-wiring", "status": "pending" },
