@@ -324,6 +324,12 @@ function seedEmbargo(ctx, contents, status) {
   return articleId;
 }
 const distHist = (ctx, articleId, kind) => ctx.historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: '2026-07-28T01:00:00.000Z' });
+// 송고 이력 = 배부 사이클의 경계다(이 행 **뒤**의 distribute만 "이번 사이클"). 보류→재송고로 열린 새 사이클을
+// 재현할 때 쓴다 — 실물에서도 송고 이력은 상태 전이 직후 배부 훅보다 먼저 기록된다(applyAction).
+const sendHist = (ctx, articleId) => ctx.historyModel.insert({
+  articleId, eventType: 'status', action: 'send', fromStatus: 'DDH', toStatus: 'DES',
+  createdAt: '2026-07-28T02:00:00.000Z',
+});
 
 test('syncEmbargoStatus: 배부 이력만으로 승격한다(extraKinds 없이 — tick의 self-heal 경로)', () => {
   const ctx = setupWithHistory();
@@ -412,6 +418,47 @@ test('syncEmbargoStatus: DES/EPS가 아닌 상태는 절대 바꾸지 않는다'
 test('syncEmbargoStatus: 존재하지 않는 기사는 not-found', () => {
   const ctx = setupWithHistory();
   assert.deepEqual(ctx.service.syncEmbargoStatus('AKR000'), { ok: false, reason: 'not-found' });
+});
+
+// ── 배부 사이클 경계(phase 51) — 승격 판정은 "이번 사이클"의 배부만 센다 ──────────────
+// 보류→엠바고 재설정→재송고로 DES에 재진입한 기사가 과거 사이클 이력 때문에 완결(DPS)로
+// 거짓 승격되면, DPS는 MUTABLE_STATUSES 밖이라 상태 계산이 다시는 개입하지 못하고
+// tick의 도래 판정에서도 "이미 배부됨"으로 걸러져 **영구 미배부**가 된다(복구 경로 없음).
+
+test('syncEmbargoStatus: 재송고 이후의 판정은 과거 사이클 배부 이력으로 승격하지 않는다(거짓 완결 금지)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { embargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  distHist(ctx, articleId, 'press'); // 과거 사이클에 나간 배부
+  sendHist(ctx, articleId); // 재송고 = 새 사이클 시작(경계)
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId), { ok: true, status: 'DES' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DES');
+  assert.equal(
+    ctx.service.queryHistory(articleId).filter((r) => r.eventType === 'status' && r.action === 'embargo').length,
+    0,
+    '바꿀 게 없으므로 쓰기 0건',
+  );
+});
+
+test('syncEmbargoStatus: 새 사이클에서도 extraKinds(방금 성공한 배부)는 승격 근거다', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { embargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  distHist(ctx, articleId, 'press');
+  sendHist(ctx, articleId);
+
+  // 힌트는 "방금 이 사이클에서 성공한 배부"이므로 이력 경계와 무관하게 합집합에 남는다.
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'] }), { ok: true, status: 'DPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DPS');
+});
+
+test('syncEmbargoStatus: 송고 이력 뒤(사이클 안)의 배부 이력은 그대로 승격 근거다', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  sendHist(ctx, articleId);
+  distHist(ctx, articleId, 'press');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId), { ok: true, status: 'EPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'EPS');
 });
 
 // ── 파일참조 가드 — 첨부/자료 파일은 /uploads 상대경로 또는 https:// 만 저장 (서버 심화 방어, ADR-004) ──

@@ -5,7 +5,9 @@
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
-import { requiredKinds, distributedKinds, embargoStatusFor } from './embargoPolicy.js';
+import {
+  requiredKinds, distributedKinds, cycleDistributedKinds, embargoStatusFor,
+} from './embargoPolicy.js';
 import { toPublicContents } from './contentsProjection.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
@@ -244,8 +246,13 @@ export function createArticleService({ articleModel, db, historyModel, distribut
 
     const fromStatus = row.contents.status;
     const history = historyModel ? historyModel.queryByArticle(articleId) : [];
+    // 승격 판정은 **이번 사이클**의 배부만 센다(cycleDistributedKinds) — 과거 사이클 이력으로
+    // 재엠바고 기사가 거짓 완결되지 않게. 보류→엠바고 재설정→재송고로 DES에 재진입한 기사를
+    // 전체 이력으로 판정하면 DPS(완결)로 승격되고, DPS는 MUTABLE_STATUSES 밖이라 상태 계산이
+    // 다시는 개입하지 못한다 → 도래 시각이 와도 영원히 배부되지 않는다(무음 미배부 + 거짓 완결).
+    // 송고 훅의 distributedKinds(전체 이력 = "역사상 어디로 나갔나")와는 질문이 다르다 — 바꾸지 마라.
     const distributed = [...new Set([
-      ...distributedKinds(history),
+      ...cycleDistributedKinds({ status: fromStatus, historyRows: history }),
       ...(Array.isArray(extraKinds) ? extraKinds : []),
     ])];
 

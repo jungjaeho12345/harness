@@ -23,6 +23,8 @@ import { createDistributionTickService } from '../src/services/distributionTickS
 const T0 = '2026-07-28T05:00:00.000Z'; // 엠바고 미도래 기준 시각
 const T1 = '2026-07-28T09:00:00.000Z'; // 1차 엠바고 시각
 const T2 = '2026-07-28T12:00:00.000Z'; // 2차 엠바고 시각
+const T9 = '2026-07-29T09:00:00.000Z'; // 재설정된 1차 엠바고 시각(T1·T2보다 뒤)
+const T10 = '2026-07-29T12:00:00.000Z'; // 재설정된 2차 엠바고 시각
 const SENT_AT = '2026-07-28T04:00:00.000Z';
 const MARKUP = '{"blocks":[{"text":"본문 (끝)"}]}';
 
@@ -36,7 +38,10 @@ function harness() {
 
   let seq = 0;
   // 송고까지 끝난 기사 1건을 만든다. distributed에 든 kind는 "이미 배부됨" 이력으로 심는다.
-  function addArticle({ status = 'DES', embargoAt, secondEmbargoAt, distributed = [] } = {}) {
+  // pastDistributed: 송고(사이클 경계)보다 **앞에** 남는 과거 배부 사이클의 이력.
+  function addArticle({
+    status = 'DES', embargoAt, secondEmbargoAt, distributed = [], pastDistributed = [],
+  } = {}) {
     seq += 1;
     const articleId = `AKR2026072800000000${seq}`;
     articleModel.insert({
@@ -53,6 +58,13 @@ function harness() {
         secondEmbargoAt,
       },
     });
+    // 과거 사이클(재송고 전)에 이미 나간 배부 — 송고 이력보다 먼저 심는다.
+    for (const kind of pastDistributed) {
+      historyModel.insert({
+        articleId, eventType: 'distribute', action: kind, actorUserId: 'desk1',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      });
+    }
     // 기존 송고 이력 — tick이 보존해야 하는 행이다(DB 비파괴 검증용).
     historyModel.insert({
       articleId, eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: status,
@@ -738,4 +750,200 @@ test('DB 비파괴: 행 수·송고 이력·sentAt/sender/본문은 tick 후에�
 
   const sends = h.historyOf(id).filter((x) => x.eventType === 'status' && x.action === 'send');
   assert.equal(sends.length, 1, '기존 송고 이력이 보존된다');
+});
+
+// ── 배부 사이클 경계 — 보류→엠바고 재설정→재송고 회귀(phase 51) ──────────────────
+// 픽스처를 직접 심지 않고 실제 전이(applyAction/update)를 밟는다 — 결함이 상태 전이와
+// append-only 이력의 상호작용에서 나오므로, 이력 순서까지 실물과 같아야 재현된다.
+// 잠그는 것: 과거 사이클의 배부 이력이 (1) 새 사이클의 도래분 배부를 막지 않고
+// (2) DES를 DPS로 거짓 완결시키지 않는다. 거짓 완결은 MUTABLE_STATUSES 밖이라 복구 경로가 없다.
+
+// 엠바고 기사를 만들어 데스크가 송고한다(RDS→DES) — 송고 이력이 사이클 경계로 남는다.
+function sendEmbargoArticle(h, contents) {
+  const { articleId } = h.articleService.create({
+    title: '엠바고 기사', markupVersion: MARKUP, author: 'r1', ...contents,
+  });
+  assert.deepEqual(
+    h.articleService.applyAction(articleId, 'D', 'send', { userId: 'desk1' }),
+    { ok: true, status: 'DES' },
+    '엠바고가 설정된 기사의 송고는 DES(배부 전 대기)로 진입한다',
+  );
+  return articleId;
+}
+
+// 보류(DPS→DDH) → (선택) 엠바고 재설정 → 재송고(DDH→DES). 새 배부 사이클이 열린다.
+function reopenCycle(h, articleId, embargoFields) {
+  assert.deepEqual(
+    h.articleService.applyAction(articleId, 'D', 'hold', { userId: 'desk1' }),
+    { ok: true, status: 'DDH' },
+  );
+  if (embargoFields) h.articleService.update(articleId, { ...embargoFields, modifier: 'desk1' });
+  assert.deepEqual(
+    h.articleService.applyAction(articleId, 'D', 'send', { userId: 'desk1' }),
+    { ok: true, status: 'DES' },
+  );
+}
+
+test('사이클 경계: 보류 후 엠바고를 재설정해 재송고한 기사는 과거 배부 이력으로 거짓 완결되지 않고 새 시각에 배부된다', async () => {
+  const h = harness();
+  const id = sendEmbargoArticle(h, { embargoAt: T1 });
+  const before = h.counts();
+
+  // 1차 사이클: T1 도래 → press 배부 → 완결(DPS)
+  const c1 = fakeDistribution({ historyModel: h.historyModel, now: () => T1 });
+  const r1 = await tickWith(h, { distributionService: c1, now: () => T1 }).run({ actorUserId: 'system' });
+  assert.deepEqual(r1.distributed, [{ articleId: id, kinds: ['press'], status: 'DPS' }]);
+  assert.equal(h.statusOf(id), 'DPS');
+
+  // 보류 → 엠바고를 미래(T9)로 재설정 → 재송고 → 새 사이클(DES)
+  reopenCycle(h, id, { embargoAt: T9 });
+  assert.equal(h.statusOf(id), 'DES');
+
+  // (1) 미도래 tick: 배부 0건 + DES 유지. 과거 사이클 이력으로 DPS 승격이 일어나면
+  //     이후 어떤 tick도 이 기사를 배부하지 못한다(무음 미배부 + 거짓 완결).
+  const c2 = fakeDistribution({ historyModel: h.historyModel, now: () => T1 });
+  const r2 = await tickWith(h, { distributionService: c2, now: () => T1 }).run({ actorUserId: 'system' });
+  assert.equal(c2.calls.length, 0, '엠바고 시각 전에는 배부 지시 자체가 나가지 않는다');
+  assert.deepEqual(r2.distributed, []);
+  assert.deepEqual(r2.failed, []);
+  assert.equal(h.statusOf(id), 'DES', '새 사이클의 DES가 과거 이력으로 완결 승격되면 안 된다');
+
+  // (2) 재설정된 시각 도래 → press 1건 배부 후 완결
+  const c3 = fakeDistribution({ historyModel: h.historyModel, now: () => T9 });
+  const r3 = await tickWith(h, { distributionService: c3, now: () => T9 }).run({ actorUserId: 'system' });
+  assert.equal(c3.calls.length, 1);
+  assert.deepEqual(c3.calls[0].kinds, ['press']);
+  assert.deepEqual(r3.distributed, [{ articleId: id, kinds: ['press'], status: 'DPS' }]);
+  assert.equal(h.statusOf(id), 'DPS');
+
+  // (3) 멱등: 같은 사이클 안에서는 다시 배부하지 않는다.
+  const c4 = fakeDistribution({ historyModel: h.historyModel, now: () => T9 });
+  const r4 = await tickWith(h, { distributionService: c4, now: () => T9 }).run({ actorUserId: 'system' });
+  assert.equal(c4.calls.length, 0);
+  assert.deepEqual(r4.distributed, []);
+
+  const after = h.counts();
+  assert.equal(after.article, before.article, '행 수는 줄지 않는다');
+  assert.equal(after.contents, before.contents);
+  assert.equal(after.history > before.history, true, '이력은 append-only로만 늘어난다');
+});
+
+test('사이클 경계: 새 사이클이어도 미도래 엠바고는 스풀에 한 건도 쓰이지 않는다(시각 게이트 불변)', async () => {
+  const h = harness();
+  const id = sendEmbargoArticle(h, { embargoAt: T1 });
+  h.distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y', createdAt: T0, updatedAt: T0 });
+
+  // 실제 distributionService + spoolWriter. FS 조작만 주입해 디스크를 건드리지 않는다.
+  const fsCalls = [];
+  const realDistribution = (stamp) => createDistributionService({
+    distributionTargetModel: h.distributionTargetModel,
+    articleModel: h.articleModel,
+    historyModel: h.historyModel,
+    spoolWriter: createSpoolWriter({
+      rootDir: 'spool-root',
+      mkdir: async () => { fsCalls.push('mkdir'); },
+      writeFile: async () => { fsCalls.push('writeFile'); },
+      rename: async () => { fsCalls.push('rename'); },
+      now: () => stamp,
+    }),
+    now: () => stamp,
+  });
+
+  await tickWith(h, { distributionService: realDistribution(T1), now: () => T1 }).run({ actorUserId: 'system' });
+  assert.equal(fsCalls.filter((c) => c === 'rename').length, 1, '1차 사이클은 정상 게시된다');
+
+  reopenCycle(h, id, { embargoAt: T9 });
+  const r = await tickWith(h, { distributionService: realDistribution(T2), now: () => T2 }).run({ actorUserId: 'system' });
+
+  assert.equal(fsCalls.filter((c) => c === 'rename').length, 1, '미도래 엠바고는 새 사이클에서도 나가지 않는다');
+  assert.equal(fsCalls.filter((c) => c === 'writeFile').length, 1);
+  assert.deepEqual(r.distributed, []);
+  assert.deepEqual(r.failed, []);
+  assert.equal(h.statusOf(id), 'DES');
+});
+
+test('사이클 경계: 재설정된 1+2차는 새 사이클에서 T9에 press(EPS), T10에 nonpress(DPS)로 배부된다', async () => {
+  const h = harness();
+  const id = sendEmbargoArticle(h, { embargoAt: T1 });
+
+  const c1 = fakeDistribution({ historyModel: h.historyModel, now: () => T1 });
+  await tickWith(h, { distributionService: c1, now: () => T1 }).run({ actorUserId: 'system' });
+  assert.equal(h.statusOf(id), 'DPS');
+
+  reopenCycle(h, id, { embargoAt: T9, secondEmbargoAt: T10 });
+
+  const c2 = fakeDistribution({ historyModel: h.historyModel, now: () => T9 });
+  const r2 = await tickWith(h, { distributionService: c2, now: () => T9 }).run({ actorUserId: 'system' });
+  assert.deepEqual(c2.calls[0].kinds, ['press'], '2차 시각(T10)은 아직 미도래');
+  assert.deepEqual(r2.distributed, [{ articleId: id, kinds: ['press'], status: 'EPS' }]);
+  assert.equal(h.statusOf(id), 'EPS');
+
+  const c3 = fakeDistribution({ historyModel: h.historyModel, now: () => T10 });
+  const r3 = await tickWith(h, { distributionService: c3, now: () => T10 }).run({ actorUserId: 'system' });
+  assert.deepEqual(c3.calls[0].kinds, ['nonpress'], '같은 사이클의 press는 다시 배부하지 않는다');
+  assert.deepEqual(r3.distributed, [{ articleId: id, kinds: ['nonpress'], status: 'DPS' }]);
+  assert.equal(h.statusOf(id), 'DPS');
+});
+
+test('사이클 경계: 엠바고를 고치지 않은 재송고는 도래한 kind에 정정본을 다시 배부한다(의도된 동작 — 되돌리지 말 것)', async () => {
+  // 근거: phases/51-security-hotfix/step3.md §배경 "의도된 동작 변화".
+  // 재송고로 새 사이클이 열리면 과거 사이클에 나간 kind는 "정정본 재배부" 대상이다 —
+  // phase 49가 DPS 재송고에 확정한 "이미 배부된 곳에 정정본" 의미론과 동형이며,
+  // 대안(과거 이력을 계속 세는 것)은 곧 영구 미배부 결함이다. 재배부는 사이클당 1회다.
+  const h = harness();
+  const id = sendEmbargoArticle(h, { embargoAt: T1 });
+
+  const c1 = fakeDistribution({ historyModel: h.historyModel, now: () => T1 });
+  await tickWith(h, { distributionService: c1, now: () => T1 }).run({ actorUserId: 'system' });
+  assert.equal(h.statusOf(id), 'DPS');
+  const afterFirst = h.counts();
+
+  reopenCycle(h, id); // 엠바고 시각은 그대로 둔 채 재송고
+
+  const c2 = fakeDistribution({ historyModel: h.historyModel, now: () => T2 });
+  const r2 = await tickWith(h, { distributionService: c2, now: () => T2 }).run({ actorUserId: 'system' });
+  assert.equal(c2.calls.length, 1);
+  assert.deepEqual(c2.calls[0].kinds, ['press'], '도래한 kind에 정정본이 다시 나간다');
+  assert.deepEqual(r2.distributed, [{ articleId: id, kinds: ['press'], status: 'DPS' }]);
+  assert.equal(h.statusOf(id), 'DPS');
+
+  const c3 = fakeDistribution({ historyModel: h.historyModel, now: () => T2 });
+  const r3 = await tickWith(h, { distributionService: c3, now: () => T2 }).run({ actorUserId: 'system' });
+  assert.equal(c3.calls.length, 0, '사이클 내 배부 이력으로 이후 tick은 멱등이다');
+  assert.deepEqual(r3.distributed, []);
+
+  const after = h.counts();
+  assert.equal(after.article, afterFirst.article);
+  assert.equal(after.contents, afterFirst.contents);
+  assert.equal(after.history > afterFirst.history, true);
+  const distRows = h.historyOf(id).filter((x) => x.eventType === 'distribute');
+  assert.deepEqual(distRows.map((x) => x.action), ['press', 'press'], '과거 사이클 이력이 남고 새 배부가 append된다');
+  assert.equal(distRows[0].createdAt, T1, '과거 배부 이력 행은 수정되지 않는다');
+});
+
+test('TOCTOU: 배부 직전에 상태가 바뀌면 "이미 배부됨" 판정도 새 상태 기준으로 다시 센다(중복 배부 금지)', async () => {
+  const h = harness();
+  // 과거 사이클에 press가 나간 뒤 재송고된 기사(스냅샷 DES) — 사이클 기준이면 미배부로 보인다.
+  const target = h.addArticle({ status: 'DES', embargoAt: T1, pastDistributed: ['press'] });
+  // 후보는 createdAt DESC로 처리되므로 나중에 추가한 driver가 먼저 배부된다(아래 단언으로 고정).
+  const driver = h.addArticle({ status: 'DES', embargoAt: T1 });
+
+  const dist = fakeDistribution({
+    historyModel: h.historyModel,
+    behavior: async ({ articleId }) => {
+      // 선행 기사의 await 동안 target이 완결(DPS)로 전이된다 — allowlist 안이라 TOCTOU 가드는 통과한다.
+      if (articleId === driver) h.articleModel.update(target, { contents: { status: 'DPS' } });
+      return { ok: true, distributed: [{ targetId: 1, kind: 'press' }], failed: [] };
+    },
+  });
+
+  const r = await tickWith(h, { distributionService: dist, now: () => T1 }).run({ actorUserId: 'system' });
+
+  assert.deepEqual(dist.calls.map((c) => c.articleId), [driver], 'DPS로 전이된 기사는 전체 이력 기준으로 이미 배부됨');
+  assert.deepEqual(r.distributed, [{ articleId: driver, kinds: ['press'], status: 'DPS' }]);
+  assert.equal(h.statusOf(target), 'DPS');
+  assert.equal(
+    h.historyOf(target).filter((x) => x.eventType === 'distribute').length, 1,
+    '같은 수신처로 중복 배부되지 않는다(회수 불가)',
+  );
 });

@@ -13,7 +13,7 @@
 import {
   EMBARGO_DISTRIBUTABLE_STATUSES,
   requiredKinds,
-  distributedKinds,
+  cycleDistributedKinds,
   dueKinds,
   unparsableEmbargoFields,
 } from './embargoPolicy.js';
@@ -65,9 +65,13 @@ export function createDistributionTickService({
   // "이미 배부됨"의 유일한 근거는 append-only 이력((eventType='distribute', action=kind))이다.
   // 상태가 아니라 이력으로 판정하기 때문에 멱등이 자연 성립하고(같은 시각 반복 호출에도 재배부 없음),
   // phase 47 이전에 DDH 경로로 송고돼 DPS로 남은 레거시 엠바고 기사도 후보에서 빠지지 않는다.
-  function distributedOf(articleId) {
+  // 범위는 **이번 배부 사이클**이다(cycleDistributedKinds — DES·EPS는 마지막 송고 이력 이후만,
+  // DPS 등은 전체 이력). 보류→엠바고 재설정→재송고로 DES에 재진입한 기사를 전체 이력으로 보면
+  // 도래분이 "이미 배부됨"으로 걸러져 영원히 배부되지 않고, 이어지는 self-heal이 거짓 완결(DPS)까지
+  // 만든다 — 복구 경로가 없는 결함이다. status는 반드시 호출 시점의 판정 대상 상태를 넘겨라.
+  function distributedOf(articleId, status) {
     if (!historyModel) return [];
-    return distributedKinds(historyModel.queryByArticle(articleId));
+    return cycleDistributedKinds({ status, historyRows: historyModel.queryByArticle(articleId) });
   }
 
   // 상태 전이는 전적으로 articleService.syncEmbargoStatus에 위임한다(생애주기 단일 출처).
@@ -138,7 +142,9 @@ export function createDistributionTickService({
         // 운영자가 알 수 있게 표면화한다(무음 삼킴 금지).
         for (const field of unparsableEmbargoFields(contents)) invalid.push({ articleId, field });
 
-        const done = distributedOf(articleId);
+        // 불변식: done을 계산할 때 쓴 status와, 그 done을 넘기는 dueKinds/embargoStatusFor의
+        // status는 항상 같아야 한다(사이클 범위가 status에 따라 달라지므로).
+        let done = distributedOf(articleId, contents.status);
         let effective = contents;
         let due = dueKinds({ status: contents.status, contents, distributed: done, now: at });
 
@@ -155,6 +161,10 @@ export function createDistributionTickService({
             continue;
           }
           effective = fresh;
+          // 스냅샷과 status가 달라졌으면 "이미 배부됨"도 fresh 기준으로 다시 센다(위 불변식).
+          // 예: 스냅샷 DES(사이클 범위) → 완결로 전이(DPS·전체 이력 범위). 옛 done을 그대로 쓰면
+          // 이미 나간 수신처로 중복 배부된다(회수 불가).
+          if (fresh.status !== contents.status) done = distributedOf(articleId, fresh.status);
           due = dueKinds({ status: fresh.status, contents: fresh, distributed: done, now: at });
         }
 
