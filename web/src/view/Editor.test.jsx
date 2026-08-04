@@ -1196,6 +1196,84 @@ describe('Editor — 편집 메뉴 선택 제스처(요소 앵커) + 선택 삭�
   });
 });
 
+// 53-1 보강(테스트 게이트): 임베드가 섞인 문서(사진 기사 — 가장 흔한 형태)의 요소 앵커 선택.
+// 임베드는 blocksToText/replaceRangeInBlocks 좌표에 포함되지 않으므로(step0 좌표 계약), DOM→좌표 환산이
+// 임베드를 텍스트 줄로 세면 lineIndex가 통째로 밀려 "선택했는데 안 지워지는"(A 결함 그대로) 결과가 된다.
+// 순수 계층(editorNewline)의 임베드 테스트는 좌표가 이미 옳다고 가정하므로 이 결선 구간을 잡지 못한다.
+describe('Editor — 임베드 포함 문서의 선택 삭제 결선(좌표 환산 계약)', () => {
+  const img = () => embedBlock({ embedType: 'image', src: 'a.png' });
+
+  it('임베드가 있어도 전체 선택 + 붙여넣기는 텍스트를 전부 대체한다(임베드는 무삭제·마커 무손상)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('본문'), img(), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box);
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('A\nB\n(끝)'); // 임베드를 텍스트 줄로 세면 'A\nB본문\n(끝)'(선택 미삭제)이 된다
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(1); // 미디어 무음 소실 금지
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1); // 마커 정확히 하나
+  });
+
+  it('임베드가 있어도 전체 선택 + Enter는 텍스트만 비운다(임베드 보존)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), img(), textBlock('둘째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box);
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('\n');
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(1);
+  });
+
+  it('임베드를 사이에 둔 문단 선택 + 붙여넣기는 선택 줄만 대체하고 임베드·뒷줄은 남긴다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('첫줄'), img(), textBlock('둘째'), textBlock('셋째')]}
+        onTextChange={onTextChange}
+      />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectParagraphInEditor(box, 0, 1); // 텍스트-줄 기준 0~1행('첫줄'~'둘째') — 사이에 임베드가 있다
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('A\nB셋째'); // '첫줄'·'둘째'만 사라지고 '셋째'는 무손상
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(1);
+  });
+
+  it('임베드 경계(root 자식 = 임베드)에서 시작한 선택은 앞 텍스트 줄의 끝으로 환산된다(문서화된 계약)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), img(), textBlock('둘째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(box, 1); // 임베드 바로 앞(root 자식 경계 인덱스)
+    range.setEnd(box, box.childNodes.length); // 내용 끝
+    sel.addRange(range);
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('첫줄\n'); // 앞 텍스트 줄('첫줄')은 보존되고 그 끝에서 분할된다
+    expect(blocks.filter((b) => b.type === 'embed')).toHaveLength(1);
+  });
+});
+
 // 53-2(B 결함): 편집 div에 onDrop/onDragOver가 없으면 브라우저가 드롭 지점(마커 줄 안쪽 포함)에 텍스트/DOM을
 // 그대로 떨구고 handleInput이 본문으로 커밋한다 → '(끝)단어'가 되면 serializeBodyFromBlocks(trim 정확 비교)는
 // 마커를 놓치는데 송고 가드 hasEndMarker(substring)는 통과해 오염된 본문이 송고·배부된다.
