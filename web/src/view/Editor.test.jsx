@@ -9,6 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { Editor, readCaret } from './Editor.jsx';
 import { textBlock, embedBlock } from './editorContent.js';
 import { COLORS } from './editorColoring.js';
+import { selectAllInEditor, selectLineInEditor, selectParagraphInEditor } from './editorSelect.js';
 
 // 캐럿을 lineIndex번째 라인 div에 둔다(toEnd면 줄 끝, 아니면 줄 시작). jsdom의 Selection/Range로 직접 설정.
 function caretAtLine(container, lineIndex, toEnd = true) {
@@ -29,6 +30,37 @@ function setCaret(node, offset) {
   range.setStart(node, offset);
   range.collapse(true);
   sel.addRange(range);
+}
+
+// 정방향 선택(anchor=start, focus=end)을 만든다 — 마우스 드래그·Shift 이동의 일반형.
+function selectRange(startNode, startOffset, endNode, endOffset) {
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  sel.addRange(range);
+}
+
+// 역방향 선택(anchor가 뒤, focus가 앞) — 위로 드래그한 경우.
+function selectBackward(anchorNode, anchorOffset, focusNode, focusOffset) {
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+}
+
+// 텍스트-줄(.yh-editor__line)의 텍스트 노드.
+function lineText(container, lineIndex) {
+  return container.querySelectorAll('.yh-editor__line')[lineIndex].firstChild;
+}
+
+// 일반 텍스트 클립보드(이미지 item 없음) paste 이벤트.
+function pastePlainEvent(el, text) {
+  const ev = createEvent.paste(el, {});
+  Object.defineProperty(ev, 'clipboardData', {
+    value: { items: [], getData: () => text },
+  });
+  return ev;
 }
 
 // 이벤트를 dispatch하되 preventDefault 호출 여부를 스파이로 잡는다(이벤트 cancelable 여부와 무관하게 결선 검증).
@@ -943,5 +975,223 @@ describe('Editor — 하이라이트 + "(끝)" 마커 차단 판정(span-aware o
     // span 안('본문') offset 1 → 실제 offset 1(<2) — 허용.
     setCaret(line.childNodes[0].firstChild, 1);
     expect(fireWithPreventSpy(box, 'keyDown', { key: 'a' })).not.toHaveBeenCalled();
+  });
+});
+
+// 53-1(A 결함): Enter·여러 줄 붙여넣기는 preventDefault로 브라우저 기본 대체(선택 삭제 후 삽입)를 막으므로,
+// 선택 범위 삭제를 우리 경로(replaceRangeInBlocks)가 직접 해야 한다. 선택이 한 점으로 취급되면 선택 텍스트가
+// 그대로 남아 본문이 파손된다('hello A' / 'Bworld').
+describe('Editor — 선택 범위 삭제 결선(텍스트 노드 앵커)', () => {
+  it('선택 후 여러 줄 붙여넣기는 선택 텍스트를 지우고 그 자리에 삽입한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const t = lineText(container, 0);
+    selectRange(t, 6, t, 11); // 'world'
+
+    const ev = pastePlainEvent(box, 'A\nB');
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled();
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    expect(onTextChange.mock.calls[0][0]).toBe('hello A\nB');
+  });
+
+  it('선택 후 Enter는 선택 텍스트를 지우고 그 자리에서 분할한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const t = lineText(container, 0);
+    selectRange(t, 6, t, 11);
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    expect(onTextChange.mock.calls[0][0]).toBe('hello \n');
+  });
+
+  it('두 줄에 걸친 선택 + Enter는 두 줄을 병합·분할한다(step0 규칙과 동일)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('AB'), textBlock('CD')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectRange(lineText(container, 0), 1, lineText(container, 1), 1); // 'B' + '\n' + 'C'
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('A\nD');
+  });
+
+  it('역방향 선택(anchor가 뒤)도 정방향과 같은 결과를 낸다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const t = lineText(container, 0);
+    selectBackward(t, 11, t, 6); // 'world'를 오른쪽에서 왼쪽으로 선택
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('hello A\nB');
+  });
+
+  it('focus가 에디터 밖이면 삭제 없이 anchor 위치에 삽입한다(폴백)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const outside = document.createElement('div');
+    outside.textContent = '바깥';
+    document.body.appendChild(outside);
+    try {
+      selectBackward(lineText(container, 0), 6, outside.firstChild, 2);
+      fireEvent(box, pastePlainEvent(box, 'A\nB'));
+      expect(onTextChange.mock.calls[0][0]).toBe('hello A\nBworld'); // 선택 삭제 없음(오늘 동작 유지)
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('anchor를 환산할 수 없으면(에디터 밖) focus가 유효해도 범위를 지어내지 않고 캐럿 미상 폴백을 탄다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const outside = document.createElement('div');
+    outside.textContent = '바깥';
+    document.body.appendChild(outside);
+    try {
+      selectBackward(outside.firstChild, 0, lineText(container, 0), 11);
+      fireEvent(box, pastePlainEvent(box, 'A\nB'));
+      expect(onTextChange.mock.calls[0][0]).toBe('hello worldA\nB'); // 마지막 텍스트 줄 끝 덧붙임(폴백)
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('마커에 걸친 선택 + Enter는 "(끝)" 줄을 온전히 남긴다(step0 clamp 결선)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('본문'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectRange(lineText(container, 0), 1, lineText(container, 1), 3); // '문' ~ 마커 끝
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('본\n\n(끝)');
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1); // 마커 정확히 하나·오염 없음
+  });
+
+  it('역방향 선택으로 anchor가 마커 뒤면 기존 차단(caretBlocked)이 그대로 걸려 본문이 바뀌지 않는다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('본문'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectBackward(lineText(container, 1), 3, lineText(container, 0), 1); // anchor가 마커 줄
+
+    expect(fireWithPreventSpy(box, 'keyDown', { key: 'Enter' })).toHaveBeenCalled();
+    expect(onTextChange).not.toHaveBeenCalled(); // 보수적 no-op(A-3 결정)
+  });
+
+  it('collapsed 캐럿의 여러 줄 붙여넣기는 기존대로 그 자리에서 분할한다(회귀)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    setCaret(lineText(container, 0), 6);
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('hello A\nBworld');
+  });
+
+  it('한 줄 붙여넣기는 선택이 있어도 네이티브 위임 그대로다(preventDefault·onTextChange 없음)', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    const t = lineText(container, 0);
+    selectRange(t, 6, t, 11);
+
+    const ev = pastePlainEvent(box, 'X');
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).not.toHaveBeenCalled();
+    expect(onTextChange).not.toHaveBeenCalled();
+  });
+});
+
+// 53-1(요소 앵커): 편집 메뉴의 전체/문단/한 줄 선택은 텍스트 노드가 아니라 "요소 + 자식 경계 인덱스"를 앵커로
+// 만든다(editorSelect.js). 요소 지점을 col 0으로 접거나 null로 흘리면 가장 흔한 제스처에서 선택이 지워지지 않는다.
+// 실제 선택 함수를 그대로 호출해 앱과 같은 경로를 재현한다.
+describe('Editor — 편집 메뉴 선택 제스처(요소 앵커) + 선택 삭제', () => {
+  it('전체 선택(selectAllInEditor) + 여러 줄 붙여넣기는 본문을 통째로 대체한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box); // selectNodeContents(root) — root 요소 앵커
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('A\nB'); // 선택 텍스트 0 잔존
+  });
+
+  it('전체 선택(selectAllInEditor) + Enter는 본문을 빈 두 줄로 만든다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box);
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('\n');
+  });
+
+  it('문단 선택(selectParagraphInEditor — setStartBefore/setEndAfter) + Enter는 선택 줄만 지운다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째'), textBlock('셋째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectParagraphInEditor(box, 0, 1); // root 앵커 + 자식 경계 인덱스
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('\n셋째'); // 0~1행 사라지고 셋째는 무손상
+  });
+
+  it('한 줄 선택(selectLineInEditor — 줄 요소 앵커) + 여러 줄 붙여넣기는 그 줄을 대체한다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('첫줄'), textBlock('둘째')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectLineInEditor(box, 0); // selectNodeContents(lineEl)
+
+    fireEvent(box, pastePlainEvent(box, 'X\nY'));
+
+    expect(onTextChange.mock.calls[0][0]).toBe('X\nY\n둘째'); // collapsed로 접히면 'X\nY첫줄\n둘째'
+  });
+
+  it('전체 선택 + 마커 문서에서 붙여넣어도 "(끝)"이 정확히 하나 온전히 남는다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('본문'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box); // readCaret도 null이라 caretBlocked가 막지 않는 경로
+
+    fireEvent(box, pastePlainEvent(box, 'A\nB'));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('A\nB\n(끝)'); // 선택 본문은 사라지고 마커는 무손상
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1); // '(끝)A' 오염 없음
   });
 });
