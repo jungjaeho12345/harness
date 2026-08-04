@@ -2,7 +2,12 @@
   "project": "기사 작성기",
   "phase": "52-security-hardening",
   "steps": [
-    { "step": 0, "name": "csrf-origin-guard", "status": "pending" },
+    {
+      "step": 0,
+      "name": "csrf-origin-guard",
+      "status": "completed",
+      "summary": "server/index.js에 allowedOrigins(env)·csrfOriginGuard({origins,isProd}) export 신설 — 요청 로거 다음·/uploads·라우트 앞에 app.use 등록하고 cors origin 옵션과 목록을 단일 출처화(createApp에 origins 주입 seam 추가, 기본값 allowedOrigins() = 기본 2항목 + process.env.ALLOWED_ORIGINS). 비-GET/HEAD/OPTIONS만 검사: 자기 출처(req.get('host') — X-Forwarded-Host 불신)·allowlist·비프로덕션 loopback 통과, Origin·Referer 부재 통과(서버-서버·cron), 그 외 403 forbidden-origin. test/csrf-origin.test.js 15개 신설(공격 5·회귀 8·allowedOrigins 단위 2, 시나리오 12는 origins 주입 방식 채택 — 전역 process.env 비의존). npm test 679→694 pass/fail 0, lint·build clean. 변이 검증: 403 분기 2곳을 next()로 바꾸면 시나리오 1~5(+12 대조·13) red, 원복 후 green. docs/ADR.md ADR-009 신설 + docs/ARCHITECTURE.md 보안 경계 1줄 추가."
+    },
     { "step": 1, "name": "session-revalidation", "status": "pending" },
     { "step": 2, "name": "session-revalidation-wiring", "status": "pending" },
     { "step": 3, "name": "sse-reauth", "status": "pending" },
