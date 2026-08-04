@@ -63,8 +63,11 @@ export function requiredKinds(contents = {}) {
 }
 
 /**
- * 이미 배부된 kind 목록. distributionService가 실제 스풀 기록 1건 이상일 때만 남기는
+ * 이미 배부된 kind 목록 — **"역사상 어디로 나갔나"**(정정본 대상 판정: 송고 훅).
+ * distributionService가 실제 스풀 기록 1건 이상일 때만 남기는
  * (eventType='distribute', action=kind) 행이 "이미 배부됨"의 유일한 근거다.
+ * 이력은 append-only라 과거 배부 사이클의 기록도 그대로 포함된다 — 그것이 이 함수의 의미다.
+ * 이번 사이클 한정 판정이 필요하면 cycleDistributedKinds를 써라(두 함수는 서로를 대체하지 않는다).
  * @param {Array<object>} [historyRows] articleHistoryModel.queryByArticle() 결과(최신순)
  * @returns {string[]} 중복 없는 kind 목록(항상 [press, nonpress] 순서)
  */
@@ -77,6 +80,56 @@ export function distributedKinds(historyRows = []) {
   );
   // 이력은 id DESC로 오므로 수집 순서가 아니라 KINDS 순서로 고정한다(단언 안정성).
   return KINDS.filter((k) => seen.has(k));
+}
+
+// 사이클 경계가 적용되는 상태 — 재송고로 "새 배부 사이클"이 열리는 DES·EPS뿐.
+// DPS(완결·레거시)는 전체 이력을 본다: 재송고 정정본 계약(phase 49)의 근거가
+// "역사상 어디로 나갔나"이기 때문이다. 여기에 DPS를 넣으면 tick이 이미 배부된 수신처로
+// 중복 배부한다(회수 불가) — 넣지 마라.
+export const CYCLE_SCOPED_STATUSES = Object.freeze(['DES', 'EPS']);
+
+// 사이클 경계 = 가장 최근 송고 이력의 id. 송고 이력은 상태 전이 직후 배부 훅보다 **먼저**
+// insert되므로(articleService.applyAction) 그 사이클의 배부는 전부 경계보다 뒤(id가 크다)에 남는다.
+// 정렬에 의존하지 않고 값으로만 최대를 고른다(호출자가 다른 정렬로 넘길 수 있다).
+// 시각(createdAt)은 쓰지 않는다 — 같은 밀리초 충돌·백필 데이터로 신뢰도가 낮고, 단조 증가하는
+// id가 유일하게 결정적인 순서다. id가 정수가 아닌 송고 행은 후보에서 제외한다(경계 미확정 → 전체 이력).
+function latestSendId(rows) {
+  let boundaryId = null;
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue;
+    if (r.eventType !== 'status' || r.action !== 'send') continue;
+    if (!Number.isInteger(r.id)) continue;
+    if (boundaryId === null || r.id > boundaryId) boundaryId = r.id;
+  }
+  return boundaryId;
+}
+
+/**
+ * 이번 배부 사이클에서 이미 배부된 kind — **"이번 사이클에서 이미 보냈나"**(도래·완결 판정: tick·상태 승격).
+ * 경계는 가장 최근 송고 이력(eventType==='status' && action==='send')이며, 그 행보다 뒤(id가 큰)
+ * distribute 이력만 이번 사이클로 센다. 경계를 확정할 수 없으면 전체 이력을 센다(안전측 — 조기 배부 금지).
+ * @param {object} [args]
+ * @param {string} [args.status] 기사 현재 상태
+ * @param {Array<object>} [args.historyRows] articleHistoryModel.queryByArticle() 결과(id DESC)
+ * @returns {string[]} 중복 없는 kind 목록(항상 [press, nonpress] 순서)
+ */
+export function cycleDistributedKinds({ status, historyRows } = {}) {
+  const rows = Array.isArray(historyRows) ? historyRows : [];
+  // 경계 밖 상태(DPS·RDS·EEK…)는 전체 이력 판정 그대로다 — kind 필터링을 복제하지 않는다.
+  if (!CYCLE_SCOPED_STATUSES.includes(status)) return distributedKinds(rows);
+
+  const boundaryId = latestSendId(rows);
+  // 경계 미확정(송고 이력 없음·id 결손) → 전체 이력을 센다. "배부 이력 없음"으로 폴백하면
+  // 엠바고 시각 전 배부로 이어진다(회수 불가) — 모르면 항상 넓게 센다.
+  if (boundaryId === null) return distributedKinds(rows);
+
+  // CRITICAL(안전측 방향): id를 알 수 없는 distribute 행은 이번 사이클에 **포함해서** 센다.
+  // 순진한 `r.id > boundaryId`는 undefined > n === false라 그 행을 빼는데, 그 방향은
+  // "이미 배부됨"을 좁혀 조기 배부가 된다. 순서를 모르는 행은 항상 "센다" 쪽으로 처리한다.
+  const inCycle = rows.filter(
+    (r) => r && typeof r === 'object' && (!Number.isInteger(r.id) || r.id > boundaryId),
+  );
+  return distributedKinds(inCycle);
 }
 
 /**

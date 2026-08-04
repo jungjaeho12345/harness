@@ -592,11 +592,12 @@ export function createApp({
   // 부분 수정 — 편집 잠금 보유자(세션)만 가능.
   app.put('/api/articles/:id', articleJson, (req, res, next) => {
     try {
-      const { me } = sessionOf(req);
+      const { sid, me } = sessionOf(req);
       if (!me) return res.status(401).json(UNAUTH);
       // 편집 탭(clientId) 기준으로 보유자를 검증한다 — 같은 세션의 2번째 탭은 저장 차단.
+      // 신원(userId/sessionId)은 오직 검증된 세션에서만 도출한다(ADR-004) — 헤더 clientId 하나로 인가하지 않는다.
       const clientId = req.get('x-edit-client');
-      const hold = controllers.article.assertLockHolder(req.params.id, { clientId });
+      const hold = controllers.article.assertLockHolder(req.params.id, { clientId, userId: me.userId, sessionId: sid });
       if (!hold.ok) return fail(res, hold);
       const fields = { ...(req.body ?? {}), modifier: me.userId };
       delete fields.role;

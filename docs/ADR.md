@@ -30,7 +30,7 @@ DB의 데이터는 절대 삭제하지 않는다(비파괴·멱등 마이그레�
 ### ADR-005: SSE 단방향 무효화 스트림으로 실시간 동기화 (WebSocket 대신)
 **결정**: 기사 생성/수정/상태전이/편집잠금 변경을 서버 in-process `EventEmitter` → SSE(`/api/stream`)로 브로드캐스트한다. 페이로드는 행 데이터가 없는 "무효화 신호"이며, 클라이언트가 자기 필터로 재조회한다.
 **이유**: 동기화는 서버→클라이언트 단방향이면 충분하다(클라이언트 변경은 일반 REST로 올라간다). SSE는 표준 `EventSource`로 추가 의존성 없이 자동 재연결을 제공한다. 행 없는 신호 방식이라 역할별 데이터 노출 문제를 회피한다.
-**트레이드오프**: 양방향 통신은 불가하다(필요해지면 WebSocket으로 교체). 신호마다 클라이언트 재조회가 발생한다(서버측 필터링 없는 naive broadcast). `EventSource`가 커스텀 헤더를 못 보내 이 라우트만 `?session=` 쿼리 인증 폴백을 둔다.
+**트레이드오프**: 양방향 통신은 불가하다(필요해지면 WebSocket으로 교체). 신호마다 클라이언트 재조회가 발생한다(서버측 필터링 없는 naive broadcast). `EventSource`가 커스텀 헤더를 못 보내 이 라우트의 인증 수단은 **HttpOnly 세션 쿠키(withCredentials)** 뿐이다 — 과거의 `?session=` 쿼리 폴백은 서버·클라이언트 양쪽에서 제거됐고(평문 토큰 URL 누출 표면 금지, ADR-007과 같은 규율) 그 대가로 cross-origin dev 구성에서는 SSE 인증이 불가하다(동일 출처 프록시 배치를 쓴다).
 
 ### ADR-006: 얇은 transport + 계층형 도메인 백엔드 (controllers → services → models)
 **결정**: `server/index.js`는 비즈니스 로직 없는 얇은 REST/SSE 라우팅만 담당하고, 도메인 로직은 `controllers → services → models → db` 계층에 둔다. 모든 의존성은 주입 가능하게 만들어 테스트에서 in-memory로 대체한다.

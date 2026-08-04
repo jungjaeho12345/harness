@@ -324,6 +324,12 @@ function seedEmbargo(ctx, contents, status) {
   return articleId;
 }
 const distHist = (ctx, articleId, kind) => ctx.historyModel.insert({ articleId, eventType: 'distribute', action: kind, createdAt: '2026-07-28T01:00:00.000Z' });
+// 송고 이력 = 배부 사이클의 경계다(이 행 **뒤**의 distribute만 "이번 사이클"). 보류→재송고로 열린 새 사이클을
+// 재현할 때 쓴다 — 실물에서도 송고 이력은 상태 전이 직후 배부 훅보다 먼저 기록된다(applyAction).
+const sendHist = (ctx, articleId) => ctx.historyModel.insert({
+  articleId, eventType: 'status', action: 'send', fromStatus: 'DDH', toStatus: 'DES',
+  createdAt: '2026-07-28T02:00:00.000Z',
+});
 
 test('syncEmbargoStatus: 배부 이력만으로 승격한다(extraKinds 없이 — tick의 self-heal 경로)', () => {
   const ctx = setupWithHistory();
@@ -414,6 +420,47 @@ test('syncEmbargoStatus: 존재하지 않는 기사는 not-found', () => {
   assert.deepEqual(ctx.service.syncEmbargoStatus('AKR000'), { ok: false, reason: 'not-found' });
 });
 
+// ── 배부 사이클 경계(phase 51) — 승격 판정은 "이번 사이클"의 배부만 센다 ──────────────
+// 보류→엠바고 재설정→재송고로 DES에 재진입한 기사가 과거 사이클 이력 때문에 완결(DPS)로
+// 거짓 승격되면, DPS는 MUTABLE_STATUSES 밖이라 상태 계산이 다시는 개입하지 못하고
+// tick의 도래 판정에서도 "이미 배부됨"으로 걸러져 **영구 미배부**가 된다(복구 경로 없음).
+
+test('syncEmbargoStatus: 재송고 이후의 판정은 과거 사이클 배부 이력으로 승격하지 않는다(거짓 완결 금지)', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { embargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  distHist(ctx, articleId, 'press'); // 과거 사이클에 나간 배부
+  sendHist(ctx, articleId); // 재송고 = 새 사이클 시작(경계)
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId), { ok: true, status: 'DES' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DES');
+  assert.equal(
+    ctx.service.queryHistory(articleId).filter((r) => r.eventType === 'status' && r.action === 'embargo').length,
+    0,
+    '바꿀 게 없으므로 쓰기 0건',
+  );
+});
+
+test('syncEmbargoStatus: 새 사이클에서도 extraKinds(방금 성공한 배부)는 승격 근거다', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { embargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  distHist(ctx, articleId, 'press');
+  sendHist(ctx, articleId);
+
+  // 힌트는 "방금 이 사이클에서 성공한 배부"이므로 이력 경계와 무관하게 합집합에 남는다.
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId, { extraKinds: ['press'] }), { ok: true, status: 'DPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'DPS');
+});
+
+test('syncEmbargoStatus: 송고 이력 뒤(사이클 안)의 배부 이력은 그대로 승격 근거다', () => {
+  const ctx = setupWithHistory();
+  const articleId = seedEmbargo(ctx, { secondEmbargoAt: '2026-07-29T00:00:00.000Z' }, 'DES');
+  sendHist(ctx, articleId);
+  distHist(ctx, articleId, 'press');
+
+  assert.deepEqual(ctx.service.syncEmbargoStatus(articleId), { ok: true, status: 'EPS' });
+  assert.equal(ctx.articleModel.getById(articleId).contents.status, 'EPS');
+});
+
 // ── 파일참조 가드 — 첨부/자료 파일은 /uploads 상대경로 또는 https:// 만 저장 (서버 심화 방어, ADR-004) ──
 
 test('create: 위험 스킴 파일참조는 빈 문자열로 무력화해 저장한다', () => {
@@ -492,4 +539,73 @@ test('update: 파일참조 미전달이면 기존 값을 보존한다 (DB 비파
   const c = articleModel.getById(articleId).contents;
   assert.equal(c.attachmentFile, '/uploads/a.pdf', '미전달 파일 필드는 건드리지 않는다');
   assert.equal(c.region, '부산');
+});
+
+// --- 읽기 경로 응답 투영 (phase 51 step0) ---
+// 서비스의 읽기 3경로(getById/query/search)가 응답용 투영을 통과시키고,
+// 모델(잠금 판정의 단일 출처)은 잠금 컬럼을 그대로 돌려주는지 잠근다.
+
+test('getById/query: 응답 투영에서 lockerSessionId·lockerClientId를 제거한다(모델은 무변경)', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 'sess-secret', clientId: 'tab-1' }).ok, true);
+
+  const one = service.getById(articleId).contents;
+  assert.equal(one.lockerSessionId, undefined, '세션 토큰 비노출');
+  assert.equal(one.lockerClientId, undefined, '편집 탭 식별자 비노출');
+  assert.equal(one.lockYN, 'Y', '잠금 표시 계약은 유지');
+  assert.equal(one.lockerUserId, 'kim');
+  assert.ok(one.lockedAt);
+
+  const listed = service.query({ articleId })[0];
+  assert.equal(listed.lockerSessionId, undefined);
+  assert.equal(listed.lockerClientId, undefined);
+  assert.equal(listed.lockYN, 'Y');
+  assert.equal(listed.lockerUserId, 'kim');
+
+  // 모델은 잠금 판정의 단일 출처다 — 여기서는 값이 그대로 남아 있어야 한다.
+  const raw = articleModel.getById(articleId).contents;
+  assert.equal(raw.lockerSessionId, 'sess-secret');
+  assert.equal(raw.lockerClientId, 'tab-1');
+});
+
+test('getById: 투영은 원본 행을 변형하지 않고, 없는 기사는 그대로 null이다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 'sess-secret', clientId: 'tab-1' });
+
+  service.getById(articleId);
+  service.query({});
+  assert.equal(
+    articleModel.getById(articleId).contents.lockerSessionId, 'sess-secret',
+    '투영 후에도 DB/모델 행은 그대로',
+  );
+  assert.equal(service.getById('NOPE'), null);
+});
+
+test('재로그인 takeover 판정(lockerSessionId 비교)은 응답 투영과 무관하게 동작한다', () => {
+  const { service, articleModel } = setup();
+  const { articleId } = service.create({ title: '제목', author: 'kim' });
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  service.getById(articleId); // 응답 투영이 잠금 판정 입력을 오염시키지 않는다.
+
+  // 같은 사용자·다른 세션(재로그인) → takeover 성공.
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's2', clientId: 'c2' }).ok, true);
+  const c = articleModel.getById(articleId).contents;
+  assert.equal(c.lockerSessionId, 's2');
+  assert.equal(c.lockerClientId, 'c2');
+
+  // 같은 세션의 다른 탭은 여전히 차단.
+  assert.equal(service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's2', clientId: 'c3' }).ok, false);
+});
+
+test('search: Article 행에도 같은 투영을 적용해 토큰 키가 실리지 않는다', () => {
+  const { service } = setup();
+  service.create({ title: '투영검색', author: 'kim', markupVersion: markup('투영검색 본문') });
+  const items = service.search('투영검색');
+  assert.ok(items.length > 0);
+  for (const item of items) {
+    assert.equal(item.lockerSessionId, undefined);
+    assert.equal(item.lockerClientId, undefined);
+  }
 });

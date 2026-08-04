@@ -357,6 +357,37 @@ test('PUT /api/articles/:id: 같은 세션의 2번째 탭(다른 clientId)은 lo
   } finally { await ctx.close(); }
 });
 
+test('PUT /api/articles/:id: 남의 편집 탭(clientId)을 알아도 다른 사용자는 저장할 수 없다 [ADR-004]', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk1', role: 'D', department: '사회부', password: 'pw' });
+    seedUser(ctx.db, { userId: 'rep1', role: 'R', department: '사회부', password: 'pw' });
+    const dsid = (await login(ctx.base, 'desk1', 'pw')).sessionId;
+    const rsid = (await login(ctx.base, 'rep1', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', { sid: dsid, body: { title: '원제목', markupVersion: '{"v":1}' } })).body;
+
+    // D가 자기 탭(tab-d)으로 잠금을 보유한다.
+    assert.equal((await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid: dsid, clientId: 'tab-d' })).status, 200);
+
+    // R이 D의 탭 식별자를 그대로 흉내내 저장 시도 → 세션 신원이 다르므로 403 not-holder.
+    const steal = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid: rsid, clientId: 'tab-d', body: { title: '탈취제목', markupVersion: '{"v":666}' },
+    });
+    assert.equal(steal.status, 403);
+    assert.equal(steal.body.reason, 'not-holder');
+
+    // 쓰기 0건 — 제목·본문이 그대로다.
+    const after = await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid: dsid });
+    assert.equal(after.body.article.title, '원제목', '탈취 시도 후 제목 무변경');
+    assert.equal(after.body.article.markupVersion, '{"v":1}', '탈취 시도 후 본문 무변경');
+
+    // 정상 경로 회귀: 보유자 D는 자기 세션·자기 탭으로 저장할 수 있다.
+    assert.equal((await api(ctx.base, 'PUT', `/api/articles/${articleId}`, { sid: dsid, clientId: 'tab-d', body: { title: '정상제목' } })).status, 200);
+    const ok = await api(ctx.base, 'GET', `/api/articles/${articleId}`, { sid: dsid });
+    assert.equal(ok.body.article.title, '정상제목');
+  } finally { await ctx.close(); }
+});
+
 test('POST /api/articles: 작성자 미전송 시 세션 사용자 이름으로 stamp한다', async () => {
   const ctx = await start();
   try {

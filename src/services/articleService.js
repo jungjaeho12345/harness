@@ -5,7 +5,10 @@
 import { generateArticleId } from '../db/articleId.js';
 import { transition, initialStatus } from './lifecycle.js';
 import { sanitizeFileRef } from './fileRef.js';
-import { requiredKinds, distributedKinds, embargoStatusFor } from './embargoPolicy.js';
+import {
+  requiredKinds, distributedKinds, cycleDistributedKinds, embargoStatusFor,
+} from './embargoPolicy.js';
+import { toPublicContents } from './contentsProjection.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -135,17 +138,27 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true, changes };
   }
 
+  // --- 읽기 경로: Contents 행이 응답으로 나가는 단일 투영 지점이다 ---
+  // 아래 3개 함수(getById/query/search)만 클라이언트로 나가는 행을 만든다. 세션 토큰(lockerSessionId)·
+  // 편집 탭 식별자(lockerClientId) 제거는 여기서만 한다 — 라우트/컨트롤러에서 개별 삭제 금지
+  // (새 라우트에서 반드시 누락된다). 제거 목록의 단일 출처는 contentsProjection.PRIVATE_CONTENTS_COLS다.
+  // 내부 판정 경로(acquireEditLock·assertLockHolder·applyAction·syncEmbargoStatus·deriveArticle)는
+  // articleModel.getById를 직접 부르므로 이 투영의 영향을 받지 않는다(잠금 takeover 판정 보존).
+
   // 단건 조회 — 본문(Article.markupVersion)을 포함한 { article, contents }(없으면 null). 읽기 전용.
   function getById(articleId) {
-    return articleModel.getById(articleId);
+    const row = articleModel.getById(articleId);
+    if (!row) return null;
+    return { ...row, contents: toPublicContents(row.contents) };
   }
 
   function query(filters) {
-    return articleModel.query(filters);
+    return articleModel.query(filters).map((contents) => toPublicContents(contents));
   }
 
+  // Article 행에는 잠금 컬럼이 없다(스키마) — 같은 투영을 통과시켜 검색 응답도 동일 규율 아래 둔다.
   function search(q) {
-    return articleModel.searchByText(q);
+    return articleModel.searchByText(q).map((row) => toPublicContents(row));
   }
 
   // 생애주기 액션 적용 — transition으로 다음 status를 구하고 갱신한다.
@@ -233,8 +246,13 @@ export function createArticleService({ articleModel, db, historyModel, distribut
 
     const fromStatus = row.contents.status;
     const history = historyModel ? historyModel.queryByArticle(articleId) : [];
+    // 승격 판정은 **이번 사이클**의 배부만 센다(cycleDistributedKinds) — 과거 사이클 이력으로
+    // 재엠바고 기사가 거짓 완결되지 않게. 보류→엠바고 재설정→재송고로 DES에 재진입한 기사를
+    // 전체 이력으로 판정하면 DPS(완결)로 승격되고, DPS는 MUTABLE_STATUSES 밖이라 상태 계산이
+    // 다시는 개입하지 못한다 → 도래 시각이 와도 영원히 배부되지 않는다(무음 미배부 + 거짓 완결).
+    // 송고 훅의 distributedKinds(전체 이력 = "역사상 어디로 나갔나")와는 질문이 다르다 — 바꾸지 마라.
     const distributed = [...new Set([
-      ...distributedKinds(history),
+      ...cycleDistributedKinds({ status: fromStatus, historyRows: history }),
       ...(Array.isArray(extraKinds) ? extraKinds : []),
     ])];
 
@@ -355,15 +373,27 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return { ok: true };
   }
 
-  // 해당 편집 탭(clientId)이 잠금 보유자인지 — 편집 저장 권한 검증에 쓴다.
+  // 해당 편집 탭(clientId)이 잠금 보유자인지 — 편집 저장(PUT) 인가에 쓴다.
   // 보유 탭만 저장할 수 있다(같은 세션의 2번째 탭은 저장 차단).
-  function assertLockHolder(articleId, { clientId } = {}) {
+  // CRITICAL(ADR-004): clientId는 클라이언트가 만든 탭 식별자일 뿐이다. 저장 인가는 반드시
+  //   "검증된 세션의 userId"와 잠금 행의 lockerUserId를 함께 대조한다(문자열 하나로 인가하지 않는다).
+  //   userId를 넘기지 않으면 거부한다 — "미전달이면 통과" 폴백은 인가를 조용히 여는 취약점 그 자체다.
+  // sessionId는 판정에 쓰지 않는다 — acquireEditLock의 sameUserReLogin과 같은 관용도(같은 사용자의
+  //   재로그인 허용)를 유지하기 위함이다. 세션 일치를 강제하면 세션이 갱신됐는데 탭이 잠금을 재획득하지
+  //   못한 편집자의 저장이 거부돼 편집물이 유실된다. (인자는 계약·감사·후속 강화의 접점으로 남긴다.)
+  // 실패 사유는 모두 not-holder로 수렴한다 — 누가 잠갔는지는 응답에 담지 않는다.
+  // eslint-disable-next-line no-unused-vars -- sessionId는 계약상 받되 판정에 쓰지 않는다(위 주석 참조).
+  function assertLockHolder(articleId, { clientId, userId, sessionId } = {}) {
     const row = articleModel.getById(articleId);
     if (!row || !row.contents) return { ok: false, reason: 'not-found' };
 
     const c = row.contents;
-    if (c.lockYN === 'Y' && c.lockerClientId === clientId) return { ok: true };
-    return { ok: false, reason: 'not-holder' };
+    const denied = { ok: false, reason: 'not-holder' };
+    if (c.lockYN !== 'Y') return denied;
+    if (c.lockerClientId !== clientId) return denied; // 탭 규칙(같은 사용자의 2번째 탭 차단).
+    if (!userId || !c.lockerUserId) return denied; // 신원 미상(레거시 잠금 행 포함) → 거부.
+    if (c.lockerUserId !== userId) return denied; // 남의 탭 문자열을 알아도 사람이 다르면 거부.
+    return { ok: true };
   }
 
   return {
