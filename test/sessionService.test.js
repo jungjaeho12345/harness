@@ -77,3 +77,53 @@ test('invalidate: 로그아웃하면 세션이 사라진다', () => {
   svc.invalidate(sid);
   assert.equal(svc.touchSession(sid), undefined);
 });
+
+// --- peekSession: 만료를 연장하지 않는 조회 (SSE처럼 반복 확인하는 경로용) ---
+
+test('peekSession: 유효 세션이면 touchSession과 같은 정제 신원을 반환한다', () => {
+  const clock = makeClock();
+  const svc = createSessionService({ now: clock.now });
+  const sid = svc.createSession({
+    userId: 'kim', name: '김기자', role: 'D',
+    department: '정치부', departmentCode: 'POL', password: 'secret-hash',
+  });
+  const id = svc.peekSession(sid);
+  assert.deepEqual(id, {
+    userId: 'kim', role: 'D', department: '정치부', departmentCode: 'POL', name: '김기자',
+  });
+  assert.ok(!('password' in id), '신원에 비밀번호 키가 없다');
+});
+
+test('peekSession: 없는 세션은 undefined', () => {
+  const svc = createSessionService();
+  assert.equal(svc.peekSession('nope'), undefined);
+});
+
+test('peekSession: 만료를 연장하지 않는다(peek만 반복하면 1시간 뒤 만료)', () => {
+  const clock = makeClock();
+  const svc = createSessionService({ now: clock.now });
+  const sid = svc.createSession({ userId: 'kim', role: 'R' });
+
+  clock.advance(30 * MIN);
+  assert.ok(svc.peekSession(sid), '30분 시점: 아직 유효');
+  clock.advance(31 * MIN);
+  assert.equal(svc.peekSession(sid), undefined, '발급 후 61분: peek는 연장하지 않으므로 만료');
+});
+
+test('peekSession: 만료된 세션은 스토어에서 제거된다(touchSession도 undefined)', () => {
+  const clock = makeClock();
+  const svc = createSessionService({ now: clock.now });
+  const sid = svc.createSession({ userId: 'kim', role: 'R' });
+
+  clock.advance(61 * MIN);
+  assert.equal(svc.peekSession(sid), undefined, '만료');
+  assert.equal(svc.touchSession(sid), undefined, '제거됐으므로 touch로도 부활하지 않는다');
+});
+
+test('peekSession: 반환 신원은 사본이라 스토어를 오염시키지 않는다', () => {
+  const svc = createSessionService();
+  const sid = svc.createSession({ userId: 'kim', role: 'R' });
+  const id = svc.peekSession(sid);
+  id.role = 'Z';
+  assert.equal(svc.peekSession(sid).role, 'R', '외부 변형이 세션 스토어에 반영되지 않는다');
+});
