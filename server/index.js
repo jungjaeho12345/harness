@@ -1,6 +1,7 @@
 // 얇은 HTTP/SSE transport (ADR-006). 비즈니스 로직 없음 — 컨트롤러 위임 + 인가 게이트 + shape 매핑만.
 // CRITICAL: acting role은 검증된 x-session-id 세션에서만 도출한다. req.body.role은 절대 신뢰하지 않는다 (ADR-004).
-// 의존성(controllers, sessionService)은 주입받는다 — 테스트는 in-memory db/서비스로 구동한다.
+// 의존성(controllers)은 주입받는다 — 테스트는 in-memory db/서비스로 구동한다.
+// 신원은 세션 스토어를 직접 만지지 않고 controllers.auth를 통해서만 얻는다(재검증 경로 단일화, ADR-004).
 // SSE(/api/stream)는 행 데이터 없는 "무효화 신호"만 브로드캐스트한다 (ADR-005).
 
 import express from 'express';
@@ -230,14 +231,15 @@ function articleToText(found = {}) {
 // cookieSecure: Secure 속성 토글. 미주입 시 isProd(프로덕션 HTTPS에서만 true). dev/test(HTTP)는 false여야 쿠키가 실린다.
 // forceHttps: HTTPS 강제 토글. 미주입 시 isProd. true면 HSTS 적용 + 평문 HTTP를 https로 308 리다이렉트.
 //   Secure 쿠키와 같은 환경(prod)을 전제로 한다 — HSTS/리다이렉트는 https 보장과 함께만 의미가 있다.
-// logService: cross-cutting 인프라 — sessionService처럼 createApp에 직접 주입한다(컨트롤러 경유 금지).
+// logService: cross-cutting 인프라 — createApp에 직접 주입한다(컨트롤러 경유 금지).
 //   기본값 제공으로 미주입 기존 테스트도 무회귀. 로그 message에는 식별용 최소 필드만 담는다
 //   (비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지 — 마스킹 규율).
 // origins: CORS allowlist와 CSRF 가드가 공유하는 허용 출처 목록(ADR-009). 미주입 시 allowedOrigins()
 //   = 기본 두 항목 + process.env.ALLOWED_ORIGINS. env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
+// sessionService 파라미터는 두지 않는다 — 신원 도출 경로가 둘이면 한쪽만 재검증되는 구멍이 생긴다.
+//   세션 스토어는 createControllers가 가드로 감싸 보유하고, transport는 controllers.auth로만 신원을 얻는다.
 export function createApp({
   controllers,
-  sessionService,
   env = process.env.NODE_ENV,
   cookieSecure,
   forceHttps,
@@ -369,9 +371,11 @@ export function createApp({
   app.notifyChange = (kind) => bus.emit('change', { kind });
 
   // 쿠키(우선) 또는 x-session-id 헤더(폴백) → 검증된 신원. req.body.role은 절대 쓰지 않는다.
+  // controllers.auth.session은 매 호출 User 행을 재조회해 비활성/역할 변경을 즉시 반영한다(세션 가드).
+  // 라우트 핸들러에 재검증을 개별 삽입하지 마라 — 누락된 라우트가 곧 권한 상승 구멍이다.
   function sessionOf(req) {
     const sid = readSessionToken(req);
-    return { sid, me: sid ? sessionService.touchSession(sid) : undefined };
+    return { sid, me: sid ? controllers.auth.session(sid) : undefined };
   }
 
   // --- health ---
@@ -416,8 +420,7 @@ export function createApp({
   // F5 복원 — 재인증 없이 세션으로 신원을 돌려준다(쿠키 우선, x-session-id 헤더 폴백).
   // 평문 ?session= 쿼리 폴백은 제거했다 — URL/로그 누출 표면이므로 쿠키·헤더만 허용한다.
   app.get('/api/session', (req, res) => {
-    const sid = readSessionToken(req);
-    const me = sid ? sessionService.touchSession(sid) : undefined;
+    const { me } = sessionOf(req);
     if (!me) return res.status(401).json(UNAUTH);
     return res.json({ ok: true, user: me });
   });
@@ -845,8 +848,7 @@ export function createApp({
   // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더)만 허용한다.
   // 평문 ?session= 쿼리 폴백은 제거했다 — URL/프록시 로그 누출 표면이므로 쿠키·헤더만 신뢰한다.
   app.get('/api/stream', (req, res) => {
-    const sid = readSessionToken(req);
-    const me = sid ? sessionService.touchSession(sid) : undefined;
+    const { me } = sessionOf(req);
     if (!me) return res.status(401).json(UNAUTH);
 
     res.set({
@@ -927,7 +929,8 @@ function bootstrap() {
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
-  const app = createApp({ controllers, sessionService, logService, forceHttps });
+  // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
+  const app = createApp({ controllers, logService, forceHttps });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {

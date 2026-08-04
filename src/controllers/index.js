@@ -14,6 +14,7 @@ import { createPhotoModel } from '../models/photoModel.js';
 import { createDistributionTargetModel } from '../models/distributionTargetModel.js';
 
 import { createSessionService } from '../services/sessionService.js';
+import { createSessionGuard } from '../services/sessionGuard.js';
 import { createUserService } from '../services/userService.js';
 import { createArticleService } from '../services/articleService.js';
 import { createAuthorization } from '../services/authorization.js';
@@ -52,7 +53,12 @@ export function createControllers(db, {
   const distributionTargetModel = createDistributionTargetModel(db);
 
   // 세션 스토어는 HTTP 계층과 공유 — 주입 없으면 새로 만든다.
-  const session = sessionService ?? createSessionService();
+  // 그 위에 세션 가드를 씌워 touch/peek 마다 User 행을 재조회한다(비활성·역할 강등 즉시 반영, ADR-004).
+  // CRITICAL: 이 합성 루트 아래의 모든 소비처(authorization 게이트·auth.*)는 원본이 아니라 **가드**를 쓴다 —
+  //   한 갈래라도 원본을 직접 쓰면 그 경로만 옛 스냅샷 권한으로 남아 권한 상승 구멍이 된다.
+  //   주입받은 원본(rawSession)은 그대로 살아 있어 HTTP 계층과 같은 스토어를 공유한다.
+  const rawSession = sessionService ?? createSessionService();
+  const session = createSessionGuard({ sessionService: rawSession, userModel });
 
   // 배부(ADR-008) — 스풀 루트(DIST_SPOOL_DIR)가 설정된 환경에서만 활성화한다.
   // 기본값을 하드코딩하지 않는다: 미설정 환경에서 의도치 않은 파일 쓰기가 생기면 안 된다.
@@ -117,6 +123,9 @@ export function createControllers(db, {
     },
     logout: (sessionId) => ({ ok: session.invalidate(sessionId) }),
     session: (sessionId) => session.touchSession(sessionId),
+    // 비연장 조회 — SSE push 시점 재검증처럼 사용자 활동이 아닌 경로 전용(만료를 연장하지 않는다).
+    // 일반 REST 요청은 슬라이딩 갱신이 계약이므로 반드시 session(touch)을 쓴다.
+    peek: (sessionId) => session.peekSession(sessionId),
     manageUsers: (sessionId, op, payload) => authorization.manageUsers(sessionId, op, payload),
     editDps: (sessionId, articleId, action) => authorization.editDps(sessionId, articleId, action),
   };

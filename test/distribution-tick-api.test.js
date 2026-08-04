@@ -43,11 +43,27 @@ function fakeSpoolFs({ fail = false } = {}) {
   };
 }
 
-async function start({ spool = true, spoolFs = fakeSpoolFs(), now = () => NOW } = {}) {
+// tick 후보 스캔(Contents 조회)만 실패하는 DB 장애 재현용 래퍼.
+// 인증 경로(User 조회)는 살려 둔다 — 세션 재검증(phase 52)이 매 요청 User 행을 재조회하므로
+// db 전체를 닫으면 인가 게이트에서 먼저 터져 tick의 'tick-failed' 경로를 관측할 수 없다.
+function contentsScanFailingDb(db) {
+  return {
+    prepare(sql) {
+      if (/FROM Contents/i.test(sql)) throw new Error('database disk image is malformed');
+      return db.prepare(sql);
+    },
+    exec: (sql) => db.exec(sql),
+  };
+}
+
+async function start({
+  spool = true, spoolFs = fakeSpoolFs(), now = () => NOW, failContentsScan = false,
+} = {}) {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
-  const controllers = createControllers(db, {
+  // 시드는 항상 원본 db로 한다(래퍼는 앱 쪽 조회만 실패시킨다).
+  const controllers = createControllers(failContentsScan ? contentsScanFailingDb(db) : db, {
     sessionService,
     env: spool ? { ...ENV, DIST_SPOOL_DIR: SPOOL_ROOT } : ENV,
     spoolFs,
@@ -231,14 +247,13 @@ test('POST /api/distribution/tick: 실패 항목에 서버 파일시스템 경�
 });
 
 test('POST /api/distribution/tick: 후보 조회 자체가 실패하는 서버 장애는 500 tick-failed다(4xx 아님)', async () => {
-  const ctx = await start();
+  // 인증(User 조회)은 정상이고 tick의 후보 조회(Contents)에서만 DB가 터지는 서버 장애를 재현한다 —
+  // 서비스는 throw 없이 { ok:false, reason:'tick-failed' }를 돌려주고 라우트가 500으로 매핑한다.
+  const ctx = await start({ failContentsScan: true });
   try {
     seedTarget(ctx.db);
     seedDueArticle(ctx.db);
     const zsid = await loginAs(ctx, 'Z', 'admin');
-    // 로그인(세션 확보) 후 DB 연결을 잃은 서버 장애를 재현한다 — 세션은 메모리라 인가 게이트는 통과하고,
-    // tick의 후보 조회에서 처음 DB를 만나 실패한다({ ok:false, reason:'tick-failed' }, throw 없음).
-    ctx.db.close();
 
     const r = await tick(ctx, { sid: zsid });
     assert.equal(r.status, 500, '서버 장애를 4xx로 보고하면 운영 cron이 클라이언트 잘못으로 오인한다');

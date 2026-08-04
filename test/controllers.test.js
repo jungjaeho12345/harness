@@ -118,6 +118,31 @@ test('createControllers: 외부 sessionService 주입을 지원한다 (HTTP 계�
   assert.equal(sessionService.touchSession(sessionId).userId, 'kim');
 });
 
+// auth.peek 계약 잠금 — SSE push 시점 재검증(step3)이 소비할 비연장 조회 표면이다.
+// touch(=session)와 달리 만료를 연장하지 않아야 열린 스트림이 세션을 무기한 살리지 않는다.
+test('auth.peek: 존재하는 비연장 조회이며 세션 만료를 연장하지 않는다(session은 연장한다)', async () => {
+  let clock = 0;
+  const sessionService = createSessionService({ now: () => clock });
+  const { db, controllers } = setup({ sessionService });
+  seedUser(db, { userId: 'kim', role: 'R', password: 'pw' });
+
+  assert.equal(typeof controllers.auth.peek, 'function', 'auth.peek');
+
+  // peek만 반복하면 발급 후 1시간에 만료된다(연장 없음).
+  const peeked = (await controllers.auth.login('kim', 'pw')).sessionId;
+  clock += 30 * 60 * 1000;
+  assert.equal(controllers.auth.peek(peeked).userId, 'kim');
+  clock += 30 * 60 * 1000;
+  assert.equal(controllers.auth.peek(peeked), undefined, 'peek는 만료를 연장하지 않는다');
+
+  // 대조: 같은 간격으로 session(touch)을 쓰면 슬라이딩 갱신돼 살아 있다.
+  const touched = (await controllers.auth.login('kim', 'pw')).sessionId;
+  clock += 30 * 60 * 1000;
+  assert.equal(controllers.auth.session(touched).userId, 'kim');
+  clock += 30 * 60 * 1000;
+  assert.equal(controllers.auth.session(touched).userId, 'kim', 'session은 슬라이딩 갱신된다');
+});
+
 test('user.query: 비밀번호를 제외한 목록을 서비스에 위임한다', () => {
   const { db, controllers } = setup();
   seedUser(db, { userId: 'kim', role: 'R', password: 'pw' });
