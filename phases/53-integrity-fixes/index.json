@@ -1,0 +1,118 @@
+{
+  "project": "기사 작성기",
+  "phase": "53-integrity-fixes",
+  "steps": [
+    { "step": 0, "name": "selection-range-model", "status": "pending" },
+    { "step": 1, "name": "editor-selection-delete", "status": "pending" },
+    { "step": 2, "name": "editor-drop-guard", "status": "pending" },
+    { "step": 3, "name": "writer-drop-wiring", "status": "pending" },
+    { "step": 4, "name": "submit-save-gate", "status": "pending" },
+    { "step": 5, "name": "lock-integrity", "status": "pending" },
+    { "step": 6, "name": "submit-failure-feedback", "status": "pending" }
+  ],
+  "scope": "2026-08-03 전수감사 잔여 중 데이터 무결성 5건만 — (A) 비-collapsed 선택이 삭제되지 않아 Enter·여러 줄 붙여넣기가 본문을 파손, (B) 드래그앤드롭이 '(끝)' 마커 계약을 우회해 오염된 본문이 송고 가드를 통과, (C) 편집 송고 경로가 저장(PUT) 실패를 무시하고 상태 전이를 강행, (D) SSE takeover 시 좀비 편집 탭 잔존, (E) 잠금 획득 실패 fail-open으로 무잠금 편집 진입. 소규모 6건은 phase 54로 분리한다(혼입 금지). 보안 4건은 phase 52에서 완료됐다.",
+  "baseline": "feat-0-mvp tip 020e34c 실측: npm test 751/751 pass·fail 0, npm run test:web 87 files / 2011 tests pass, npm run lint clean, npm run build clean.",
+  "order": "editor 패스(step0~3) → controller 패스(step4~5) → view 결선 패스(step6). 순서 고정 이유: (1) step1은 step0이 만드는 순수 함수 replaceRangeInBlocks를 소비한다. (2) step1·step2가 같은 파일 web/src/view/Editor.jsx를 순차 수정한다(동시 수정 금지 — 실패 격리 불가). (3) step3은 step2가 확정한 onDropImageFile prop 계약을 결선한다. (4) step6은 step4가 확정한 submit 실패 반환 계약(reason:'save-failed')을 소비하며, step3과 같은 파일 web/src/view/WriterPage.jsx를 순차 수정한다. backend(src/·server/·test/)는 이 phase에서 한 줄도 바뀌지 않는다.",
+  "decisions": [
+    {
+      "id": "A",
+      "topic": "선택 범위 삭제를 어느 계층에서 처리할 것인가",
+      "verdict": "순수 계층(web/src/view/editorNewline.js)에서 처리한다. 신규 순수 함수 replaceRangeInBlocks(blocks, range, text)가 '범위 삭제 + 삽입'을 한 번에 계산하고, Editor.jsx는 DOM selection(anchor+focus)을 블록 좌표 range로 환산해 넘기기만 한다. DOM 계층에서 range.deleteContents()/execCommand('delete')로 지우는 안은 기각한다. 환산은 텍스트 노드 앵커뿐 아니라 **요소(element) 앵커**(offset=자식 경계 인덱스, node===root 포함)까지 반드시 처리한다.",
+      "rationale": "요소 앵커를 함께 다루는 이유(plan-reviewer high 1): 편집 메뉴의 전체 선택(selectAllInEditor — selectNodeContents(root))·문단 선택(setStartBefore/setEndAfter — root 앵커)·한 줄 선택(selectNodeContents(lineEl))이 전부 요소 앵커인데, 재사용 대상 readCaretForInsert는 root 앵커에서 null을 돌려주고 요소 앵커를 col 0으로 고정한다 — 그대로 두면 A 결함이 가장 흔한 제스처에서 미해결로 남고 텍스트 노드 기반 테스트는 전부 green이라 결함이 조용히 통과한다. 회귀 안전: 오늘 요소 앵커를 쓰는 경로(focusLineStart·focusCaretAt 빈 줄 폴백·테스트 헬퍼 caretAtLine)는 전부 offset 0이라 새 규칙에서도 col 0으로 동일하다. (1) 이 에디터는 '브라우저가 바꾼 DOM을 React가 재조정하면 캐럿 소실·removeChild 크래시'라는 이유로 타이핑 중 재렌더를 금지하고 구조 변경은 항상 blocks→remount로만 반영한다(Editor.jsx 상단 CRITICAL). DOM을 직접 지우면 그 불변식과 정면 충돌하고, 지운 DOM을 다시 readEditorBlocks로 파싱하는 왕복이 하나 더 생긴다. (2) execCommand는 폐기 API이고 jsdom 미구현이라 단위 검증이 불가능하다 — 이 프로젝트의 회귀 방어는 전부 vitest 단위 테스트에 걸려 있다. (3) 임베드 보존·'(끝)' 마커 clamp·정렬 승계 같은 도메인 규칙은 DOM이 아니라 블록 모델의 규칙이며, 이미 insertTextIntoBlocks·editorEditOps가 같은 계층에 산다(ADR-003 View 순수 로직 분리). (4) 순수 함수라 역방향 선택·여러 줄 걸침·임베드 포함 같은 조합을 DOM 없이 전수 테스트할 수 있다."
+    },
+    {
+      "id": "A-2",
+      "topic": "선택 범위 안의 임베드·'(끝)' 마커·정렬 처리 규칙",
+      "verdict": "임베드는 절대 삭제하지 않고 제자리(상대 순서) 보존한다. 삭제 범위 end는 '(끝)' 마커 줄 시작 이전으로 clamp해 마커 블록을 이 경로가 변형하지 못하게 한다(range 경로와 캐럿 미상 폴백 경로 양쪽 적용). 캐럿 미상 폴백의 삽입 대상은 '마지막 텍스트 줄'이 아니라 '마커 줄 직전의 마지막 텍스트 줄'로 바꾼다. 정렬은 승계한다 — 결과 첫 줄은 start 줄의 align, 마지막 줄은 end 줄의 align, 중간에 새로 생기는 줄은 start 줄의 align.",
+      "rationale": "폴백 교정(plan-reviewer high 2): 오늘 폴백은 무조건 마지막 텍스트 줄에 이어붙이는데 그 줄이 '(끝)'이면 '(끝)A'가 되어 serializeBodyFromBlocks(trim 정확 비교)가 마커를 놓치는 반면 송고 가드 hasEndMarker(substring)는 통과한다 — A가 B와 똑같은 구멍을 새로 뚫는다. 전체 선택은 root 요소 앵커라 readCaret도 null을 돌려줘 caretBlocked가 막지 못하므로 실제 도달 가능한 경로다(같은 계층의 editorClipboard.js L24~27은 이 위험을 '마커 있으면 통째로 no-op'으로 회피한다 — 이 함수는 삽입 위치를 마커 앞으로 옮겨 사용자의 입력을 살리면서 마커를 지킨다). 이 한 경우만 collapsed 텍스트 결과가 의도적으로 바뀐다. 마커 식별은 재정규화 주체인 serializeBodyFromBlocks와 같은 trim 정확 비교로 하며 isInputBlocked의 substring 기준과 섞지 않는다(본문 중간에 '(끝)'을 인용한 기사의 정상 편집을 막지 않기 위함). 임베드: 미디어 삭제 경로는 임베드 × 버튼과 줄 삭제(news.md 173·174행)라는 명시 수단이 이미 있고, 선택 삭제로 조용히 사라지면 복구 수단이 없다(undo는 있으나 본문 텍스트 기준 코얼레싱이라 사용자가 인지하기 어렵다). phase 29 editorEditOps가 확립한 '임베드 제자리' 관례와도 일치한다. 마커: serializeBodyFromBlocks(writerBody.js L20)는 trim 정확 비교로 마커 블록을 식별하는데, 삭제로 tail이 마커 줄에 붙으면('B(끝)') 재정규화·정렬 제외·치환 가드가 전부 풀리고 송고 가드 hasEndMarker는 substring이라 오염된 채 통과한다 — 이 phase가 B에서 막는 것과 같은 구멍을 A가 새로 뚫으면 안 된다. 삭제 자체는 Backspace/Delete/Ctrl+D/한줄 지우기로 여전히 가능하므로 news.md 170행('삭제/이동/선택은 항상 가능')과 충돌하지 않는다. 정렬: 정렬 유실은 이 프로젝트가 반복적으로 결함으로 판정해 고쳐온 계열이고(phase 45 step0, 49 step3·step4의 pair-following 확정), 정렬된 줄에서 Enter를 치면 양쪽 줄이 정렬을 잃는 현행 동작은 워드프로세서 표준과도 어긋난다. editorDate.js L86~92·editorGlyph.js L84~90의 '새 줄 생성 분기는 승계 대상 아님' 관례와 반대인 이유는 대상이 다르기 때문이다 — 그 둘의 '새 줄'은 삽입할 줄이 아예 없어 만들어내는 무연고 줄이지만, Enter/범위 대체가 만드는 줄은 원본 줄을 두 조각으로 쪼갠 연속물이다. 텍스트 결과는 불변이므로 회귀 표면은 align 키뿐이다."
+    },
+    {
+      "id": "A-3",
+      "topic": "'(끝)' 뒤 입력 차단(caretBlocked) 판정 기준을 range.start로 바꿀 것인가",
+      "verdict": "바꾸지 않는다. Editor.jsx의 caretBlocked(readCaret anchor 기준)는 그대로 두고, 마커 보호는 순수 계층의 end clamp로만 한다.",
+      "rationale": "caretBlocked는 readCaret(.yh-editor__line 단위 좌표)을 쓰고 삽입 경로는 readCaretForInsert(<br>·중첩 블록까지 분할한 좌표)를 쓴다 — 두 좌표계는 dirty DOM에서 갈릴 수 있다. 차단 판정의 caret 소스를 바꾸면 Enter뿐 아니라 일반 타이핑·한 줄 붙여넣기·IME 조합까지 전부 영향을 받아 회귀 표면이 5건 수정 범위를 크게 넘는다. 역방향 선택으로 anchor가 마커 뒤에 있는 경우는 오늘과 동일하게 no-op(무변경)으로 남는다 — 데이터 손상이 아니라 '한 번 더 시도' 수준의 보수적 실패다."
+    },
+    {
+      "id": "B",
+      "topic": "드래그앤드롭 정책 — 차단만 할 것인가, 결선할 것인가",
+      "verdict": "네이티브 드롭은 전면 차단(onDragOver·onDrop 모두 preventDefault)하고, 이미지 파일 드롭만 환경설정 edit.dragDrop 게이트로 기존 안전 경로(WriterPage.pasteImageAtCaret — 업로드 후 경로 임베드)에 위임한다. 텍스트/HTML 드롭(드래그 이동 포함)은 삽입하지 않는다.",
+      "rationale": "news.md L192가 정의하는 드래그앤드롭 스펙은 '이미지를 드래그앤 드롭이 허용된다. 기본값은 된다' 하나뿐이고, editorPrefs 기본값도 dragDrop:true다(editorPrefs.test.js가 잠금). 즉 스펙이 요구하는 것은 이미지 드롭이며, 텍스트 드롭은 스펙에 없고 지금은 마커 계약을 우회해 '(끝)단어' 오염 본문을 만드는 결함 경로다. 차단만 하면 스펙 기능이 영구 사문화되고 pref가 거짓 표시가 된다. 이미지 경로는 phase 20이 검증한 onPasteImageFile 오케스트레이션(업로드→경로 임베드→탭 전환 방어)을 그대로 재사용하므로 새 데이터 경로가 생기지 않는다. 반대로 텍스트 드롭 결선은 drag-move의 원본 범위 삭제 의미론과 드롭 좌표 캐럿 계산이 필요해 회귀 표면이 결함 수정보다 커진다 — 제외한다."
+    },
+    {
+      "id": "C",
+      "topic": "송고 경로의 저장 실패 처리 계약",
+      "verdict": "useWriteController.submit의 편집 경로는 저장 결과가 r.ok === true가 아니면 applyAction·unlock·탭 리셋을 전부 건너뛰고 { ok:false, reason:'save-failed', saveReason }를 반환한다. 자동 재시도는 하지 않는다. 사용자 안내는 View(WriterPage.onAction)가 담당한다.",
+      "rationale": "저장 실패 후 전이를 진행하면 옛 본문으로 송고·배부되고(ADR-008 배부는 송고 훅에서 즉시 스풀에 쓰인다 — 되돌릴 수 없다) 성공 처리로 탭이 리셋되며 초안(clearDraft)까지 지워져 편집분이 영구 소실된다. phase 52가 세션 재검증을 도입해 401/403 저장 실패 확률은 오히려 늘었다. 재시도를 컨트롤러에 넣지 않는 이유: 실패 사유가 not-holder/forbidden이면 재시도는 영원히 실패하고, 네트워크 실패에서는 중복 저장 위험이 있다. 사유 토큰을 별도 키(saveReason)로 보존하는 이유: 뷰가 '저장 실패로 송고하지 않음'과 '전이 거부'를 구분해 안내해야 하기 때문이다."
+    },
+    {
+      "id": "D",
+      "topic": "takeover(보유자 변경) 판정에 쓸 신호",
+      "verdict": "queryArticles 응답의 lockerUserId와 로그인 신원(identity.userId) 비교로만 판정한다. lockerClientId·lockerSessionId는 판정에 쓰지 않는다(서버 투영에서 제거됨). 같은 userId의 재획득(같은 사람의 다른 탭/재로그인)은 이 phase에서 닫지 않는다.",
+      "rationale": "phase 51 step0이 lockerSessionId·lockerClientId를 응답 투영(contentsProjection.PRIVATE_CONTENTS_COLS)에서 제거했으므로 클라이언트가 볼 수 있는 보유자 신호는 lockYN·lockerUserId·lockedAt뿐이다. 타인 takeover는 lockerUserId 변화로 정확히 잡히고, 이것이 감사가 보고한 시나리오다. 트레이드오프(명시): 탭을 닫으면 그 탭의 미저장 편집분이 사라진다(자동저장 기본 off, 컨트롤러는 ADR-003상 editorDraft를 import할 수 없다) — C·E와 반대 방향이지만 잠금이 이미 타인에게 넘어가 그 탭의 입력은 어차피 저장될 수 없으므로, 살려두면 사용자가 더 오래 헛수고한 뒤 더 큰 분량을 잃는다. 그래서 안내 문구에 '저장되지 않은 변경은 반영되지 않았다'를 반드시 넣고 테스트로 잠근다(무음 종료 금지). lockedAt 변화 기반 판정은 같은 사람의 F5·재획득까지 오탐해 미저장 편집분이 있는 탭을 닫을 수 있어 기각한다(닫기는 되돌릴 수 없다). 같은 userId의 다른 탭까지 잡으려면 서버 응답에 'lockedByMe' 같은 계산 필드를 추가해야 하는데, 그것은 백엔드 계약 확장이라 이 phase(프론트 무결성 5건) 범위 밖이다 — phase 54 이후 후보로 남긴다."
+    },
+    {
+      "id": "E",
+      "topic": "잠금 획득 실패 시 편집 진입 정책",
+      "verdict": "fail-closed — lockArticle이 ok:true가 아니면(사유 불문, 예외·null 포함) 편집 탭을 열지 않고 사유별 안내 후 null을 반환한다. 'locked'의 기존 문구 '편집중입니다.'는 그대로 유지한다.",
+      "rationale": "무잠금 편집 진입은 동시 편집·저장 거부(phase 51·52가 강화한 인가로 이제 확실히 거부된다)·편집분 유실로 이어진다. phase 49 step7(httpModel 실패 정규화)로 네트워크 단절·비JSON 응답도 { ok:false, reason }로 값이 되어 판정이 가능해졌다. 기존 문구를 유지하는 이유: 두 개의 테스트가 문자열을 계약으로 잠그고 있고, 사용자에게 익숙한 문구를 바꿀 이유가 없다."
+    }
+  ],
+  "excluded": [
+    {
+      "candidate": "감사 잔여 소규모 6건(phase 54 예정)",
+      "verdict": "제외(phase 54)",
+      "rationale": "이 phase는 데이터 무결성 5건만 다룬다. 성격이 다른 항목을 섞으면 회귀 검증 창이 흐려지고 리뷰 게이트의 초점이 분산된다(phase 52와 동일 규율)."
+    },
+    {
+      "candidate": "텍스트 드래그앤드롭(에디터 안 drag-move) 결선",
+      "verdict": "제외(범위 밖)",
+      "rationale": "news.md에 텍스트 드롭 스펙이 없다. 결선하려면 드롭 좌표→캐럿 환산과 drag-move의 원본 범위 삭제까지 필요해 회귀 표면이 이번 결함 수정보다 커진다. 이 phase는 '네이티브 드롭 차단'으로 마커 계약 우회를 확정 차단한다."
+    },
+    {
+      "candidate": "드롭 좌표 기반 캐럿 계산(document.caretRangeFromPoint / caretPositionFromPoint)",
+      "verdict": "기각",
+      "rationale": "jsdom 미구현이라 단위 검증이 불가능하고 브라우저별 비표준 분기가 프로덕션 경로에 들어간다. 임베드 삽입은 이미 '캐럿 위치, 없으면 문서 끝' 계약(insertEmbedAfterLine)이라 현재 캐럿 사용으로 충분하다."
+    },
+    {
+      "candidate": "선택 범위 안의 임베드 삭제(네이티브 동형 동작)",
+      "verdict": "기각(A-2 결정)",
+      "rationale": "미디어 무음 소실은 이 phase가 막으려는 무결성 손상과 같은 부류다. 임베드 삭제 수단은 × 버튼·줄 삭제로 이미 존재한다."
+    },
+    {
+      "candidate": "caretBlocked(‘(끝)’ 뒤 입력 차단)의 caret 소스 교체·차단 규칙 완화",
+      "verdict": "제외(무접촉 — A-3 결정)",
+      "rationale": "타이핑·한 줄 붙여넣기·IME까지 영향을 받는 전역 규칙이다. 마커 보호는 순수 계층 clamp로 달성된다."
+    },
+    {
+      "candidate": "서버 응답에 잠금 보유 여부 계산 필드(lockedByMe 등) 추가 / lockerClientId 재노출",
+      "verdict": "제외(범위 밖 — D 결정)",
+      "rationale": "백엔드 계약 확장이며, lockerClientId 재노출은 phase 51 step0이 닫은 표면을 되여는 것이다. 같은 사용자의 다른 탭 takeover 감지는 후속 phase 후보."
+    },
+    {
+      "candidate": "useViewController.enterEditor(L136~150)의 동일한 잠금 fail-open — 목록 화면의 1차 관문",
+      "verdict": "제외(후속 후보 — plan-reviewer med 1 근거 기재)",
+      "rationale": "openArticle과 문자 그대로 같은 패턴(reason!=='locked'면 그대로 진행)이지만, 성격이 다르다: enterEditor는 잠금을 clientId 없이 '탐색'만 하고 실제 편집 잠금은 writer 진입 후 openArticle이 다시 획득한다. step 5로 writer 측이 fail-closed가 되면 **무잠금 편집 진입 자체가 성립하지 않는다**(편집 탭이 열리지 않고 안내가 뜬다) — 남는 것은 '사용자가 writer.do로 이동한 뒤에야 실패를 안다'는 UX 지연뿐이고 데이터 무결성 손상은 없다. 같은 step에 넣으면 서로 다른 컨트롤러 모듈 두 개를 한 step에서 수정하게 되어 실패 격리가 깨지고(harness 원칙 1), 별도 step 추가는 무결성 5건 범위를 넘는다. 사유 매핑을 공유 모듈로 승격해 두 화면에 함께 적용하는 작업으로 phase 54에 넘긴다."
+    },
+    {
+      "candidate": "저장 실패 시 자동 재시도·자동 로컬 초안 저장 신설",
+      "verdict": "제외(C 결정)",
+      "rationale": "재시도는 not-holder/forbidden에서 영원히 실패하고 네트워크 실패에서 중복 저장을 만든다. 편집분은 탭(sessionStorage)에 그대로 남고 기존 자동저장 초안도 삭제되지 않으므로 새 저장 경로를 늘릴 이유가 없다."
+    },
+    {
+      "candidate": "force-unlock(강제 해제, lockYN='N') 수신 시 무음 종료 → 안내 추가",
+      "verdict": "제외(무접촉)",
+      "rationale": "news.md '강제 해제 수신 시 편집 탭 자동 종료'가 정의한 기존 계약이며 감사 지적 대상이 아니다. 안내는 이번에 새로 잡는 takeover 경로에만 추가한다."
+    },
+    {
+      "candidate": "DB 스키마 변경·행 삭제·백필, 백엔드(src/·server/·test/) 수정",
+      "verdict": "제외(영구 금지 / 범위 밖)",
+      "rationale": "DB 비파괴 원칙(CLAUDE.md·ADR-002). 이번 5건은 전부 web/ 프론트엔드 결함이며 서버 계약 변경 없이 닫힌다."
+    },
+    {
+      "candidate": "앱 내 타이머·외부 네트워크 egress 도입",
+      "verdict": "제외(영구 금지)",
+      "rationale": "ADR-008. 이 phase의 어떤 step도 setInterval/setTimeout 폴링이나 새 네트워크 경로를 만들지 않는다(기존 자동저장 타이머는 무접촉)."
+    }
+  ],
+  "coordination": "phases/50-hygiene-cleanup(미실행 계획)은 web 쪽에서 view/mgmtMessages.js 신설·writerBody.js 마커 align 승계·toSaveDto 오버라이드 원자성을 건드린다. 이번 phase가 만지는 지점(editorNewline.js의 신규 함수, Editor.jsx의 emitInsert·drop 핸들러, WriterPage.jsx의 Editor 결선·onAction, useWriteController.js의 submit·openArticle·SSE 잠금 핸들러)과 함수 단위로 겹치지 않는다. 다만 phase 50 step4(마커 align 승계)와 이번 step0(삽입 경로 align 승계)은 같은 '마커/정렬 계약'을 다루므로, 두 계획이 모두 머지될 때 serializeBodyFromBlocks의 마커 블록이 정렬을 승계하는지 한 번 교차 확인이 필요하다(이번 phase는 writerBody.js를 수정하지 않는다). phases/49-mini-backlog-cleanup/step0.md, phases/50-hygiene-cleanup/, .claude/skills/**는 이 phase의 어떤 step도 읽거나 수정하지 않는다."
+}
