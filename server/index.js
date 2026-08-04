@@ -892,7 +892,16 @@ export function createApp({
     // 주기 재검증 타이머는 두지 않는다(ADR-008) — 대가로 이벤트가 없으면 종료가 다음 이벤트까지 지연된다.
     const closer = createSseCloser(res);
     const onChange = (signal) => {
-      if (!controllers.auth.peek(sid)) return closer.close();
+      // 재검증은 DB를 읽는다 — 이 콜백은 bus.emit('change') 위, 즉 라우트 핸들러의 스택에서 돈다.
+      // 예외를 여기서 잡지 않으면 성공한 저장이 전역 에러 핸들러에 걸려 500으로 뒤집힌다(클라 재시도 → 중복 저장).
+      // fail-closed: 재검증 불가는 "일단 전송"이 아니라 봉인이다(신호를 쓰지 않고 스트림을 끝낸다).
+      // 잡는 위치는 여기(리스너 국소)여야 한다 — sessionGuard에서 잡으면 HTTP 라우트의 DB 예외가
+      // 500 internal-error 대신 401로 바뀌는 광범위한 동작 변화가 생긴다.
+      try {
+        if (!controllers.auth.peek(sid)) return closer.close();
+      } catch {
+        return closer.close();
+      }
       return res.write(`event: change\ndata: ${JSON.stringify(signal ?? {})}\n\n`);
     };
     bus.on('change', onChange);
@@ -941,7 +950,16 @@ export function createApp({
     // 비연장 peek 필수(touch면 열린 스트림이 세션을 무한 연장한다). 캐시·타이머 없음(ADR-008).
     const closer = createSseCloser(res);
     const off = logService.subscribe((rec) => {
-      const actor = controllers.auth.peek(sid);
+      // CRITICAL: 재검증은 DB를 읽는데 이 콜백은 logService.log가 try/catch 없이 동기 호출하고,
+      // 그 호출자는 요청 로거의 res.on('finish')다. 예외를 여기서 잡지 않으면 finish 리스너 밖으로 새어
+      // uncaughtException → 프로세스 종료가 된다(SQLITE_BUSY·디스크 I/O 등 DB 일시 장애로 서버 다운).
+      // fail-closed: 재검증 불가는 봉인이다(그 로그 라인은 쓰지 않고 스트림을 끝낸다).
+      let actor;
+      try {
+        actor = controllers.auth.peek(sid);
+      } catch {
+        return closer.close();
+      }
       if (!actor || actor.role !== 'Z') return closer.close();
       return res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`);
     });
