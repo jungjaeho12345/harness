@@ -88,11 +88,16 @@ const isMarkerBlock = (b) => isTextBlock(b) && String(b.text).trim() === END_MAR
 // 순수 함수 — DOM/window/React/전역 상태 비의존(ADR-003). DOM selection → 좌표 환산·결선은 Editor.jsx(호출부)의 책임이다.
 //
 // 설계 이유(벗어나지 마라):
-//  - 규칙 3(마커 end clamp): 삭제로 tail이 '(끝)' 줄에 붙으면('B(끝)') serializeBodyFromBlocks의 trim 정확 비교가
+//  - 규칙 3(마커 clamp): 삭제로 tail이 '(끝)' 줄에 붙으면('B(끝)') serializeBodyFromBlocks의 trim 정확 비교가
 //    마커를 놓쳐 재정규화·정렬 제외·치환 가드가 전부 풀리는데, 송고 가드 hasEndMarker는 substring이라 오염된 본문이
 //    그대로 송고·배부된다(ADR-008 배부는 송고 훅에서 즉시 스풀에 기록 — 되돌릴 수 없다). 그래서 마커 줄과 그 뒤 블록은
-//    이 함수가 절대 변경하지 않는다. start는 clamp하지 않는다(마커 뒤 삽입 차단은 호출부 책임 — Editor의 caretBlocked,
-//    editorClipboard의 isInputBlocked).
+//    이 함수가 절대 변경하지 않는다: end는 마커 줄 시작 이전으로 clamp하고, start가 마커 줄 이상이면 삽입 지점 자체를
+//    규칙 1-b(마커 직전)로 되돌린다.
+//    start도 이 함수가 막는 이유(리뷰 반영 — 종전에는 "호출부 책임"으로 미뤘다): 호출부 가드 Editor.caretBlocked는
+//    readCaret(.yh-editor__line 앵커) 기준이라 요소 앵커에서 null을 돌려주고(전체 선택 selectNodeContents(root)·
+//    문단 선택 setStartBefore/setEndAfter), 그 제스처가 정확히 start를 마커 줄에 얹는다 — 가드가 볼 수 없는 start가
+//    실제로 도달한다('[(끝)] + Ctrl+A + 붙여넣기' → 'X\nY(끝)'). 보호를 순수 계층 한 곳에 모아 A-3(caretBlocked
+//    무접촉)을 지키면서 호출부 좌표계 차이와 무관하게 마커를 지킨다.
 //  - 규칙 4(임베드 보존): 미디어가 무음으로 사라지면 복구 수단이 없다. 삭제 수단은 임베드 × 버튼과 줄 삭제로 이미
 //    존재한다(news.md 173·174행). phase29 editorEditOps의 '임베드 제자리' 관례와 동일하다.
 //  - 규칙 5(정렬 승계): 결과 첫 줄 = start 줄 align, 마지막 줄 = end 줄 align, 중간 새 줄 = start 줄 align.
@@ -132,6 +137,23 @@ export function replaceRangeInBlocks(blocks, range, text) {
   if (!end) end = start;
   if (start && isAfter(start, end)) { const t = start; start = end; end = t; }
 
+  // 규칙 1-b 공통 지점 — "마커 앞"에 삽입한다(마커가 없으면 오늘과 동일하게 마지막 텍스트 줄 끝).
+  // 반환 { result }: 즉시 반환할 결과(마커가 첫 텍스트 줄이라 그 앞에 새 줄을 만들어야 하는 경우),
+  //        { point }: 그 지점으로 collapsed 삽입(마커 직전 줄 끝).
+  // 캐럿 미상 폴백(바로 아래)과 start clamp(규칙 3-start)가 이 한 곳을 공유한다 — 마커 보호 지점이 두 벌이면 갈린다.
+  const insertBeforeMarker = () => {
+    // 마커 앞에 텍스트 줄이 없다(빈 문서에서 Alt+Y를 누른 상태) — 마커 바로 앞에 새 텍스트 줄을 만들어 그 자리에 삽입.
+    // 여기서 "없으면 마지막 텍스트 줄"로 폴백하면 그 줄이 곧 마커 줄이라 '(끝)A' 오염이 되살아난다.
+    if (markerLine === 0) {
+      const next = list.slice();
+      next.splice(textArrIdx[0], 0, ...insLines.map((t) => textBlock(t)));
+      return { result: { blocks: next, caretLineIndex: insLines.length - 1 } };
+    }
+    const targetLine = markerLine > 0 ? markerLine - 1 : textArrIdx.length - 1;
+    // 삽입 대상 줄 끝 — caretLineIndex base도 이 줄이다.
+    return { point: { lineIndex: targetLine, inLine: lineLen(targetLine) } };
+  };
+
   // 규칙 1-b — 캐럿 미상 폴백. 삽입 지점은 "마커 줄 직전"이다(마커가 없으면 오늘과 동일하게 마지막 텍스트 줄 끝).
   // 오늘의 폴백은 무조건 마지막 텍스트 줄에 이어붙여, 그 줄이 '(끝)'이면 '(끝)A'로 마커를 오염시킨다.
   // 전체 선택(selectNodeContents(root))은 root 요소 앵커라 readCaret도 null을 돌려줘 caretBlocked가 막지 못하는
@@ -142,19 +164,23 @@ export function replaceRangeInBlocks(blocks, range, text) {
     if (textArrIdx.length === 0) {
       return { blocks: list.concat(insLines.map((t) => textBlock(t))), caretLineIndex: insLines.length - 1 };
     }
-    // 마커 앞에 텍스트 줄이 없다(빈 문서에서 Alt+Y를 누른 상태) — 마커 바로 앞에 새 텍스트 줄을 만들어 그 자리에 삽입.
-    // 여기서 "없으면 마지막 텍스트 줄"로 폴백하면 그 줄이 곧 마커 줄이라 '(끝)A' 오염이 되살아난다.
-    if (markerLine === 0) {
-      const next = list.slice();
-      next.splice(textArrIdx[0], 0, ...insLines.map((t) => textBlock(t)));
-      return { blocks: next, caretLineIndex: insLines.length - 1 };
-    }
-    const targetLine = markerLine > 0 ? markerLine - 1 : textArrIdx.length - 1;
-    start = { lineIndex: targetLine, inLine: lineLen(targetLine) }; // 삽입 대상 줄 끝 — caretLineIndex base도 이 줄이다.
+    const fb = insertBeforeMarker();
+    if (fb.result) return fb.result;
+    start = fb.point;
     end = start;
   }
 
-  // 규칙 3 — 삭제 end를 마커 줄 시작 이전으로 clamp. clamp 결과가 start보다 앞이면 삭제 없이 삽입만 한다.
+  // 규칙 3-start — 삽입 지점(start)이 마커 줄 이상이면 규칙 1-b(마커 직전)로 되돌린다. 선택 범위 전체가
+  // 마커 줄 이상이라는 뜻이므로(start가 범위의 앞점) 삭제 대상도 마커·그 뒤 블록뿐이라 함께 접는다.
+  // 이 가드가 없으면 요소 앵커 제스처(전체 선택·문단 선택)에서 마커 줄이 'X\nY(끝)'로 오염된다 — 위 설계 이유 참조.
+  if (markerLine >= 0 && start.lineIndex >= markerLine) {
+    const fb = insertBeforeMarker();
+    if (fb.result) return fb.result;
+    start = fb.point;
+    end = start;
+  }
+
+  // 규칙 3-end — 삭제 end를 마커 줄 시작 이전으로 clamp. clamp 결과가 start보다 앞이면 삭제 없이 삽입만 한다.
   if (markerLine >= 0 && end.lineIndex >= markerLine) {
     const clamped = markerLine > 0 ? { lineIndex: markerLine - 1, inLine: lineLen(markerLine - 1) } : null;
     end = clamped && !isAfter(start, clamped) ? clamped : start;

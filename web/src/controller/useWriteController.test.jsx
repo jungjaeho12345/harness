@@ -937,6 +937,22 @@ describe('useWriteController — 편집 송고 경로 저장 실패 게이트 (p
     expectNoTransition(ctx);
   });
 
+  // [리뷰 반영] saveArticle이 reject하면 종전에는 submit이 그대로 reject해 호출부(WriterPage.onAction)의
+  // 안내 결선(step6)이 통째로 건너뛰어졌다 — "실패는 반드시 알린다" 계약과 어긋나고, 같은 파일의 lockArticle이
+  // .catch(() => null)로 값화하는 규율과도 갈렸다. reject도 값(save-failed)으로 흡수한다.
+  it('저장이 reject되어도 예외를 던지지 않고 { ok:false, reason:"save-failed" }로 값화한다', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockRejectedValue(new Error('boom'));
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('save-failed');
+    expect(r.saveReason ?? null).toBeNull(); // 예외는 사유 토큰이 아니다(문구 누출 금지)
+    expectNoTransition(ctx);
+  });
+
   it('저장 실패 시 자동 재시도를 하지 않는다(saveArticle 1회 호출)', async () => {
     const ctx = await openDirtyEditTab();
     const save = vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'unauthorized' });
@@ -1242,6 +1258,45 @@ describe('useWriteController — SSE takeover 좀비 편집 탭 (phase53 step5)'
     expect(Object.prototype.hasOwnProperty.call(row, 'lockerClientId')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(row, 'lockerSessionId')).toBe(false);
     await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+  });
+
+  // [리뷰 반영] 여러 편집 탭이 한 신호에 함께 넘어가는 경우. 종전 removeTab은 tabsRef 스냅샷을 통째로
+  // setTabs(next)하므로 같은 tick에 두 번 호출하면 첫 호출의 제거가 덮어써져 좀비 탭이 살아남는데,
+  // 안내 문구는 takenOver 전체를 나열해 "닫혔습니다"라고 단언했다(사용자에게 거짓 통지).
+  it('여러 편집 탭이 한 신호에 함께 넘어가면 전부 닫히고, 안내는 실제로 닫힌 탭만 말한다', async () => {
+    const a1 = { ...FULL };
+    const a2 = { ...FULL, articleId: 'AKR2', lockYN: 'N' };
+    const trigger = { ...FULL, articleId: 'AKR3', lockYN: 'N' };
+    const { result, model } = setup({ articles: [a1, a2, trigger] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    await act(async () => { await result.current.openArticle({ ...a1 }, 'edit'); });
+    await act(async () => { await result.current.openArticle({ ...a2 }, 'edit'); });
+    expect(result.current.tabs.filter((t) => t.articleId)).toHaveLength(2);
+
+    // 두 기사 모두 타인(lee)이 보유 — 잠금 신호 1개로 두 탭이 같은 tick에 판정된다.
+    a1.lockYN = 'Y'; a1.lockerUserId = 'lee';
+    a2.lockYN = 'Y'; a2.lockerUserId = 'lee';
+    const query = vi.spyOn(model, 'queryArticles');
+    await act(async () => { await model.lockArticle('AKR3', 'revise', 'c-other'); });
+    await waitFor(() => expect(query).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    // 좀비 탭 0 — 하나만 닫히면(스냅샷 덮어쓰기) 안내가 거짓이 된다.
+    await waitFor(() => expect(result.current.tabs.filter((t) => t.articleId)).toHaveLength(0));
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toContain('AKR1');
+    expect(alert.mock.calls[0][0]).toContain('AKR2');
+  });
+
+  it('열려 있지 않은(닫히지 않은) 기사아이디는 안내 문구에 들어가지 않는다', async () => {
+    const { result, alert } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'lee';
+    });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toContain('AKR1');
+    expect(alert.mock.calls[0][0]).not.toContain('AKR2'); // 편집 탭이 아니었던 기사
   });
 
   // ── 정상 플로우 무손상(회귀) ──────────────────────────────────────────────

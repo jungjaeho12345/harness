@@ -1194,6 +1194,56 @@ describe('Editor — 편집 메뉴 선택 제스처(요소 앵커) + 선택 삭�
     expect(text).toBe('A\nB\n(끝)'); // 선택 본문은 사라지고 마커는 무손상
     expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1); // '(끝)A' 오염 없음
   });
+
+  // [리뷰 반영] 마커가 "첫 텍스트 줄"인 문서 — 새 탭 → Alt+Y(insertEndMarker) → Ctrl+A → 외부 원고 붙여넣기.
+  // 요소 앵커라 readCaret이 null이고(caretBlocked가 못 본다) start가 마커 줄에 정확히 얹히는 제스처다.
+  it('마커만 있는 문서(Alt+Y 직후)의 전체 선택 + 붙여넣기도 "(끝)"이 온전하다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(<Editor blocks={[textBlock('(끝)')]} onTextChange={onTextChange} />);
+    const box = container.querySelector('.yh-editor');
+    selectAllInEditor(box);
+
+    fireEvent(box, pastePlainEvent(box, 'X\nY'));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('X\nY\n(끝)'); // start clamp가 없으면 'X\nY(끝)'(마커 소멸 — 송고 가드 통과)
+    expect(text).not.toContain('Y(끝)');
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1);
+  });
+
+  it('마커 줄만 문단 선택(selectParagraphInEditor) + 붙여넣기도 "(끝)"이 온전하다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('AAA'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectParagraphInEditor(box, 1, 1); // 마커 줄만 선택(root 요소 앵커)
+
+    fireEvent(box, pastePlainEvent(box, 'X\nY'));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('AAAX\nY\n(끝)'); // start clamp가 없으면 'AAA\nX\nY(끝)'
+    expect(text).not.toContain('Y(끝)');
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1);
+  });
+
+  it('마커 줄만 문단 선택 + Enter도 마커를 오염시키지 않는다', () => {
+    const onTextChange = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('AAA'), textBlock('(끝)')]} onTextChange={onTextChange} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    selectParagraphInEditor(box, 1, 1);
+
+    fireEvent(box, createEvent.keyDown(box, { key: 'Enter' }));
+
+    expect(onTextChange).toHaveBeenCalledTimes(1);
+    const [text, blocks] = onTextChange.mock.calls[0];
+    expect(text).toBe('AAA\n\n(끝)');
+    expect(blocks.filter((b) => b.text === '(끝)')).toHaveLength(1);
+  });
 });
 
 // 53-1 보강(테스트 게이트): 임베드가 섞인 문서(사진 기사 — 가장 흔한 형태)의 요소 앵커 선택.

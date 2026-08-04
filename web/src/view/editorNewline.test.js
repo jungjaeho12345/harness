@@ -408,11 +408,46 @@ describe('editorNewline — replaceRangeInBlocks (선택 범위 삭제 + 삽입)
     expect(r.blocks.filter(isMarkerBlock)).toHaveLength(1);
   });
 
-  it('start는 clamp하지 않는다 — 마커 뒤 삽입 차단은 호출부 책임(오늘 동작 보존)', () => {
+  // 9-1. [리뷰 반영] start 방향 clamp — end만 clamp하고 start를 호출부(Editor.caretBlocked)에 맡기면
+  // 요소 앵커 제스처(전체 선택·문단 선택)에서 start가 마커 줄에 얹힌다: readCaret은 root 앵커에서 null을
+  // 돌려주므로 caretBlocked가 그 start를 보지 못한다(step1이 요소 앵커를 해석하게 되며 실제로 도달했다).
+  // 오염된 '(끝)'은 serializeBodyFromBlocks(trim 정확 비교)의 재정규화를 빠져나가면서 송고 가드
+  // hasEndMarker(substring)는 통과해 그대로 송고·배부(스풀 기록, 불가역)된다.
+  it('마커가 첫 텍스트 줄인 문서(빈 문서 Alt+Y 직후)의 전 범위 대체는 마커 앞에 삽입한다(결함 재현)', () => {
+    const blocks = [textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 0, 0, 3), 'X\nY'); // 전체 선택 + 붙여넣기
+    expect(blocksToText(r.blocks)).toBe('X\nY\n(끝)'); // clamp 없으면 'X\nY(끝)'
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1);
+    const round = deserialize(serializeBodyFromBlocks(r.blocks));
+    expect(round.filter(isMarkerBlock)).toHaveLength(1);
+    expect(isMarkerBlock(round[round.length - 1])).toBe(true);
+  });
+
+  it('마커 줄만 선택한 대체(문단 선택)는 마커 직전 줄 끝에 삽입한다(결함 재현)', () => {
+    const blocks = [textBlock('AAA'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 1, 0, 1, 3), 'X\nY');
+    expect(blocksToText(r.blocks)).toBe('AAAX\nY\n(끝)'); // clamp 없으면 'AAA\nX\nY(끝)'
+    expect(blocksToText(r.blocks)).not.toContain('Y(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1);
+  });
+
+  it('마커 줄 collapsed 캐럿의 삽입도 마커 앞으로 내려간다(규칙 1-b와 같은 지점)', () => {
     const blocks = [textBlock('본문'), textBlock('(끝)')];
     const caret = caretAt(blocks, 1, 3); // 마커 줄 끝
-    const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, '\n');
-    expect(blocksToText(r.blocks)).toBe(blocksToText(insertTextIntoBlocks(blocks, caret, '\n').blocks));
+    const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('본문A\nB\n(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    // 캐럿 미상 폴백(규칙 1-b)과 같은 결과 — 마커 보호 지점은 단일 출처다.
+    expect(blocksToText(r.blocks)).toBe(blocksToText(replaceRangeInBlocks(blocks, null, 'A\nB').blocks));
+  });
+
+  it('마커 뒤 블록에서 시작하는 대체도 마커와 그 뒤 블록을 전혀 바꾸지 않는다', () => {
+    const blocks = [textBlock('(끝)'), textBlock('꼬리')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 1, 0, 1, 2), 'X');
+    expect(blocksToText(r.blocks)).toBe('X\n(끝)\n꼬리');
+    expect(r.blocks.slice(1)).toEqual(blocks); // 마커 줄·그 뒤 블록 무변경(규칙 3 불변식)
   });
 
   // 10. 문서 전 범위 선택.
