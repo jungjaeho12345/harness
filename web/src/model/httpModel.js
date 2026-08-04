@@ -121,7 +121,8 @@ export function createHttpModel({ base = '' } = {}) {
     // --- 인증 / 세션 ---
     // 로그인 성공 시 서버가 Set-Cookie(sid)로 세션을 발급한다. 인증의 1차 수단은 그 쿠키지만,
     // dev cross-origin(SameSite 제약으로 쿠키 미적재) 폴백을 위해 응답의 sessionId를 sessionStorage에
-    // 보관해 이후 요청에 x-session-id 헤더/?session= 쿼리로 병행 첨부한다.
+    // 보관해 이후 REST 요청에 x-session-id 헤더로만 병행 첨부한다(쿼리스트링에는 싣지 않는다 —
+    // 서버가 읽지 않는 평문 토큰 URL 노출 표면). SSE는 헤더를 못 보내므로 쿠키 전용이다.
     async login(userId, password) {
       const r = await request('/api/login', { method: 'POST', body: { userId, password } });
       if (r && r.ok && r.sessionId) writeSessionId(r.sessionId);
@@ -284,15 +285,16 @@ export function createHttpModel({ base = '' } = {}) {
     },
 
     // --- 실시간 무효화 스트림 (SSE) ---
-    // 인증의 1차 수단은 HttpOnly 세션 쿠키 — EventSource는 헤더를 못 보내지만 withCredentials:true로
-    // cross-origin 쿠키를 자동 전송한다(step5, server는 쿠키 우선 readSessionToken으로 인증).
-    // dev cross-origin(SameSite 제약으로 쿠키 미적재)에서는 보관된 sessionId를 ?session= 쿼리 폴백으로만
-    // 붙인다(토큰 없으면 URL에 노출 안 함). ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다.
+    // 인증 수단은 HttpOnly 세션 쿠키뿐이다 — EventSource는 커스텀 헤더를 못 보내므로 withCredentials:true로
+    // 쿠키를 자동 전송한다(server /api/stream은 쿠키 우선 readSessionToken으로만 인증한다).
+    // 세션 토큰을 쿼리스트링에 싣지 않는다: 서버는 쿼리 토큰을 읽지 않으며(과거의 `?session` 폴백은 폐기됨)
+    // 평문 토큰이 프록시·서버 액세스 로그·브라우저 히스토리에만 남는 누출 표면이다 — subscribeLogs(ADR-007)와 같은 규율.
+    // 따라서 cross-origin으로 띄운 dev 구성에서는 SSE 인증이 불가하다 → 동일 출처(Vite 프록시) 배치를 쓴다.
+    // ADR-005: 표준 EventSource가 끊김 시 자동 재연결을 제공한다.
     // onChange는 "무효화 신호"만 받으며, filter는 그대로 넘겨 Controller가 자기 필터로 재조회하게 한다.
     // onStatus(boolean) — 선택적 연결 상태 콜백. ready→true, error→false로 호출해 View가 실제 SSE 상태를 표시할 수 있게 한다.
     subscribe(filter, onChange, onStatus) {
-      const url = `${base}/api/stream${buildQuery({ session: readSessionId() })}`;
-      const source = new EventSource(url, { withCredentials: true });
+      const source = new EventSource(`${base}/api/stream`, { withCredentials: true });
       let connected = false;
       const setStatus = (next) => { connected = next; onStatus?.(next); };
       source.addEventListener('ready', () => setStatus(true));
@@ -318,7 +320,7 @@ export function createHttpModel({ base = '' } = {}) {
       return request('/api/logs/digest');
     },
     // 실시간 로그 스트림(Z 전용). 인증 1차 수단은 HttpOnly 세션 쿠키 → withCredentials:true로 자동 전송.
-    // 기존 subscribe와 달리 ?session= 쿼리 폴백을 두지 않는다 — 로그 라우트는 쿼리 토큰을 읽지 않는다(평문 토큰 URL 노출 표면 제거).
+    // subscribe와 마찬가지로 ?session= 쿼리 폴백을 두지 않는다 — 로그 라우트는 쿼리 토큰을 읽지 않는다(평문 토큰 URL 노출 표면 제거).
     // 서버는 접속 시 버퍼를 replay(event: log) 후 실시간 push한다. 재연결 중복은 Controller가 record.seq로 거른다.
     subscribeLogs(onLog, onStatus) {
       const source = new EventSource(`${base}/api/logs/stream`, { withCredentials: true });

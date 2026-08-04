@@ -401,16 +401,25 @@ describe('createHttpModel', () => {
     expect(instances[0].opts).toEqual({ withCredentials: true });
   });
 
-  it('subscribe keeps the ?session= query fallback when a token is stored (dev cross-origin)', async () => {
+  it('subscribe never appends a ?session= query even when a token is stored (cookie-only auth)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-q', user: {} }));
     const instances = [];
     installFakeEventSource(instances);
 
     const model = createHttpModel({ base: BASE });
-    await model.login('a', 'b'); // stores sid-q (dev 폴백용)
+    // 토큰이 보관돼 있어도(REST의 x-session-id 폴백용) 스트림 URL에는 싣지 않는다 —
+    // 서버 /api/stream은 쿠키·헤더만 읽으므로(폐기된 쿼리 폴백) 인증 효과 없이 평문 토큰만 노출된다.
+    await model.login('a', 'b'); // stores sid-q
 
     model.subscribe({}, vi.fn());
-    expect(instances[0].url).toBe(`${BASE}/api/stream?session=sid-q`);
+    expect(instances[0].url).toBe(`${BASE}/api/stream`);
+    expect(instances[0].url).not.toContain('session=');
+    expect(instances[0].url).not.toContain('sid-q');
+    // 쿠키(withCredentials)가 SSE의 유일한 인증 수단이 됐으므로 반드시 잠근다.
+    expect(instances[0].opts).toEqual({ withCredentials: true });
+    // REST 경로는 폴백 헤더를 계속 싣는다(readSessionId 유지 근거 — SSE와 달리 헤더 전송이 가능하다).
+    await model.queryArticles();
+    expect(callAt(1)[1].headers['x-session-id']).toBe('sid-q');
   });
 
   it('publishPhoto POSTs /api/photos with the payload body and never role/registeredBy (ADR-004)', async () => {
