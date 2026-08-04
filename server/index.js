@@ -66,6 +66,65 @@ export function enforceHttps(env = process.env.NODE_ENV) {
     return res.redirect(308, `https://${host}${req.originalUrl}`);
   };
 }
+
+// CORS 옵션과 CSRF 가드가 같은 목록을 보도록 허용 출처를 단일 출처화한다 (ADR-009).
+// 기본값은 오늘의 CORS allowlist와 동일하다 — dev 배선(Vite :5173)과 기존 preflight 테스트가 이 값에 묶여 있다.
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+// env.ALLOWED_ORIGINS(콤마 구분)가 있으면 트림·빈 값 제외 후 기본 목록 뒤에 append 한다.
+// 별도 출처 SPA 배포/호스트 재작성 프록시는 이 변수로 명시 등록해야 한다(미설정 시 프로덕션 쓰기 403 — ADR-009).
+export function allowedOrigins(env = process.env) {
+  const extra = String(env?.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...DEFAULT_ALLOWED_ORIGINS, ...extra];
+}
+
+// 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
+// 브라우저가 보내는 Origin은 http://localhost:5173(포트가 밀리면 5174 등)이다.
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isLoopbackOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return LOOPBACK_HOSTNAMES.has(u.hostname); // hostname은 포트를 제외한다(IPv6는 [::1] 형태).
+  } catch {
+    return false;
+  }
+}
+
+// CSRF 방어 — 상태 변경 메서드(비 GET/HEAD/OPTIONS) 전용 Origin/Referer 게이트 (ADR-009).
+// CORS는 simple request의 "실행"을 막지 않고 "응답 읽기"만 막는다 → 본문 없는 cross-site POST가
+// 피해자 쿠키와 함께 실행되는 표면을 여기서 닫는다. 브라우저는 비-GET에 Origin을 항상 붙인다(Fetch 표준).
+// CRITICAL: 자기 출처 판정에 X-Forwarded-Host(req.hostname)를 쓰지 않는다 — 스푸핑으로 게이트가 뚫린다.
+//   호스트 재작성 배포는 origins(ALLOWED_ORIGINS)로 명시 등록한다.
+// 라우트별 예외 목록은 두지 않는다 — 서버-서버 관용은 "Origin·Referer 부재" 단일 규칙으로만 표현한다.
+export function csrfOriginGuard({ origins = [], isProd = false } = {}) {
+  const allow = new Set(origins);
+  return (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+
+    let claimed = req.get('origin');
+    if (!claimed) {
+      const referer = req.get('referer');
+      // Origin·Referer 둘 다 없음 = 서버-서버/cron 클라이언트 → 통과(브라우저 공격 벡터가 아니다).
+      if (!referer) return next();
+      try {
+        claimed = new URL(referer).origin;
+      } catch {
+        return res.status(403).json({ ok: false, reason: 'forbidden-origin' });
+      }
+    }
+
+    if (claimed === `${req.protocol}://${req.get('host')}`) return next();
+    if (allow.has(claimed)) return next();
+    if (!isProd && isLoopbackOrigin(claimed)) return next();
+    return res.status(403).json({ ok: false, reason: 'forbidden-origin' });
+  };
+}
+
 const ACTION_SET = new Set(['send', 'hold', 'kill', 'approveDelete']);
 const DERIVE_MODE_SET = new Set(['followUp', 'continue']);
 
@@ -174,6 +233,8 @@ function articleToText(found = {}) {
 // logService: cross-cutting 인프라 — sessionService처럼 createApp에 직접 주입한다(컨트롤러 경유 금지).
 //   기본값 제공으로 미주입 기존 테스트도 무회귀. 로그 message에는 식별용 최소 필드만 담는다
 //   (비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지 — 마스킹 규율).
+// origins: CORS allowlist와 CSRF 가드가 공유하는 허용 출처 목록(ADR-009). 미주입 시 allowedOrigins()
+//   = 기본 두 항목 + process.env.ALLOWED_ORIGINS. env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
 export function createApp({
   controllers,
   sessionService,
@@ -182,6 +243,7 @@ export function createApp({
   forceHttps,
   uploadDir = 'uploads',
   logService = createLogService(),
+  origins = allowedOrigins(),
 }) {
   const app = express();
 
@@ -220,7 +282,8 @@ export function createApp({
   // credentials:true — 쿠키를 cross-origin으로 주고받기 위함. allowlist 유지(origin:* 금지: 브라우저가 credentials와 함께 거부).
   app.use(cors({
     // credentials 모드에서는 와일드카드 origin 금지 → 명시 allowlist가 필수.
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    // 목록은 CSRF 가드와 공유한다(allowedOrigins 단일 출처, ADR-009).
+    origin: origins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-session-id', 'x-collection-token', 'x-edit-client'],
     credentials: true,
@@ -262,6 +325,11 @@ export function createApp({
     });
     next();
   });
+
+  // CSRF Origin/Referer 게이트 (ADR-009) — 상태 변경 메서드만 본다.
+  // 등록 위치: 요청 로거 다음(거부 403도 액세스 로그에 남는다), /uploads 정적 서빙·라우트보다 앞.
+  // CORS preflight(OPTIONS)는 위 cors 미들웨어가 이미 응답을 끝내므로 여기 도달하지 않는다.
+  app.use(csrfOriginGuard({ origins, isProd }));
 
   // 업로드 파일 정적 서빙 — uploadDir(기본 'uploads')를 /uploads 경로로 노출한다.
   // 저장 파일명은 서버가 발급한 <random-hex>.<ext>뿐이라 사용자 입력 경로가 끼어들지 않는다(경로 탐색 방지).

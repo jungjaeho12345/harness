@@ -67,4 +67,5 @@ test/                   # 백엔드 테스트 (node --test)
 ## 보안 경계
 - 신뢰 경계는 **서버**. acting role은 검증된 `x-session-id` 세션에서만 도출하고 `req.body.role`은 신뢰하지 않는다.
 - helmet(CSP), CORS allowlist(`localhost:5173`), 로그인 레이트리밋(15분/10회), bcrypt 해시, 전역 에러 핸들러(내부 스택 비노출).
+- CSRF: 상태 변경 메서드(비 GET/HEAD/OPTIONS)의 Origin/Referer 검증 미들웨어 — 자기 출처·allowlist(`ALLOWED_ORIGINS`)·비프로덕션 loopback만 통과, 그 외 403(`forbidden-origin`). Origin·Referer 부재(서버-서버·cron)는 통과 (ADR-009).
 - DB 비파괴 원칙: 스키마는 `CREATE TABLE IF NOT EXISTS` / additive `ALTER`만, 행 삭제 없음.
