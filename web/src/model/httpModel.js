@@ -307,6 +307,11 @@ export function createHttpModel({ base = '' } = {}) {
         }
         onChange(signal, filter);
       });
+      // 서버가 push 시점 재인증에 실패하면 보내는 종료 이벤트(server /api/stream 계약). 여기서 반드시
+      // 닫는다 — EventSource는 끊기면 자동 재연결하는데(ADR-005) 세션이 이미 죽었으므로 재연결이 매번
+      // 401로 실패하며 무한 재시도가 서버 요청 로그(링 버퍼)를 채운다. data는 고정 토큰이라 파싱하지 않는다.
+      source.addEventListener('unauthorized', () => { setStatus(false); source.close(); });
+      // error는 닫지 않는다 — 일시적 네트워크 단절은 EventSource의 자동 재연결로 회복돼야 한다(종료는 위 이벤트만).
       source.addEventListener('error', () => setStatus(false));
       return {
         connected: () => connected,
@@ -332,6 +337,10 @@ export function createHttpModel({ base = '' } = {}) {
         try { record = event.data ? JSON.parse(event.data) : null; } catch { record = null; }
         if (record) onLog(record);
       });
+      // subscribe와 동일한 종료 계약(server /api/logs/stream): 세션 만료·Z 권한 상실 시 서버가 1회 보내고 끊는다.
+      // 로그 스트림은 모든 HTTP 요청이 로그 라인을 만들므로 재연결 폭주가 곧 자기 증폭 잡음이 된다 — 즉시 닫는다.
+      source.addEventListener('unauthorized', () => { setStatus(false); source.close(); });
+      // error는 닫지 않는다(자동 재연결 보존 — ADR-005).
       source.addEventListener('error', () => setStatus(false));
       return { connected: () => connected, unsubscribe: () => source.close() };
     },
