@@ -1,0 +1,79 @@
+{
+  "project": "기사 작성기",
+  "phase": "52-security-hardening",
+  "steps": [
+    { "step": 0, "name": "csrf-origin-guard", "status": "pending" },
+    { "step": 1, "name": "session-revalidation", "status": "pending" },
+    { "step": 2, "name": "session-revalidation-wiring", "status": "pending" },
+    { "step": 3, "name": "sse-reauth", "status": "pending" },
+    { "step": 4, "name": "unlock-authz", "status": "pending" },
+    { "step": 5, "name": "sse-terminal-close", "status": "pending" }
+  ],
+  "scope": "2026-08-03 전수감사 잔여 중 보안 성격 4건만 — (A) CSRF 방어 부재, (B) 계정 비활성화·역할 강등이 기존 세션에 미반영, (C) SSE 로그 스트림이 접속 시점에만 인증, (D) releaseEditLock 세션 미검증. 데이터 무결성 5건·소규모 6건은 phase 53·54로 분리한다(혼입 금지).",
+  "baseline": "feat-0-mvp tip af114b7 실측: npm test 679/679 pass·fail 0, npm run test:web 87 files/2006 tests pass, npm run lint clean, npm run build clean.",
+  "order": "backend 패스(step0~4) → web 패스(step5). step1(세션 도메인) → step2(결선) → step3(SSE 재인증)은 순서 고정 — step3이 step1의 peekSession과 step2가 결선한 재검증 경로를 소비한다. step0·step4는 다른 step과 파일 함수가 겹치지 않는 독립 항목이지만, 순번대로 실행한다. step5는 step3이 정의한 서버 종료 이벤트(event: unauthorized)를 소비한다.",
+  "decisions": [
+    {
+      "id": "A",
+      "topic": "CSRF 방어 방식",
+      "verdict": "Origin/Referer 검증 미들웨어(상태 변경 메서드 한정) + CORS allowlist 단일 출처화. CSRF 토큰(double-submit)·SameSite 정책 변경은 채택하지 않는다.",
+      "rationale": "이 결정은 동일 출처 배포를 전제한다 — httpModel은 base=''(동일 출처 상대경로)로 요청하고, 별도 출처 SPA 배포는 JSON Content-Type 때문에 preflight가 필수인데 CORS allowlist가 localhost 고정(server/index.js L223)이라 이미 동작하지 않는다. 앱 자체가 SPA 번들을 서빙하지는 않는다(express.static은 /uploads 하나뿐) — 동일 출처는 리버스 프록시가 SPA와 /api를 같은 출처로 묶는 배치를 가정한 것이고, 별도 출처·호스트 재작성 배포에서는 ALLOWED_ORIGINS 명시 설정이 필요하다(미설정 시 프로덕션 쓰기 전부 403 — ADR-009에 실패 모드로 기록). 반면 CORS는 simple request(본문 없는 POST 등)의 '실행'은 막지 않으므로 실제 구멍은 Origin 검증으로 정확히 닫힌다. 브라우저는 GET/HEAD 이외 메서드에 Origin을 항상 붙이므로(Fetch 표준) 공격자는 이를 생략시킬 수 없다. 토큰 방식은 클라이언트 전 REST 경로·쿠키 배선 개조가 필요해 회귀 표면이 훨씬 크고, SameSite 변경은 배포 형상을 조용히 깨뜨린다."
+    },
+    {
+      "id": "B",
+      "topic": "비활성/역할 변경의 기존 세션 반영",
+      "verdict": "매 요청 DB 재조회(세션 가드 데코레이터). sessionService는 순수 in-memory 스토어로 두고, createControllers가 sessionGuard(sessionService + userModel)로 감싸 touchSession/peekSession 시점에 User 행을 재조회해 active='N'/행 없음이면 세션을 즉시 무효화하고 role 등 신원을 DB 최신값으로 재도출한다.",
+      "rationale": "이 앱의 유일한 변경 경로(PUT /api/users)뿐 아니라 운영자의 DB 직접 수정·시드 스크립트까지 전부 커버되고, 강등/승격이 대칭으로 반영된다. 비용은 in-process SQLite PK 조회 1회/요청(마이크로초)로 무시 가능하다. 무효화 훅(userService 훅) 단독안은 앱 밖 변경을 놓치고, TTL 캐시는 '즉시 차단' 요구와 정면 충돌한다. 데코레이터를 createControllers(공통 합성 루트)에 두는 이유: 기존 HTTP 테스트가 전부 이 경로로 앱을 만들기 때문에 재검증이 기본값으로 실행돼 '앱을 재검증 없이 조립할 수 있는 길'이 남지 않는다. 세션 스토어 자체에 userModel을 직접 결합하지 않는 이유: 세션을 DB 없이 조립하는 기존 서비스 단위 테스트 계약을 보존하기 위함."
+    },
+    {
+      "id": "C",
+      "topic": "SSE 접속 후 재인증",
+      "verdict": "push 시점 재검증(타이머 없음) — 서버가 이벤트를 쓰기 직전 peekSession으로 세션·역할을 재확인하고, 실패 시 event: unauthorized 1회 전송 후 스트림을 종료한다. 재검증은 만료를 연장하지 않는 peek로 한다. 클라이언트는 그 이벤트에서 EventSource를 닫는다.",
+      "rationale": "코드에 SSE 하트비트/keep-alive 타이머가 없어 재사용할 지점이 없고, setInterval 도입은 ADR-008의 '앱 내 타이머 없음' 규율과 충돌한다. push 시점 검증은 '무효화 이후 단 한 줄도 나가지 않는다'를 보장하며, /api/logs/stream은 모든 HTTP 요청이 로그 라인을 만들어 사실상 즉시 종료된다. touchSession으로 재검증하면 열려 있는 SSE가 세션을 무기한 연장해 유휴 만료가 무력화되므로 peek(비연장)가 필수다. /api/stream(로그인 전용)도 같은 성질이라 동일하게 처리한다 — 다만 페이로드가 무효화 신호라 노출 위험은 낮고, 변경 이벤트가 없으면 종료도 지연된다(수용한 트레이드오프)."
+    },
+    {
+      "id": "D",
+      "topic": "releaseEditLock 신원 검증",
+      "verdict": "세션 userId와 Contents.lockerUserId 대조를 추가하되, 기존 clientId 절과 멱등(미잠금 → ok) 계약은 유지한다. 레거시 lockerUserId NULL 행은 거부(해제는 D/Z force-unlock 또는 30분 stale 재획득).",
+      "rationale": "phase 51 step1(assertLockHolder)과 동일한 판정 규율·동일 관용도(같은 userId의 재로그인 허용, sessionId 비교 없음)를 해제 경로에도 적용해 '레거시 NULL이면 아무나 해제' 구멍을 닫는다. force-unlock은 별개 권한(D/Z)이라 무접촉."
+    }
+  ],
+  "excluded": [
+    {
+      "candidate": "감사 잔여 중 데이터 무결성 5건·소규모 6건(에디터 선택영역/드롭, 저장 실패 피드백, fakeModel 저장 인가 드리프트 등)",
+      "verdict": "제외(phase 53·54)",
+      "rationale": "이 phase는 보안 성격 4건만 다룬다. 성격이 다른 항목을 섞으면 보안 회귀 검증 창이 흐려지고 리뷰 게이트의 초점이 분산된다."
+    },
+    {
+      "candidate": "CSRF 토큰(double-submit cookie) 도입",
+      "verdict": "기각(방식 선택 — A 결정)",
+      "rationale": "토큰 발급·저장·전 REST 경로 첨부·SSE 예외 처리까지 클라이언트 전면 개조가 필요하다. 동일 출처 배포(전제)에서는 Origin 검증이 동일한 방어를 0-클라이언트-변경으로 제공한다. 추후 cross-site 배포가 실제로 필요해지면 그때 ADR-009를 갱신해 재검토한다."
+    },
+    {
+      "candidate": "세션 쿠키 SameSite/Secure 정책 변경(prod None → Lax 등)",
+      "verdict": "제외(무접촉)",
+      "rationale": "쿠키 전송 정책 변경은 배포 형상(동일 출처 여부)에 따라 로그인 자체를 조용히 깨뜨린다. 이번 phase의 검증 범위를 넘고, Origin 검증만으로 해당 CSRF 표면이 닫힌다."
+    },
+    {
+      "candidate": "세션 스토어의 DB/공유 스토어 이전, 세션 무효화 pub/sub(즉시 SSE 종료 알림)",
+      "verdict": "제외(범위 밖)",
+      "rationale": "ADR-004가 in-process 스토어를 명시 결정했고 다중 인스턴스는 현행 범위 밖이다. SSE 즉시 종료 알림도 push 시점 재검증으로 데이터 누출이 이미 0이 되므로 새 pub/sub 표면을 늘릴 이유가 없다."
+    },
+    {
+      "candidate": "SSE 주기 재검증 타이머(setInterval) / 재검증 결과 캐시",
+      "verdict": "기각(영구 금지)",
+      "rationale": "타이머는 ADR-008 '앱 내 타이머·외부 egress 없음' 규율 위반이고, 캐시 창은 그대로 무효화 지연이 되어 '즉시 차단' 요구와 충돌한다."
+    },
+    {
+      "candidate": "force-unlock(D/Z 강제 해제) 권한·동작 변경, acquireEditLock/assertLockHolder 재수정",
+      "verdict": "제외(무접촉)",
+      "rationale": "force-unlock은 보유자 신원과 무관한 별개 권한이며, acquire/assert는 phase 51 step1이 확정하고 테스트가 잠근 계약이다. D는 해제 경로만 좁힌다."
+    },
+    {
+      "candidate": "Contents.lockerSessionId 컬럼 제거 등 스키마 변경·행 삭제",
+      "verdict": "제외(영구 금지)",
+      "rationale": "DB 비파괴 원칙(CLAUDE.md·ADR-002). 이 phase의 어떤 step도 DROP/DELETE/백필을 수행하지 않는다."
+    }
+  ],
+  "coordination": "phases/50-hygiene-cleanup(미실행 계획)은 embargoPolicy·distributionService·distributionTickService·articleModel·web mgmt/editor 파일을 건드린다. 52가 건드리는 지점(server/index.js 미들웨어·SSE 라우트, sessionService/sessionGuard, controllers 합성 루트, articleService.releaseEditLock, web httpModel의 subscribe 2곳)과 함수 단위로 겹치지 않으므로 실행 순서 제약은 없다. 다만 같은 파일(server/index.js)을 여러 step이 순차 수정하므로 step 순서는 반드시 지킨다."
+}
