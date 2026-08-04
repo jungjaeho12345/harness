@@ -227,6 +227,33 @@ function articleToText(found = {}) {
   return found.contents?.title ?? article.title ?? '';
 }
 
+// SSE 재인증 종료 계약 (phase 52 step3) — 클라이언트(step5)는 이 이벤트에서 EventSource를 닫는다.
+// CRITICAL(프레임 종결): 끝의 빈 줄(\n\n)이 SSE 프레임 종결자다 — 마지막 \n을 빠뜨리면 브라우저가
+//   이벤트를 디스패치하지 않아 클라이언트가 스트림을 닫지 못하고 무한 재연결이 남는다
+//   (서버·클라이언트 테스트는 둘 다 green이라 실환경에서만 조용히 실패한다). ready 프레임과 같은 규율.
+// 사유는 고정 토큰 하나만 싣는다 — 누가/왜(로그아웃·만료·강등·비활성)는 노출하지 않는다.
+const UNAUTHORIZED_FRAME = 'event: unauthorized\ndata: {"ok":false,"reason":"unauthenticated"}\n\n';
+
+// 두 SSE 라우트가 **같은 방식으로** 끝나게 하는 공통 종료기.
+// close(): 구독 해제 → 종료 이벤트 1회 → res.end(). 중복 호출은 무시한다(플래그).
+// 구독 해제를 먼저 하는 이유: 닫힌 응답에 write가 누적되면 리스너 누수와 예외가 된다.
+// setUnsubscribe로 나중에 주입하는 이유: 구독 콜백이 종료기를 참조하고 종료기가 그 구독을 해제하는 순환 배선이다.
+// 이미 200 헤더가 나간 뒤라 종료를 HTTP 상태로 표현할 수 없다 — 이벤트 + end()가 유일한 수단이다.
+function createSseCloser(res) {
+  let closed = false;
+  let unsubscribe = () => {};
+  return {
+    setUnsubscribe(fn) { unsubscribe = fn; },
+    close() {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      res.write(UNAUTHORIZED_FRAME);
+      res.end();
+    },
+  };
+}
+
 // env: 프로덕션 판별 기준(테스트에서 'production' 주입 가능). 미주입 시 process.env.NODE_ENV.
 // cookieSecure: Secure 속성 토글. 미주입 시 isProd(프로덕션 HTTPS에서만 true). dev/test(HTTP)는 false여야 쿠키가 실린다.
 // forceHttps: HTTPS 강제 토글. 미주입 시 isProd. true면 HSTS 적용 + 평문 HTTP를 https로 308 리다이렉트.
@@ -848,7 +875,7 @@ export function createApp({
   // 인증은 쿠키 우선(readSessionToken: 쿠키→x-session-id 헤더)만 허용한다.
   // 평문 ?session= 쿼리 폴백은 제거했다 — URL/프록시 로그 누출 표면이므로 쿠키·헤더만 신뢰한다.
   app.get('/api/stream', (req, res) => {
-    const { me } = sessionOf(req);
+    const { sid, me } = sessionOf(req);
     if (!me) return res.status(401).json(UNAUTH);
 
     res.set({
@@ -859,8 +886,16 @@ export function createApp({
     if (res.flushHeaders) res.flushHeaders();
     res.write('event: ready\ndata: {"ok":true}\n\n');
 
-    const onChange = (signal) => res.write(`event: change\ndata: ${JSON.stringify(signal ?? {})}\n\n`);
+    // push 시점 재검증 — 접속 시점 인증만으로는 로그아웃·만료·강등·비활성 이후에도 신호가 계속 나간다.
+    // 반드시 비연장 peek다: touch면 열린 SSE가 세션을 무한 연장해 1시간 유휴 만료가 무력화된다.
+    // 주기 재검증 타이머는 두지 않는다(ADR-008) — 대가로 이벤트가 없으면 종료가 다음 이벤트까지 지연된다.
+    const closer = createSseCloser(res);
+    const onChange = (signal) => {
+      if (!controllers.auth.peek(sid)) return closer.close();
+      return res.write(`event: change\ndata: ${JSON.stringify(signal ?? {})}\n\n`);
+    };
     bus.on('change', onChange);
+    closer.setUnsubscribe(() => bus.off('change', onChange)); // 종료기도 같은 해제 함수를 쓴다(이중 해제 안전).
     req.on('close', () => bus.off('change', onChange));
   });
 
@@ -884,7 +919,7 @@ export function createApp({
   // Last-Event-ID 프로토콜 없이 재연결 유실을 replay로 해소한다 — 중복 라인은 클라(step4)가 record.seq로 거른다.
   const LOG_REPLAY_MAX = 2000; // step4 클라 MAX_LINES와 정렬 — 전체 cap(10000) replay는 첫 렌더/대역폭 낭비.
   app.get('/api/logs/stream', (req, res) => {
-    const { me } = sessionOf(req);
+    const { sid, me } = sessionOf(req);
     if (!me) return res.status(401).json(UNAUTH);
     if (me.role !== 'Z') return res.status(403).json(FORBIDDEN); // 비-Z 차단 — SSE 헤더를 열기 전에 끝낸다.
 
@@ -896,10 +931,20 @@ export function createApp({
     if (res.flushHeaders) res.flushHeaders();
     res.write('event: ready\ndata: {"ok":true}\n\n');
 
+    // 접속 직후 replay는 접속 시점 인증으로 충분하다(같은 tick — 아직 무효화될 틈이 없다).
     for (const rec of logService.snapshot().slice(-LOG_REPLAY_MAX)) {
       res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`);
     }
-    const off = logService.subscribe((rec) => res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`));
+    // live push 시점 재검증 — Z 전용 봉인(ADR-007)이 시간축에서도 유지돼야 한다.
+    // 세션이 죽었거나 role이 Z가 아니게 되면 그 로그 라인은 쓰지 않고 스트림을 끝낸다(한 줄도 나가지 않는다).
+    // 비연장 peek 필수(touch면 열린 스트림이 세션을 무한 연장한다). 캐시·타이머 없음(ADR-008).
+    const closer = createSseCloser(res);
+    const off = logService.subscribe((rec) => {
+      const actor = controllers.auth.peek(sid);
+      if (!actor || actor.role !== 'Z') return closer.close();
+      return res.write(`event: log\ndata: ${JSON.stringify(rec)}\n\n`);
+    });
+    closer.setUnsubscribe(off); // 종료기도 같은 해제 함수를 쓴다(이중 해제 안전).
     req.on('close', () => off()); // 구독 해제 필수 — 누수 시 닫힌 응답에 write가 누적된다.
   });
 
