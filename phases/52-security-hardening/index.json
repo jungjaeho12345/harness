@@ -8,7 +8,12 @@
       "status": "completed",
       "summary": "server/index.js에 allowedOrigins(env)·csrfOriginGuard({origins,isProd}) export 신설 — 요청 로거 다음·/uploads·라우트 앞에 app.use 등록하고 cors origin 옵션과 목록을 단일 출처화(createApp에 origins 주입 seam 추가, 기본값 allowedOrigins() = 기본 2항목 + process.env.ALLOWED_ORIGINS). 비-GET/HEAD/OPTIONS만 검사: 자기 출처(req.get('host') — X-Forwarded-Host 불신)·allowlist·비프로덕션 loopback 통과, Origin·Referer 부재 통과(서버-서버·cron), 그 외 403 forbidden-origin. test/csrf-origin.test.js 15개 신설(공격 5·회귀 8·allowedOrigins 단위 2, 시나리오 12는 origins 주입 방식 채택 — 전역 process.env 비의존). npm test 679→694 pass/fail 0, lint·build clean. 변이 검증: 403 분기 2곳을 next()로 바꾸면 시나리오 1~5(+12 대조·13) red, 원복 후 green. docs/ADR.md ADR-009 신설 + docs/ARCHITECTURE.md 보안 경계 1줄 추가."
     },
-    { "step": 1, "name": "session-revalidation", "status": "pending" },
+    {
+      "step": 1,
+      "name": "session-revalidation",
+      "status": "completed",
+      "summary": "src/services/sessionGuard.js 신설 — createSessionGuard({ sessionService, userModel }) -> { createSession, touchSession, peekSession, invalidate }. touch/peek 결과가 있으면 userModel.findById(identity.userId)로 재검증: 행 없음 또는 row.active === 'N'이면 sessionService.invalidate(sid) 후 undefined, 아니면 DB 행에 identityOf를 적용해 신원 재도출(화이트리스트 5필드 userId/role/department/departmentCode/name — password·failedLoginCount·lockedUntil·lastFailedLoginAt 차단). 비활성 판정은 정확히 'N'만(레거시 NULL·'n' 통과, userService.login과 동형). sessionService.touchSession/peekSession은 동적 호출(구조분해 캡처 금지 — sse-auth.test.js의 스파이 교체 패턴 보존), createSession/invalidate는 원본 위임, 캐시·타이머 없음. sessionService.js는 additive: 만료 판정을 내부 liveSession() 한 곳으로 모으고 비연장 조회 peekSession(만료면 스토어 제거 후 undefined) 추가 + identityOf named export(touchSession의 슬라이딩 계약 불변, userModel/db 의존 없음 유지). 테스트 694→711 pass/fail 0 (test/sessionGuard.test.js 12 신설: 공격 1~8·회귀 9~12, test/sessionService.test.js peek 5 보강), lint clean. 변이 검증 3종 전부 확인 후 원복: (a) active==='N' 분기 제거→가드 1·6 red, (b) 세션 스냅샷 반환→가드 2·3(+5·6) red, (c) peekSession→touchSession 위임→가드 11·peek 비연장 red. 결선 없음(server/·src/controllers/·web/ 변경 0건) = 프로덕션 동작 변화 0. step2는 createControllers에서 createSessionGuard로 sessionService를 감싸 소비처에 주입하면 된다."
+    },
     { "step": 2, "name": "session-revalidation-wiring", "status": "pending" },
     { "step": 3, "name": "sse-reauth", "status": "pending" },
     { "step": 4, "name": "unlock-authz", "status": "pending" },
