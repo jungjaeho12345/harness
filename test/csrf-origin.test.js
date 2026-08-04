@@ -17,6 +17,7 @@ import bcrypt from 'bcryptjs';
 import { createSchema } from '../src/db/schema.js';
 import { createUserModel } from '../src/models/userModel.js';
 import { createSessionService } from '../src/services/sessionService.js';
+import { createReceiverConfigModel } from '../src/models/receiverConfigModel.js';
 import { createControllers } from '../src/controllers/index.js';
 import { createApp, allowedOrigins, SESSION_COOKIE_NAME } from '../server/index.js';
 
@@ -94,6 +95,8 @@ async function loginCookie(base, headers, userId, password) {
 
 const statusOf = (db, articleId) => db.prepare('SELECT status FROM Contents WHERE articleId = ?').get(articleId).status;
 const lockOf = (db, articleId) => db.prepare('SELECT lockYN FROM Contents WHERE articleId = ?').get(articleId).lockYN;
+const titleOf = (db, articleId) => db.prepare('SELECT title FROM Contents WHERE articleId = ?').get(articleId).title;
+const countRows = (db, table) => db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c;
 
 // --- allowedOrigins: cors 옵션과 CSRF 가드가 공유하는 단일 출처 ---
 test('allowedOrigins: 기본값은 오늘의 CORS allowlist와 동일하다', () => {
@@ -358,6 +361,133 @@ test('12) ALLOWED_ORIGINS로 등록한 출처는 프로덕션에서도 통과한
     await ctx.close();
     await plain.close();
   }
+});
+
+// --- 보강(④ 테스트 게이트): 메서드 경계 / Referer 통과 분기 / 프로덕션 loopback 봉인 / 인제스트 경로 ---
+// 14·15는 "상태 변경 메서드 전부"를 잠근다 — 기존 13개는 전부 POST라 안전 메서드 목록에 PUT/DELETE가
+//   끼어들어도(또는 가드가 POST 전용으로 좁혀져도) 아무 테스트도 red가 되지 않았다.
+// 16은 Referer 통과 분기를 잠근다 — 기존 4·5는 둘 다 403 기대라 "Referer가 있으면 무조건 403" 구현에서도
+//   전부 green이 된다(자기 출처 Referer 요청이 조용히 막히는 회귀를 아무도 못 잡는다).
+// 17은 loopback 관용의 프로덕션 봉인(!isProd)을 잠근다.
+// 18은 ADR-008 cron·수집처럼 Origin·Referer가 없는 서버-서버 경로가 살아 있는지를 프로덕션 앱에서 확인한다.
+
+test('14) 프로덕션: 교차 출처 PUT(기사 저장)도 403이고 본문이 저장되지 않는다', async () => {
+  const ctx = await start({ env: 'production' });
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, prod(), 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: prod({ cookie }), body: { title: '원제목', markupVersion: END_MARKUP },
+    });
+    const { articleId } = created.body;
+    await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/lock`, {
+      headers: prod({ cookie, 'x-edit-client': 'tab-1' }),
+    });
+
+    const attack = await rawFetch(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      headers: prod({ cookie, origin: EVIL_ORIGIN, 'x-edit-client': 'tab-1' }),
+      body: { title: '탈취제목', markupVersion: END_MARKUP },
+    });
+    assert.equal(attack.status, 403);
+    assert.deepEqual(attack.body, { ok: false, reason: 'forbidden-origin' });
+    assert.equal(titleOf(ctx.db, articleId), '원제목', '거부된 저장은 본문을 바꾸지 않는다');
+
+    // 양성 대조 — 같은 PUT이 Origin만 없으면 성사된다(막은 주체가 가드임을 확정).
+    const legit = await rawFetch(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      headers: prod({ cookie, 'x-edit-client': 'tab-1' }),
+      body: { title: '정상수정', markupVersion: END_MARKUP },
+    });
+    assert.equal(legit.status, 200);
+    assert.equal(titleOf(ctx.db, articleId), '정상수정');
+  } finally { await ctx.close(); }
+});
+
+test('15) 프로덕션: 교차 출처 DELETE(수신 설정 삭제)도 403이고 행이 그대로 남는다', async () => {
+  const ctx = await start({ env: 'production' });
+  try {
+    seedUser(ctx.db, { userId: 'admin', role: 'Z', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, prod(), 'admin', 'pw');
+    const id = createReceiverConfigModel(ctx.db).insert({ sourceId: 'src-1', type: 'FTP', active: 'Y' });
+    assert.equal(countRows(ctx.db, 'ReceiverConfig'), 1);
+
+    const attack = await rawFetch(ctx.base, 'DELETE', `/api/receiver-config/${id}`, {
+      headers: prod({ cookie, origin: EVIL_ORIGIN }),
+    });
+    assert.equal(attack.status, 403);
+    assert.equal(attack.body.reason, 'forbidden-origin');
+    assert.equal(countRows(ctx.db, 'ReceiverConfig'), 1, '거부된 DELETE는 행을 지우지 않는다');
+
+    const legit = await rawFetch(ctx.base, 'DELETE', `/api/receiver-config/${id}`, {
+      headers: prod({ cookie }),
+    });
+    assert.equal(legit.status, 200);
+    assert.equal(countRows(ctx.db, 'ReceiverConfig'), 0);
+  } finally { await ctx.close(); }
+});
+
+test('16) 프로덕션: Origin 없이 자기 출처 Referer만 있는 상태 변경은 통과한다', async () => {
+  const ctx = await start({ env: 'production' });
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, prod(), 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: prod({ cookie }), body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const { articleId } = created.body;
+
+    const r = await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/action`, {
+      headers: prod({ cookie, referer: `https://${PROD_HOST}/editor?tab=1` }), body: { action: 'send' },
+    });
+    assert.equal(r.status, 200, 'Referer의 origin이 자기 출처면 통과해야 한다');
+    assert.equal(statusOf(ctx.db, articleId), 'DPS');
+  } finally { await ctx.close(); }
+});
+
+test('17) 프로덕션: 미등록 loopback Origin은 거부된다(비프로덕션 관용은 프로덕션에 새지 않는다)', async () => {
+  const loopback = 'http://localhost:9999'; // 기본 allowlist(5173)에 없는 포트 — 관용 분기로만 통과 가능.
+  const ctx = await start({ env: 'production' });
+  const dev = await start(); // 같은 Origin이 비프로덕션에서는 통과한다는 대조군.
+  try {
+    for (const c of [ctx, dev]) seedUser(c.db, { userId: 'desk', role: 'D', password: 'pw' });
+
+    const cookie = await loginCookie(ctx.base, prod(), 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: prod({ cookie }), body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const denied = await rawFetch(ctx.base, 'POST', `/api/articles/${created.body.articleId}/action`, {
+      headers: prod({ cookie, origin: loopback }), body: { action: 'send' },
+    });
+    assert.equal(denied.status, 403, '프로덕션에서 loopback 관용이 살아 있으면 안 된다');
+    assert.equal(denied.body.reason, 'forbidden-origin');
+    assert.equal(statusOf(ctx.db, created.body.articleId), 'RDS');
+
+    const devCookie = await loginCookie(dev.base, {}, 'desk', 'pw');
+    const devCreated = await rawFetch(dev.base, 'POST', '/api/articles', {
+      headers: { cookie: devCookie }, body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const allowed = await rawFetch(dev.base, 'POST', `/api/articles/${devCreated.body.articleId}/action`, {
+      headers: { cookie: devCookie, origin: loopback }, body: { action: 'send' },
+    });
+    assert.equal(allowed.status, 200, '비프로덕션 dev 배선(포트 밀림)은 계속 통과해야 한다');
+  } finally {
+    await ctx.close();
+    await dev.close();
+  }
+});
+
+test('18) 프로덕션: Origin·Referer 없는 수집 인제스트(서버-서버·cron)는 그대로 통과한다', async () => {
+  const ctx = await start({ env: 'production' });
+  try {
+    createReceiverConfigModel(ctx.db).insert({ sourceId: 'src-1', type: 'FTP', active: 'Y' });
+    const before = countRows(ctx.db, 'Article');
+
+    // 세션 쿠키도 브라우저 헤더도 없는 서버-서버 호출 — 가드가 이 경로를 막으면 수집이 통째로 죽는다.
+    const r = await rawFetch(ctx.base, 'POST', '/api/collection/receive', {
+      headers: prod(), body: { sourceId: 'src-1', payload: '자동제목\n본문' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(countRows(ctx.db, 'Article'), before + 1, '자동기사가 실제로 등록된다');
+  } finally { await ctx.close(); }
 });
 
 test('13) 프로덕션: X-Forwarded-Host 스푸핑으로 자기 출처 판정을 통과시킬 수 없다', async () => {
