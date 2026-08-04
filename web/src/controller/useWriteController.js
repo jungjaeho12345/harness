@@ -335,7 +335,17 @@ export function useWriteController() {
       return r;
     }
 
-    await model.saveArticle(toSaveDto(tab, override), tab.clientId);
+    // 저장(PUT)이 실패하면 전이를 중단한다 — 저장 결과를 보지 않고 applyAction으로 넘어가면
+    // (1) 방금 고친 본문이 서버에 없는 채로 옛 본문이 송고·배부되고(ADR-008 — 송고 성공 훅이 즉시
+    // 스풀 파일을 쓰므로 되돌릴 수단이 없다), (2) 전이 성공 처리로 잠금 해제 + 탭 리셋이 일어나고
+    // 호출부(WriterPage.onAction)가 clearDraft까지 실행해 편집분이 초안째 영구 소실된다.
+    // 성공 판정은 ok === true(truthy 금지) — 모델/서버가 이상값을 줄 때 조용히 전이하면 안 된다.
+    // 자동 재시도는 하지 않는다: not-holder/forbidden은 재시도해도 영구 실패이고, network-error 재시도는
+    // 중복 저장(중복 이력·중복 배부 후보)을 만든다. 사용자 안내는 View 책임이라 사유 토큰만 돌려준다.
+    const saved = await model.saveArticle(toSaveDto(tab, override), tab.clientId);
+    if (!saved || saved.ok !== true) {
+      return { ok: false, reason: 'save-failed', saveReason: (saved && saved.reason) ?? null };
+    }
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
