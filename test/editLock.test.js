@@ -139,8 +139,8 @@ test('releaseEditLock: 보유 탭(clientId)은 해제할 수 있고 비보유 �
   assert.equal(service.releaseEditLock(articleId, { clientId: 'c2' }).ok, false);
   assert.equal(articleModel.getById(articleId).contents.lockYN, 'Y', '비보유 탭 해제 시 잠금 유지');
 
-  // 보유 탭 → 해제.
-  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1' }).ok, true);
+  // 보유 탭 → 해제(신원도 함께 대조하므로 보유자 userId를 넘긴다).
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1', userId: 'kim' }).ok, true);
   const c = articleModel.getById(articleId).contents;
   assert.equal(c.lockYN, 'N');
   assert.equal(c.lockerClientId, null, '해제 시 lockerClientId도 NULL이 된다');
@@ -149,6 +149,75 @@ test('releaseEditLock: 보유 탭(clientId)은 해제할 수 있고 비보유 �
 test('releaseEditLock: 이미 해제된 잠금 해제는 멱등(ok)', () => {
   const { service, articleId } = setup();
   assert.equal(service.releaseEditLock(articleId, { clientId: 'c1' }).ok, true);
+});
+
+test('releaseEditLock: 남의 clientId를 알아도 다른 사용자는 해제할 수 없다(ADR-004)', () => {
+  const { service, articleModel, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+
+  // 공격자가 보유 탭 문자열을 정확히 알아도, 검증 세션의 userId가 다르면 해제되지 않는다.
+  const r = service.releaseEditLock(articleId, { clientId: 'c1', userId: 'lee' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'not-holder');
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'Y', '거부된 해제는 잠금을 풀지 않는다');
+  // 거부 응답에 누가 잠갔는지 담지 않는다(보유자 비노출).
+  assert.equal(r.lockerUserId, undefined, '잠근 사용자 비노출');
+  assert.equal(r.lockerSessionId, undefined, '잠근 세션 비노출');
+  assert.equal(r.lockerClientId, undefined, '잠근 탭 비노출');
+});
+
+test('releaseEditLock: lockerClientId가 비어 있는 레거시 잠금은 남이 해제할 수 없다', () => {
+  const { service, articleModel, articleId } = setup();
+  // 과거(탭 미기록) 잠금 행 재현 — clientId 절만으로는 판정이 통과해 아무나 해제할 수 있었다.
+  articleModel.setLock(articleId, {
+    lockerUserId: 'kim', lockerSessionId: 's1', lockerClientId: null, lockedAt: new Date().toISOString(),
+  });
+
+  assert.equal(service.releaseEditLock(articleId, { clientId: '아무거나', userId: 'lee' }).reason, 'not-holder');
+  assert.equal(service.releaseEditLock(articleId, { userId: 'lee' }).reason, 'not-holder');
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'Y', '거부된 해제는 잠금을 풀지 않는다');
+
+  // 보유자 본인은 탭 기록이 없어도 해제할 수 있다(기존 clientId 절은 그대로 — NULL이면 탭을 따지지 않는다).
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c9', userId: 'kim' }).ok, true);
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'N');
+});
+
+test('releaseEditLock: userId를 넘기지 않으면 거부한다(하위호환 폴백 금지)', () => {
+  const { service, articleModel, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+
+  // 호출자가 신원 인자를 빠뜨리면 조용히 해제가 열리는 폴백이 있어선 안 된다.
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1' }).reason, 'not-holder');
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1', userId: '' }).reason, 'not-holder');
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1', userId: null }).reason, 'not-holder');
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'Y', '거부된 해제는 잠금을 풀지 않는다');
+});
+
+test('releaseEditLock: lockerUserId가 비어 있는 레거시 잠금 행은 누구도 해제할 수 없다', () => {
+  const { service, articleModel, articleId } = setup();
+  // 신원 미기록 잠금 행 — 보유자를 자처해도 거부한다(D/Z 강제 해제·30분 stale 재획득으로 풀린다).
+  articleModel.setLock(articleId, {
+    lockerUserId: null, lockerSessionId: null, lockerClientId: 'c1', lockedAt: new Date().toISOString(),
+  });
+
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1', userId: 'kim' }).reason, 'not-holder');
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1' }).reason, 'not-holder');
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'Y', '거부된 해제는 잠금을 풀지 않는다');
+});
+
+test('releaseEditLock: 같은 사용자가 재로그인해 sessionId가 달라도 보유 탭이면 해제할 수 있다', () => {
+  const { service, articleModel, articleId } = setup();
+  service.acquireEditLock(articleId, { userId: 'kim', sessionId: 's1', clientId: 'c1' });
+  // 세션만 갱신되고(재로그인) 탭이 잠금을 재획득하지 못한 상태 — acquireEditLock의 관용도와 동형으로 허용한다.
+  assert.equal(articleModel.getById(articleId).contents.lockerSessionId, 's1');
+
+  assert.equal(service.releaseEditLock(articleId, { clientId: 'c1', userId: 'kim', sessionId: 's2' }).ok, true);
+  assert.equal(articleModel.getById(articleId).contents.lockYN, 'N');
+});
+
+test('releaseEditLock: 없는 기사는 not-found', () => {
+  const { service } = setup();
+  assert.equal(service.releaseEditLock('999999', { clientId: 'c1', userId: 'kim' }).reason, 'not-found');
 });
 
 test('forceReleaseEditLock: 보유자와 무관하게 강제 해제한다', () => {

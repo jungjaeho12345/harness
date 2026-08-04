@@ -355,7 +355,12 @@ describe('createHttpModel', () => {
       }
       addEventListener(type, cb) { (this.listeners[type] ??= []).push(cb); }
       close() { this.closed = true; }
-      emit(type, data) { (this.listeners[type] ?? []).forEach((cb) => cb({ data })); }
+      // 실제 EventSource는 close() 이후 어떤 이벤트도 발화하지 않고 재연결도 하지 않는다 —
+      // 가짜도 같은 성질을 갖게 해 "닫은 뒤에는 데이터가 흐르지 않는다"를 그대로 단언할 수 있게 한다.
+      emit(type, data) {
+        if (this.closed) return;
+        (this.listeners[type] ?? []).forEach((cb) => cb({ data }));
+      }
     }
     globalThis.EventSource = FakeEventSource;
   }
@@ -581,6 +586,132 @@ describe('createHttpModel', () => {
     model.subscribeLogs(vi.fn());
     expect(instances[0].url).toBe(`${BASE}/api/logs/stream`);
     expect(instances[0].url).not.toContain('session=');
+  });
+
+  // 서버(phase52 step3)는 push 시점 재인증에 실패하면 두 스트림 공통으로 아래 프레임을 1회 보내고 연결을 끝낸다:
+  //   event: unauthorized / data: {"ok":false,"reason":"unauthenticated"}
+  // 표준 EventSource는 끊기면 자동 재연결하므로(ADR-005), 죽은 세션에서는 매 재연결이 401로 실패하며
+  // 요청 로그(링 버퍼)를 채운다 → 클라이언트가 이 이벤트에서 스스로 닫아야 한다.
+  describe('SSE terminal close — event: unauthorized', () => {
+    const UNAUTHORIZED = '{"ok":false,"reason":"unauthenticated"}';
+
+    it('subscribe closes the EventSource on the terminal unauthorized event (no reconnect storm)', () => {
+      const instances = [];
+      installFakeEventSource(instances);
+
+      const model = createHttpModel({ base: BASE });
+      const onChange = vi.fn();
+      const onStatus = vi.fn();
+      const sub = model.subscribe({ menu: 'desk' }, onChange, onStatus);
+
+      instances[0].emit('ready', '{"ok":true}');
+      expect(sub.connected()).toBe(true);
+
+      instances[0].emit('unauthorized', UNAUTHORIZED);
+
+      // 닫혔다 = 브라우저가 재연결하지 않는다(401 폭주·로그 오염 차단).
+      expect(instances[0].closed).toBe(true);
+      expect(sub.connected()).toBe(false);
+      expect(onStatus).toHaveBeenLastCalledWith(false);
+
+      // 닫힌 뒤에는 어떤 데이터도 흐르지 않고, 대체 스트림을 새로 열지도 않는다.
+      instances[0].emit('change', '{"kind":"status"}');
+      expect(onChange).not.toHaveBeenCalled();
+      expect(instances).toHaveLength(1);
+
+      // 소비처(Controller)의 정리 호출은 종료 이후에도 안전하다(멱등).
+      expect(() => sub.unsubscribe()).not.toThrow();
+      expect(instances[0].closed).toBe(true);
+      expect(sub.connected()).toBe(false);
+    });
+
+    it('subscribeLogs closes the EventSource on the terminal unauthorized event (Z 게이트 상실·세션 만료)', () => {
+      const instances = [];
+      installFakeEventSource(instances);
+
+      const model = createHttpModel({ base: BASE });
+      const onLog = vi.fn();
+      const onStatus = vi.fn();
+      const sub = model.subscribeLogs(onLog, onStatus);
+
+      instances[0].emit('ready', '{"ok":true}');
+      expect(sub.connected()).toBe(true);
+
+      instances[0].emit('unauthorized', UNAUTHORIZED);
+
+      expect(instances[0].closed).toBe(true);
+      expect(sub.connected()).toBe(false);
+      expect(onStatus).toHaveBeenLastCalledWith(false);
+
+      instances[0].emit('log', JSON.stringify({ seq: 2, level: 'INFO', message: 'after' }));
+      expect(onLog).not.toHaveBeenCalled();
+      expect(instances).toHaveLength(1);
+
+      expect(() => sub.unsubscribe()).not.toThrow();
+      expect(instances[0].closed).toBe(true);
+    });
+
+    it('closes on the terminal event even when its data is empty or unparseable (고정 토큰 — 파싱에 분기하지 않는다)', () => {
+      const instances = [];
+      installFakeEventSource(instances);
+
+      const model = createHttpModel({ base: BASE });
+      const streamSub = model.subscribe({}, vi.fn());
+      const logsSub = model.subscribeLogs(vi.fn());
+
+      instances[0].emit('unauthorized', '');
+      instances[1].emit('unauthorized', 'not-json');
+
+      expect(instances[0].closed).toBe(true);
+      expect(instances[1].closed).toBe(true);
+      expect(streamSub.connected()).toBe(false);
+      expect(logsSub.connected()).toBe(false);
+    });
+
+    it('subscribe keeps the stream open on a transient error (EventSource 자동 재연결 보존 — ADR-005)', () => {
+      const instances = [];
+      installFakeEventSource(instances);
+
+      const model = createHttpModel({ base: BASE });
+      const onChange = vi.fn();
+      const onStatus = vi.fn();
+      const sub = model.subscribe({ menu: 'desk' }, onChange, onStatus);
+
+      instances[0].emit('ready', '{"ok":true}');
+      instances[0].emit('error', null);
+
+      // 연결 끊김으로 보고하되 닫지는 않는다 — 일시 단절은 브라우저 재연결로 회복돼야 한다.
+      expect(sub.connected()).toBe(false);
+      expect(onStatus).toHaveBeenLastCalledWith(false);
+      expect(instances[0].closed).toBe(false);
+
+      // 재연결 성공 시나리오: 같은 소스가 ready/change를 다시 흘린다.
+      instances[0].emit('ready', '{"ok":true}');
+      expect(sub.connected()).toBe(true);
+      instances[0].emit('change', '{"kind":"status"}');
+      expect(onChange).toHaveBeenCalledWith({ kind: 'status' }, { menu: 'desk' });
+    });
+
+    it('subscribeLogs keeps the stream open on a transient error (EventSource 자동 재연결 보존 — ADR-005)', () => {
+      const instances = [];
+      installFakeEventSource(instances);
+
+      const model = createHttpModel({ base: BASE });
+      const onLog = vi.fn();
+      const sub = model.subscribeLogs(onLog);
+
+      instances[0].emit('ready', '{"ok":true}');
+      instances[0].emit('error', null);
+
+      expect(sub.connected()).toBe(false);
+      expect(instances[0].closed).toBe(false);
+
+      instances[0].emit('ready', '{"ok":true}');
+      expect(sub.connected()).toBe(true);
+      const record = { seq: 9, ts: 1000, level: 'INFO', message: 'back', line: 'back' };
+      instances[0].emit('log', JSON.stringify(record));
+      expect(onLog).toHaveBeenCalledWith(record);
+    });
   });
 
   // request()는 reject하지 않는다 — 모든 실패를 서버 실패 응답과 같은 shape({ ok:false, reason })으로

@@ -10,7 +10,9 @@ const ONE_HOUR_MS = 60 * 60 * 1000;
 // 세션에 보관/반환하는 정제된 신원 — 비밀번호(해시 포함)는 절대 담지 않는다.
 const IDENTITY_FIELDS = ['userId', 'role', 'department', 'departmentCode', 'name'];
 
-function identityOf(user = {}) {
+// 임의의 사용자/DB 행에서 화이트리스트 필드만 뽑아 신원을 만든다(비밀번호·잠금 메타 차단).
+// 세션 가드가 DB 최신 행으로 신원을 재도출할 때도 이 투영을 재사용한다.
+export function identityOf(user = {}) {
   const out = {};
   for (const f of IDENTITY_FIELDS) out[f] = user[f];
   return out;
@@ -31,15 +33,30 @@ export function createSessionService({ now = () => Date.now() } = {}) {
     return sessionId;
   }
 
-  // 유효하면 1시간 슬라이딩 갱신 후 정제된 신원을 반환, 없거나 만료면 undefined.
-  function touchSession(sessionId) {
+  // 만료 판정만 하는 내부 조회 — 만료된 세션은 스토어에서 제거한다. 판정식은 여기 한 곳뿐이다.
+  function liveSession(sessionId) {
     const s = sessions.get(sessionId);
     if (!s) return undefined;
     if (now() >= s.expiresAt) {
       sessions.delete(sessionId);
       return undefined;
     }
+    return s;
+  }
+
+  // 유효하면 1시간 슬라이딩 갱신 후 정제된 신원을 반환, 없거나 만료면 undefined.
+  function touchSession(sessionId) {
+    const s = liveSession(sessionId);
+    if (!s) return undefined;
     s.expiresAt = now() + ONE_HOUR_MS;
+    return { ...s.identity };
+  }
+
+  // 비연장 조회 — 만료 판정만 하고 expiresAt은 갱신하지 않는다.
+  // SSE처럼 사용자 활동 없이 반복 확인하는 경로가 세션을 무한 연장해 유휴 만료를 무력화하지 않도록.
+  function peekSession(sessionId) {
+    const s = liveSession(sessionId);
+    if (!s) return undefined;
     return { ...s.identity };
   }
 
@@ -48,5 +65,5 @@ export function createSessionService({ now = () => Date.now() } = {}) {
     return sessions.delete(sessionId);
   }
 
-  return { createSession, touchSession, invalidate };
+  return { createSession, touchSession, peekSession, invalidate };
 }
