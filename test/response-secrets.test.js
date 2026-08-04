@@ -27,7 +27,8 @@ const END_MARKUP = JSON.stringify({
   blocks: [{ type: 'text', text: '제목' }, { type: 'text', text: '본문' }, { type: 'text', text: '(끝)' }],
 });
 
-async function start() {
+// 앱만 만든다(포트 바인딩 없음) — 라우터 전수 반영 테스트는 네트워크가 필요 없다.
+function buildApp() {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const sessionService = createSessionService();
@@ -36,7 +37,11 @@ async function start() {
     env: ENV,
     fetchFn: async () => { throw new Error('외부 호출 금지'); },
   });
-  const app = createApp({ controllers, sessionService });
+  return { db, app: createApp({ controllers, sessionService }) };
+}
+
+async function start() {
+  const { db, app } = buildApp();
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -99,24 +104,42 @@ async function fixture(ctx) {
 }
 
 // R 세션으로 호출할 기사/배부 라우트 전수. 새 라우트가 추가되면 반드시 여기에 넣는다.
+// 4번째 원소는 Express에 등록된 라우트 템플릿 — 아래 "누락 방지" 테스트가 라우터 실물과 대조한다.
 function routesFor({ articleId, historyId }) {
   return [
-    ['GET', '/api/articles', {}],
-    ['GET', `/api/articles/${articleId}`, {}],
-    ['GET', '/api/articles/search?q=%EC%9E%A0%EA%B8%B4', {}],
-    ['GET', `/api/articles/${articleId}/history`, {}],
-    ['GET', `/api/articles/${articleId}/history/${historyId}`, {}],
-    ['POST', '/api/articles', { body: { title: 'R의 새 기사', markupVersion: END_MARKUP } }],
-    ['POST', `/api/articles/${articleId}/action`, { body: { action: 'send' } }],
-    ['POST', `/api/articles/${articleId}/derive`, { body: { mode: 'continue' } }],
-    ['POST', `/api/articles/${articleId}/translate`, { body: { targetLang: 'en' } }],
-    ['PUT', `/api/articles/${articleId}`, { clientId: 'tab-r', body: { title: '탈취 시도' } }],
-    ['POST', `/api/articles/${articleId}/lock`, { clientId: 'tab-r' }],
-    ['POST', `/api/articles/${articleId}/unlock`, { clientId: 'tab-r' }],
-    ['POST', `/api/articles/${articleId}/force-unlock`, { clientId: 'tab-r' }],
+    ['GET', '/api/articles', {}, '/api/articles'],
+    ['GET', `/api/articles/${articleId}`, {}, '/api/articles/:id'],
+    ['GET', '/api/articles/search?q=%EC%9E%A0%EA%B8%B4', {}, '/api/articles/search'],
+    ['GET', `/api/articles/${articleId}/history`, {}, '/api/articles/:id/history'],
+    ['GET', `/api/articles/${articleId}/history/${historyId}`, {}, '/api/articles/:id/history/:historyId'],
+    ['POST', '/api/articles', { body: { title: 'R의 새 기사', markupVersion: END_MARKUP } }, '/api/articles'],
+    ['POST', `/api/articles/${articleId}/action`, { body: { action: 'send' } }, '/api/articles/:id/action'],
+    ['POST', `/api/articles/${articleId}/derive`, { body: { mode: 'continue' } }, '/api/articles/:id/derive'],
+    ['POST', `/api/articles/${articleId}/translate`, { body: { targetLang: 'en' } }, '/api/articles/:id/translate'],
+    ['PUT', `/api/articles/${articleId}`, { clientId: 'tab-r', body: { title: '탈취 시도' } }, '/api/articles/:id'],
+    ['POST', `/api/articles/${articleId}/lock`, { clientId: 'tab-r' }, '/api/articles/:id/lock'],
+    ['POST', `/api/articles/${articleId}/unlock`, { clientId: 'tab-r' }, '/api/articles/:id/unlock'],
+    ['POST', `/api/articles/${articleId}/force-unlock`, { clientId: 'tab-r' }, '/api/articles/:id/force-unlock'],
     // 스풀 미설정이라 spool-disabled/403이어도 응답 본문을 검사한다.
-    ['POST', '/api/distribution/tick', {}],
+    ['POST', '/api/distribution/tick', {}, '/api/distribution/tick'],
   ];
+}
+
+// 감사 대상 범위 — Contents 행(잠금 컬럼 보유)이 응답에 실릴 수 있는 라우트군.
+// /api/stream(SSE)은 무효화 신호만 보내므로(ADR-005) 제외한다.
+const inAuditScope = (path) => path.startsWith('/api/articles') || path === '/api/distribution/tick';
+
+// Express 라우터에 실제 등록된 (METHOD, 템플릿) 전수. 반영(reflection)이라 목록을 손으로 관리하지 않는다.
+function registeredRoutes(app) {
+  const stack = app._router?.stack ?? app.router?.stack ?? [];
+  const out = [];
+  for (const layer of stack) {
+    if (!layer.route || typeof layer.route.path !== 'string') continue;
+    for (const [method, on] of Object.entries(layer.route.methods ?? {})) {
+      if (on && method !== '_all') out.push(`${method.toUpperCase()} ${layer.route.path}`);
+    }
+  }
+  return out;
 }
 
 test('R 세션의 어떤 기사 라우트 응답에도 D의 활성 세션 토큰/편집 탭 식별자가 실리지 않는다', async () => {
@@ -152,6 +175,25 @@ test('투영 후에도 잠금 표시 UI 계약(lockYN/lockerUserId/lockedAt)은 
     assert.equal(one.body.contents.lockerUserId, 'desk1');
     assert.ok(one.body.contents.lockedAt);
   } finally { await ctx.close(); }
+});
+
+// 누락 방지 장치 — 손으로 관리하는 목록은 반드시 썩는다(이 결함의 원인 자체가 라우트별 누락이었다).
+// 라우터 실물과 대조해, 새 기사 라우트를 추가하면 위 전수 목록에 넣기 전까지 이 테스트가 먼저 실패하게 한다.
+test('전수 목록이 등록된 모든 기사/배부 라우트를 덮는다(새 라우트 누락 방지)', () => {
+  const { app } = buildApp();
+  const registered = registeredRoutes(app);
+
+  // 반영이 깨지면(Express 내부 구조 변경 등) 조용히 통과하지 않고 여기서 실패한다.
+  assert.ok(registered.length > 20, `라우터 반영 실패: ${registered.length}건만 수집됐다`);
+  assert.ok(registered.includes('GET /api/articles/:id'), '알려진 라우트가 수집되지 않았다 — 반영 로직 점검');
+
+  const audited = new Set(routesFor({ articleId: 'X', historyId: 1 }).map(([m, , , tpl]) => `${m} ${tpl}`));
+  const missing = registered.filter((r) => inAuditScope(r.slice(r.indexOf(' ') + 1)) && !audited.has(r));
+  assert.deepEqual(missing, [], `응답 비밀 감사에서 빠진 라우트: ${missing.join(', ')} → routesFor에 추가하라`);
+
+  // 반대 방향 — 사라진 라우트를 감사 목록에 남겨두면 커버리지 착시가 된다.
+  const stale = [...audited].filter((r) => !registered.includes(r));
+  assert.deepEqual(stale, [], `등록되지 않은 라우트가 감사 목록에 남아 있다: ${stale.join(', ')}`);
 });
 
 test('응답 투영은 DB의 잠금 상태를 바꾸지 않는다(잠금 판정 근거 보존 — DB 비파괴)', async () => {

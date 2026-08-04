@@ -921,6 +921,42 @@ test('사이클 경계: 엠바고를 고치지 않은 재송고는 도래한 kin
   assert.equal(distRows[0].createdAt, T1, '과거 배부 이력 행은 수정되지 않는다');
 });
 
+test('사이클 경계 미적용(DPS): 완결 기사를 정정본으로 재송고해도 tick은 이미 나간 수신처로 다시 배부하지 않는다', async () => {
+  // phase 49 계약(DPS 재송고 = 이미 배부된 곳에 정정본)의 tick 쪽 무손상 검증이다.
+  // 재송고 이력은 배부 이력보다 **뒤**에 남으므로, DPS까지 사이클 경계를 적용하면 tick이
+  // "이번 사이클 미배부"로 오판해 이미 press를 받은 수신처로 한 번 더 내보낸다(회수 불가).
+  // 송고 훅 자체의 정정본 배부는 articleSendDistribution.test.js의 계약이다 —
+  // 여기 harness의 articleService에는 distributionService가 없어 훅이 돌지 않으므로 tick만 관측된다.
+  const h = harness();
+  const id = sendEmbargoArticle(h, { embargoAt: T1 });
+
+  const c1 = fakeDistribution({ historyModel: h.historyModel, now: () => T1 });
+  await tickWith(h, { distributionService: c1, now: () => T1 }).run({ actorUserId: 'system' });
+  assert.equal(h.statusOf(id), 'DPS', '1차 사이클 완결');
+
+  // 보류를 거치지 않는 DPS→DPS 재송고(고침 후 재송) — 상태는 DPS 그대로다.
+  assert.deepEqual(
+    h.articleService.applyAction(id, 'D', 'send', { userId: 'desk1' }),
+    { ok: true, status: 'DPS' },
+  );
+  const afterResend = h.counts();
+
+  // 회귀 재현 조건 확인 — 이 순서(배부 < 재송고)가 아니면 아래 단언은 아무것도 잡지 못한다.
+  const rows = h.historyOf(id);
+  const lastSend = [...rows].reverse().find((r) => r.eventType === 'status' && r.action === 'send');
+  const lastDist = [...rows].reverse().find((r) => r.eventType === 'distribute');
+  assert.ok(lastSend.id > lastDist.id, '재송고 이력이 배부 이력 뒤에 남는다');
+
+  const c2 = fakeDistribution({ historyModel: h.historyModel, now: () => T2 });
+  const r2 = await tickWith(h, { distributionService: c2, now: () => T2 }).run({ actorUserId: 'system' });
+
+  assert.equal(c2.calls.length, 0, 'tick은 완결 기사의 정정본 재배부에 개입하지 않는다(송고 훅의 책임)');
+  assert.deepEqual(r2.distributed, []);
+  assert.deepEqual(r2.failed, []);
+  assert.equal(h.statusOf(id), 'DPS');
+  assert.equal(h.counts().history, afterResend.history, '배부 이력이 늘지 않는다(중복 배부 0건)');
+});
+
 test('TOCTOU: 배부 직전에 상태가 바뀌면 "이미 배부됨" 판정도 새 상태 기준으로 다시 센다(중복 배부 금지)', async () => {
   const h = harness();
   // 과거 사이클에 press가 나간 뒤 재송고된 기사(스냅샷 DES) — 사이클 기준이면 미배부로 보인다.
