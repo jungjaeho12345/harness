@@ -594,11 +594,25 @@ export function Editor({
     e.preventDefault(); // drop 이벤트 수신 보장 + 네이티브 삽입 준비(드롭 캐럿) 차단
   };
 
+  // 드래그 이동(drag-move) 원본 삭제 차단 — 드롭 차단만으로는 부족하다.
+  // 브라우저의 드래그 이동은 "드롭 수락 → dragend에서 원본 범위 삭제"가 한 쌍이라, 드롭을 preventDefault로
+  // 취소해도 최종 drag operation이 'move'로 남으면 UA가 원본 선택을 지운다 → 삽입은 없고 삭제만 남는다(본문 유실).
+  // 원본 삭제 여부를 UA 구현에 맡기지 않도록 시작점에서 닫는다: 편집 영역 안에서 시작하는 드래그(텍스트 선택·
+  // 임베드 이미지)를 dragstart에서 열지 않는다. 외부(OS·다른 앱)에서 끌어온 이미지 파일 드롭은 dragstart가
+  // 여기서 나지 않으므로 영향받지 않는다(news.md 192행 스펙 유지).
+  const handleDragStart = (e) => {
+    e.preventDefault();
+  };
+
   const handleDrop = (e) => {
     e.preventDefault(); // 어떤 데이터든 브라우저가 편집 div에 직접 떨구지 못하게 한다(조건 분기보다 먼저).
+    // 최종 drag operation을 'move'가 아닌 값으로 확정한다 — 'move'로 남으면 출처 문서(다른 앱·다른 창)에서
+    // 원본이 삭제된다. 우리는 어떤 경우에도 이동을 수행하지 않는다: 받지 않으면 'none', 이미지는 복사 삽입.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
     if (!onDropImageFile) return; // 드롭 위임 비활성(환경설정 off) — 차단만.
     const file = findImageFile(e.dataTransfer);
     if (!file) return; // 텍스트/HTML 등은 아무것도 하지 않는다(삽입 금지·콜백 없음).
+    e.dataTransfer.dropEffect = 'copy';
     const caret = readCaret(e.currentTarget); // 위임 전 동기 확보(이후 비동기 업로드 중 selection 소실 대비)
     onDropImageFile(file, caret);
   };
@@ -660,6 +674,7 @@ export function Editor({
       lang={lang}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
+      onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onCompositionStart={handleCompositionStart}
