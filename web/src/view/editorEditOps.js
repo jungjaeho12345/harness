@@ -20,6 +20,9 @@ function isEndMarkerBlock(b) {
 
 // 두 블록 배열이 내용상 같은지(changed 판정용). 텍스트는 text 값 비교, 임베드는 참조 비교로 충분
 // (이 모듈은 임베드 객체를 새로 만들지 않고 그대로 옮기므로 참조가 다르면 자리가 바뀐 것이다).
+// align을 비교하지 않는 것은 의도다: sortDocument는 { text, align } 쌍을 텍스트 기준으로 안정 정렬하므로,
+// 출력 텍스트 시퀀스가 입력과 같다면 그 정렬은 항등 순열이고 align 쌍도 이동하지 않는다.
+// 판정을 align까지 넓히면 결과가 같은데도 changed=true가 되어 불필요한 dirty·저장이 생긴다(phase49 결정).
 function sameBlocks(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {

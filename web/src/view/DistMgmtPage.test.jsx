@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
 import { DistMgmtPage } from './DistMgmtPage.jsx';
@@ -237,5 +237,113 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
     // 내부 재조회는 성공했고(목록 표시 유지) 실패 메시지는 그대로 남는다.
     expect(screen.getByText('가나일보')).toBeInTheDocument();
     expect(screen.getByTestId('dist-error')).toHaveTextContent('권한');
+  });
+
+  // --- phase 54 step6: 비문자열 사유 회귀 + 중복 제출 가드 ---
+
+  it('reason 없는 실패 응답도 일반 문구로 안내한다((null)·(undefined) 노출 금지)', async () => {
+    const { model } = setup({ distributionTargets: [] });
+    vi.spyOn(model, 'createDistributionTarget').mockResolvedValue({ ok: false });
+
+    await userEvent.click(screen.getByRole('button', { name: '생성' }));
+
+    const err = await screen.findByTestId('dist-error');
+    expect(err).toHaveTextContent('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    expect(err.textContent).not.toContain('(null)');
+    expect(err.textContent).not.toContain('(undefined)');
+  });
+
+  it('진입 조회가 null을 돌려줘도 일반 문구를 띄운다', async () => {
+    setup({ distributionTargets: [] }, undefined, (m) => {
+      vi.spyOn(m, 'queryDistributionTargets').mockResolvedValue(null);
+    });
+    const err = await screen.findByTestId('dist-error');
+    expect(err).toHaveTextContent('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    expect(err.textContent).not.toContain('(null)');
+    expect(err.textContent).not.toContain('(undefined)');
+  });
+
+  it('제출 중 재클릭은 무시된다 — 더블클릭이 대상을 두 벌 만들지 않는다', async () => {
+    const { model } = setup({ distributionTargets: [] });
+    let resolveCreate;
+    const create = vi.spyOn(model, 'createDistributionTarget')
+      .mockImplementation(() => new Promise((res) => { resolveCreate = res; }));
+
+    await userEvent.type(screen.getByLabelText('수신처명'), '다라방송');
+    await userEvent.type(screen.getByLabelText('스풀 폴더'), 'darabc');
+    const btn = screen.getByRole('button', { name: '생성' });
+    await userEvent.click(btn);
+    await userEvent.click(btn); // 더블클릭 — in-flight 가드가 막아야 한다.
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(btn).toBeDisabled();
+
+    await act(async () => { resolveCreate({ ok: true }); });
+    await waitFor(() => expect(screen.getByLabelText('수신처명')).toHaveValue(''));
+    expect(btn).toBeEnabled();
+  });
+
+  it('수정 제출도 더블클릭에서 한 번만 나간다', async () => {
+    const { model } = setup();
+    let resolveUpdate;
+    const update = vi.spyOn(model, 'updateDistributionTarget')
+      .mockImplementation(() => new Promise((res) => { resolveUpdate = res; }));
+    await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+    await userEvent.click(within(screen.getByTestId('dist-row-7')).getByRole('button', { name: '수정' }));
+    const submit = within(screen.getByTestId('dist-form')).getByRole('button', { name: '수정' });
+    await userEvent.click(submit);
+    await userEvent.click(submit);
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(submit).toBeDisabled();
+
+    await act(async () => { resolveUpdate({ ok: true }); });
+    await waitFor(() => expect(screen.getByLabelText('수신처명')).toHaveValue(''));
+  });
+
+  it('버튼 disabled를 우회한 연속 submit 이벤트도 1회만 요청한다(핸들러 가드)', async () => {
+    const { model } = setup({ distributionTargets: [] });
+    let resolveCreate;
+    const create = vi.spyOn(model, 'createDistributionTarget')
+      .mockImplementation(() => new Promise((res) => { resolveCreate = res; }));
+
+    const form = screen.getByTestId('dist-form');
+    fireEvent.submit(form);
+    fireEvent.submit(form); // Enter 연타·프로그램적 제출 — disabled 버튼으로는 막지 못하는 경로.
+
+    expect(create).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveCreate({ ok: true }); });
+  });
+
+  it('실패로 끝난 뒤에는 다시 제출할 수 있다(영구 잠금 아님)', async () => {
+    const { model } = setup({ distributionTargets: [] });
+    const create = vi.spyOn(model, 'createDistributionTarget').mockResolvedValue({ ok: false, reason: 'invalid-name' });
+
+    await userEvent.type(screen.getByLabelText('수신처명'), '다라방송');
+    await userEvent.click(screen.getByRole('button', { name: '생성' }));
+    await waitFor(() => expect(screen.getByTestId('dist-error')).toHaveTextContent('수신처명'));
+    expect(screen.getByRole('button', { name: '생성' })).toBeEnabled();
+    expect(screen.getByLabelText('수신처명')).toHaveValue('다라방송');
+
+    await userEvent.click(screen.getByRole('button', { name: '생성' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  });
+
+  it('비활성 버튼에는 제출 가드가 걸리지 않는다(연속 비활성 가능)', async () => {
+    const { model } = setup();
+    const deactivate = vi.spyOn(model, 'deactivateDistributionTarget');
+    await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+    await userEvent.click(within(screen.getByTestId('dist-row-7')).getByRole('button', { name: '비활성' }));
+    await waitFor(() => expect(within(screen.getByTestId('dist-row-7')).getByText('N')).toBeInTheDocument());
+    // 재활성화 후 다시 비활성 — 가드가 남아 있으면 두 번째 호출이 막힌다.
+    await userEvent.click(within(screen.getByTestId('dist-row-8')).getByRole('button', { name: '수정' }));
+    await userEvent.selectOptions(screen.getByLabelText('활성'), 'Y');
+    await userEvent.click(within(screen.getByTestId('dist-form')).getByRole('button', { name: '수정' }));
+    await waitFor(() => expect(within(screen.getByTestId('dist-row-8')).getByText('Y')).toBeInTheDocument());
+    await userEvent.click(within(screen.getByTestId('dist-row-8')).getByRole('button', { name: '비활성' }));
+
+    await waitFor(() => expect(deactivate).toHaveBeenCalledTimes(2));
   });
 });

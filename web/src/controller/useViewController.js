@@ -1,8 +1,10 @@
 // 기사 조회페이지(list.do) 컨트롤러 — 4개 메뉴 필터·부서 드롭다운·페이징(10)·SSE 실시간 재조회와
 // 우클릭 액션(편집/고침·포털고침 진입, Lock해제, 삭제요청)을 보유한다. 모든 데이터는 Model 경유(ADR-003).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
+// 잠금 실패 문구는 writer 진입(useWriteController)과 공유한다 — 사유별 안내가 두 관문에서 동일하다.
+import { lockFailMessage } from './lockMessages.js';
 
 // list.do 우클릭에서 writer.do로 편집 진입할 때 대상 기사·진입 모드를 넘기는 sessionStorage 채널.
 // 모드는 URL에 싣지 않는다(편집 탭 주소창엔 기사아이디만) — useWriteController가 읽고 소비한다.
@@ -82,8 +84,21 @@ export function useViewController() {
     [menu, identity, departments],
   );
 
+  // 재조회 가드 2종. seq(요청 순번)는 겹친 두 조회의 순서 역전(메뉴 전환·SSE 무효화가 겹칠 때 이전 필터의
+  // 응답이 늦게 도착해 최신 목록을 덮는 것)을, mounted는 언마운트 후 도착한 응답의 setState를 막는다.
+  // ref는 의존성이 아니라 refresh의 정체성이 바뀌지 않는다(SSE 재구독이 늘지 않는다).
+  const refreshSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const refresh = useCallback(async () => {
+    const seq = (refreshSeqRef.current += 1);
     const r = await model.queryArticles(filter);
+    // 낡은 응답·언마운트 — 화면에 반영하지 않는다. 반환은 그대로 한다(호출자가 조회 결과를 소비한다).
+    if (!mountedRef.current || seq !== refreshSeqRef.current) return r;
     setItems((r && r.items) || []);
     return r;
   }, [model, filter]);
@@ -128,17 +143,19 @@ export function useViewController() {
 
   const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // 편집 진입 — 이동 전에 편집 잠금을 먼저 획득한다. 다른 세션이 편집 중(locked)이면
-  // '편집중입니다.' ALERT만 띄우고 현재(목록) 페이지에 그대로 머문다(writer.do로 이동하지 않음).
+  // 편집 진입 — 이동 전에 편집 잠금을 먼저 획득한다. fail-closed: 잠금을 얻지 못하면 사유 불문
+  // (locked/네트워크 단절/401/403/404/비JSON/예외) 사유별 안내 ALERT만 띄우고 목록에 그대로 머문다
+  // (writer.do로 이동하지 않고 pendingEdit도 저장하지 않는다). 성공 판정은 ok === true다 —
+  // truthy 판정은 모델/서버 이상값에 조용히 진입시킨다. 문구는 writer 진입과 공유(lockMessages).
   // 잠금에 성공하면 대상·모드를 sessionStorage로 넘기고 writer.do로 이동한다(편집 탭 주소창엔 기사아이디).
   // 고침/포털고침은 lock action으로 구분(서버 editDps D 게이트). 매핑도 전이 없는 'revise' 잠금을 재사용한다.
-  // 실제 인가는 서버 POST :id/lock 게이트가 강제한다(신뢰경계=서버, ADR-004) — 여기선 충돌(locked) UX만 담당.
+  // 실제 인가는 서버 POST :id/lock 게이트가 강제한다(신뢰경계=서버, ADR-004) — 여기선 진입 관문 UX를 담당한다.
   const enterEditor = useCallback(async (article, mode) => {
     const lockAction = mode === 'portalRevise' ? 'portalRevise' : 'revise';
     const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction)).catch(() => null);
-    if (lock && lock.ok === false && lock.reason === 'locked') {
-      globalThis.alert?.('편집중입니다.');
-      return null; // 다른 세션이 편집 중 — 이동하지 않고 목록에 그대로 머문다.
+    if (!lock || lock.ok !== true) {
+      globalThis.alert?.(lockFailMessage(lock && lock.reason));
+      return null; // 잠금 실패 — 이동하지 않고 목록에 그대로 머문다(잠금 해제도 시도하지 않는다).
     }
     try {
       sessionStorage.setItem(PENDING_EDIT_KEY, JSON.stringify({ article, mode }));

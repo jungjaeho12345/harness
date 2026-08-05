@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  saveDraft, loadDraft, clearDraft, expireDrafts,
+  saveDraft, loadDraft, clearDraft, expireDrafts, draftScopeId, draftKeyFor, loadDraftForRecover,
 } from './editorDraft.js';
 
 const DAY = 86400000;
@@ -66,5 +66,125 @@ describe('editorDraft — 초안 자동저장 저장소', () => {
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: original });
     }
+  });
+});
+
+// 54-5: 초안 키 규약 — localStorage는 같은 출처의 모든 창이 공유하므로 신규 탭 키(tab-1, tab-2…)가 창 사이에서
+// 충돌한다(서로 덮어쓰기·다른 문서 오복구·남의 초안 삭제). 브라우저 탭 스코프 id(sessionStorage 보관)를
+// 신규 탭 키에만 접두사로 붙여 격리한다. 기존 기사 키(articleId)는 전역 고유라 그대로 쓴다.
+describe('editorDraft — 초안 키 스코프(draftScopeId/draftKeyFor)', () => {
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear(); });
+
+  it('기존 기사(articleId)는 접두사 없이 그대로 키가 된다(창을 옮겨도 같은 초안을 찾는다)', () => {
+    expect(draftKeyFor('AKR1', 'tab-1')).toBe('AKR1');
+  });
+
+  it('신규 탭(articleId 없음)은 "<스코프>:<tabId>" 키가 되고 tabId 자체와 다르다', () => {
+    for (const empty of [null, '', undefined]) {
+      const key = draftKeyFor(empty, 'tab-1');
+      expect(key).not.toBe('tab-1');
+      expect(key).toBe(`${draftScopeId()}:tab-1`);
+      expect(key.endsWith(':tab-1')).toBe(true);
+    }
+  });
+
+  it('같은 로드 안에서는 여러 번 불러도 스코프가 동일하다(키 안정성)', () => {
+    expect(draftKeyFor(null, 'tab-1')).toBe(draftKeyFor(null, 'tab-1'));
+    expect(draftScopeId()).toBe(draftScopeId());
+  });
+
+  it('sessionStorage가 비면(=다른 창) 스코프가 달라지고, 값이 남아 있으면(F5) 같은 키가 나온다', async () => {
+    const first = draftKeyFor(null, 'tab-1');
+
+    // F5 모사 — 모듈 캐시를 버리고 다시 로드해도 sessionStorage 값이 남아 있으면 같은 키.
+    vi.resetModules();
+    const reloaded = await import('./editorDraft.js');
+    expect(reloaded.draftKeyFor(null, 'tab-1')).toBe(first);
+
+    // 다른 창 모사 — sessionStorage는 창/탭별 격리라 비어 있고, 새 스코프가 발급된다.
+    sessionStorage.clear();
+    expect(reloaded.draftKeyFor(null, 'tab-1')).not.toBe(first);
+  });
+
+  it('sessionStorage 접근이 throw해도 예외 없이 안정된 문자열 키를 돌려준다(graceful)', () => {
+    const original = globalThis.sessionStorage;
+    try {
+      Object.defineProperty(globalThis, 'sessionStorage', {
+        configurable: true,
+        get() { throw new Error('sessionStorage blocked'); },
+      });
+      let key;
+      expect(() => { key = draftKeyFor(null, 'tab-1'); }).not.toThrow();
+      expect(typeof key).toBe('string');
+      expect(key.endsWith(':tab-1')).toBe(true);
+      expect(draftKeyFor(null, 'tab-1')).toBe(key); // 이 페이지 로드 동안은 안정
+      expect(draftKeyFor('AKR1', 'tab-1')).toBe('AKR1'); // 기존 기사 키는 스코프와 무관
+    } finally {
+      Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: original });
+    }
+  });
+
+  it('키 규약만 바뀐다 — saveDraft/loadDraft/clearDraft는 그 키로 그대로 동작한다(저장 shape 불변)', () => {
+    const key = draftKeyFor(null, 'tab-1');
+    saveDraft(key, { title: 'N' }, 1000);
+    saveDraft('AKR1', { title: 'A' }, 1000);
+    expect(loadDraft(key)).toEqual({ title: 'N' });
+    clearDraft(key);
+    expect(loadDraft(key)).toBeNull();
+    expect(loadDraft('AKR1')).toEqual({ title: 'A' }); // 다른 키는 보존
+  });
+});
+
+// 54-5 리뷰 반영: 스코프 접두사 도입 '이전'에 저장된 신규 탭 초안은 키가 스코프 없는 'tab-N'이라
+// draftKeyFor로 조회하면 영영 도달하지 못한다(파일>복구가 "복구할 자동저장 내용이 없습니다"만 낸다).
+// 초안은 사용자가 아직 저장하지 않은 본문이므로 조용한 유실을 두면 안 된다 — 마이그레이션(쓰기) 없이
+// '읽기 폴백'만 둔다. 쓰기는 언제나 새 키로만 한다(옛 키로 다시 쓰면 창 간 충돌이 재발한다).
+describe('editorDraft — 복구 읽기 폴백(loadDraftForRecover)', () => {
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear(); });
+
+  it('새 키에 초안이 있으면 그 키/데이터를 반환한다(옛 키는 보지 않는다 — 새 키 우선)', () => {
+    const key = draftKeyFor(null, 'tab-1');
+    saveDraft(key, { title: '새초안' }, 1000);
+    saveDraft('tab-1', { title: '옛초안' }, 1000);
+
+    expect(loadDraftForRecover(null, 'tab-1')).toEqual({ key, data: { title: '새초안' } });
+  });
+
+  it('새 키가 비어 있고 옛 키(tab-N)에만 있으면 옛 초안을 찾아 그 키와 함께 반환한다', () => {
+    saveDraft('tab-1', { title: '옛초안' }, 1000);
+
+    expect(loadDraftForRecover(null, 'tab-1')).toEqual({ key: 'tab-1', data: { title: '옛초안' } });
+  });
+
+  it('기존 기사(articleId)에는 폴백하지 않는다 — 같은 탭의 tab-N 초안(다른 문서)을 되살리지 않는다', () => {
+    saveDraft('tab-1', { title: '남의초안' }, 1000);
+    expect(loadDraftForRecover('AKR1', 'tab-1')).toBeNull();
+
+    saveDraft('AKR1', { title: '내초안' }, 1000);
+    expect(loadDraftForRecover('AKR1', 'tab-1')).toEqual({ key: 'AKR1', data: { title: '내초안' } });
+  });
+
+  it('새 키·옛 키 어디에도 없으면 null이다(기존 "없습니다" 안내 경로 유지)', () => {
+    expect(loadDraftForRecover(null, 'tab-1')).toBeNull();
+    expect(loadDraftForRecover('AKR1', 'tab-1')).toBeNull();
+  });
+
+  it('반환된 key는 clearDraft로 그대로 지울 수 있다(복구 후 재부활 방지 — 찾은 키를 지운다)', () => {
+    saveDraft('tab-1', { title: '옛초안' }, 1000);
+    const found = loadDraftForRecover(null, 'tab-1');
+
+    clearDraft(found.key);
+    expect(loadDraft('tab-1')).toBeNull();
+    expect(loadDraftForRecover(null, 'tab-1')).toBeNull();
+  });
+
+  it('읽기 전용이다 — 조회만으로 저장소가 바뀌지 않는다(옛 키 재기록·이관 0건)', () => {
+    saveDraft('tab-1', { title: '옛초안' }, 1000);
+    const before = localStorage.getItem('yh.editorDrafts');
+
+    loadDraftForRecover(null, 'tab-1');
+
+    expect(localStorage.getItem('yh.editorDrafts')).toBe(before);
+    expect(loadDraft(draftKeyFor(null, 'tab-1'))).toBeNull(); // 새 키로 복사하지 않는다
   });
 });

@@ -42,6 +42,45 @@ describe('serializeBodyFromBlocks — 커서 위치/블록 순서 보존(임베�
     expect(out.filter((b) => b.type === 'text' && b.text === END_MARKER)).toHaveLength(1);
     expect(out.filter(isEmbedBlock)).toHaveLength(1);
   });
+
+  it('마커 재생성 시 그 줄의 정렬(align)을 승계한다(타이핑 커밋마다 정렬이 풀리지 않게)', () => {
+    const blocks = [textBlock('본문'), textBlock(END_MARKER, 'center')];
+    const out = deserialize(serializeBodyFromBlocks(blocks));
+    const last = out[out.length - 1];
+    expect(last.text).toBe(END_MARKER);
+    expect(last.align).toBe('center');
+  });
+
+  it('미정렬 마커에는 align 키를 만들지 않는다(직렬화 바이트 안정)', () => {
+    const blocks = [textBlock('본문'), textBlock(END_MARKER)];
+    const out = deserialize(serializeBodyFromBlocks(blocks));
+    const last = out[out.length - 1];
+    expect(last.text).toBe(END_MARKER);
+    expect('align' in last).toBe(false);
+  });
+
+  it('마커가 여러 개면 1개로 병합하고 align은 문서 순서상 첫 마커의 값을 쓴다', () => {
+    const blocks = [
+      textBlock(END_MARKER, 'right'),
+      textBlock('본문'),
+      textBlock(END_MARKER, 'center'),
+    ];
+    const out = deserialize(serializeBodyFromBlocks(blocks));
+    expect(out.filter((b) => b.type === 'text' && b.text === END_MARKER)).toHaveLength(1);
+    expect(out[out.length - 1].align).toBe('right');
+  });
+
+  it('마커가 없으면 만들지 않는다', () => {
+    const out = deserialize(serializeBodyFromBlocks([textBlock('제목'), textBlock('본문')]));
+    expect(out.some((b) => b.type === 'text' && b.text === END_MARKER)).toBe(false);
+  });
+
+  it('앞뒤 공백 마커(" (끝) ")도 정규 "(끝)" 텍스트로 되쓰고 정렬은 승계한다', () => {
+    const out = deserialize(serializeBodyFromBlocks([textBlock('본문'), textBlock(' (끝) ', 'justify')]));
+    const last = out[out.length - 1];
+    expect(last.text).toBe(END_MARKER);
+    expect(last.align).toBe('justify');
+  });
 });
 
 describe('insertEmbedAfterLine — 텍스트 줄 뒤 임베드 + 빈 줄 + 캐럿 줄 반환', () => {
@@ -107,6 +146,23 @@ describe('insertEmbedAfterLine — 텍스트 줄 뒤 임베드 + 빈 줄 + 캐�
   it('embed가 없으면 본문 불변, caretTextLine은 null', () => {
     const body = serialize([textBlock('제목')]);
     expect(insertEmbedAfterLine(body, null, 0)).toEqual({ body, caretTextLine: null });
+  });
+
+  it('정렬된 "(끝)" 마커가 있는 본문에 임베드를 넣어도 마커 정렬이 유지되고 caretTextLine은 그대로다', () => {
+    const body = serialize([textBlock('제목'), textBlock('본문'), textBlock(END_MARKER, 'center')]);
+    const { body: out, caretTextLine } = insertEmbedAfterLine(body, makeImageEmbed('data:img'), 0);
+    const blocks = deserialize(out);
+    const last = blocks[blocks.length - 1];
+    expect(last.text).toBe(END_MARKER);
+    expect(last.align).toBe('center');
+    expect(caretTextLine).toBe(1); // 회귀: 새 빈 줄 위치는 불변
+  });
+
+  it('미정렬 마커에는 임베드 삽입 후에도 align 키가 생기지 않는다', () => {
+    const body = serialize([textBlock('제목'), textBlock(END_MARKER)]);
+    const { body: out } = insertEmbedAfterLine(body, makeImageEmbed('data:img'), 0);
+    const blocks = deserialize(out);
+    expect('align' in blocks[blocks.length - 1]).toBe(false);
   });
 });
 

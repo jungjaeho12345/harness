@@ -97,10 +97,11 @@ export function insertContinueMarker(blocks, textLineIndex) {
   if (blockIndex < 0) next.push(marker); // 폴백: 끝에 추가(아래 정규화로 "(끝)"은 다시 최종으로).
   else next.splice(blockIndex + 1, 0, marker); // 지정 텍스트 줄 블록 다음.
   // "(끝)"을 최종 블록으로 정규화(insertEmbedAfterLine과 동일 규칙)한 뒤, 삽입된 마커의 텍스트-줄 인덱스를 센다.
+  // 마커 재생성 시 정렬(align)은 승계한다(문서 순서상 첫 마커).
   const isEnd = (b) => b.type === 'text' && String(b.text).trim() === END_MARKER;
-  const hasEnd = next.some(isEnd);
+  const prevMarker = next.find(isEnd);
   const ordered = next.filter((b) => !isEnd(b));
-  if (hasEnd) ordered.push(textBlock(END_MARKER));
+  if (prevMarker) ordered.push(textBlock(END_MARKER, prevMarker.align));
   let caretTextLine = null;
   let count = -1;
   for (const b of ordered) {

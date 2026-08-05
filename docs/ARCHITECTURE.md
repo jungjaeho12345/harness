@@ -66,6 +66,9 @@ test/                   # 백엔드 테스트 (node --test)
 
 ## 보안 경계
 - 신뢰 경계는 **서버**. acting role은 검증된 `x-session-id` 세션에서만 도출하고 `req.body.role`은 신뢰하지 않는다. 신원(role/active)은 세션 스냅샷이 아니라 **매 요청 User 행 재조회로 재도출**한다(비활성/강등 즉시 반영, ADR-004).
-- helmet(CSP), CORS allowlist(`localhost:5173`), 로그인 레이트리밋(15분/10회), bcrypt 해시, 전역 에러 핸들러(내부 스택 비노출).
-- CSRF: 상태 변경 메서드(비 GET/HEAD/OPTIONS)의 Origin/Referer 검증 미들웨어 — 자기 출처·allowlist(`ALLOWED_ORIGINS`)·비프로덕션 loopback만 통과, 그 외 403(`forbidden-origin`). Origin·Referer 부재(서버-서버·cron)는 통과 (ADR-009).
+- helmet(CSP), CORS allowlist, 로그인 레이트리밋(15분/10회), bcrypt 해시, 전역 에러 핸들러(내부 스택 비노출). allowlist는 비프로덕션 기본값이 `http://localhost:5173`·`http://127.0.0.1:5173`이고, **프로덕션은 `ALLOWED_ORIGINS`에 등록한 출처만**이다(미설정 시 자기 출처 외 쓰기 403 — `server/index.js`의 `allowedOrigins`).
+- CSRF: 상태 변경 메서드(비 GET/HEAD/OPTIONS)의 Origin/Referer 검증 미들웨어 — 자기 출처·allowlist(`ALLOWED_ORIGINS`)·비프로덕션 loopback만 통과, 그 외 403(`forbidden-origin`). Origin·Referer 부재(서버-서버·cron)는 통과 (ADR-009). CORS와 같은 목록을 공유하므로 프로덕션에서 loopback은 허용되지 않는다.
+- 응답 투영: Contents 행의 `lockerSessionId`·`lockerClientId`는 어떤 응답에도 싣지 않는다. 제거 지점은 `src/services/contentsProjection.js`의 `toPublicContents` **단일 지점**이며, 새 읽기 경로는 모델 행을 그대로 내보내지 말고 이 함수를 통과시킨다.
+- SSE 재검증: `/api/stream`·`/api/logs/stream`은 접속 시점 인증뿐 아니라 **push 직전에 비연장 재검증**(`controllers.auth.peek` — touch 금지)을 하고, 실패하면 그 신호를 쓰지 않고 종료 이벤트 1회 후 연결을 닫는다(로그 스트림은 `role==='Z'`까지 재확인). 주기 재검증 타이머는 두지 않는다(ADR-008).
+- 운영 환경변수 주의: `NODE_ENV=production`은 세션 쿠키를 `Secure`+`SameSite=None`으로 만든다 — `FORCE_HTTPS=false`로 평문 HTTP 운영하면 브라우저가 그 쿠키를 저장·전송하지 않아 로그인이 조용히 실패한다(HTTPS 종단은 외부 프록시 책임. 두 스위치는 서로 다른 축이다).
 - DB 비파괴 원칙: 스키마는 `CREATE TABLE IF NOT EXISTS` / additive `ALTER`만, 행 삭제 없음.

@@ -115,6 +115,134 @@ test('allowedOrigins: ALLOWED_ORIGINS(콤마 구분)를 트림·빈 값 제외 �
   ]);
 });
 
+// --- phase 54 step2: 프로덕션 기본 allowlist에서 dev loopback 제외 ---
+// 프로덕션 쿠키는 SameSite=None; Secure라 cross-site 요청에도 붙고, 이 목록은 CORS(응답 읽기)와
+// CSRF 가드(쓰기 실행)가 공유한다 → http://localhost:5173으로 열린 아무 로컬 페이지가 운영 API를
+// 피해자 세션으로 호출·판독할 수 있었다(Origin 위조 불필요 — 브라우저가 진짜 그 값을 보낸다).
+// 운영 영향: 프로덕션 배포는 ALLOWED_ORIGINS에 SPA 출처를 등록해야 한다(미설정 시 자기 출처 외 쓰기 403).
+test('allowedOrigins: 프로덕션에서는 기본 loopback을 내보내지 않는다(빈 배열)', () => {
+  assert.deepEqual(allowedOrigins({ NODE_ENV: 'production' }), []);
+});
+
+// 프로덕션 부트스트랩의 실제 배선 확인 — server/index.js는 createApp에 origins를 주입하지 않으므로
+// 기본값 `origins = allowedOrigins()`(무인자 = process.env)가 쓰인다. 즉 이 함수가 process.env.NODE_ENV를
+// 실제로 읽어야 운영에서 loopback이 빠진다. 인자 주입 테스트만으로는 이 결선이 검증되지 않는다.
+test('allowedOrigins: 무인자 호출은 process.env를 읽는다(프로덕션 기본 배선에서 loopback 제외)', () => {
+  const prevEnv = process.env.NODE_ENV;
+  const prevList = process.env.ALLOWED_ORIGINS;
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.ALLOWED_ORIGINS;
+    assert.deepEqual(allowedOrigins(), []);
+
+    process.env.ALLOWED_ORIGINS = 'https://spa.example';
+    assert.deepEqual(allowedOrigins(), ['https://spa.example']);
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prevEnv;
+    if (prevList === undefined) delete process.env.ALLOWED_ORIGINS; else process.env.ALLOWED_ORIGINS = prevList;
+  }
+  // 환경 복원 확인 — 뒤따르는 테스트(무인자 기본값 계약)가 오염되지 않는다.
+  assert.ok(allowedOrigins().includes('http://localhost:5173'));
+});
+
+test('allowedOrigins: 프로덕션에서도 ALLOWED_ORIGINS 파싱 규칙(트림·빈 값 제외·순서)은 그대로다', () => {
+  assert.deepEqual(
+    allowedOrigins({ NODE_ENV: 'production', ALLOWED_ORIGINS: ' https://spa.example , ,https://admin.example ' }),
+    ['https://spa.example', 'https://admin.example'],
+  );
+});
+
+test('allowedOrigins: 비프로덕션(미지정/development/test)은 기본 두 항목을 그대로 포함한다', () => {
+  for (const env of [{}, { NODE_ENV: 'development' }, { NODE_ENV: 'test' }]) {
+    assert.deepEqual(allowedOrigins(env), ['http://localhost:5173', 'http://127.0.0.1:5173'], JSON.stringify(env));
+  }
+  // append 규칙도 비프로덕션에서는 오늘 그대로다.
+  assert.deepEqual(allowedOrigins({ NODE_ENV: 'development', ALLOWED_ORIGINS: 'https://a.example' }), [
+    'http://localhost:5173', 'http://127.0.0.1:5173', 'https://a.example',
+  ]);
+});
+
+test('19) 프로덕션 기본 구성: Origin http://localhost:5173의 상태 변경은 403이고 status가 그대로다', async () => {
+  const ctx = await start({ env: 'production', origins: allowedOrigins({ NODE_ENV: 'production' }) });
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, prod(), 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: prod({ cookie }), body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const { articleId } = created.body;
+
+    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5173']) {
+      const denied = await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/action`, {
+        headers: prod({ cookie, origin }), body: { action: 'send' },
+      });
+      assert.equal(denied.status, 403, `${origin}는 프로덕션에서 허용되면 안 된다`);
+      assert.equal(denied.body.reason, 'forbidden-origin');
+      assert.equal(statusOf(ctx.db, articleId), 'RDS', '거부된 요청은 부수효과가 없어야 한다');
+    }
+
+    // 자기 출처 분기는 무손상 — 목록이 비어도 운영 SPA(같은 출처)는 계속 동작한다.
+    const legit = await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/action`, {
+      headers: prod({ cookie, origin: `https://${PROD_HOST}` }), body: { action: 'send' },
+    });
+    assert.equal(legit.status, 200);
+    assert.equal(statusOf(ctx.db, articleId), 'DPS');
+  } finally { await ctx.close(); }
+});
+
+test('20) 프로덕션: ALLOWED_ORIGINS로 등록한 출처만 남는다(등록분 통과·기본 loopback 부재)', async () => {
+  const spa = 'http://spa.example';
+  const origins = allowedOrigins({ NODE_ENV: 'production', ALLOWED_ORIGINS: spa });
+  assert.deepEqual(origins, [spa], '프로덕션 목록에는 기본 loopback이 섞이지 않는다');
+  const ctx = await start({ env: 'production', origins });
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, prod(), 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: prod({ cookie }), body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const { articleId } = created.body;
+
+    const allowed = await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/action`, {
+      headers: prod({ cookie, origin: spa }), body: { action: 'send' },
+    });
+    assert.equal(allowed.status, 200);
+    assert.equal(statusOf(ctx.db, articleId), 'DPS');
+  } finally { await ctx.close(); }
+});
+
+test('21) 프로덕션 기본 구성: Origin·Referer 없는 서버-서버 경로는 계속 통과한다(ADR-009 관용)', async () => {
+  const ctx = await start({ env: 'production', origins: allowedOrigins({ NODE_ENV: 'production' }) });
+  try {
+    createReceiverConfigModel(ctx.db).insert({ sourceId: 'src-1', type: 'FTP', active: 'Y' });
+    const before = countRows(ctx.db, 'Article');
+
+    const r = await rawFetch(ctx.base, 'POST', '/api/collection/receive', {
+      headers: prod(), body: { sourceId: 'src-1', payload: '자동제목\n본문' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(countRows(ctx.db, 'Article'), before + 1);
+  } finally { await ctx.close(); }
+});
+
+test('22) 비프로덕션 회귀: 오늘의 dev 구성에서 Origin http://localhost:5173 상태 변경은 통과한다', async () => {
+  const ctx = await start(); // env 미지정 + 기본 origins(allowedOrigins()) = 오늘의 dev 배선.
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', password: 'pw' });
+    const cookie = await loginCookie(ctx.base, {}, 'desk', 'pw');
+    const created = await rawFetch(ctx.base, 'POST', '/api/articles', {
+      headers: { cookie }, body: { title: 't', markupVersion: END_MARKUP },
+    });
+    const { articleId } = created.body;
+
+    const r = await rawFetch(ctx.base, 'POST', `/api/articles/${articleId}/action`, {
+      headers: { cookie, origin: 'http://localhost:5173' }, body: { action: 'send' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(statusOf(ctx.db, articleId), 'DPS');
+  } finally { await ctx.close(); }
+});
+
 // --- 공격 시나리오 (프로덕션) ---
 test('1) 프로덕션: 교차 출처 Origin의 POST /action은 403 forbidden-origin이고 status가 바뀌지 않는다', async () => {
   const ctx = await start({ env: 'production' });

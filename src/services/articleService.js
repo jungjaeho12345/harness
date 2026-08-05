@@ -98,13 +98,32 @@ export function distributionKindsForSend(status, contents = {}, distributed = []
 const DES_ENTRY_STATUSES = new Set(['RDS', 'DDH']);
 
 // distributionService(선택): 미주입이면 배부 훅이 비활성이며 송고는 기존과 동일하게 동작한다.
-export function createArticleService({ articleModel, db, historyModel, distributionService }) {
+// onHistoryError(선택): 이력 insert 실패를 표면화한다(distributionService.onFailure와 동형의 seam).
+//   이력 행은 감사 기록만이 아니라 판정 입력이다 — status 행은 사이클 경계(cycleDistributedKinds),
+//   distribute 행은 tick의 "이미 배부됨" 멱등 판정에 쓰인다. 무음으로 사라지면 조용한 미배부/중복 배부가 된다.
+//   미주입이면 오늘과 동일하게 조용히 삼킨다(하위 호환). 결선은 합성 루트(createControllers)가 한다.
+export function createArticleService({ articleModel, db, historyModel, distributionService, onHistoryError }) {
+  // 이력 실패 알림 자체가 본 기능을 깨뜨리지 않도록 격리한다(distributionService.notifyFailure와 동형).
+  function notifyHistoryError(info) {
+    if (!onHistoryError) return;
+    try { onHistoryError(info); } catch { /* 알림 실패는 본 기능을 막지 않는다 */ }
+  }
+
   // 이력 기록 헬퍼 — 부가 기록이므로 본 기능(편집/전이)을 막지 않는다.
   // historyModel 미주입 시 건너뛰고, insert 실패는 try/catch로 격리한다.
+  // 삼키되 반드시 남긴다: 예외 승격은 이미 커밋된 편집/전이를 되돌릴 수 없는 상태에서 호출자를 깨뜨린다.
+  // 콜백에는 식별자·사유만 담는다(본문 스냅샷 markupVersion 등 페이로드 금지 — LOGS.md 마스킹 규율).
   function record(rec) {
     if (!historyModel) return;
     try { historyModel.insert({ ...rec, createdAt: nowISO() }); }
-    catch { /* 이력 기록 실패는 본 기능을 막지 않는다 */ }
+    catch (err) {
+      notifyHistoryError({
+        articleId: rec?.articleId,
+        eventType: rec?.eventType,
+        action: rec?.action,
+        reason: err?.message ?? String(err),
+      });
+    }
   }
 
   // 신규 기사 — articleId 생성, 초기 status 결정, Article+Contents 트랜잭션 저장.

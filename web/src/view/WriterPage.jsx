@@ -50,7 +50,9 @@ import { HelpDialog } from './HelpDialog.jsx';
 import { AboutDialog } from './AboutDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
-import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
+import {
+  saveDraft, clearDraft, expireDrafts, draftKeyFor, loadDraftForRecover,
+} from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
@@ -134,6 +136,22 @@ function submitFailMessage(action, result) {
   }
   return `${ACTION_VERB[action]}에 실패했습니다. ${SUBMIT_FAIL_KEEP}${submitFailReasonSuffix(reason)}`;
 }
+
+// 비동기 업로드(이미지 붙여넣기/드롭) 대기 중 본문이 바뀌어도 '시작 시점 캐럿 줄'을 그대로 써도 되는지 판정한다.
+// 규칙: 대상 줄 앞쪽(텍스트-줄 0..lineIndex-1)을 개행으로 이은 문자열이 스냅샷과 같고, 최신 본문에 그 인덱스의
+// 줄이 실재하면 true. 대상 줄 인덱스를 밀어내는 변경은 오직 '앞쪽' 줄 추가·삭제뿐이라 이것만 보면 된다.
+// 대상 줄 텍스트나 줄 개수는 일부러 보지 않는다 — 대상 줄에 이어서 타이핑하는 것과 대상 줄 뒤가 늘어나는 것
+// (연속 붙여넣기가 만드는 빈 줄)은 인덱스를 밀지 않는 정상 시나리오이고, 그것까지 폴백으로 보내면 오늘 정상
+// 동작하던 경로가 문서 끝 삽입 + 안내로 바뀐다(결함 수정이 회귀 생성).
+function samePrefixLines(prevBody, nextBody, lineIndex) {
+  const prev = blocksToText(deserialize(prevBody)).split('\n');
+  const next = blocksToText(deserialize(nextBody)).split('\n');
+  if (lineIndex < 0 || lineIndex >= next.length) return false;
+  return prev.slice(0, lineIndex).join('\n') === next.slice(0, lineIndex).join('\n');
+}
+
+// 업로드 대기 중 본문이 바뀌어 캐럿 줄을 못 쓸 때의 안내(삽입 자체는 문서 끝으로 반드시 수행한다 — 업로드본 폐기 금지).
+const IMAGE_MOVED_TO_END = '본문이 바뀌어 이미지를 문서 끝에 넣었습니다. 필요한 위치로 옮겨 주세요.';
 
 // 편집>되돌리기/다시실행(37-editor-undo-redo) — 탭별 본문 히스토리 상한과 타이핑 코얼레싱 창.
 const HISTORY_LIMIT = 100; // 탭별 최대 스냅샷 수(메모리 상한 — body 문자열 × 100 × 열린 탭. 이미지는 업로드 경로라 base64 폭증 없음).
@@ -250,6 +268,10 @@ export function WriterPage() {
   const [histRightKey, setHistRightKey] = useState(null);
   const [histLeftText, setHistLeftText] = useState(null);
   const [histRightText, setHistRightText] = useState(null);
+  // 쪽(side)별 최신 요청 key 미러 ref(지연 조회 레이스 가드 — 계약은 selectCompareTarget 주석 참조).
+  // 선언이 selectCompareTarget 바로 위에 있으면 탭 전환 조정 블록(아래)이 참조할 때 const TDZ ReferenceError가
+  // 나므로 이력비교 state 옆으로 올렸다(훅은 렌더마다 순서대로 실행되니 useRef 호출 순번은 그대로다).
+  const histReqRef = useRef({ left: null, right: null });
   // 맞춤법 검사(맞춤법 메뉴 spell.* — 30-editor-spellcheck step 2) 결과 다이얼로그 표시 state — showFileInfo/fileInfoStats 패턴.
   // spellIssues는 검사 시점 스냅샷(엔진 이슈 + snippet), spellStyle은 오류 조각 렌더 스타일(prefs.errorStyle).
   // 아래 spell state(브라우저 네이티브 spellCheck 속성 — Alt+Y 빨간 물결)와는 별개 기능이다(혼용 금지).
@@ -374,6 +396,16 @@ export function WriterPage() {
     setShowPhotoPublish(false);
     // UI 언어 다이얼로그는 비모달 — uiLanguage는 전역이라 좌표 stale은 없지만, 열린 채 이월되는 혼란을 막으려 함께 닫는다.
     setShowUiLanguage(false);
+    // 이력비교의 목록/좌·우 key/비교 텍스트도 전부 문서-로컬 — 열린 채 전환하면 이전 기사의 이력 목록이 새 탭 위에
+    // 떠 있고, 항목을 고르면 새 탭의 articleId로 남의 이력 id를 조회한다('현재 본문'은 남의 이력과 나란히 비교돼
+    // 오독). 같은 계열(캐럿·맞춤법·표·메타·사진발행·URL임베드)과 동일하게 닫고 in-flight 응답도 폐기한다.
+    setShowHistoryCompare(false);
+    setHistoryEntries([]);
+    setHistLeftKey(null);
+    setHistRightKey(null);
+    setHistLeftText(null);
+    setHistRightText(null);
+    histReqRef.current = { left: null, right: null };
   }
 
   // 탭(문서)별 본문 히스토리 — 탭 id → editorHistory 상태. 세션-로컬(휘발, sessionStorage/tab.fields 미저장).
@@ -443,7 +475,7 @@ export function WriterPage() {
     const ms = autosaveCfg.intervalSec * 1000;
     const id = setInterval(() => {
       const tab = activeTabRef.current; // 최신 활성 탭(미러 ref)
-      const key = tab.articleId || tab.id; // 기존=articleId(안정), 신규=tab.id(best-effort)
+      const key = draftKeyFor(tab.articleId, tab.id); // 기존=articleId(안정), 신규='<브라우저 탭 스코프>:tab.id'(창 간 초안 충돌 방지)
       const hasContent = !!(tab.fields.body || tab.fields.title);
       if (!hasContent) return; // 빈 탭은 스냅샷 안 함
       saveDraft(key, { ...tab.fields }, Date.now()); // 시각은 런타임에서 주입(저장소는 시계를 모름).
@@ -669,7 +701,7 @@ export function WriterPage() {
   // 늦게 도착한 이전 응답이 최신 선택의 텍스트를 덮어써 key와 표시 본문이 어긋난 diff가 보인다. 그래서 진입 시
   // ref에 key를 기록하고('current' 즉시경로 포함), await 뒤 ref가 여전히 이 호출의 key일 때만 setText를 적용한다
   // (pasteImageAtCaret의 시작 시점 tabId 캡처→쓰기 전 재확인과 동일 패턴).
-  const histReqRef = useRef({ left: null, right: null });
+  // histReqRef 선언은 탭 전환 조정 블록에서도 참조하므로 이력비교 state 6종 옆(위)에 있다.
   const selectCompareTarget = async (side, key) => {
     const setKey = side === 'left' ? setHistLeftKey : setHistRightKey;
     const setText = side === 'left' ? setHistLeftText : setHistRightText;
@@ -698,8 +730,10 @@ export function WriterPage() {
 
   // 매치 start 오프셋이 속한 텍스트-줄로 캐럿을 옮긴다(임베드/마커 삽입과 동일한 pendingCaretLine 포커스 경로).
   // 줄 안 정확 컬럼 선택은 이번 범위 밖(focusLineStart — 줄 시작 캐럿).
-  const focusMatchLine = (offset) => {
-    const { lineIndex } = lineAtOffset(bodyText, offset);
+  // text는 offset이 속한 좌표계의 본문 텍스트 — 기본값은 이번 렌더 본문(찾기/맞춤법 등 '본문을 안 바꾼' 호출부).
+  // 본문을 바꾸고 나서 옮기는 호출부(onReplaceOne)는 치환 후 텍스트를 명시 전달해야 한다(좌표계 일치).
+  const focusMatchLine = (offset, text = bodyText) => {
+    const { lineIndex } = lineAtOffset(text, offset);
     setPendingCaretLine(lineIndex);
   };
 
@@ -756,7 +790,9 @@ export function WriterPage() {
     const r = replaceOne(blocks, findQuery, replacement, { caseSensitive: findCase, fromOffset });
     if (!r.replaced) return; // 매치 없음 no-op
     commitBody(serialize(r.blocks));
-    if (typeof r.caretOffset === 'number') focusMatchLine(r.caretOffset);
+    // caretOffset은 '치환 후' 텍스트 좌표(editorFind.replaceOne 계약)라 줄 환산도 치환 후 텍스트로 해야 한다 —
+    // 이번 렌더의 bodyText(치환 전)로 환산하면 대체문이 길수록 캐럿이 뒷줄로 밀리고 '다음 찾기' 순서까지 교란된다.
+    if (typeof r.caretOffset === 'number') focusMatchLine(r.caretOffset, blocksToText(r.blocks));
     setActiveIndex(-1); // 텍스트가 바뀌어 기존 매치 인덱스 무효 → 리셋(다음 찾기는 캐럿/0부터).
   };
 
@@ -821,7 +857,7 @@ export function WriterPage() {
   // 파일>저장 — 기사 상태로 갈린다. 기존 기사(articleId 有)는 컨트롤러 save()로 서버 PUT 부분 수정(잠금 보유자)
   // — 상태 전이·잠금 해제·탭 리셋 없이 편집을 이어간다(save의 기존 계약). 신규 기사(articleId 無)는 saveDraft로
   // 로컬 초안만 저장한다 — 절대 save()/POST를 부르지 않는다(송고 전 DB에 draft 행이 생겨 DB를 오염시킴).
-  // 초안 key는 tab.articleId || tab.id(신규=tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
+  // 초안 key는 draftKeyFor(tab.articleId, tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
   const saveDocument = async () => {
     const tab = activeTab;
     const auto = autoCompanyCodeOverride(); // auto 모드면 변환+commitBody 후 { body, title } 오버라이드, 아니면 null.
@@ -831,7 +867,7 @@ export function WriterPage() {
     } else {
       // 초안에도 변환 본문+제목 한 쌍(신규) — body만 바꾸면 title이 변환 전 값으로 남는 자기모순 스냅샷이 된다.
       const draftFields = auto ? { ...tab.fields, body: auto.body, title: auto.title } : { ...tab.fields };
-      saveDraft(tab.articleId || tab.id, draftFields, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
+      saveDraft(draftKeyFor(tab.articleId, tab.id), draftFields, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
       window.alert('임시 저장했습니다. (송고 전에는 DB에 생성되지 않으며, 파일>복구로 되살릴 수 있습니다.)');
     }
   };
@@ -963,12 +999,14 @@ export function WriterPage() {
     // 리셋이 없다(편집 유지) — submit/applyAction/saveMapping 경로가 아니다. async지만 fire-and-forget(openHistoryCompare 패턴).
     if (id === 'file.save') { saveDocument(); return; }      // 기존=PUT / 신규=로컬 초안만(DB 미생성 — POST 금지)
     if (id === 'file.saveAs') { saveAsDocument(); return; }  // 현재 본문을 새 기사로 POST(복제본, 현재 탭 articleId 불변)
-    // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
+    // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraftForRecover → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
       const tab = activeTab;
-      const key = tab.articleId || tab.id;
-      const draft = loadDraft(key);
-      if (!draft) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
+      // 조회는 loadDraftForRecover — 새 키(draftKeyFor)에 없으면 스코프 접두사 도입 이전의 옛 신규 탭 키(tab.id)까지
+      // 한 번 더 본다(배포 전 초안 구제, 54-5 리뷰 반영). 폴백은 읽기 전용이고 저장은 아래·다른 경로 모두 새 키로만 한다.
+      const found = loadDraftForRecover(tab.articleId, tab.id);
+      if (!found) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
+      const { key, data: draft } = found; // key = 실제로 찾은 키(옛 키일 수 있다) — 복구 후 이 키를 지운다.
       if (!window.confirm('자동저장된 내용으로 복구하시겠습니까?')) return;
       // body만 commitBody 경로로 — 복구가 하나의 undo 단계가 되고(복구 전으로 되돌리기 가능) 히스토리
       // 베이스라인과 불일치가 없다. title은 commitBody가 body에서 재동기화(updateField 이중 기록 방지).
@@ -976,7 +1014,7 @@ export function WriterPage() {
         if (k === 'body') commitBody(v);
         else if (k !== 'title') updateField(k, v); // updateField가 EDITABLE_FIELDS만 통과(메타 무시)
       });
-      clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
+      clearDraft(key); // 복구 후 초안 제거(찾은 키 그대로 — 옛 키였다면 옛 키를 지운다) — 재복구로 부활 방지.
       return;
     }
     // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
@@ -1292,6 +1330,7 @@ export function WriterPage() {
   //   실패/too-large면 삽입하지 않고 window.alert로만 안내한다(확정 정책 — 서버가 5MB를 판정, 클라 사전 검사 없음).
   const pasteImageAtCaret = async (file, caret) => {
     const tabId = activeTab.id; // 붙여넣기 시점 편집 탭 고정(업로드 대기 중 탭 전환 대비).
+    const bodyAtStart = activeTab.fields.body; // 같은 탭 안의 줄 구조 변경 판정용 스냅샷(samePrefixLines).
     let r;
     try {
       r = await model.uploadFile(file);
@@ -1314,9 +1353,16 @@ export function WriterPage() {
       window.alert('편집 탭이 바뀌어 이미지 삽입이 취소되었습니다.');
       return;
     }
+    // 같은 탭이어도 대기 중 대상 줄 '앞쪽'이 바뀌었으면 시작 시점 lineIndex가 다른 줄을 가리킨다 —
+    // 그때는 문서 끝("(끝)" 앞) 폴백으로 넣고 1회 안내한다(캐럿이 원래 없던 경우는 어긋난 게 아니라 안내 없음).
+    let caretLine = caret ? caret.lineIndex : null;
+    if (caretLine != null && !samePrefixLines(bodyAtStart, current.fields.body, caretLine)) {
+      caretLine = null;
+      window.alert(IMAGE_MOVED_TO_END);
+    }
     insertEmbedAtLine(
       makeImageEmbed(r.path, { alt: '' }),
-      caret ? caret.lineIndex : null,
+      caretLine,
       current.fields.body,
       current.mode === 'mapping',
     );
@@ -1481,7 +1527,7 @@ export function WriterPage() {
     }
     if (!window.confirm(`${ACTION_VERB[action]}하시겠습니까?`)) return;
     // 전이 직전 탭 키를 잡아둔다 — 성공 후 초안을 무효화(빈 새 기사 탭에서 복구 시 송고/제출 내용 부활 방지).
-    const key = activeTab.articleId || activeTab.id;
+    const key = draftKeyFor(activeTab.articleId, activeTab.id);
     const histTabId = activeTab.id; // 리셋 대상 탭 id(resetTabToBlank가 유지) — key와 대칭으로 await 전 캡처.
     const auto = autoCompanyCodeOverride(); // 송고/보류 직전 자동 변환(auto 모드) — commitBody(화면·undo) 후 { body, title } 오버라이드로 전달(null=기존 필드).
     const r = await submit(action, auto);
@@ -1496,7 +1542,7 @@ export function WriterPage() {
   // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
   const onSaveMapping = async () => {
     if (!window.confirm('저장하시겠습니까?')) return;
-    const key = activeTab.articleId || activeTab.id; // 저장 직전 키 — 성공 후 초안 무효화.
+    const key = draftKeyFor(activeTab.articleId, activeTab.id); // 저장 직전 키 — 성공 후 초안 무효화.
     const histTabId = activeTab.id; // 성공 시 히스토리 폐기 — onAction과 동일(resetTabToBlank로 문서가 바뀜).
     const r = await saveMapping();
     if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }

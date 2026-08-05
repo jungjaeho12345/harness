@@ -1,0 +1,152 @@
+{
+  "project": "기사 작성기",
+  "phase": "54-audit-closeout",
+  "steps": [
+    { "step": 0, "name": "projection-array-guard", "status": "completed", "summary": "src/services/contentsProjection.js의 toPublicContents 맨 앞에 배열 분기 추가 — 배열 입력 = 원소별 재귀 투영(새 배열·새 객체, 원본 무변형), throw 금지(비객체 원소는 원본 규칙대로 통과), 호출부(articleService.getById/query/search)의 명시적 map 유지. test/contentsProjection.test.js에 신규 4케이스(배열 투영·토큰 문자열 0건/원본 불변/비객체 원소/중첩 객체 참조 유지). 백엔드 755 pass(751+4), 웹 2124 불변, lint·build clean." },
+    { "step": 1, "name": "history-write-visibility", "status": "completed", "summary": "ArticleHistory insert 실패를 선택 주입 콜백 onHistoryError로 표면화 — 콜백 shape { articleId, eventType, action, reason }(reason은 err.message 문자열, 에러 객체·markupVersion·토큰 미포함). articleService/distributionService 양쪽 record()의 catch에서 호출하고 콜백 호출 자체를 try/catch로 격리(알림 실패가 본 기능을 막지 않는다). distributionService의 기존 onFailure(수신처 미발송)와 분리 — 이력 실패는 failed에 넣지 않고 반환 shape·distributedAt 갱신 불변. createControllers가 historyErrorLogger 하나로 두 서비스를 logService.warn('history write failed articleId=… eventType=… action=… reason=…')에 결선(미주입 시 ?.로 조용히 생략). 예외 승격·재시도·타이머 0건. 백엔드 765 pass(755+10), 웹 2124 불변, lint·build clean." },
+    { "step": 2, "name": "origin-allowlist-prod", "status": "completed", "summary": "server/index.js의 allowedOrigins가 NODE_ENV==='production'일 때 기본 loopback 2항목(http://localhost:5173·http://127.0.0.1:5173)을 내보내지 않는다 — ALLOWED_ORIGINS로 명시 등록한 출처만 남는다. 프로덕션 판별은 인자 env만 본다(주입 seam 유지). DEFAULT_ALLOWED_ORIGINS 상수·ALLOWED_ORIGINS 파싱 규칙(콤마·트림·빈 값 제외·순서)·csrfOriginGuard/isLoopbackOrigin/cors 설정·createApp 시그니처는 무수정. 운영 영향: 프로덕션 배포는 ALLOWED_ORIGINS에 SPA 출처를 등록해야 한다(미설정 시 자기 출처 외 쓰기 403) — step9가 이 문장을 문서로 옮긴다. test/csrf-origin.test.js에 신규 7케이스(프로덕션 빈 배열·프로덕션 append 파싱·비프로덕션 회귀·프로덕션 loopback 403+status 불변·자기 출처 통과·등록 출처 통과·Origin/Referer 부재 서버-서버 통과·dev loopback 통과). 백엔드 772 pass(765+7), 웹 2124 불변, lint·build clean." },
+    { "step": 3, "name": "marker-align", "status": "completed", "summary": "\"(끝)\" 마커 재생성 3곳(writerBody.serializeBodyFromBlocks·writerBody.insertEmbedAfterLine·editorShortcuts.insertContinueMarker)이 textBlock(END_MARKER) single-arg로 정렬을 지우던 것을 editorEditOps.sortDocument와 동형으로 승계 — 승계 소스는 '문서 순서상 첫 마커'(filter 전 find(isEnd)로 잡고 textBlock(END_MARKER, prevMarker.align))다. hasEnd 불리언은 prevMarker 존재 판정으로 대체했고 마커 판정 기준(text.trim()===END_MARKER)·'항상 최종 블록' 정규화·다중 마커 1개 병합·caretTextLine 참조 비교는 무변경. 미정렬 마커에는 align 키가 생기지 않는다(textBlock의 isValidAlign 계약 = 직렬화 바이트 안정). insertEndMarker(신규 마커)·textBlock('') 빈 줄·새 '(계속)' 블록은 승계 원본이 없어 single-arg 유지. 신규 9케이스(writerBody 7 + editorShortcuts 2). 변이 검증: serializeBodyFromBlocks의 2번째 인자 제거 시 해당 3케이스만 red. 전수 grep 결과 남은 production single-arg는 insertEndMarker 1곳뿐(의도). 웹 2133 pass(2124+9), 백엔드 772 불변, lint·build clean." },
+    { "step": 4, "name": "writer-stale-coords", "status": "completed", "summary": "WriterPage.jsx의 '좌표 계산 시점 != 적용 시점' 결함 3건 마감. (a) 탭 전환 조정 블록(caretTabId !== activeTabId)이 이력비교 state 6종(showHistoryCompare·historyEntries·histLeftKey·histRightKey·histLeftText·histRightText)을 초기값으로 되돌리고 histReqRef.current={left:null,right:null}로 in-flight 응답을 폐기한다 — histReqRef 선언은 TDZ ReferenceError를 피하려 selectCompareTarget 위(구 L672)에서 이력비교 state 옆(조정 블록보다 위)으로 이동(useRef 호출 순번 불변, 사용부 무변경). (b) pasteImageAtCaret가 시작 시점 bodyAtStart를 캡처하고 업로드 성공+탭 동일성 확인 뒤 모듈 스코프 순수 헬퍼 samePrefixLines(prevBody,nextBody,lineIndex)로 판정한다 — 판정 기준은 '대상 줄 앞쪽 prefix(텍스트 줄 0..lineIndex-1 조인) 동일 + lineIndex < 최신 줄 수'뿐이고 대상 줄 텍스트·줄 개수는 보지 않는다(대상 줄 이어 타이핑·뒤쪽 줄 증가는 인덱스를 밀지 않는 정상 시나리오). 어긋나면 caretLine=null 폴백(문서 끝, '(끝)' 앞)으로 반드시 삽입하고 window.alert 1회 안내(업로드본 폐기 금지), caret==null이면 안내 없이 기존 동작. (c) focusMatchLine(offset, text = bodyText) 선택 인자 신설 — 기본값은 현재 렌더 본문이라 기존 호출부(findStep·onSpellSelect) 무변경이고, onReplaceOne만 치환 후 텍스트(blocksToText(r.blocks))를 넘겨 replaceOne의 caretOffset(치환 후 좌표)과 좌표계를 맞춘다. editorFind·insertEmbedAtLine 시그니처·activeTabRef 탭 가드는 무수정. 신규 11케이스(A 4·B 5·C 2). 변이 검증 4종 전부 확인(닫기 제거→A 3건 red / prefix→true→B 재현만 red / prefix→대상 줄 텍스트 비교→'대상 줄 이어 타이핑' 회귀만 red / focusMatchLine 2번째 인자 제거→C만 red). 웹 2144 pass(2133+11, full run 2회 연속 green), 백엔드 772 불변, lint·build clean." },
+    { "step": 5, "name": "draft-key-scope", "status": "completed", "summary": "신규(미저장) 탭 초안 키의 브라우저 창 간 충돌을 닫았다. editorDraft.js에 draftScopeId()·draftKeyFor(articleId, tabId) 두 함수 추가 — 키 규약은 '기존 기사=articleId 그대로(전역 고유라 접두사 금지), 신규 탭=<scope>:<tabId>'다. 스코프 id는 sessionStorage 전용 키 'yh.draftScope'에 1회 생성·보관(창/탭별 격리 + F5 유지), 생성은 crypto.randomUUID → 실패 시 `w-<Date.now(36)>-<seq>`(useWriteController.newClientId 관례, 이 Date.now는 id 생성 전용이며 savedAt 등 저장 데이터에는 시계를 쓰지 않는다). sessionStorage 접근 불가/throw면 모듈 메모리 폴백으로 이 페이지 로드 동안만 안정된 키를 쓴다(F5 후 그 초안은 복구되지 않을 수 있음 — 주석 명시). localStorage에는 스코프를 저장하지 않는다(공유 저장소라 결함 재발). STORAGE_KEY('yh.editorDrafts')·저장 shape({data,savedAt})·기존 4함수 시그니처는 무수정. WriterPage.jsx의 초안 키 5곳(자동저장 타이머·saveDocument 신규 분기·file.recover·onAction 송고 후·onSaveMapping)을 draftKeyFor로 교체(다른 로직 무변경, 무관한 3곳 — 탭 라벨·publishPhoto.sourceArticleId·문서열기 목록 — 은 미접촉). 옛 'tab-N' 초안은 삭제·이관하지 않는다(마이그레이션 0줄, expireDrafts 보존일수가 자연 정리). 신규 9케이스(editorDraft 6 + WriterPage 3: 키 격리·신규 탭 복구 왕복·송고 시 그 키만 삭제). 기존 단언 중 갱신은 파일>저장(신규) 1건뿐 — /^tab-/ 매칭을 draftKeyFor 계약 대조로 바꾸되 tab.id는 컨트롤러 모듈 카운터라 파일 단위 실행에서 값이 달라지므로 키에서 tabId를 떼어 draftKeyFor(null, tabId)와 대조 + '단독 tab.id가 아님'을 함께 단언한다(계획의 'tab-1' 고정값은 파일 단위 실행에서 성립하지 않아 동일 의도의 비취약 형태로 작성). 변이 검증 2종(키에서 스코프 제거→키 격리 케이스 red / articleId 분기 제거→기존 기사 복구·초안 무효화 케이스 red). 웹 2153 pass(2144+9, full run 2회 연속 green), 백엔드 772 불변, lint·build clean. [리뷰 반영] 코드리뷰 [med] '레거시 초안 복구 불가(데이터 유실)' 1건 수정 — 계획이 근거로 든 '옛 초안은 expireDrafts가 자연 정리'가 실코드와 어긋난다(expireDrafts는 자동저장 타이머 안에서만 불리고 자동저장 기본값은 off라, 자동저장 OFF 사용자는 정리도 복구도 안 된다). 그래서 스코프 접두사 배포 이전에 만들어진 신규 탭 초안(옛 키 'tab-N')을 '읽기 폴백'으로 구제한다 — editorDraft.js에 loadDraftForRecover(articleId, tabId) 신설: 새 키(draftKeyFor)를 먼저 보고 없을 때만 옛 키(tabId)를 한 번 더 조회해 { key, data }를 준다(key=실제로 찾은 키). WriterPage의 file.recover만 이 함수를 쓰고 loadDraft 직접 호출을 걷어냈으며(import 교체), 복구 후 clearDraft(found.key)로 '찾은 키'를 지운다(폴백이면 옛 키가 지워진다 — 재복구 부활 방지 계약 유지). 마이그레이션(옛 키→새 키 재기록)은 0줄 — 쓰기 경로(자동저장·파일>저장·송고 후·매핑 저장)는 전부 draftKeyFor 새 키 그대로다(옛 키로 다시 쓰면 창 간 충돌이 재발한다). 기존 기사(articleId)에는 폴백하지 않는다 — draftKeyFor 결과가 articleId면 즉시 null(규칙 복제 금지). 'AKR1' 탭이 같은 탭 슬롯의 'tab-N' 초안(다른 문서)을 되살리는 오복구 방지. 폴백 사실·근거는 editorDraft.js 함수 주석과 WriterPage file.recover 주석에 남겼다(다음 감사 재발견 방지). 신규 9케이스(editorDraft 6: 새 키 우선·옛 키 구제·articleId 폴백 없음·둘 다 없으면 null·반환 key로 clearDraft·읽기 전용(저장소 무변경) + WriterPage 3: 옛 키 초안 복구+옛 키 제거·새 키 우선 시 옛 키 무접촉·폴백 복구 후 파일>저장이 새 키로만 기록). WriterPage 테스트는 tab.id가 모듈 카운터라 자동저장이 쓴 새 키에서 스코프 접두사를 떼어 옛 키를 만든다(상수 'tab-1' 고정 금지). 변이 검증 3종: 폴백 제거 → editorDraft 2·WriterPage 2 red(나머지 green) / articleId 가드 제거 → '기존 기사 폴백 없음' 1건만 red / 폴백 시 새 키로 마이그레이션 쓰기 도입 → '읽기 전용'·'반환 key clearDraft' 2건 red. 웹 89 files/2213 pass(2204+9, full run 2회 연속 green — 1회 중간 실행에서 무관한 드래그앤드롭 붙여넣기 케이스가 병렬 부하로 1건 플레이크했으나 파일 단독·재실행 모두 green), 백엔드 773 불변, lint·build clean." },
+    { "step": 6, "name": "mgmt-pages", "status": "completed", "summary": "관리 3화면(DistMgmtPage·RcvMgmtPage·UserMgmtPage)의 실패 문구 복제와 중복 제출을 닫았다. (a) 신규 순수 모듈 web/src/view/mgmtMessages.js — export는 COMMON_REASON_MESSAGE(Object.freeze, 공통 4종 unauthenticated·internal-error·network-error·invalid-response 문자열 바이트 그대로 이전)·GENERIC_FAILURE_MESSAGE('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.')·createReasonMessage(extra) 3개. 판정 순서는 1) 비문자열/빈 문자열 → GENERIC(=(null)·(undefined) 유출 차단) 2) extra 자기 소유 키 3) COMMON 자기 소유 키 4) `요청을 처리하지 못했습니다 (<토큰>).` 이고, 조회는 Object.hasOwn만 써 프로토타입 체인('toString'·'constructor')을 타지 않는다. extra가 비객체면 공통 매핑만 쓴다. 세 화면은 모듈 스코프에서 createReasonMessage({화면별 forbidden, dist는 도메인 6종})를 1회 생성하고 호출부 setError(reasonMessage(r && r.reason))는 무수정 — 화면별 forbidden 문구·미지 문자열 토큰 노출 형식은 그대로다. (b) in-flight 가드는 제출 핸들러에만 넣었다 — DistMgmtPage.onSubmit(생성/수정 겸용)·RcvMgmtPage.onCreate·UserMgmtPage.onSubmit(생성/수정 겸용)에 `if (submitting) return;` + try/finally setSubmitting(false) + 제출 버튼 disabled={submitting}(기존 .yh-btn:disabled 사용, 새 CSS 0). onDelete·onDeactivate·startEdit·진입 refresh에는 넣지 않았다. (c) 서버 유일성 검사(sourceId 중복 거부)는 도입하지 않았다(decisions C — 스펙 부재로 사용자 확정 필요). 신규 28케이스(mgmtMessages 8 + Dist 7 + Rcv 6 + User 7). 더블클릭 케이스는 버튼 disabled와 핸들러 가드를 분리 검증한다(fireEvent.submit 2연발이 disabled를 우회해 핸들러 가드만 겨냥). 변이 검증 3종: 비문자열 게이트 제거 → 3화면 비문자열 회귀 + 모듈 케이스만 red / `if (submitting) return;` 제거 → 핸들러 가드 케이스만 red / setSubmitting(false) 제거 → 재제출 계열 3건 red. 잔여 확인: 프로덕션 코드의 '요청을 처리하지 못했습니다' 문자열은 mgmtMessages.js 1파일뿐. 웹 88 files/2181 pass(2153+28), 백엔드 772 불변, lint·build clean." },
+    { "step": 7, "name": "view-controller-guards", "status": "completed", "summary": "useViewController의 가드 공백 2건을 닫고 잠금 실패 문구를 컨트롤러 공용 모듈로 승격했다. (a) 신규 순수 모듈 web/src/controller/lockMessages.js — export는 LOCK_FAIL_MESSAGES(Object.freeze, 6종 바이트 그대로 이전)·LOCK_FAIL_DEFAULT('편집 잠금을 얻지 못해 편집할 수 없습니다.')·lockFailMessage(reason) 3개. 판정 규칙은 이전과 동일(비문자열/빈 문자열 → 기본 문구, 미지 문자열 → `기본 (토큰)`)이고 조회만 Object.hasOwn으로 좁혔다. 컨트롤러가 view를 import하지 않도록 controller/ 아래에 뒀고(mgmtMessages와 대칭·계층 다름), useWriteController는 로컬 3심볼을 지우고 import만 한다(openArticle·takeoverMessage·SSE 핸들러·submit 무수정 — 잠금 실패 12케이스 무수정 green). (b) enterEditor fail-closed — 판정이 `lock.ok === false && reason === 'locked'`에서 `!lock || lock.ok !== true`로 바뀌어 사유 불문(network-error·invalid-response·unauthenticated·forbidden·not-found·reason 미상·{ok:'yes'} 이상값·reject) 이동하지 않고 pendingEdit도 저장하지 않으며 lockFailMessage로 사유별 안내 1회. 'locked' → '편집중입니다.' 정확 일치는 불변(기존 테스트 무수정 green), 실패 경로에서 unlockArticle 호출 0건, PENDING_EDIT_KEY·navigate·lockAction·반환 계약(articleId|null) 무변경. (c) refresh 가드 2종 — refreshSeqRef(요청 순번)로 겹친 조회의 순서 역전 시 낡은 응답이 setItems를 하지 못하게, mountedRef로 언마운트 후 setState를 막는다. 두 ref 모두 useCallback 의존성 밖이라 refresh 정체성이 유지되고 SSE 재구독 churn이 없다. 반환값 계약 유지 — 폐기 경로도 응답 r을 그대로 반환한다(호출자 소비). AbortController·디바운스·타이머 0건, queryUsers alive 가드·SSE 구독 effect·page 클램프 effect 무접촉. 신규 12케이스(lockMessages 4 + enterEditor 4 + refresh 4). 변이 검증 4종 중 3종 확인(옛 locked-only 판정 → fail-closed 3케이스 red / truthy 판정 → {ok:'yes'} 포함 케이스 red / seq 비교 제거 → out-of-order·반환계약 2케이스 red). 4번째(mountedRef 제거)는 red가 되지 않는다 — React 19는 언마운트 후 setState를 경고 없는 no-op으로 처리해 블랙박스 훅 테스트로 관측되지 않는다(가드는 방어적으로 유지, 테스트는 예외·console.error 부재와 상태 불변만 단언). 잔여 확인: '편집중입니다.' 문자열 리터럴은 프로덕션 코드에서 lockMessages.js 1곳(나머지는 주석 참조). 웹 89 files/2193 pass(2181+12), 백엔드 772 불변, lint·build clean." },
+    { "step": 8, "name": "save-contract-guard", "status": "completed", "summary": "useWriteController의 계약 위생 2건을 닫았다. (a) 오버라이드 원자성 — toSaveDto의 판정식이 `override && typeof override === 'object' && override.body != null && override.title != null ? override : null`로 바뀌어 body-only도 통째로 무시된다(주석이 이미 선언한 '전부 아니면 전무'에 코드를 맞춤). dto는 `{ ...rest, markupVersion: ov ? ov.body : body }` + `if (ov) dto.title = ov.title`이고 != null 판정을 유지해 title:''은 여전히 실린다(truthy 금지). body 키 미포함·role 미포함·articleId 조건부 포함은 무변경. L91 주석 1줄만 '쌍으로만 적용, 한쪽이라도 없으면 오버라이드 전체 무시'로 정정. 프로덕션 동작은 무변경 — 유일한 생산자 WriterPage.autoCompanyCodeOverride()는 항상 { body, title } 쌍이나 null을 준다. (b) reject 흡수 규율 통일 — save·saveAsNew·saveMapping의 saveArticle, submit 신규 경로의 saveArticle, submit의 applyAction, SSE 잠금 핸들러의 queryArticles 6곳을 `Promise.resolve(model.X(...)).catch(() => null)`로 감쌌다(이미 감싼 3곳과 getArticle try/catch 2곳은 무접촉). 새 사유 토큰 0건 — reject는 '결과 없음(null)'으로만 표현하고 기존 falsy 분기(`r && r.ok` / `(r && r.items) || []`)를 그대로 탄다. submit 저장 실패 게이트({ ok:false, reason:'save-failed', saveReason })·SSE takeover 판정·removeTabs 1회 호출은 무수정. 신규 10케이스(원자성 5 + reject 6 중 기존 1건 갱신 반영). 기존 테스트 1건은 결함 자체를 계약으로 잠그고 있어 새 계약으로 갱신했다(save({body}) → 이전엔 markupVersion만 교체 기대, 지금은 통째 무시 기대). 변이 검증: title != null 조건 제거 → 원자성 4케이스 red / save의 .catch 제거 → save reject 케이스 red / applyAction의 .catch 제거 → 편집 경로 applyAction 케이스 red / queryArticles의 .catch 제거 → SSE 케이스에서 vitest unhandled error 1건(런 실패). 웹 89 files/2203 pass(2193+10), 백엔드 772 불변, lint·build clean. 참고: 백엔드는 test/server.test.js가 임의 포트 선택에서 undici 'bad port'를 만나면 간헐 실패하는 환경 플레이크가 있다(이 step과 무관 — 재실행 시 772/772 green)." },
+    { "step": 9, "name": "docs-notes", "status": "completed", "summary": "실행 코드 0줄(주석·문서만)로 위생 4건 마감. (a) docs/ARCHITECTURE.md '보안 경계' 절: CORS 항목을 실제 동작으로 정정(비프로덕션 기본값 localhost:5173·127.0.0.1:5173, 프로덕션은 ALLOWED_ORIGINS 등록 출처만 — 미설정 시 자기 출처 외 쓰기 403)하고 CSRF 항목에 '같은 목록 공유라 프로덕션 loopback 불가' 한 줄 정합, 응답 투영 불변식(lockerSessionId·lockerClientId는 응답에 없고 제거는 toPublicContents 단일 지점) 1줄, SSE push 직전 비연장 재검증(controllers.auth.peek, 실패 시 종료 이벤트 1회 후 close, 로그 스트림은 role==='Z'까지 재확인, 주기 타이머 없음) 1줄, 운영 환경변수 주의(NODE_ENV=production은 쿠키를 Secure+SameSite=None으로 만들므로 FORCE_HTTPS=false 평문 운영은 로그인 무음 실패 — 두 스위치는 다른 축) 1줄 추가. 절 구조·기존 항목 순서는 유지. 네 문장 모두 실코드(contentsProjection.js·server/index.js SSE 라우트 2곳·allowedOrigins·sessionCookieOptions·부트스트랩 forceHttps)와 대조 확인. (b) editorEditOps.sameBlocks 주석에 align 미비교의 근거(안정 정렬 하에 텍스트 시퀀스가 같으면 정렬은 항등 순열이라 align 쌍도 이동하지 않는다 + 판정을 넓히면 불필요한 dirty·저장) 추가. (c) editorNewline: insertTextIntoBlocks의 '임베드는 위치를 보존한다'를 '삭제되지 않는다(범위 대체 시 병합 결과 뒤로 밀릴 수 있다)'로, 규칙 4 헤더를 '삭제 범위 안의 임베드는 삭제되지 않고 병합된 텍스트 블록들 뒤에 원래 상대 순서로 남는다(제자리가 아니다)'로 정정 — 코드 무변경. (d) fakeModel의 saveArticle·lockArticle 주석에 축소 모사 경고(이 더블은 clientId만 보고 서버는 세션 userId ↔ Contents.lockerUserId까지 대조하므로 더블 통과가 서버 통과를 뜻하지 않는다, 인가 계약의 진실은 test/editLock.test.js·test/server.test.js) 추가 — 동작 무변경. docs/news.md·docs/ADR.md는 한 글자도 건드리지 않았다(diff 4파일: ARCHITECTURE.md·editorEditOps.js·editorNewline.js·fakeModel.js). 웹 89 files/2203 pass·백엔드 772 pass로 step8 종료 시점과 정확히 동일(실행 코드 무변경의 증거). lint·build clean. ※ phase 54 전 step(0~9) 완결 — 2026-08-03 전수감사 백로그 소진(최우선 4건=phase51, 보안 4건=phase52, 무결성 5건=phase53, 잔여 10 step=이 phase). phase 50 디렉터리 status 변경 권고는 coordination에 남긴 그대로 실행하지 않았다." }
+  ],
+  "scope": "2026-08-03 전수감사의 마지막 phase — 감사 소규모 6건 + phase 49~53 리뷰 이월 low + 미실행 계획 phase 50(hygiene-cleanup)의 유효분 흡수. 실코드 대조 triage 후 채택 10 step. 최우선 4건(phase 51)·보안 4건(phase 52)·무결성 5건(phase 53)은 이미 머지됐고 이 phase에서 재론하지 않는다. 이 phase가 끝나면 감사 백로그는 소진된다.",
+  "baseline": "feat-0-mvp tip 1453434 실측: npm test 751/751 pass·fail 0, npm run test:web 87 files / 2124 tests pass, npm run lint clean, npm run build clean.",
+  "order": "backend 패스(step0~2 — contentsProjection.js / articleService+distributionService+controllers / server/index.js, 서로 파일 중복 없음) → web 에디터 순수 패스(step3 writerBody.js+editorShortcuts.js) → WriterPage 패스(step4 → step5, 같은 파일 web/src/view/WriterPage.jsx를 순차 수정 — 동시 수정 금지) → 관리화면 패스(step6) → controller 패스(step7 → step8, 같은 파일 web/src/controller/useWriteController.js를 순차 수정) → 문서·주석 패스(step9, 실행 코드 0줄이라 마지막에 최종 상태를 기술한다). step3(writerBody.js)과 step4·5(WriterPage.jsx)는 파일이 겹치지 않는다. step9가 손대는 파일(docs/ARCHITECTURE.md·editorEditOps.js·editorNewline.js·fakeModel.js)은 step0~8 어디에서도 수정하지 않는다. web/src/view/Editor.jsx·docs/news.md는 이 phase의 어떤 step도 수정하지 않는다.",
+  "decisions": [
+    {
+      "id": "A",
+      "topic": "업로드 대기 중 본문 줄 구조가 바뀐 경우의 이미지 임베드 삽입 위치(step4)",
+      "verdict": "붙여넣기/드롭 시점의 본문 스냅샷을 잡아 두고, 업로드 완료 시점에 '대상 줄 앞쪽(텍스트 줄 0..lineIndex-1을 개행으로 조인한 문자열)이 스냅샷과 동일한가'와 '대상 줄 인덱스가 최신 본문 범위 안인가'만 확인한다. 둘 다 참이면 그 줄에 삽입하고, 아니면 caretLine=null 경로(문서 끝, '(끝)' 앞 append — insertEmbedAtLine의 기존 계약)로 폴백하고 window.alert로 1회 안내한다. 업로드된 이미지를 폐기(취소)하지 않는다.",
+      "rationale": "무음 오배치와 무음 위치변경을 둘 다 피하는 선택이다. 취소 안은 기각한다 — 파일은 이미 서버에 업로드돼 경로가 발급됐고, 사용자는 붙여넣기를 다시 해야 하며 업로드본만 고아로 남는다. '가장 가까운 같은 텍스트 줄 탐색' 같은 휴리스틱도 기각한다 — 같은 텍스트 줄이 여럿인 문서에서 비결정적이라 계약을 테스트로 고정할 수 없다. 판정 기준을 '앞쪽 prefix 동일'로 잡은 이유(plan-reviewer 지적 반영): lineIndex를 밀어내는 변경은 오직 대상 줄 '앞'의 줄 추가·삭제뿐이므로 그것만 정확히 포착하면 된다. 초안에서 검토했던 '대상 줄 텍스트 동일' 규칙은 업로드 대기 중 그 줄에 이어서 타이핑하는 흔한 정상 시나리오(오늘은 캐럿 줄 뒤에 정상 삽입된다)를 문서 끝 폴백+안내로 바꿔, 결함 수정이 새 회귀를 만든다. 줄 수 비교도 같은 이유로 넣지 않는다 — 대상 줄 '뒤'가 늘어나는 것(연속 붙여넣기가 만드는 빈 줄)은 정상이다. 탭 전환 가드(activeTabRef 재확인)는 phase 20이 이미 넣었으므로 그대로 두고, 같은 탭 안의 앞쪽 구조 변경만 이번에 닫는다."
+    },
+    {
+      "id": "B",
+      "topic": "신규 탭 자동저장 초안 키('tab-N')의 브라우저 창 간 충돌 해소 방식(step5)",
+      "verdict": "탭 id 생성 규칙(tab-N)과 sessionStorage 탭 복원 로직은 그대로 두고, localStorage 초안 키에만 '브라우저 탭 스코프 id'를 접두사로 붙인다. 스코프 id는 sessionStorage에 1회 생성·보관하며(랜덤, 접근 불가 시 폴백), 기존 기사 키(tab.articleId)는 접두사 없이 그대로 쓴다. 옛 'tab-N' 초안은 삭제하지 않는다(expireDrafts 자동 만료에 맡긴다).",
+      "rationale": "sessionStorage는 브라우저 탭별로 격리되고 F5에도 유지되므로 '같은 창에서의 복구'라는 기존 UX를 정확히 보존하면서 창 간 충돌만 없앤다. 탭 id 자체를 전역 고유(UUID)로 바꾸는 안은 기각한다 — restoreTabs가 'tab-' 접미 숫자로 카운터를 복원하고 다수 테스트가 이 형식에 묶여 있어 회귀 표면이 초안 키 문제보다 크다. articleId 키를 건드리지 않는 이유는 그 키가 이미 전역 고유이고, 접두사를 붙이면 다른 창에서 기존 기사 초안을 못 찾는 새 결함이 생기기 때문이다. 옛 키 삭제는 하지 않는다 — 사용자 데이터를 지우지 않는다는 프로젝트 규율과 정합하며 보존일수 만료가 자연 정리한다."
+    },
+    {
+      "id": "C",
+      "topic": "수신 설정 생성 중복 행(감사 A-6)을 어디서 막을 것인가(step6)",
+      "verdict": "클라이언트 in-flight 가드(제출 중 재제출 차단 + 버튼 disabled)만 이번 phase에서 한다. 서버 유일성 검사(sourceId 중복 거부)는 도입하지 않는다.",
+      "rationale": "docs/RCV.md·docs/SCHEMA.md 어디에도 sourceId 유일성 규칙이 없다. 서버에서 중복을 거부하면 (1) 오늘 성공하던 요청이 실패로 바뀌는 스펙 변경이고(같은 소스에 FTP·API 설정을 각각 두는 운용을 막을 수 있다), (2) 이미 DB에 있는 중복 행의 처리 방침(비파괴 원칙상 삭제 불가)까지 함께 정해야 한다. 사용자 확정이 필요한 스펙 결정이라 마감 phase의 범위 밖으로 두고, 감사가 재현한 경로(더블클릭)는 클라이언트 가드로 닫는다. 같은 이유로 관리 3화면(배부 대상·수신 설정·사용자)에 동형으로 넣는다 — 한 화면만 고치면 다음 감사에서 나머지 둘이 다시 올라온다."
+    },
+    {
+      "id": "D",
+      "topic": "프로덕션 기본 CORS/CSRF allowlist의 loopback(:5173) 항목 처리(step2)",
+      "verdict": "allowedOrigins가 NODE_ENV==='production'일 때 기본 두 항목(http://localhost:5173·http://127.0.0.1:5173)을 내보내지 않도록 바꾼다(ALLOWED_ORIGINS로 명시 등록한 출처만 남는다). 비프로덕션 동작·ALLOWED_ORIGINS append 규칙·CSRF 가드의 비프로덕션 loopback 관용은 그대로 둔다.",
+      "rationale": "채택 판단이다(제외 후보였으나 재평가 결과 실질 위험이 있다). 프로덕션 쿠키는 SameSite=None+Secure라 cross-site 요청에 첨부되고, 이 목록은 CORS(응답 읽기 허용)와 CSRF 가드(쓰기 허용)가 공유한다. 따라서 피해자 브라우저에서 http://localhost:5173으로 열린 아무 페이지(로컬에서 도는 임의의 dev 서버·데모 스크립트)가 운영 API를 피해자 세션으로 호출하고 응답까지 읽을 수 있다 — 공격자가 Origin을 위조할 필요조차 없다(브라우저가 진짜로 그 값을 보낸다). 정당한 프로덕션 사용처는 없다(운영 SPA는 실제 출처에서 서빙되고 ADR-009가 ALLOWED_ORIGINS 명시 등록을 이미 요구한다). 회귀 위험은 프로덕션에서 ALLOWED_ORIGINS를 설정하지 않은 배포뿐이며, 그 경우는 오늘도 자기 출처 외 쓰기가 막히던 구성이고 step9가 문서로 명시한다."
+    },
+    {
+      "id": "E",
+      "topic": "이력(ArticleHistory) insert 실패의 표면화 방식(step1)",
+      "verdict": "실패를 삼키는 동작(본 기능 비차단)은 유지하되, articleService·distributionService 양쪽 record()에 선택 주입 콜백 onHistoryError를 추가하고 합성 루트(createControllers)에서 logService.warn으로 결선한다. 예외 승격·재시도·트랜잭션 롤백은 하지 않는다.",
+      "rationale": "이력 행은 단순 감사 기록이 아니라 판정 입력이다 — distribute 행은 tick의 '이미 배부됨' 멱등 판정에, status/send 행은 phase 51 cycleDistributedKinds의 사이클 경계 판정에 쓰인다. 지금은 insert가 실패해도 아무도 모르고, 결과는 '중복 배부' 또는 '영구 미배부'라는 되돌릴 수 없는 사건으로 나타난다(ADR-008 스풀 기록은 회수 불가). 반대로 예외로 승격하면 이미 커밋된 편집·전이·스풀 기록을 되돌릴 수 없는 상태에서 호출자를 깨뜨린다 — 그래서 '삼키되 반드시 남긴다'가 유일하게 안전한 조합이다. distributionService의 기존 onFailure를 재사용하지 않는 이유는 그 콜백이 '수신처 미발송'을 뜻해 운영자가 배부 실패로 오독하기 때문이다."
+    },
+    {
+      "id": "F",
+      "topic": "toPublicContents 배열 입력 방어(step0)",
+      "verdict": "배열이면 원소별로 재귀 투영해 새 배열을 돌려준다. 예외를 던지지 않는다. 호출부(articleService.query/search)의 명시적 .map은 그대로 둔다.",
+      "rationale": "지금은 배열을 넘기면 Object.entries가 인덱스 키를 돌려줘 결과가 { '0': 원본행, … }이 되고, 원본 행에는 lockerSessionId·lockerClientId가 그대로 남는다 — 오용이 조용한 토큰 유출로 이어진다(phase 51 step0이 닫은 바로 그 표면). 예외 던지기는 읽기 라우트를 500으로 만들어 가용성을 깎으므로, '안전한 값으로 수렴'이 이 함수의 기존 방어 규율(null/비객체는 그대로 반환)과 일관된다. 호출부의 .map을 없애지 않는 이유는 투영 책임의 소재가 코드에서 보여야 하고, 배열 분기는 어디까지나 안전망이기 때문이다."
+    },
+    {
+      "id": "G",
+      "topic": "목록 조회(useViewController.refresh)의 out-of-order 응답 처리(step7)",
+      "verdict": "refresh에 요청 순번(seq) 가드와 언마운트 가드를 넣어, 늦게 도착한 낡은 응답이 최신 목록을 덮어쓰지 못하게 한다. 반환값 계약(호출자가 응답 r을 그대로 받는다)과 재조회 트리거(메뉴/부서 변경 effect·SSE 무효화)는 그대로 둔다.",
+      "rationale": "2026-08-03 감사의 '중·저' 항목인데 phase 51~53 어디에도 채택·제외 기록이 없어 이 phase에서 마감한다. 실코드: refresh는 await 후 무조건 setItems를 호출하고 in-flight/alive 가드가 없다 — 바로 아래 queryUsers effect가 alive 가드를 쓰는 것과 대비된다. 메뉴 전환·SSE 무효화가 겹치면 이전 필터의 응답이 나중에 도착해 화면이 '방금 고른 메뉴와 다른 목록'을 보여주고(사용자는 그 행을 기준으로 편집·송고를 시도한다) 언마운트 후 setState 경고도 남는다. 같은 파일을 여는 step에서 함께 처리하는 편이 세션 비용·충돌 위험이 모두 낮다. 응답 자체를 취소(AbortController)하지 않는 이유: 모델 계약(주입형)에 취소 개념이 없고, transport 계약 변경은 이 phase 범위 밖이다."
+    },
+    {
+      "id": "H",
+      "topic": "관리 3화면 위생(공용 사유 문구 승격)과 중복 제출 가드를 한 step에서 다루는 근거(step6)",
+      "verdict": "같은 3개 파일(DistMgmtPage·RcvMgmtPage·UserMgmtPage)을 두 번 열지 않도록 한 step으로 묶되, 작업을 (1) 공용 모듈 승격(동작 불변) → 테스트 green 확인 → (2) 중복 제출 가드(동작 변경) 순서로 강제하고 검증 절차에 중간 체크포인트를 둔다.",
+      "rationale": "두 변경 모두 View 계층의 같은 3개 파일에 국한되고, 분리하면 두 step이 같은 파일을 순차 잠그며 두 번째 step은 첫 step의 산출물을 그대로 다시 읽어야 한다(문맥 재수집 비용 + 충돌 위험). 대신 '리팩터와 동작 변경이 한 diff에 섞여 리뷰가 흐려지는' 위험은 순서 강제와 중간 green 확인으로 낮춘다. 레이어는 하나이므로 harness 원칙 1(한 step = 한 레이어/모듈군)에 어긋나지 않는다."
+    }
+  ],
+  "excluded": [
+    {
+      "candidate": "감사 소규모 A-1 — Enter로 줄 분할 시 align 유실(web/src/view/editorNewline.js)",
+      "verdict": "제외(이미 해소 — 실코드 확인)",
+      "rationale": "phase 53 step0이 replaceRangeInBlocks를 도입하며 '규칙 5(정렬 승계)'를 넣었고 Enter 경로(Editor.handleKeyDown → emitInsert → replaceRangeInBlocks)가 그 함수를 탄다. 실코드 확인: 결과 블록 생성이 textBlock(t, i === last && last > 0 ? endAlign : startAlign)이라 첫 줄=start 줄, 마지막 줄=end 줄의 align을 승계한다(collapsed Enter는 start===end라 양쪽 동일). 남은 align 유실 지점은 '(끝)' 마커 재생성 3곳뿐이며 step3이 처리한다."
+    },
+    {
+      "candidate": "phase 51~53 리뷰 이월 — Editor.readPointForInsert의 seekInline 중첩 인라인 좌표",
+      "verdict": "제외(재확인 결과 결함 아님 — 실코드 확인)",
+      "rationale": "리뷰 시점의 의심은 '자식 요소를 건너뛸 때 그 텍스트 길이가 acc에 누적되지 않는다'였다. 실코드를 다시 읽으면 acc는 seekInline 스코프의 단일 변수이고 재귀 walk가 같은 변수를 갱신한다 — 지점을 못 찾은 자식 요소도 walk(sub)가 그 하위 텍스트 노드를 모두 순회하며 acc를 증가시키므로 중첩 인라인에서도 컬럼이 정확하다. sub === pEnd 분기 역시 walk(sub)가 끝난 뒤라 acc에 그 요소의 텍스트가 이미 포함돼 '내용 끝' 지점과 일치한다. 결과적으로 walkBlock의 cur += child.textContent 규칙과 동일한 좌표가 나온다. 존재하지 않는 결함을 고치려고 Editor.jsx(타이핑 중 재렌더 금지·remount 계약이 걸린 최고위험 파일)를 여는 것은 마감 phase에서 순손실이라 제외한다."
+    },
+    {
+      "candidate": "phase 49 리뷰 이월 — controller→view bodyTitle import 경계",
+      "verdict": "제외(이미 해소 — 실코드 확인)",
+      "rationale": "phase 49 step6이 저장 오버라이드를 { body, title } 객체 계약으로 바꾸며 컨트롤러의 view import를 제거했다. 실코드 확인: bodyTitle 심볼은 web/src/view/writerBody.js(정의)와 web/src/view/WriterPage.jsx(사용)에만 있고, useWriteController.js에는 주석 언급만 남아 있다(import 0건)."
+    },
+    {
+      "candidate": "phase 49 리뷰 이월 — 신규 초안 저장 시 title 1회 지연",
+      "verdict": "제외(이미 해소 — 실코드 확인)",
+      "rationale": "WriterPage.saveDocument의 신규 경로가 draftFields = auto ? { ...tab.fields, body: auto.body, title: auto.title } : { ...tab.fields }로 본문·제목을 항상 한 쌍으로 스냅샷한다(phase 49 step6). 자동 변환이 없는 경로의 title은 commitBody가 커밋 시점에 이미 동기화한 값이다."
+    },
+    {
+      "candidate": "phase 49 리뷰 이월 — 전체-본문 transform의 align 유실 잔여",
+      "verdict": "제외(이미 해소 — 전수 확인)",
+      "rationale": "web/src의 textBlock( 호출을 전수 확인했다. 변환·편집 op(abbrevConvert·companyCodeConvert·simpTradConvert·editorFind.replaceOne/replaceAll·editorEditOps·editorDate·editorGlyph·editorShortcuts.transformTextLine)는 전부 두 번째 인자로 원본 align을 넘긴다. single-arg로 남은 것은 (a) 새로 만드는 줄(빈 줄·'(계속)'·신규 '(끝)'·DOM 재읽기 폴백)과 (b) '(끝)' 마커 재생성 3곳뿐이고, (b)만 결함이며 step3이 처리한다."
+    },
+    {
+      "candidate": "phase 49 리뷰 이월 — 서로게이트 페어 중간 캐럿 엣지",
+      "verdict": "제외(도달 경로 미확인 + 대공사)",
+      "rationale": "앱이 스스로 페어를 쪼갤 수 있던 유일한 경로(수정 모드 overwrite 확장)는 phase 49 step5의 shouldOverwriteNextChar 게이트로 닫혔다(low 서로게이트 위치면 삽입 폴백). 나머지는 '브라우저가 서로게이트 페어 내부에 캐럿을 놓는' 상황을 전제하는데, 주요 브라우저는 astral 문자를 단일 그래핌으로 다뤄 그 지점을 만들지 않아 재현 경로를 확인하지 못했다. 방어를 일반화하려면 텍스트 offset을 소비하는 모든 순수 함수(삽입·삭제·치환·정렬·통계)에 코드포인트 정규화를 도입해야 해 마감 phase의 회귀 예산을 초과한다."
+    },
+    {
+      "candidate": "phase 50 step0 — 'status-changed' 사유 토큰을 embargoPolicy로 승격(dist-reason-token)",
+      "verdict": "제외(계획 무효화 — 실코드 확인)",
+      "rationale": "phase 50 계획이 전제한 '리터럴 복제' 상태가 아니다. distributionService.js·distributionTickService.js 모두 이미 모듈 상수(const STATUS_CHANGED = 'status-changed')로 뽑아 두고 주석으로 서로를 참조한다. 남은 것은 '두 상수의 값이 같아야 한다'인데, 이 값은 tick 응답에 실리는 외부 계약이라 양쪽 테스트가 문자열을 그대로 단언해 고정한다(test/distributionService.test.js). 정책 판정 모듈(embargoPolicy)이 transport 사유 토큰을 소유하게 되는 책임 역전까지 감수할 이득이 없다."
+    },
+    {
+      "candidate": "phase 50 step1 — 배부 TOCTOU 가드의 status-only 재조회(status-guard-read)",
+      "verdict": "제외(의도적 수용이 이미 코드에 명시)",
+      "rationale": "distributionService.distribute 주석이 '비용 인식(의도적 수용): TOCTOU 가드로 수신처 수만큼 getById 읽기가 늘어난다(N+1). in-process SQLite 단건 조회라 비용이 작고, 회수 불가능한 KILL 기사 유출을 막는 가치가 압도한다'로 트레이드오프를 못 박았다. 판정 의미가 전혀 바뀌지 않는 마이크로 최적화를 위해 배부 핫패스와 모델 계약(getStatus 신설)을 건드리는 것은 마감 phase의 '회귀 최소화'와 정면으로 어긋난다."
+    },
+    {
+      "candidate": "articleService.assertLockHolder의 미사용 sessionId 인자 정리",
+      "verdict": "제외(주석 유지 — 무동작 변경 회피)",
+      "rationale": "인자는 이미 '왜 받되 쓰지 않는지'(같은 사용자 재로그인 허용 관용도 유지)가 주석으로 문서화돼 있고 eslint-disable도 그 한 줄에만 좁게 걸려 있다. 제거해도 동작은 1비트도 바뀌지 않는 반면 저장 인가의 핵심 함수 시그니처를 마감 phase에서 흔드는 셈이고(호출부 server/index.js는 객체를 넘기므로 조용히 통과), '왜 안 쓰는가'의 근거가 코드에서 사라진다."
+    },
+    {
+      "candidate": "fakeModel의 저장 인가 드리프트 실교정(clientId만 비교 → userId 대조 추가)",
+      "verdict": "제외(주석으로만 표면화 — step9)",
+      "rationale": "fakeModel은 스스로 '편집 잠금 계약의 축소판'임을 선언한 테스트 더블이고, 실제 인가(세션 userId ↔ Contents.lockerUserId)는 백엔드 테스트(test/editLock.test.js·test/server.test.js)가 검증한다. 더블에 신원 인가를 넣으려면 createFakeModel을 쓰는 테스트 파일 전반에 identity를 스레딩해야 해 프로덕션 이득 0에 테스트 회귀 표면만 커진다. 대신 step9가 '서버는 userId도 대조한다 — 이 더블의 통과가 서버 통과를 뜻하지 않는다'는 경고 주석을 남긴다."
+    },
+    {
+      "candidate": "수신 설정 생성의 서버측 중복(sourceId) 거부",
+      "verdict": "제외(스펙 결정 필요 — 후속 후보)",
+      "rationale": "decisions C 참조. rcv.md·SCHEMA.md에 유일성 규칙이 없어 새 거부 규칙은 사용자 확정 사항이고, 기존 중복 행 처리 방침(DB 비파괴라 삭제 불가)까지 함께 정해야 한다."
+    },
+    {
+      "candidate": "docs/news.md의 엠바고 송고 직후 상태 문구(EPS → DES) 한 줄 수정",
+      "verdict": "제외(사용자 소유 스펙 문서 — 후속 별도 처리)",
+      "rationale": "phase 50 계획이 사용자 승인 항목으로 기록한 한 줄이고 내용 자체는 구현·같은 문서의 생애주기 서술·SCHEMA.md와 정합한다(phase 48이 DES를 신설한 뒤 이 줄만 옛 서술로 남았다). 그러나 (1) 스펙 문서는 사용자 소유이고 오케스트레이터가 이번 phase의 무접촉 파일로 지정했으며, (2) 계획 수립 중 docs/news.md에 다른 세션의 편집('# 이력보기' 절 신설)이 실제로 관측됐다 — 같은 파일을 이 phase가 함께 커밋하면 남의 편집분이 섞인다. '미커밋 변경이 있으면 건너뛴다'는 조건부 가드도 실행 전에 그 세션이 커밋해 버리면 풀리므로 안전하지 않다. 따라서 이 phase는 news.md를 전혀 건드리지 않고, 문구 정정은 사용자 확인 후 별도 작업으로 남긴다."
+    },
+    {
+      "candidate": "업로드 정적 파일(/uploads) 무인증 서빙(감사 low)",
+      "verdict": "제외(의도된 계약 — 테스트로 잠김)",
+      "rationale": "감사에서 low로 보고됐으나 현재 동작은 '업로드 경로는 인증 없이 서빙한다'는 의도된 계약이고 서버 테스트가 이를 단언한다(본문 임베드가 <img src>·상세보기 새 창·인쇄에서 세션 헤더 없이 로드돼야 하기 때문). 인증을 걸려면 임베드 렌더 경로 전반(에디터 InlineEmbed·articleDetail·인쇄 창)에 자격 전달 수단을 새로 만들어야 하고 파일명이 추측 불가한 난수라는 현재 전제도 재검토해야 한다 — 마감 phase의 회귀 예산을 넘는 설계 변경이라 후속 후보로 남긴다. 백로그 소진 선언을 위해 여기 명시적으로 계상한다."
+    },
+    {
+      "candidate": "phase 53이 제외 확정한 항목들(텍스트 드래그앤드롭 결선·드롭 좌표 캐럿·선택 범위 임베드 삭제·caretBlocked 판정 소스 교체·lockedByMe 서버 필드)",
+      "verdict": "제외(캐리오버)",
+      "rationale": "phase 53 index.json excluded에 근거가 기록된 확정 결정이다. 이 phase에서 재론하거나 되돌리지 않는다."
+    },
+    {
+      "candidate": "phase 49가 제외 확정한 항목들(DES 고착·tick invalid 보고의 스냅샷 기준·single-flight 워치독)",
+      "verdict": "제외(캐리오버)",
+      "rationale": "워치독은 setTimeout 도입이 필요해 ADR-008의 '앱 내 타이머 0건' 불변식을 정면 위반한다. 나머지 둘은 보고 전용/도달 불가로 판정이 끝났다."
+    },
+    {
+      "candidate": "DB 스키마 변경·행 삭제·백필, 앱 내 타이머·네트워크 egress 도입",
+      "verdict": "제외(영구 금지)",
+      "rationale": "CLAUDE.md(DB 비파괴)·ADR-002·ADR-008. 이 phase의 어떤 step도 SQL DDL/DELETE, setInterval/setTimeout 폴링, 새 외부 전송 경로를 만들지 않는다."
+    }
+  ],
+  "coordination": "phases/50-hygiene-cleanup(미실행 계획, untracked)의 6 step을 실코드로 재검증해 유효분만 이 phase가 흡수했다 — step2(mgmt-reason-message)→54 step6, step3(save-override-atomic)→54 step8, step4(marker-align)→54 step3, step5의 주석 항목→54 step9(같은 step5의 news.md 한 줄은 excluded로 이관 — 사용자 소유 스펙 + 동시 편집 충돌). phase 50 step0·step1은 위 excluded에 근거를 남기고 폐기한다. 처리 방침 제안(이번 phase에서 실행하지 않음 — 파일 삭제·이동 금지): phases/50-hygiene-cleanup/ 디렉터리는 그대로 남기고, phase 54가 머지된 뒤 phases/index.json의 '50-hygiene-cleanup' 항목 status를 'pending' → 'superseded'로 바꾸고 note에 '유효분은 54-audit-closeout step3·6·8·9로 흡수, step0·1은 실코드 재검증 결과 무효'를 기록하기를 권한다(15-editor-prefs-tabs 선례와 같은 표기). status가 pending으로 남아 있으면 누군가 execute.py로 재실행해 이미 흡수된 변경을 중복 적용할 수 있다. 무접촉 파일: .claude/skills/**, phases/49-mini-backlog-cleanup/step0.md, docs/ADR.md(다른 세션이 편집 중 — 이 phase의 어떤 step도 수정하지 않는다), web/src/view/Editor.jsx(이번 triage에서 수정 대상 0건)."
+}

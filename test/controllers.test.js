@@ -507,3 +507,40 @@ test('createControllers: 배부 실패는 logService.warn으로 표면화된다(
   // 실패했으므로 배부 시각도 기록되지 않는다(거짓 기록 금지).
   assert.equal(db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(c.articleId).distributedAt, null);
 });
+
+// phase 54 step1 — 이력 insert 실패는 합성 루트에서 logService.warn으로 결선된다.
+// 이력 쓰기 실패는 in-memory DB 트리거로 결정적으로 재현한다(스키마·행은 그대로 두고 INSERT만 ABORT시킨다).
+function blockHistoryInserts(db) {
+  db.exec(`CREATE TRIGGER block_history_insert BEFORE INSERT ON ArticleHistory
+             BEGIN SELECT RAISE(ABORT, 'db locked'); END;`);
+}
+
+test('createControllers: 이력 쓰기 실패는 logService.warn으로 표면화된다(식별자·이벤트만)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  blockHistoryInserts(db);
+  const warns = [];
+  const controllers = createControllers(db, {
+    env: ENV,
+    sessionService: createSessionService(),
+    logService: { warn: (m) => warns.push(m), info: () => {}, error: () => {} },
+  });
+
+  const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
+  // 편집(edit) + 전이(status) 두 경로 모두 이력 쓰기에 실패한다 — 그래도 본 기능은 성공한다.
+  assert.equal(controllers.article.update(c.articleId, { title: '수정', modifier: 'kim' }).ok, true);
+  assert.deepEqual(
+    controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' }),
+    { ok: true, status: 'DPS' },
+  );
+
+  assert.equal(warns.length, 2);
+  assert.match(warns[0], /^history write failed articleId=AKR\d+ eventType=edit action=- reason=.+$/);
+  assert.match(warns[1], /^history write failed articleId=AKR\d+ eventType=status action=send reason=.+$/);
+  // 마스킹 규율: 본문·세션 토큰·비밀번호는 로그에 실리지 않는다.
+  for (const line of warns) {
+    assert.equal(line.includes('markupVersion'), false);
+    assert.equal(line.includes('yh-editor'), false);
+    assert.equal(line.includes('password'), false);
+  }
+});

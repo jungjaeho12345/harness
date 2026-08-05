@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
 import { RcvMgmtPage } from './RcvMgmtPage.jsx';
@@ -128,5 +128,94 @@ describe('RcvMgmtPage (Z 전용 CRUD)', () => {
     await userEvent.click(screen.getByRole('button', { name: '설정 생성' }));
 
     await waitFor(() => expect(screen.getByTestId('rcv-error')).toHaveTextContent('요청을 처리하지 못했습니다 (weird-reason).'));
+  });
+
+  // --- phase 54 step6: 비문자열 사유 회귀 + 중복 제출 가드 ---
+
+  it('reason 없는 실패 응답도 일반 문구로 안내한다((null)·(undefined) 노출 금지)', async () => {
+    const { model } = setup({ receiverConfigs: [] });
+    vi.spyOn(model, 'createReceiverConfig').mockResolvedValue({ ok: false });
+
+    await userEvent.click(screen.getByRole('button', { name: '설정 생성' }));
+
+    const err = await screen.findByTestId('rcv-error');
+    expect(err).toHaveTextContent('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    expect(err.textContent).not.toContain('(null)');
+    expect(err.textContent).not.toContain('(undefined)');
+  });
+
+  it('진입 조회가 null을 돌려줘도 일반 문구를 띄운다', async () => {
+    setup({ receiverConfigs: [] }, undefined, (m) => {
+      vi.spyOn(m, 'queryReceiverConfig').mockResolvedValue(null);
+    });
+    const err = await screen.findByTestId('rcv-error');
+    expect(err).toHaveTextContent('요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    expect(err.textContent).not.toContain('(null)');
+    expect(err.textContent).not.toContain('(undefined)');
+  });
+
+  it('제출 중 재클릭은 무시된다 — 더블클릭이 설정을 두 벌 만들지 않는다', async () => {
+    const { model } = setup({ receiverConfigs: [] });
+    let resolveCreate;
+    const create = vi.spyOn(model, 'createReceiverConfig')
+      .mockImplementation(() => new Promise((res) => { resolveCreate = res; }));
+
+    await userEvent.type(screen.getByLabelText('소스아이디'), 'NEWS1');
+    const btn = screen.getByRole('button', { name: '설정 생성' });
+    await userEvent.click(btn);
+    await userEvent.click(btn); // 더블클릭 — in-flight 가드가 막아야 한다.
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(btn).toBeDisabled();
+
+    await act(async () => { resolveCreate({ ok: true }); });
+    await waitFor(() => expect(screen.getByLabelText('소스아이디')).toHaveValue(''));
+    expect(btn).toBeEnabled();
+  });
+
+  it('버튼 disabled를 우회한 연속 submit 이벤트도 1회만 요청한다(핸들러 가드)', async () => {
+    const { model } = setup({ receiverConfigs: [] });
+    let resolveCreate;
+    const create = vi.spyOn(model, 'createReceiverConfig')
+      .mockImplementation(() => new Promise((res) => { resolveCreate = res; }));
+
+    const form = screen.getByTestId('rcv-form');
+    fireEvent.submit(form);
+    fireEvent.submit(form); // Enter 연타·프로그램적 제출 — disabled 버튼으로는 막지 못하는 경로.
+
+    expect(create).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveCreate({ ok: true }); });
+  });
+
+  it('실패로 끝난 뒤에는 다시 제출할 수 있다(영구 잠금 아님)', async () => {
+    const { model } = setup({ receiverConfigs: [] });
+    const create = vi.spyOn(model, 'createReceiverConfig').mockResolvedValue({ ok: false, reason: 'internal-error' });
+
+    await userEvent.type(screen.getByLabelText('소스아이디'), 'NEWS1');
+    await userEvent.click(screen.getByRole('button', { name: '설정 생성' }));
+    await waitFor(() => expect(screen.getByTestId('rcv-error')).toHaveTextContent('서버 오류'));
+    expect(screen.getByRole('button', { name: '설정 생성' })).toBeEnabled();
+    expect(screen.getByLabelText('소스아이디')).toHaveValue('NEWS1');
+
+    await userEvent.click(screen.getByRole('button', { name: '설정 생성' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  });
+
+  it('삭제 버튼에는 제출 가드가 걸리지 않는다(연속 삭제 가능)', async () => {
+    const { model } = setup({
+      receiverConfigs: [
+        { id: 7, sourceId: 'AP', type: 'FTP', name: 'x', host: '', port: '', active: 'Y' },
+        { id: 8, sourceId: 'BP', type: 'FTP', name: 'y', host: '', port: '', active: 'Y' },
+      ],
+    });
+    const del = vi.spyOn(model, 'deleteReceiverConfig');
+    await waitFor(() => expect(screen.getByText('AP')).toBeInTheDocument());
+
+    const buttons = screen.getAllByRole('button', { name: '삭제' });
+    await userEvent.click(buttons[0]);
+    await waitFor(() => expect(screen.queryByText('AP')).toBeNull());
+    await userEvent.click(screen.getAllByRole('button', { name: '삭제' })[0]);
+
+    await waitFor(() => expect(del).toHaveBeenCalledTimes(2));
   });
 });

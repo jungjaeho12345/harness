@@ -84,6 +84,62 @@ test('toPublicContents: null/undefined/비객체 입력에 throw하지 않는다
   assert.equal(toPublicContents('row'), 'row');
 });
 
+// phase 54 step0 — 배열 오용이 무음 토큰 유출로 번지지 않게 하는 안전망.
+// 수정 전에는 Object.entries([a, b])가 [['0', a], ['1', b]]를 돌려줘 결과가 { '0': 원본행, … }이 되고
+// 원본 행의 lockerSessionId/lockerClientId가 그대로 실렸다(phase 51 step0이 닫은 권한 상승 표면과 동형).
+test('toPublicContents: 배열 입력은 원소별로 투영해 배열로 돌려준다(토큰 문자열 0건)', () => {
+  const rows = [
+    { articleId: 'AKR1', lockYN: 'Y', lockerUserId: 'u1', lockerSessionId: 'tok', lockerClientId: 'c-1' },
+    { articleId: 'AKR2', lockerSessionId: 'tok2' },
+  ];
+  const out = toPublicContents(rows);
+
+  assert.equal(Array.isArray(out), true, '배열 입력에는 배열을 돌려줘야 한다');
+  assert.equal(out.length, rows.length);
+  assert.equal(out[0].articleId, 'AKR1');
+  assert.equal(out[1].articleId, 'AKR2');
+  for (const item of out) {
+    assert.equal('lockerSessionId' in item, false);
+    assert.equal('lockerClientId' in item, false);
+  }
+  assert.equal(out[0].lockYN, 'Y');
+  assert.equal(out[0].lockerUserId, 'u1');
+
+  const json = JSON.stringify(out);
+  for (const needle of ['tok', 'tok2', 'lockerSessionId', 'lockerClientId']) {
+    assert.equal(json.includes(needle), false, `직렬화 결과에 ${needle}가 남으면 안 된다`);
+  }
+});
+
+test('toPublicContents: 배열 입력의 원본 배열·원소를 변형하지 않는다', () => {
+  const rows = [
+    { articleId: 'AKR1', lockerSessionId: 'tok', lockerClientId: 'c-1' },
+    { articleId: 'AKR2', lockerSessionId: 'tok2' },
+  ];
+  const out = toPublicContents(rows);
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].lockerSessionId, 'tok', '원본 원소는 그대로여야 한다(잠금 판정이 계속 쓴다)');
+  assert.equal(rows[0].lockerClientId, 'c-1');
+  assert.equal(rows[1].lockerSessionId, 'tok2');
+  assert.notEqual(out, rows, '새 배열을 반환한다');
+  assert.notEqual(out[0], rows[0], '새 원소 객체를 반환한다');
+});
+
+test('toPublicContents: 원소가 객체가 아닌 배열도 크래시 없이 원본 규칙대로 통과시킨다', () => {
+  const out = toPublicContents([null, 'x', 3]);
+  assert.equal(Array.isArray(out), true);
+  assert.deepEqual(out, [null, 'x', 3]);
+});
+
+test('toPublicContents: 중첩 객체 필드는 깊은 복사 없이 참조 그대로 실린다(오늘 동작 유지)', () => {
+  const meta = { desk: 'politics' };
+  const single = toPublicContents({ articleId: 'AKR1', meta, lockerSessionId: 'tok' });
+  assert.equal(single.meta, meta);
+  const [fromArray] = toPublicContents([{ articleId: 'AKR1', meta, lockerSessionId: 'tok' }]);
+  assert.equal(fromArray.meta, meta);
+});
+
 test('PRIVATE_CONTENTS_COLS: 제거 대상 목록의 단일 출처이며 동결돼 있다', () => {
   assert.deepEqual([...PRIVATE_CONTENTS_COLS].sort(), ['lockerClientId', 'lockerSessionId']);
   assert.equal(Object.isFrozen(PRIVATE_CONTENTS_COLS), true);

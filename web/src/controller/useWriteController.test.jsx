@@ -763,7 +763,9 @@ describe('useWriteController — 오버라이드 title 적용 (phase45)', () => 
 describe('useWriteController — 오버라이드 { body, title } 계약 위반 판정 (phase49 step6)', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  it('save({ body }) — title 미전달이면 markupVersion만 교체하고 dto.title은 tab.fields.title 유지(문서화된 폴백)', async () => {
+  // phase54 step8 — body-only 오버라이드도 "전부 아니면 전무"로 수렴한다(주석이 선언한 계약에 코드를 맞춤).
+  // 본문만 교체하고 제목을 tab.fields.title로 남기면 제목 ≠ 본문 첫 줄인 자기모순 기사가 서버에 저장된다.
+  it('save({ body }) — title 없는 body-only 오버라이드는 통째로 무시된다(본문·제목 모두 tab.fields)', async () => {
     const { result, model } = setup({});
     const save = vi.spyOn(model, 'saveArticle');
     act(() => { result.current.updateField('title', '내가 쓴 제목'); });
@@ -772,8 +774,67 @@ describe('useWriteController — 오버라이드 { body, title } 계약 위반 �
     await act(async () => { await result.current.save({ body: '변환된 본문' }); });
 
     const dto = save.mock.calls[0][0];
-    expect(dto.markupVersion).toBe('변환된 본문'); // body는 교체
-    expect(dto.title).toBe('내가 쓴 제목'); // title은 폴백(tab.fields.title)
+    expect(dto.markupVersion).toBe('원본 본문'); // body도 교체하지 않는다
+    expect(dto.title).toBe('내가 쓴 제목');
+  });
+
+  it('submit(action, { body }) — 편집 경로의 body-only 오버라이드도 통째로 무시된다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const save = vi.spyOn(model, 'saveArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('title', '삼성전자'); });
+    act(() => { result.current.updateField('body', '삼성전자\n본문\n(끝)'); });
+
+    await act(async () => { await result.current.submit('send', { body: '삼성전자(005930)\n본문\n(끝)' }); });
+
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.markupVersion).toBe('삼성전자\n본문\n(끝)');
+    expect(dto.title).toBe('삼성전자');
+  });
+
+  it('submit(action, { body }) — 신규(POST) 경로의 body-only 오버라이드도 통째로 무시된다', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '내가 쓴 제목'); });
+    act(() => { result.current.updateField('body', '원본 본문'); });
+
+    await act(async () => { await result.current.submit('send', { body: '변환된 본문' }); });
+
+    const dto = save.mock.calls[0][0];
+    expect(dto.markupVersion).toBe('원본 본문');
+    expect(dto.title).toBe('내가 쓴 제목');
+  });
+
+  it('save({ body:null, title }) / save({ body, title:undefined }) — 한쪽이 없으면 전량 무시', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '원래 제목'); });
+    act(() => { result.current.updateField('body', '원래 본문'); });
+
+    await act(async () => { await result.current.save({ body: null, title: '새 제목' }); });
+    await act(async () => { await result.current.save({ body: '새 본문', title: undefined }); });
+
+    for (const call of save.mock.calls) {
+      expect(call[0].markupVersion).toBe('원래 본문');
+      expect(call[0].title).toBe('원래 제목');
+    }
+  });
+
+  it('save(null)/save(undefined) — 오버라이드 없음도 tab.fields 그대로다', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    act(() => { result.current.updateField('title', '원래 제목'); });
+    act(() => { result.current.updateField('body', '원래 본문'); });
+
+    await act(async () => { await result.current.save(null); });
+    await act(async () => { await result.current.save(undefined); });
+
+    for (const call of save.mock.calls) {
+      expect(call[0].markupVersion).toBe('원래 본문');
+      expect(call[0].title).toBe('원래 제목');
+      expect(call[0].body).toBeUndefined(); // body 키는 절대 싣지 않는다
+      expect(call[0].role).toBeUndefined(); // role도 싣지 않는다(ADR-004)
+    }
   });
 
   it('save(문자열) — 옛 계약(문자열 오버라이드)은 전량 무시된다(body·title 모두 tab.fields 그대로)', async () => {
@@ -1348,5 +1409,90 @@ describe('useWriteController — SSE takeover 좀비 편집 탭 (phase53 step5)'
     await act(async () => { await Promise.resolve(); });
 
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+// phase54 step8 — 모델 reject 흡수 규율 통일. 컨트롤러가 reject를 그대로 흘리면 await save/submit을 감싸지
+// 않은 뷰 핸들러가 통째로 중단돼 실패 안내가 뜨지 않는다("실패는 반드시 알린다" — phase53 계약).
+// 흡수는 값(null)으로만 표현한다 — 새 사유 토큰을 만들지 않는다(사유 어휘는 서버·모델 소유).
+describe('useWriteController — 모델 reject 흡수 규율 (phase54 step8)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  it('save()의 saveArticle이 reject해도 예외가 새지 않고 falsy 결과를 준다', async () => {
+    const { result, model } = setup({});
+    vi.spyOn(model, 'saveArticle').mockRejectedValue(new Error('boom'));
+    act(() => { result.current.updateField('body', '본문'); });
+
+    let r = 'unset';
+    await act(async () => { r = await result.current.save(); });
+
+    expect(r).toBeFalsy(); // 호출부의 `r && r.ok` 실패 분기를 그대로 탄다
+  });
+
+  it('saveAsNew()의 saveArticle이 reject해도 예외가 새지 않는다', async () => {
+    const { result, model } = setup({});
+    vi.spyOn(model, 'saveArticle').mockRejectedValue(new Error('boom'));
+
+    let r = 'unset';
+    await act(async () => { r = await result.current.saveAsNew(); });
+
+    expect(r).toBeFalsy();
+  });
+
+  it('saveMapping()의 saveArticle이 reject하면 해제·탭 리셋 없이 실패로 끝난다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    vi.spyOn(model, 'saveArticle').mockRejectedValue(new Error('boom'));
+
+    let r = 'unset';
+    await act(async () => { r = await result.current.saveMapping(); });
+
+    expect(r).toBeFalsy();
+    expect(unlock).not.toHaveBeenCalled();
+    expect(result.current.activeTab.articleId).toBe('AKR1'); // 탭 리셋 없음
+  });
+
+  it('submit() 신규 경로의 saveArticle이 reject하면 탭 리셋 없이 실패로 끝난다', async () => {
+    const { result, model } = setup({});
+    vi.spyOn(model, 'saveArticle').mockRejectedValue(new Error('boom'));
+    act(() => { result.current.updateField('body', '작성 중 본문'); });
+
+    let r = 'unset';
+    await act(async () => { r = await result.current.submit('send'); });
+
+    expect(r).toBeFalsy();
+    expect(result.current.activeTab.fields.body).toBe('작성 중 본문'); // 초기화되지 않는다
+  });
+
+  it('submit() 편집 경로에서 applyAction만 reject하면 잠금 해제·탭 리셋이 일어나지 않는다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('body', '편집한 본문\n(끝)'); });
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    vi.spyOn(model, 'applyAction').mockRejectedValue(new Error('boom'));
+
+    let r = 'unset';
+    await act(async () => { r = await result.current.submit('send'); });
+
+    expect(r).toBeFalsy(); // 저장은 성공했으므로 되돌리지 않는다 — 전이만 실패로 보고한다
+    expect(unlock).not.toHaveBeenCalled();
+    expect(result.current.activeTab.articleId).toBe('AKR1');
+    expect(result.current.activeTab.fields.body).toBe('편집한 본문\n(끝)');
+  });
+
+  it('SSE 잠금 신호 처리 중 queryArticles가 reject해도 편집 탭이 오탐 종료되지 않는다', async () => {
+    const other = { ...FULL, articleId: 'AKR2', lockYN: 'N' };
+    const { result, model } = setup({ articles: [{ ...FULL }, other] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    const query = vi.spyOn(model, 'queryArticles').mockRejectedValue(new Error('boom'));
+
+    await act(async () => { await model.lockArticle('AKR2', 'revise', 'c-other'); });
+    await waitFor(() => expect(query).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true); // 살아 있다
+    expect(alert).not.toHaveBeenCalled();
   });
 });
