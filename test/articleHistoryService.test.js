@@ -199,3 +199,116 @@ test('history: historyModel 미주입 시 기존 동작이 보존된다(기록 �
   );
   assert.deepEqual(service.queryHistory(articleId), []);
 });
+
+// --- phase 54 step1: 이력 insert 실패의 표면화(onHistoryError) ---
+// 이력 행은 감사 기록만이 아니라 판정 입력이다(tick 멱등 판정·사이클 경계). 실패를 삼키는 동작은
+// 유지하되, 선택 주입 콜백으로 "사실"만 남긴다 — 예외 승격·재시도·롤백은 하지 않는다.
+
+// insert만 항상 던지는 이력 모델 스텁(조회 경로는 정상이어야 다른 흐름이 영향을 받지 않는다).
+function throwingHistoryModel(message = 'db locked') {
+  return {
+    insert() { throw new Error(message); },
+    queryByArticle() { return []; },
+    querySnapshotById() { return undefined; },
+  };
+}
+
+function setupFailingHistory(onHistoryError) {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const service = createArticleService({
+    articleModel, db, historyModel: throwingHistoryModel(), onHistoryError,
+  });
+  return { db, articleModel, service };
+}
+
+test('onHistoryError: update의 이력 insert 실패를 정확히 1회 표면화한다(eventType=edit)', () => {
+  const seen = [];
+  const { service, articleModel } = setupFailingHistory((info) => seen.push(info));
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' });
+
+  const u = service.update(articleId, { title: '수정', modifier: 'kim' });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].articleId, articleId);
+  assert.equal(seen[0].eventType, 'edit');
+  assert.equal(seen[0].action ?? null, null, 'edit 이벤트에는 action이 없다');
+  assert.equal(typeof seen[0].reason, 'string');
+  assert.match(seen[0].reason, /db locked/);
+  // 본 기능 비차단: 반환 계약과 실제 저장이 그대로다.
+  assert.equal(u.ok, true);
+  assert.equal(articleModel.getById(articleId).article.title, '수정');
+});
+
+test('onHistoryError: applyAction(전이 성공)의 이력 실패를 1회 표면화하고 전이는 유지된다', () => {
+  const seen = [];
+  const { service, articleModel } = setupFailingHistory((info) => seen.push(info));
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+
+  const a = service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].articleId, articleId);
+  assert.equal(seen[0].eventType, 'status');
+  assert.equal(seen[0].action, 'send');
+  assert.match(seen[0].reason, /db locked/);
+  assert.deepEqual(a, { ok: true, status: 'DPS' });
+  assert.equal(articleModel.getById(articleId).contents.status, 'DPS', '이력 실패가 전이를 되돌리지 않는다');
+});
+
+test('onHistoryError: 콜백에 본문 스냅샷(markupVersion)을 담지 않는다(마스킹 규율)', () => {
+  const seen = [];
+  const { service } = setupFailingHistory((info) => seen.push(info));
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문'), author: 'kim' });
+
+  service.update(articleId, { title: '수정', modifier: 'kim', markupVersion: markup('비밀본문') });
+
+  assert.equal(seen.length, 1);
+  assert.equal('markupVersion' in seen[0], false);
+  assert.equal(JSON.stringify(seen[0]).includes('비밀본문'), false);
+});
+
+test('onHistoryError: 콜백이 throw해도 편집/전이는 정상 반환된다(알림 실패 격리)', () => {
+  const { service, articleModel } = setupFailingHistory(() => { throw new Error('알림 실패'); });
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+
+  assert.equal(service.update(articleId, { title: '수정', modifier: 'kim' }).ok, true);
+  assert.deepEqual(
+    service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' }),
+    { ok: true, status: 'DPS' },
+  );
+  assert.equal(articleModel.getById(articleId).contents.status, 'DPS');
+});
+
+test('onHistoryError: 미주입(오늘의 조립)이어도 이력 실패가 예외로 새지 않는다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const service = createArticleService({ articleModel, db, historyModel: throwingHistoryModel() });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  assert.equal(service.update(articleId, { title: '수정', modifier: 'kim' }).ok, true);
+  assert.deepEqual(
+    service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' }),
+    { ok: true, status: 'DPS' },
+  );
+});
+
+test('onHistoryError: 정상 경로(insert 성공)에서는 호출 0회다(무소음)', () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  const service = createArticleService({
+    articleModel, db, historyModel, onHistoryError: (info) => seen.push(info),
+  });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  service.update(articleId, { title: '수정', modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  assert.deepEqual(seen, []);
+  assert.equal(service.queryHistory(articleId).length, 2);
+});

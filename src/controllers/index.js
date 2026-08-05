@@ -60,6 +60,13 @@ export function createControllers(db, {
   const rawSession = sessionService ?? createSessionService();
   const session = createSessionGuard({ sessionService: rawSession, userModel });
 
+  // ArticleHistory insert 실패의 단일 결선 — 두 서비스(편집/전이 이력·배부 이력)가 같은 어휘를 쓴다.
+  // 이력 행은 판정 입력이므로(tick 멱등·사이클 경계) 무음으로 사라지면 안 된다. 본 기능은 막지 않는다.
+  // 식별자와 사유만 남긴다(본문·세션 토큰·비밀번호 금지 — LOGS.md 마스킹 규율).
+  const historyErrorLogger = ({ articleId, eventType, action, reason }) => {
+    logService?.warn?.(`history write failed articleId=${articleId} eventType=${eventType} action=${action ?? '-'} reason=${reason}`);
+  };
+
   // 배부(ADR-008) — 스풀 루트(DIST_SPOOL_DIR)가 설정된 환경에서만 활성화한다.
   // 기본값을 하드코딩하지 않는다: 미설정 환경에서 의도치 않은 파일 쓰기가 생기면 안 된다.
   // 앱은 스풀 파일을 쓰기만 한다 — 네트워크 전송(egress)도 타이머도 없다(발송은 외부 전송기).
@@ -81,6 +88,8 @@ export function createControllers(db, {
       onFailure: ({ articleId, targetId, kind, reason }) => {
         logService?.warn?.(`distribution failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
       },
+      // 이력 쓰기 실패는 배부 실패와 다른 사건이다(스풀은 나갔다) — 어휘를 분리해 오독을 막는다.
+      onHistoryError: historyErrorLogger,
     })
     : undefined;
 
@@ -89,6 +98,7 @@ export function createControllers(db, {
   // distributionService 미주입(스풀 미설정) 시 송고 훅은 비활성 — 기존 동작 그대로.
   const articleService = createArticleService({
     articleModel, db, historyModel: articleHistoryModel, distributionService,
+    onHistoryError: historyErrorLogger,
   });
   const authorization = createAuthorization({ sessionService: session, articleModel });
   const receiverConfigService = createReceiverConfigService({ receiverConfigModel, authorization });

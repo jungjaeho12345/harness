@@ -29,6 +29,9 @@ function isDistributable(row) {
 
 // onFailure(선택): 수신처 1곳의 스풀 기록 실패를 표면화한다(ftpWatcher.onError와 동형).
 //   배부 호출자는 fire-and-forget이라 반환값을 보지 않으므로, 이 콜백이 없으면 미발송이 무음으로 사라진다.
+// onHistoryError(선택): 이력 insert 실패를 표면화한다. onFailure와 **분리**한다 —
+//   onFailure는 "수신처 미발송"을 뜻하므로 이력 실패를 그리로 흘리면 운영자가 배부 실패로 오독한다.
+//   이 행(eventType='distribute')이 없으면 다음 tick이 같은 기사를 다시 스풀에 쓴다(중복 배부, 회수 불가).
 export function createDistributionService({
   distributionTargetModel,
   articleModel,
@@ -36,17 +39,31 @@ export function createDistributionService({
   spoolWriter,
   now = () => new Date().toISOString(),
   onFailure,
+  onHistoryError,
 }) {
   // 실패 알림 자체가 배부를 깨뜨리지 않도록 격리한다.
   function notifyFailure(info) {
     if (!onFailure) return;
     try { onFailure(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
   }
+  // 이력 실패 알림도 같은 규율로 격리한다(articleService.notifyHistoryError와 동형).
+  function notifyHistoryError(info) {
+    if (!onHistoryError) return;
+    try { onHistoryError(info); } catch { /* 알림 실패는 배부를 막지 않는다 */ }
+  }
   // 이력 기록은 부가 기록이다 — 실패해도 이미 끝난 배부를 되돌리지 않는다(articleService.record와 동형).
+  // 삼키되 반드시 남긴다: 콜백 인자는 식별자·사유만(본문·페이로드 금지 — LOGS.md 마스킹 규율).
   function record(rec) {
     if (!historyModel) return;
     try { historyModel.insert({ ...rec, createdAt: now() }); }
-    catch { /* 이력 기록 실패는 배부를 막지 않는다 */ }
+    catch (err) {
+      notifyHistoryError({
+        articleId: rec?.articleId,
+        eventType: rec?.eventType,
+        action: rec?.action,
+        reason: err?.message ?? String(err),
+      });
+    }
   }
 
   // 지금 이 kind들로 배부한다. 언제 부를지는 호출자가 정한다(송고 훅 / phase 48 tick).

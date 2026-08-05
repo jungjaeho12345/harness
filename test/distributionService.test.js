@@ -532,3 +532,94 @@ test('onFailure가 throw해도 배부와 기록은 정상 완료된다', async (
   assert.equal(r.distributed.length, 1);
   assert.equal(contentsOf(db).distributedAt, NOW);
 });
+
+// --- phase 54 step1: 이력 insert 실패의 표면화(onHistoryError) ---
+// distribute 행은 tick의 "이미 배부됨" 멱등 판정 근거다 — 사라지면 중복 배부(회수 불가)로 이어진다.
+// 그래도 배부 결과 자체는 바뀌지 않는다: 스풀은 실제로 나갔으므로 failed에 넣지 않는다.
+
+// insert만 던지는 이력 모델 스텁(스풀 쓰기는 성공하는 시나리오를 만든다).
+function throwingHistoryModel(message = 'db locked') {
+  return {
+    insert() { throw new Error(message); },
+    queryByArticle() { return []; },
+  };
+}
+
+function setupHistoryFailure({ onHistoryError, onFailure } = {}) {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: throwingHistoryModel(),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onFailure,
+    onHistoryError,
+  });
+  return { db, service };
+}
+
+test('이력 insert 실패는 onHistoryError로 표면화되고 배부 결과·distributedAt은 그대로다', async () => {
+  const seen = [];
+  const failures = [];
+  const { db, service } = setupHistoryFailure({
+    onHistoryError: (info) => seen.push(info),
+    onFailure: (info) => failures.push(info),
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'], actorUserId: 'desk' });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].articleId, ARTICLE_ID);
+  assert.equal(seen[0].eventType, 'distribute');
+  assert.equal(seen[0].action, 'press', 'action에는 kind가 담긴다(articleService와 같은 shape)');
+  assert.match(seen[0].reason, /db locked/);
+  // 반환 shape은 오늘과 동일 — 이력 실패는 배부 실패가 아니다.
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.deepEqual(r.failed, []);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+  // 두 신호를 섞지 않는다: onFailure는 "수신처 미발송" 전용이다.
+  assert.deepEqual(failures, []);
+});
+
+test('onHistoryError가 throw해도 배부는 정상 완료된다(알림 실패 격리)', async () => {
+  const { db, service } = setupHistoryFailure({
+    onHistoryError: () => { throw new Error('로그 실패'); },
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.distributed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW);
+});
+
+test('onHistoryError: 이력 insert가 성공하는 정상 경로에서는 호출 0회다', async () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: fakeWriter(),
+    now: () => NOW,
+    onHistoryError: (info) => seen.push(info),
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.deepEqual(seen, []);
+  assert.equal(historyOf(db).length, 1);
+});
