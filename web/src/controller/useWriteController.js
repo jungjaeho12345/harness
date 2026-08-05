@@ -8,6 +8,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../app/context.js';
 import { PENDING_EDIT_KEY } from './useViewController.js';
+// 잠금 실패 문구는 목록(useViewController)과 공유한다 — 새 사유 토큰이 한쪽에만 반영되는 드리프트를 막는다.
+import { lockFailMessage } from './lockMessages.js';
 
 const TABS_KEY = 'yh.writer.tabs';
 
@@ -46,26 +48,6 @@ function nextClientId() {
   } catch { /* crypto 불가 — 폴백 */ }
   clientSeq += 1;
   return `c-${Date.now().toString(36)}-${clientSeq}`;
-}
-
-// 잠금 획득 실패 사유(서버 토큰 + httpModel 정규화 토큰) → 사용자 안내 문구.
-// 'locked'는 기존 테스트가 문자열째 잠근 계약이라 절대 바꾸지 않는다.
-// network-error/invalid-response는 phase49 step7 이후 httpModel이 값으로 돌려주는 실패다
-// (reject하지 않는다 — 서버에 닿지 못했거나 비JSON 응답).
-const LOCK_FAIL_MESSAGES = {
-  locked: '편집중입니다.',
-  'network-error': '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.',
-  'invalid-response': '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.',
-  unauthenticated: '세션이 만료되었습니다. 다시 로그인한 뒤 편집해 주세요.',
-  forbidden: '이 기사를 편집할 권한이 없습니다.',
-  'not-found': '기사를 찾을 수 없습니다.',
-};
-const LOCK_FAIL_DEFAULT = '편집 잠금을 얻지 못해 편집할 수 없습니다.';
-
-// 사유 미상(null·undefined·예외·비문자열)일 때 '(null)'/'(undefined)' 같은 내부 값이 사용자 문구로 새지 않게 한다.
-function lockFailMessage(reason) {
-  if (typeof reason !== 'string' || reason === '') return LOCK_FAIL_DEFAULT;
-  return LOCK_FAIL_MESSAGES[reason] ?? `${LOCK_FAIL_DEFAULT} (${reason})`;
 }
 
 // takeover(다른 사용자가 잠금을 가져감)로 편집 탭을 닫을 때의 안내. 무음 종료는 금지다 —

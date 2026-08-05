@@ -187,6 +187,87 @@ describe('useViewController', () => {
     expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // pendingEdit도 남기지 않음
   });
 
+  // --- phase 54 step7: 편집 진입 fail-closed(사유 불문) ---
+
+  it('locked 외의 잠금 실패에서도 이동하지 않는다(fail-closed — 사유별 안내)', async () => {
+    const cases = [
+      [{ ok: false, reason: 'network-error' }, '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+      [{ ok: false, reason: 'invalid-response' }, '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+      [{ ok: false, reason: 'unauthenticated' }, '세션이 만료되었습니다. 다시 로그인한 뒤 편집해 주세요.'],
+      [{ ok: false, reason: 'forbidden' }, '이 기사를 편집할 권한이 없습니다.'],
+      [{ ok: false, reason: 'not-found' }, '기사를 찾을 수 없습니다.'],
+      [{ ok: false }, '편집 잠금을 얻지 못해 편집할 수 없습니다.'], // 사유 미상 — 내부 값 노출 금지
+      [{ ok: 'yes' }, '편집 잠금을 얻지 못해 편집할 수 없습니다.'], // 이상값 — truthy로 통과시키지 않는다
+      [null, '편집 잠금을 얻지 못해 편집할 수 없습니다.'],
+    ];
+    for (const [lockResult, message] of cases) {
+      sessionStorage.clear();
+      const { result, model, navigate } = setup({ articles: rds(1) });
+      await waitFor(() => expect(result.current.items).toHaveLength(1));
+      vi.spyOn(model, 'lockArticle').mockResolvedValue(lockResult);
+      const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+
+      let ret;
+      await act(async () => { ret = await result.current.editArticle({ articleId: 'AKR0', title: 't0' }); });
+
+      expect(ret).toBeNull();
+      expect(navigate).not.toHaveBeenCalled(); // writer.do로 넘어가지 않는다
+      expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull(); // pendingEdit도 저장하지 않는다
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      expect(alertSpy).toHaveBeenCalledWith(message);
+      expect(alertSpy.mock.calls[0][0]).not.toContain('null');
+      expect(alertSpy.mock.calls[0][0]).not.toContain('undefined');
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('잠금 호출이 reject해도 예외 없이 fail-closed다', async () => {
+    const { result, model, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    vi.spyOn(model, 'lockArticle').mockRejectedValue(new Error('boom'));
+    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+
+    let ret;
+    await act(async () => { ret = await result.current.editArticle({ articleId: 'AKR0' }); });
+
+    expect(ret).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull();
+    expect(alertSpy).toHaveBeenCalledWith('편집 잠금을 얻지 못해 편집할 수 없습니다.');
+  });
+
+  it('고침·포털고침·매핑 진입도 같은 fail-closed 규칙을 탄다', async () => {
+    const { result, model, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: false, reason: 'forbidden' });
+    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+
+    let a; let b; let c;
+    await act(async () => {
+      a = await result.current.reviseArticle({ articleId: 'AKR0' });
+      b = await result.current.reviseArticle({ articleId: 'AKR0' }, true);
+      c = await result.current.mapArticle({ articleId: 'AKR0' });
+    });
+
+    expect([a, b, c]).toEqual([null, null, null]);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(PENDING_EDIT_KEY)).toBeNull();
+    expect(alertSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('잠금에 성공하면 sessionStorage 저장이 실패해도 이동은 계속된다(기존 동작)', async () => {
+    const { result, navigate } = setup({ articles: rds(1) });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+
+    let ret;
+    await act(async () => { ret = await result.current.editArticle({ articleId: 'AKR0', title: 't0' }); });
+
+    expect(ret).toBe('AKR0');
+    expect(navigate).toHaveBeenCalledWith('writer.do', { articleId: 'AKR0' });
+    setItem.mockRestore();
+  });
+
   it('requestDelete is D/Z only and confirms before approveDelete', async () => {
     // requestDelete는 전달된 기사 객체로 동작한다(목록 필터와 무관) — DPS는 기본 메뉴에 안 보임.
     // 권한 R → 거부.
@@ -328,5 +409,96 @@ describe('useViewController', () => {
     vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     await act(async () => { await result.current.releaseLock({ articleId: 'AKR9' }); });
     expect(spy).toHaveBeenCalledWith('AKR9');
+  });
+
+  // --- phase 54 step7: refresh out-of-order·언마운트 가드 ---
+
+  // 조회를 수동으로 resolve하는 setup — pending[i] = { filter, resolve }.
+  function setupDeferred(identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }) {
+    const model = createFakeModel({ articles: [] });
+    const pending = [];
+    vi.spyOn(model, 'queryArticles').mockImplementation(
+      (filter) => new Promise((resolve) => { pending.push({ filter, resolve }); }),
+    );
+    const navigate = vi.fn();
+    const wrapper = ({ children }) => (
+      <AppContext.Provider value={{ model, identity, navigate, replace: vi.fn(), setSession: vi.fn() }}>
+        {children}
+      </AppContext.Provider>
+    );
+    const { result, unmount } = renderHook(() => useViewController(), { wrapper });
+    return { result, model, pending, unmount };
+  }
+
+  it('늦게 도착한 이전 필터의 응답이 최신 목록을 덮어쓰지 않는다(out-of-order 가드)', async () => {
+    const { result, pending } = setupDeferred();
+    await waitFor(() => expect(pending).toHaveLength(1)); // 진입 조회(deskUnsent) in-flight
+
+    // 메뉴 전환 → 두 번째 조회가 겹친다(첫 조회는 아직 미완).
+    await act(async () => { result.current.selectMenu('deptSend'); });
+    await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+
+    const first = pending[0];
+    const last = pending[pending.length - 1];
+
+    // 순서 뒤집기: 나중에 보낸 요청이 먼저 도착하고, 먼저 보낸 요청이 늦게 도착한다.
+    await act(async () => {
+      last.resolve({ ok: true, items: [{ articleId: 'NEW', status: 'DPS' }] });
+      await Promise.resolve();
+      first.resolve({ ok: true, items: [{ articleId: 'OLD', status: 'RDS' }] });
+    });
+
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    expect(result.current.items[0].articleId).toBe('NEW'); // 낡은 응답이 최신 목록을 덮지 않는다
+  });
+
+  it('폐기된 응답도 호출자에게는 응답 객체 그대로 반환한다(반환 계약 유지)', async () => {
+    const { result, pending } = setupDeferred();
+    await waitFor(() => expect(pending).toHaveLength(1));
+
+    let stale;
+    let fresh;
+    await act(async () => {
+      const p1 = result.current.refresh(); // 먼저 보낸 조회(폐기 대상)
+      const p2 = result.current.refresh(); // 나중에 보낸 조회(반영 대상)
+      await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(3));
+      pending[pending.length - 1].resolve({ ok: true, items: [{ articleId: 'NEW' }] });
+      pending[pending.length - 2].resolve({ ok: false, reason: 'network-error' });
+      [stale, fresh] = await Promise.all([p1, p2]);
+    });
+
+    expect(stale).toEqual({ ok: false, reason: 'network-error' }); // 반영은 안 하지만 결과는 그대로 준다
+    expect(fresh).toEqual({ ok: true, items: [{ articleId: 'NEW' }] });
+    expect(result.current.items).toEqual([{ articleId: 'NEW' }]);
+  });
+
+  it('단일 조회는 오늘과 동일하게 items를 채우고 응답을 반환한다', async () => {
+    const { result, pending } = setupDeferred();
+    await waitFor(() => expect(pending).toHaveLength(1));
+
+    let r;
+    await act(async () => {
+      const p = result.current.refresh();
+      await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+      pending[0].resolve({ ok: true, items: [] });
+      pending[pending.length - 1].resolve({ ok: true, items: rds(3) });
+      r = await p;
+    });
+
+    expect(r.ok).toBe(true);
+    await waitFor(() => expect(result.current.items).toHaveLength(3));
+  });
+
+  it('언마운트 후 도착한 응답은 조용히 무시된다(예외·경고 없음)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { result, pending, unmount } = setupDeferred();
+    await waitFor(() => expect(pending).toHaveLength(1));
+
+    unmount();
+    await act(async () => { pending[0].resolve({ ok: true, items: rds(3) }); });
+
+    expect(result.current.items).toEqual([]); // 언마운트된 훅의 상태는 갱신되지 않는다
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });
