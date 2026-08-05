@@ -13,7 +13,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { blocksToText, isEmbedBlock, isTextBlock, isValidAlign, textBlock } from './editorContent.js';
 import { classifyLines, colorForRole, shouldRecolor } from './editorColoring.js';
-import { isInputBlocked, insertTextIntoBlocks } from './editorNewline.js';
+import { isInputBlocked, replaceRangeInBlocks } from './editorNewline.js';
 import { buildLineHighlights } from './editorSpellHighlight.js';
 import { InlineEmbed } from './InlineEmbed.jsx';
 
@@ -153,102 +153,176 @@ export function readCaret(root) {
   return { lineIndex, offset: offset + offsetInLine, col: offsetInLine };
 }
 
-// emitInsert(Enter·여러 줄 붙여넣기) 전용 캐럿 — readEditorBlocks/elementToLines와 "같은 줄 기준"으로
-// { lineIndex(텍스트-줄 순서), offset(blocksToText 좌표) }을 산출한다. readCaret(.yh-editor__line 단위)과 달리
-// 줄 안 <br>·중첩 블록까지 분할해 세므로, dirty DOM(브라우저가 만든 줄 안 <br> 등)에서도 분할 위치가 정확하다.
-// 깨끗한 DOM에선 readCaret과 동일 결과(1 .yh-editor__line = 1 줄)라 회귀가 없다. anchor가 에디터 밖/미발견이면 null.
-// 텍스트 노드 anchor는 정확히, 요소 anchor는 그 줄 시작(col 0)으로 본다(readCaret과 동일 단순화).
-function readCaretForInsert(root) {
-  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
-  if (!root || !sel || sel.rangeCount === 0) return null;
-  const A = sel.anchorNode;
-  if (!A || !root.contains(A)) return null;
-  const AO = sel.anchorOffset;
+// emitInsert(Enter·여러 줄 붙여넣기) 전용 지점 환산 — readEditorBlocks/elementToLines와 "같은 줄 기준"으로
+// (node, offset) 지점을 { lineIndex(텍스트-줄 순서), offset(blocksToText 좌표) }으로 바꾼다.
+// readCaret(.yh-editor__line 단위)과 달리 줄 안 <br>·중첩 블록까지 분할해 세므로, dirty DOM(브라우저가 만든
+// 줄 안 <br> 등)에서도 분할 위치가 정확하다. 깨끗한 DOM에선 readCaret과 동일 결과(1 .yh-editor__line = 1 줄).
+// 에디터 밖/미발견이면 null.
+// 지점 해석 규칙:
+//  - 텍스트 노드 지점: offset은 문자 오프셋(줄 안 col로 누적 환산).
+//  - 요소 지점: offset은 문자 오프셋이 아니라 DOM Range 표준의 "자식 경계 인덱스"다.
+//      offset < childNodes.length  → childNodes[offset] "바로 앞" 지점
+//      offset >= childNodes.length → 그 요소 "내용의 끝" 지점(selectNodeContents의 end·setEndAfter가 만드는 지점)
+//    node === root도 반드시 같은 규칙으로 환산한다 — 편집>전체 선택(selectNodeContents(root))·문단 선택
+//    (setStartBefore/setEndAfter)이 만드는 앵커가 root이고, null로 흘리면 그 흔한 제스처에서 선택 범위가
+//    통째로 유실된다(요소 앵커를 col 0으로 접는 것도 같은 이유로 금지 — 한 줄 선택이 collapsed로 접힌다).
+//  - 임베드(.yh-embed)는 blocksToText에 포함되지 않으므로(step0 좌표 계약) 그 경계는 앞 텍스트 줄의 끝 /
+//    다음 텍스트 줄의 시작으로 수렴시킨다.
+// 회귀 안전: 오늘 요소 지점을 만드는 경로(focusLineStart·focusCaretAt 빈 줄 폴백)는 전부 offset 0이라
+// "첫 자식 앞" = 줄 시작 = col 0으로 기존과 같은 값이 나온다(빈 줄은 자식이 없어 "내용 끝" = col 0).
+function readPointForInsert(root, node, offset) {
+  if (!root || !node || !root.contains(node)) return null;
+  const raw = Number(offset);
+  const O = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  // 지점 정규화 — 텍스트 지점(pText) / "이 노드 바로 앞"(pBefore) / "이 요소 내용 끝"(pEnd) 중 하나.
+  let pText = null;
+  let pBefore = null;
+  let pEnd = null;
+  if (node.nodeType === 3) pText = node;
+  else if (node.nodeType === 1) {
+    if (O < node.childNodes.length) pBefore = node.childNodes[O];
+    else pEnd = node;
+  } else return null;
 
   const out = []; // 완성된 텍스트 줄(임베드 제외 — blocksToText와 동일 시퀀스)
   let pending = null; // 최상위 인라인 누적 줄
   let caretLine = null;
   let caretCol = null;
+  const hit = (line, col) => { if (caretLine === null) { caretLine = line; caretCol = col; } };
+  const isEmbedEl = (el) => !!(el.classList && el.classList.contains('yh-embed'));
+  const isLineEl = (el) => !!((el.classList && el.classList.contains('yh-editor__line')) || BLOCK_TAGS.has(el.tagName));
   const flush = () => { if (pending !== null) { out.push(pending); pending = null; } };
+  // 임베드 경계·문서 끝 — 진행 중인 줄이 있으면 그 끝, 없으면 직전 텍스트 줄의 끝(둘 다 없으면 문서 시작).
+  const hitAtTextEnd = () => {
+    if (pending !== null) hit(out.length, pending.length);
+    else if (out.length) hit(out.length - 1, out[out.length - 1].length);
+    else hit(0, 0);
+  };
+  // 인라인 요소(하이라이트 span 등) 안의 지점 — 앞선 텍스트 길이를 누적해 col을 잡는다(span 없을 땐 미사용).
+  const seekInline = (el, base) => {
+    let acc = base;
+    const walk = (el2) => {
+      for (const sub of el2.childNodes) {
+        if (sub === pBefore) { hit(out.length, acc); return true; }
+        if (sub === pText) { hit(out.length, acc + Math.min(O, (sub.textContent ?? '').length)); return true; }
+        if (sub.nodeType === 3) acc += (sub.textContent ?? '').length;
+        else if (sub.nodeType === 1) {
+          if (walk(sub)) return true;
+          if (sub === pEnd) { hit(out.length, acc); return true; }
+        }
+      }
+      return false;
+    };
+    return walk(el);
+  };
 
-  // 블록 요소(.yh-editor__line/div/p…) 내용을 줄로 펼치며 캐럿을 추적(elementToLines와 동일 규칙).
+  // 블록 요소(.yh-editor__line/div/p…) 내용을 줄로 펼치며 지점을 추적(elementToLines와 동일 규칙).
   const walkBlock = (el) => {
-    if (el === A && caretLine === null) { caretLine = out.length; caretCol = 0; }
     const startLen = out.length;
     let cur = '';
     let dirty = false;
     const pushLine = () => { out.push(cur); cur = ''; dirty = false; };
     for (const child of el.childNodes) {
+      // 자식 경계 지점 — 블록 자식 앞이면 그 블록의 첫 줄 시작, 그 외(텍스트/인라인/<br>)엔 현재 줄의 현재 열.
+      if (child === pBefore) {
+        if (child.nodeType === 1 && isLineEl(child)) hit(out.length + (dirty ? 1 : 0), 0);
+        else hit(out.length, cur.length);
+      }
       if (child.nodeType === 3) {
-        if (child === A && caretLine === null) {
-          caretLine = out.length; caretCol = cur.length + Math.min(AO, (child.textContent ?? '').length);
-        }
+        if (child === pText) hit(out.length, cur.length + Math.min(O, (child.textContent ?? '').length));
         cur += child.textContent ?? ''; dirty = true;
       } else if (child.nodeType === 1) {
         if (child.tagName === 'BR') {
           pushLine();
-        } else if (BLOCK_TAGS.has(child.tagName) || (child.classList && child.classList.contains('yh-editor__line'))) {
+        } else if (isLineEl(child)) {
           if (dirty) pushLine();
           walkBlock(child);
-        } else { // 인라인 — 요소 자신이 anchor면 기존대로, 내부 텍스트 노드에 캐럿(A)이 있으면
-          // 앞선 텍스트 길이를 누적해 col을 잡는다(하이라이트 span 안 Enter — span 없을 땐 결과 불변).
-          if (child === A && caretLine === null) { caretLine = out.length; caretCol = cur.length; }
-          if (caretLine === null && child.contains && child.contains(A)) {
-            let acc = cur.length;
-            const seek = (el2) => {
-              for (const sub of el2.childNodes) {
-                if (sub === A) {
-                  caretLine = out.length;
-                  caretCol = sub.nodeType === 3 ? acc + Math.min(AO, (sub.textContent ?? '').length) : acc;
-                  return true;
-                }
-                if (sub.nodeType === 3) acc += (sub.textContent ?? '').length;
-                else if (sub.nodeType === 1 && seek(sub)) return true;
-              }
-              return false;
-            };
-            seek(child);
-          }
+        } else { // 인라인 — 내부에 지점이 있으면 앞선 텍스트 길이를 누적해 col을 잡는다(하이라이트 span 안 Enter).
+          if (caretLine === null && child.contains && child.contains(node)) seekInline(child, cur.length);
           cur += child.textContent ?? ''; dirty = true;
+          if (child === pEnd) hit(out.length, cur.length); // 인라인 내용의 끝
         }
       }
     }
     if (dirty || out.length === startLen) pushLine();
+    if (el === pEnd) { // 이 요소 내용의 끝 = 이 요소가 만든 마지막 줄의 끝(한 줄 선택 selectNodeContents(lineEl)의 end)
+      const li = Math.max(startLen, out.length - 1);
+      hit(li, (out[li] ?? '').length);
+    }
   };
 
-  for (const node of root.childNodes) {
-    if (node.nodeType === 3) {
+  for (const nd of root.childNodes) {
+    if (nd === pBefore) { // root의 자식 경계(전체 선택 start·문단 선택 start/end)
+      if (nd.nodeType === 1 && isEmbedEl(nd)) hitAtTextEnd(); // 임베드 앞 = 앞 텍스트 줄의 끝
+      else if (nd.nodeType === 1 && isLineEl(nd)) hit(out.length + (pending !== null ? 1 : 0), 0);
+      else hit(out.length, (pending ?? '').length);
+    }
+    if (nd.nodeType === 3) {
       if (pending === null) pending = '';
-      if (node === A && caretLine === null) {
-        caretLine = out.length; caretCol = pending.length + Math.min(AO, (node.textContent ?? '').length);
-      }
-      pending += node.textContent ?? '';
+      if (nd === pText) hit(out.length, pending.length + Math.min(O, (nd.textContent ?? '').length));
+      pending += nd.textContent ?? '';
       continue;
     }
-    if (node.nodeType !== 1) continue;
-    const el = node;
-    if (el.classList && el.classList.contains('yh-embed')) { flush(); continue; } // 임베드: 텍스트 줄 분리(텍스트 없음)
+    if (nd.nodeType !== 1) continue;
+    const el = nd;
+    if (isEmbedEl(el)) { if (el === pEnd) hitAtTextEnd(); flush(); continue; } // 임베드: 텍스트 줄 분리(텍스트 없음)
     if (el.tagName === 'BR') { out.push(pending ?? ''); pending = null; continue; } // 최상위 <br> — 현재 줄 닫음(빈 줄이라도)
-    if ((el.classList && el.classList.contains('yh-editor__line')) || BLOCK_TAGS.has(el.tagName)) {
+    if (isLineEl(el)) {
       flush(); walkBlock(el);
     } else { // 최상위 인라인
       if (pending === null) pending = '';
-      if (el === A && caretLine === null) { caretLine = out.length; caretCol = pending.length; }
+      if (caretLine === null && el.contains && el.contains(node)) seekInline(el, pending.length);
       pending += el.textContent ?? '';
+      if (el === pEnd) hit(out.length, pending.length);
     }
   }
+  if (root === pEnd) hitAtTextEnd(); // root 내용의 끝(전체 선택 focus — selectNodeContents(root)의 end)
   flush();
 
   if (caretLine === null) return null;
-  let offset = caretCol;
-  for (let i = 0; i < caretLine; i += 1) offset += out[i].length + 1; // 앞 줄들 + 각 '\n'
-  return { lineIndex: caretLine, offset };
+  let abs = caretCol;
+  for (let i = 0; i < caretLine; i += 1) abs += (out[i] ?? '').length + 1; // 앞 줄들 + 각 '\n'
+  return { lineIndex: caretLine, offset: abs };
+}
+
+// 현재 selection을 삽입용 range로 읽는다 — { start, end }(둘 다 readPointForInsert 좌표) 또는 null.
+// Enter·여러 줄 붙여넣기는 preventDefault로 브라우저의 기본 대체(선택 삭제 후 삽입)를 막으므로,
+// 선택 범위 삭제를 우리 경로가 넘겨야 한다(넘기지 않으면 선택 텍스트가 그대로 남아 본문이 파손된다).
+// - anchor 환산이 null이면 range 전체를 null로 흘린다(focus가 유효해도 범위를 지어내지 않는다 — 오늘의 캐럿 미상 폴백 유지).
+// - collapsed·focus 미상·focus가 에디터 밖·focus 환산 실패면 anchor로 collapsed range(삭제 없음).
+// - 역방향(anchor가 뒤) 정규화·마커 clamp·임베드 보존은 순수 계층(replaceRangeInBlocks)의 몫이다 — 여기서 중복 구현하지 않는다.
+function readSelectionForInsert(root) {
+  const sel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null;
+  if (!root || !sel || sel.rangeCount === 0) return null;
+  const start = readPointForInsert(root, sel.anchorNode, sel.anchorOffset);
+  if (!start) return null;
+  const f = sel.focusNode;
+  if (sel.isCollapsed || !f || !root.contains(f)) return { start, end: start };
+  const end = readPointForInsert(root, f, sel.focusOffset);
+  return { start, end: end || start };
 }
 
 // 캐럿이 "(끝)" 마커 시작 이상이면 삽입 차단 대상(news.md 162행). 캐럿 미상이면 차단하지 않는다.
 function caretBlocked(root) {
   const caret = readCaret(root);
   return !!caret && isInputBlocked(readEditorText(root), caret.offset);
+}
+
+// dataTransfer(드롭)에서 첫 이미지 파일을 찾는다 — files 우선, 없으면 items에서 getAsFile로 꺼낸다.
+// 판정 규칙은 handlePaste의 클립보드 이미지 판정과 같다(type이 'image/'로 시작).
+function findImageFile(dt) {
+  if (!dt) return null;
+  const files = dt.files ? Array.from(dt.files) : [];
+  const direct = files.find((f) => f && typeof f.type === 'string' && f.type.startsWith('image/'));
+  if (direct) return direct;
+  const items = dt.items ? Array.from(dt.items) : [];
+  for (const it of items) {
+    if (it && typeof it.type === 'string' && it.type.startsWith('image/') && typeof it.getAsFile === 'function') {
+      const f = it.getAsFile();
+      if (f) return f;
+    }
+  }
+  return null;
 }
 
 // 삽입성 키 — 문자 입력과 Enter만. 삭제/이동/선택 키(Backspace/Delete/방향키/Ctrl·Meta 조합)는 제외한다(news.md: 삭제/이동/선택은 항상 허용).
@@ -308,6 +382,7 @@ export function Editor({
   onKeyDown,
   onTextChange,
   onPasteImageFile,
+  onDropImageFile, // 이미지 파일 드롭 위임 — (file, caret). 없으면 드롭은 차단만 된다(환경설정 off).
   onCaretChange,
   pendingCaretLine = null,
   spellcheck = false,
@@ -432,13 +507,14 @@ export function Editor({
   const renderBlocks = snapRef.current;
   const lineRoles = classifyLines(blocksToText(renderBlocks).split('\n'));
 
-  // 캐럿 위치에 text(개행 가능)를 삽입한 블록을 부모로 내보내고, remount 후 캐럿을 둘 줄을 예약한다.
+  // 선택 범위(비-collapsed면 그 범위를 지우고, collapsed면 캐럿 위치에)에 text(개행 가능)를 넣은 블록을 부모로
+  // 내보내고, remount 후 캐럿을 둘 줄을 예약한다.
   // lastEmittedRef를 갱신하지 않아(echo가 아니라) 구조 변경으로 판정되고 편집 div가 깨끗이 remount된다 →
   // 브라우저가 <br>/미래핑 노드를 만들지 못해 "1줄 = 1 .yh-editor__line = 1 텍스트 블록" 불변식이 유지된다.
   const emitInsert = (root, text) => {
-    const caret = readCaretForInsert(root); // readEditorBlocks와 같은 줄 기준 — dirty DOM에서도 분할 위치 정합
+    const range = readSelectionForInsert(root); // readEditorBlocks와 같은 줄 기준 — dirty DOM에서도 분할 위치 정합
     const cur = readEditorBlocks(root, snapRef.current);
-    const { blocks: next, caretLineIndex } = insertTextIntoBlocks(cur, caret, text);
+    const { blocks: next, caretLineIndex } = replaceRangeInBlocks(cur, range, text);
     nextCaretLineRef.current = caretLineIndex;
     if (onTextChange) onTextChange(blocksToText(next), next);
   };
@@ -504,6 +580,29 @@ export function Editor({
     }
   };
 
+  // 드래그앤드롭 — 네이티브 드롭은 전면 차단하고 이미지 파일만 상위로 위임한다(53-2 B 결함).
+  // 왜 전면 차단인가: 핸들러가 없으면 브라우저가 드롭 지점(마커 줄 안쪽 포함)에 텍스트/DOM을 그대로 떨구고
+  //   handleInput이 그것을 본문으로 커밋한다. 마커 줄이 '(끝)단어'가 되면 serializeBodyFromBlocks(trim 정확
+  //   비교)는 마커를 놓쳐 재정규화·정렬 제외·치환 가드가 전부 풀리는데, 송고 가드 hasEndMarker는 substring이라
+  //   그대로 통과한다 → 오염된 본문이 송고·배부된다(ADR-008: 송고 즉시 스풀 기록 — 되돌릴 수 없다).
+  // 왜 이미지만 위임하나: news.md 192행("이미지를 드래그앤 드롭이 허용된다. 기본값은 된다")이 정의하는 유일한
+  //   드롭 스펙이고, 위임 계약은 붙여넣기 이미지와 같다(raw File → 상위가 업로드→경로 임베드, ADR-003).
+  //   텍스트/HTML 드롭과 드래그 이동(drag-move)은 스펙에 없고 원본 범위 삭제 의미론이 필요해 결선하지 않는다.
+  // caretBlocked로 이미지 드롭을 막지 않는 이유는 handlePaste의 이미지 분기와 같다 — 임베드 삽입은
+  //   insertEmbedAfterLine이 "(끝)"을 항상 최종 블록으로 재정규화하므로 마커 무결성이 유지된다.
+  const handleDragOver = (e) => {
+    e.preventDefault(); // drop 이벤트 수신 보장 + 네이티브 삽입 준비(드롭 캐럿) 차단
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); // 어떤 데이터든 브라우저가 편집 div에 직접 떨구지 못하게 한다(조건 분기보다 먼저).
+    if (!onDropImageFile) return; // 드롭 위임 비활성(환경설정 off) — 차단만.
+    const file = findImageFile(e.dataTransfer);
+    if (!file) return; // 텍스트/HTML 등은 아무것도 하지 않는다(삽입 금지·콜백 없음).
+    const caret = readCaret(e.currentTarget); // 위임 전 동기 확보(이후 비동기 업로드 중 selection 소실 대비)
+    onDropImageFile(file, caret);
+  };
+
   const handleCompositionStart = (e) => {
     composingRef.current = true;
     if (caretBlocked(e.currentTarget)) e.preventDefault();
@@ -561,6 +660,8 @@ export function Editor({
       lang={lang}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onBlur={handleBlur}

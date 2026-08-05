@@ -48,6 +48,35 @@ function nextClientId() {
   return `c-${Date.now().toString(36)}-${clientSeq}`;
 }
 
+// 잠금 획득 실패 사유(서버 토큰 + httpModel 정규화 토큰) → 사용자 안내 문구.
+// 'locked'는 기존 테스트가 문자열째 잠근 계약이라 절대 바꾸지 않는다.
+// network-error/invalid-response는 phase49 step7 이후 httpModel이 값으로 돌려주는 실패다
+// (reject하지 않는다 — 서버에 닿지 못했거나 비JSON 응답).
+const LOCK_FAIL_MESSAGES = {
+  locked: '편집중입니다.',
+  'network-error': '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  'invalid-response': '서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  unauthenticated: '세션이 만료되었습니다. 다시 로그인한 뒤 편집해 주세요.',
+  forbidden: '이 기사를 편집할 권한이 없습니다.',
+  'not-found': '기사를 찾을 수 없습니다.',
+};
+const LOCK_FAIL_DEFAULT = '편집 잠금을 얻지 못해 편집할 수 없습니다.';
+
+// 사유 미상(null·undefined·예외·비문자열)일 때 '(null)'/'(undefined)' 같은 내부 값이 사용자 문구로 새지 않게 한다.
+function lockFailMessage(reason) {
+  if (typeof reason !== 'string' || reason === '') return LOCK_FAIL_DEFAULT;
+  return LOCK_FAIL_MESSAGES[reason] ?? `${LOCK_FAIL_DEFAULT} (${reason})`;
+}
+
+// takeover(다른 사용자가 잠금을 가져감)로 편집 탭을 닫을 때의 안내. 무음 종료는 금지다 —
+// 이 탭의 미저장 편집분은 사라지고(자동저장 기본 off, 컨트롤러는 초안을 저장하지 않는다) 되돌릴 수 없으므로
+// "저장되지 않은 변경은 반영되지 않았다"는 사실을 반드시 알린다.
+function takeoverMessage(articleIds) {
+  const ids = articleIds.filter(Boolean).join(', ');
+  return `다른 사용자가 편집 잠금을 가져가 편집 탭${ids ? `(${ids})` : ''}이 닫혔습니다.`
+    + ' 저장되지 않은 변경은 반영되지 않았습니다.';
+}
+
 function pick(src, keys) {
   const out = {};
   for (const k of keys) if (src && src[k] !== undefined && src[k] !== null) out[k] = src[k];
@@ -161,6 +190,13 @@ export function useWriteController() {
   const authorRef = useRef(authorSeed);
   useEffect(() => { authorRef.current = authorSeed; }, [authorSeed]);
 
+  // 로그인 사용자 아이디 — takeover(보유자 변경) 판정의 유일한 내 쪽 신호. SSE 핸들러는 마운트 시 클로저가
+  // 고정되므로 authorRef와 같은 ref 미러링으로 최신 값을 본다(구독 effect 의존성을 늘리면 재구독이 잦아져
+  // 신호 유실 창이 생긴다). 클라이언트가 스스로 정한 값이 아니라 세션에서 복원된 신원만 쓴다(ADR-004 규율).
+  const userIdSeed = (identity && identity.userId) || '';
+  const userIdRef = useRef(userIdSeed);
+  useEffect(() => { userIdRef.current = userIdSeed; }, [userIdSeed]);
+
   const seed = useRef(null);
   if (seed.current === null) seed.current = loadTabs(authorSeed);
 
@@ -189,18 +225,40 @@ export function useWriteController() {
     catch { /* document.title 불가 — 무시 */ }
   }, [activeArticleId, replace]);
 
-  // 탭 제거(공통) — unlock=true면 편집 탭 잠금 해제 요청. 마지막 탭을 닫으면 빈 새 기사 탭 1개를 유지.
-  const removeTab = useCallback((id, { unlock = true } = {}) => {
-    const cur = tabsRef.current;
-    const closing = cur.find((t) => t.id === id);
-    if (unlock && closing && closing.articleId) {
-      Promise.resolve(model.unlockArticle(closing.articleId, closing.clientId)).catch(() => {});
+  // 탭 제거(공통) — ids(1개 이상)를 한 번에 닫는다. unlock=true면 각 편집 탭의 잠금 해제를 요청한다.
+  // 마지막 탭을 닫으면 빈 새 기사 탭 1개를 유지한다.
+  // 여러 탭을 한 번에 받는 이유(리뷰 반영): 종전 removeTab은 tabsRef 스냅샷으로 setTabs(next) 통째 교체라
+  // 같은 tick에 두 번 호출하면 첫 호출의 제거가 덮어써져 좀비 탭이 살아남았다(SSE 잠금 신호 하나가 여러
+  // 편집 탭을 닫는 경우 — 그런데 안내는 "닫혔습니다"라고 단언해 사용자에게 거짓을 말했다).
+  // 방어는 두 겹이다: (1) setTabs는 함수형 업데이터로만 갱신하고, (2) 다음 스냅샷을 tabsRef/activeRef에
+  // 동기 반영해 같은 tick 연속 호출이 서로를 덮어쓰지 않게 한다(상태 반영 effect보다 앞선다).
+  // 반환: 실제로 제거된 탭 목록 — 호출부가 안내 문구를 사실대로 쓰게 한다(닫지 않은 탭을 닫혔다고 말하지 않는다).
+  const removeTabs = useCallback((ids, { unlock = true } = {}) => {
+    const idSet = new Set(Array.isArray(ids) ? ids : [ids]);
+    const removed = tabsRef.current.filter((t) => idSet.has(t.id));
+    if (removed.length === 0) return [];
+    if (unlock) {
+      for (const t of removed) {
+        if (t.articleId) Promise.resolve(model.unlockArticle(t.articleId, t.clientId)).catch(() => {});
+      }
     }
-    let next = cur.filter((t) => t.id !== id);
-    if (next.length === 0) next = [blankTab()];
-    setTabs(next);
-    if (activeRef.current === id) setActiveTabId(next[next.length - 1].id);
+    const keep = (list) => list.filter((t) => !idSet.has(t.id)); // 스냅샷·업데이터 양쪽이 같은 규칙을 쓴다.
+    let next = keep(tabsRef.current);
+    if (next.length === 0) next = [blankTab()]; // 기존 동작 그대로(작성자 시드 없음 — 이번 수정 범위 밖)
+    tabsRef.current = next;
+    setTabs((prev) => {
+      const rest = keep(prev);
+      return rest.length ? rest : next;
+    });
+    if (idSet.has(activeRef.current)) {
+      const nextActiveId = next[next.length - 1].id;
+      activeRef.current = nextActiveId;
+      setActiveTabId(nextActiveId);
+    }
+    return removed;
   }, [model]);
+
+  const removeTab = useCallback((id, opts) => removeTabs([id], opts), [removeTabs]);
 
   const closeTab = useCallback((id) => removeTab(id, { unlock: true }), [removeTab]);
 
@@ -240,9 +298,12 @@ export function useWriteController() {
     // 이 편집 탭의 고유 clientId를 발급해 잠금 획득에 실어 보낸다(이후 저장/해제도 같은 값을 사용).
     const clientId = nextClientId();
     const lock = await Promise.resolve(model.lockArticle(article.articleId, lockAction, clientId)).catch(() => null);
-    if (lock && lock.ok === false && lock.reason === 'locked') {
-      globalThis.alert?.('편집중입니다.');
-      return null; // 다른 세션이 편집 중 — 탭을 열지 않는다.
+    // fail-closed — 잠금을 얻지 못하면(사유 불문: locked/네트워크 단절/401/403/404/비JSON/예외) 편집 탭을 열지 않는다.
+    // 무잠금 편집 진입은 동시 편집을 허용하고, 사용자는 한참 편집한 뒤 저장에서 거부당해(phase51·52가 저장 인가를
+    // 강화했다) 편집분을 잃는다. 성공 판정은 ok === true(truthy 금지 — 모델/서버 이상값에 조용히 진입 금지).
+    if (!lock || lock.ok !== true) {
+      globalThis.alert?.(lockFailMessage(lock && lock.reason));
+      return null;
     }
 
     const tab = tabFromArticle(full, mode, identity && identity.name, clientId);
@@ -335,7 +396,21 @@ export function useWriteController() {
       return r;
     }
 
-    await model.saveArticle(toSaveDto(tab, override), tab.clientId);
+    // 저장(PUT)이 실패하면 전이를 중단한다 — 저장 결과를 보지 않고 applyAction으로 넘어가면
+    // (1) 방금 고친 본문이 서버에 없는 채로 옛 본문이 송고·배부되고(ADR-008 — 송고 성공 훅이 즉시
+    // 스풀 파일을 쓰므로 되돌릴 수단이 없다), (2) 전이 성공 처리로 잠금 해제 + 탭 리셋이 일어나고
+    // 호출부(WriterPage.onAction)가 clearDraft까지 실행해 편집분이 초안째 영구 소실된다.
+    // 성공 판정은 ok === true(truthy 금지) — 모델/서버가 이상값을 줄 때 조용히 전이하면 안 된다.
+    // 자동 재시도는 하지 않는다: not-holder/forbidden은 재시도해도 영구 실패이고, network-error 재시도는
+    // 중복 저장(중복 이력·중복 배부 후보)을 만든다. 사용자 안내는 View 책임이라 사유 토큰만 돌려준다.
+    // reject도 값으로 흡수한다(.catch(() => null)) — 그러지 않으면 submit이 그대로 reject해 호출부의 실패 안내
+    // 결선이 통째로 건너뛰어지고("실패는 반드시 알린다" 계약 위반) 사용자는 아무 반응 없는 버튼만 본다.
+    // 같은 파일의 lockArticle 획득과 같은 규율이다(모델 계약상 reject는 없지만 규율을 갈라 두지 않는다).
+    const saved = await Promise.resolve(model.saveArticle(toSaveDto(tab, override), tab.clientId))
+      .catch(() => null);
+    if (!saved || saved.ok !== true) {
+      return { ok: false, reason: 'save-failed', saveReason: (saved && saved.reason) ?? null };
+    }
     const r = await model.applyAction(tab.articleId, action);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
@@ -378,7 +453,8 @@ export function useWriteController() {
     }
   }, [openFromSource]);
 
-  // SSE 무효화(lock) 수신 → 내 편집 탭이 강제 해제됐는지 확인 후 자동 종료(잠금 해제 요청은 보내지 않음).
+  // SSE 무효화(lock) 수신 → 내 편집 탭이 강제 해제(force-unlock)됐거나 다른 사용자에게 넘어갔는지(takeover)
+  // 확인 후 자동 종료한다. 어느 경로든 해제 요청은 보내지 않는다(내 잠금이 아니거나 이미 해제됐다).
   useEffect(() => {
     const sub = model.subscribe({ scope: 'writer' }, async (signal) => {
       if (signal && signal.kind && signal.kind !== 'lock') return;
@@ -386,13 +462,36 @@ export function useWriteController() {
       if (editTabs.length === 0) return;
       const r = await model.queryArticles({});
       const list = (r && r.items) || [];
+      const myUserId = userIdRef.current;
+      const closing = []; // 닫을 탭 id — 강제 해제 + takeover를 모아 removeTabs 1회로 닫는다.
+      const takenOver = [];
       for (const t of editTabs) {
         const a = list.find((x) => x.articleId === t.articleId);
-        if (a && a.lockYN === 'N') removeTab(t.id, { unlock: false });
+        if (!a) continue; // 목록에 없으면 판단하지 않는다.
+        // 강제 해제 — news.md가 정의한 기존 무음 자동 종료 계약(안내 없음).
+        if (a.lockYN === 'N') { closing.push(t.id); continue; }
+        // takeover — 잠금은 유지(lockYN='Y')되는데 보유자가 남이다. 이 탭의 입력은 어차피 저장될 수 없으므로
+        // (서버가 not-holder로 거부한다) 좀비로 남기지 않고 닫되, 미저장 편집분이 사라진다는 사실을 안내한다.
+        // 판정은 lockerUserId ↔ 내 userId 단독이다: lockerSessionId·lockerClientId는 phase51 step0이 응답
+        // 투영에서 제거해 프로덕션 응답에 없고, lockedAt 변화는 같은 사람의 F5·재획득까지 오탐해 미저장 탭을
+        // 닫는다. 같은 userId(내 다른 탭/재로그인)는 닫지 않는다 — 오탐의 대가가 편집분 소실이라 되돌릴 수 없다.
+        // 신원 미상(내 userId 없음·레거시 NULL 잠금 행)도 닫지 않는다(fail-safe).
+        if (myUserId && a.lockerUserId && a.lockerUserId !== myUserId) {
+          closing.push(t.id);
+          takenOver.push(t);
+        }
       }
+      // 한 번에 닫는다 — 탭마다 따로 호출하면 같은 tick 스냅샷 교체로 마지막 호출만 반영돼 좀비 탭이 남는다.
+      const removed = new Set(removeTabs(closing, { unlock: false }).map((t) => t.id));
+      // 안내는 takeover 경로에서만, 여러 탭이 걸려도 1회. 문구에는 "실제로 닫힌" 탭만 넣는다 —
+      // 닫지 않은 탭까지 닫혔다고 말하면 사용자가 미저장 편집분을 잃은 줄 알고 그 탭을 버린다.
+      // (removeTabs가 요청한 탭을 전부 닫는 지금은 항상 takenOver 전체지만, 문구의 출처를 "실제 제거 결과"로
+      //  고정해 둔다 — 제거가 부분 성공으로 바뀌어도 안내가 사실에서 어긋나지 않는다.)
+      const announce = takenOver.filter((t) => removed.has(t.id)).map((t) => t.articleId);
+      if (announce.length) globalThis.alert?.(takeoverMessage(announce));
     });
     return () => sub.unsubscribe();
-  }, [model, removeTab]);
+  }, [model, removeTabs]);
 
   // 브라우저(탭) 닫힘 → 열려 있는 편집 탭들의 잠금 해제 요청(news.md 편집 잠금 수명).
   useEffect(() => {

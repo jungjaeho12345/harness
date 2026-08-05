@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks,
+  appendEndMarker, hasEndMarker, isInputBlocked, insertTextIntoBlocks, replaceRangeInBlocks,
   shouldOverwriteNextChar, overwriteExtendLength,
 } from './editorNewline.js';
 import {
-  textBlock, embedBlock, blocksToText, isTextBlock,
+  textBlock, embedBlock, blocksToText, isTextBlock, deserialize, END_MARKER,
 } from './editorContent.js';
+import { serializeBodyFromBlocks } from './writerBody.js';
 
 describe('editorNewline — "(끝)" placement & input blocking', () => {
   it('appends "(끝)" on its own line after the body', () => {
@@ -217,5 +218,336 @@ describe('editorNewline — insertTextIntoBlocks (Enter 분할 / 여러 줄 삽�
     expect(r.blocks.map((b) => b.type)).toEqual(['text', 'embed', 'text', 'text']);
     expect(blocksToText(r.blocks)).toBe('제목\n본문\n');
     expect(r.caretLineIndex).toBe(2);
+  });
+});
+
+// phase53 step0 — 비-collapsed 선택 범위 대체(순수 계층). Enter·여러 줄 붙여넣기가 선택 텍스트를 지우지 않아
+// 본문이 파손되던 결함(A)을 블록 모델에서 닫는다. DOM selection → 블록 좌표 환산·결선은 step1(Editor.jsx).
+// 좌표 계약은 insertTextIntoBlocks와 동일: lineIndex = 텍스트 블록 순번(임베드 제외), offset = blocksToText 절대 오프셋.
+describe('editorNewline — replaceRangeInBlocks (선택 범위 삭제 + 삽입)', () => {
+  const caretAt = (blocks, lineIndex, inLine) => {
+    const textBlocks = blocks.filter(isTextBlock);
+    let off = 0;
+    for (let i = 0; i < lineIndex; i += 1) off += textBlocks[i].text.length + 1;
+    return { lineIndex, offset: off + inLine };
+  };
+  const rangeAt = (blocks, l1, c1, l2, c2) => ({
+    start: caretAt(blocks, l1, c1),
+    end: caretAt(blocks, l2, c2),
+  });
+  const isMarkerBlock = (b) => b.type === 'text' && String(b.text).trim() === END_MARKER;
+  const snapshot = (blocks) => JSON.parse(JSON.stringify(blocks));
+
+  // 1. 결함 재현 — 선택 후 여러 줄 붙여넣기.
+  it('선택 범위 텍스트를 지우고 그 자리에 삽입한다(결함 재현 — 여러 줄 붙여넣기)', () => {
+    const blocks = [textBlock('hello world')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 6, 0, 11), 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('hello A\nB'); // 'world' 소멸
+    expect(r.caretLineIndex).toBe(1);
+  });
+
+  // 2. 결함 재현 — 선택 후 Enter.
+  it('선택 범위에서 Enter는 선택을 지운 뒤 줄을 분할한다(결함 재현)', () => {
+    const blocks = [textBlock('hello world')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 6, 0, 11), '\n');
+    expect(blocksToText(r.blocks)).toBe('hello \n');
+    expect(r.caretLineIndex).toBe(1);
+  });
+
+  // 3. 여러 줄에 걸친 선택 — 중간 줄 제거 + head/tail 병합.
+  it('여러 줄에 걸친 선택은 중간 줄을 제거하고 head/tail을 한 줄로 병합한다', () => {
+    const blocks = [textBlock('ab'), textBlock('cd'), textBlock('ef')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 2, 1), 'X');
+    expect(blocksToText(r.blocks)).toBe('aXf');
+    expect(r.blocks).toHaveLength(1);
+    expect(r.caretLineIndex).toBe(0);
+  });
+
+  // 4. collapsed 동치성 — 정상 플로우 무손상(회귀 방어의 핵심).
+  const equivFixtures = [
+    {
+      name: '줄 중간',
+      blocks: () => [textBlock('AB CD')],
+      caret: (b) => caretAt(b, 0, 2),
+      enter: { text: 'AB\n CD', caretLineIndex: 1 },
+    },
+    {
+      name: '줄 끝(마지막 줄)',
+      blocks: () => [textBlock('줄1'), textBlock('줄2')],
+      caret: (b) => caretAt(b, 1, 2),
+      enter: { text: '줄1\n줄2\n', caretLineIndex: 2 },
+    },
+    {
+      name: '첫 줄 시작',
+      blocks: () => [textBlock('가'), textBlock('나')],
+      caret: (b) => caretAt(b, 0, 0),
+      enter: { text: '\n가\n나', caretLineIndex: 1 },
+    },
+    {
+      name: '임베드 포함',
+      blocks: () => [textBlock('제목'), embedBlock({ embedType: 'image', src: 'x.png' }), textBlock('본문')],
+      caret: (b) => caretAt(b, 1, 2),
+      enter: { text: '제목\n본문\n', caretLineIndex: 2 },
+    },
+    {
+      name: '캐럿 null(마커 없는 문서)',
+      blocks: () => [textBlock('줄1')],
+      caret: () => null,
+      enter: { text: '줄1\n', caretLineIndex: 1 },
+    },
+    {
+      name: '빈 본문',
+      blocks: () => [],
+      caret: () => null,
+      enter: { text: '\n', caretLineIndex: 1 },
+    },
+  ];
+
+  it('collapsed(같은 start/end)는 insertTextIntoBlocks와 텍스트·caretLineIndex가 동일하다', () => {
+    for (const f of equivFixtures) {
+      for (const text of ['\n', 'x\ny', 'Z']) {
+        const blocks = f.blocks();
+        const caret = f.caret(blocks);
+        const a = replaceRangeInBlocks(blocks, { start: caret, end: caret }, text);
+        const b = insertTextIntoBlocks(blocks, caret, text);
+        expect(blocksToText(a.blocks), `${f.name} / ${JSON.stringify(text)}`).toBe(blocksToText(b.blocks));
+        expect(a.caretLineIndex, `${f.name} / ${JSON.stringify(text)}`).toBe(b.caretLineIndex);
+      }
+    }
+  });
+
+  it('collapsed 결과는 오늘의 기대값 그대로다(동치성 자체를 잠그는 명시 단언)', () => {
+    for (const f of equivFixtures) {
+      const blocks = f.blocks();
+      const caret = f.caret(blocks);
+      const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, '\n');
+      expect(blocksToText(r.blocks), f.name).toBe(f.enter.text);
+      expect(r.caretLineIndex, f.name).toBe(f.enter.caretLineIndex);
+    }
+  });
+
+  it('range:null·{start:null,end:null}·한쪽만 null 은 캐럿 미상/collapsed 폴백과 같다', () => {
+    const blocks = [textBlock('줄1')];
+    const viaNull = replaceRangeInBlocks(blocks, null, 'x\ny');
+    const viaBothNull = replaceRangeInBlocks(blocks, { start: null, end: null }, 'x\ny');
+    const legacy = insertTextIntoBlocks(blocks, null, 'x\ny');
+    expect(blocksToText(viaNull.blocks)).toBe(blocksToText(legacy.blocks));
+    expect(blocksToText(viaBothNull.blocks)).toBe(blocksToText(legacy.blocks));
+    expect(viaNull.caretLineIndex).toBe(legacy.caretLineIndex);
+    expect(viaBothNull.caretLineIndex).toBe(legacy.caretLineIndex);
+    // 한쪽만 있으면 있는 쪽으로 collapsed 취급(규칙 1-a).
+    const caret = caretAt(blocks, 0, 1);
+    const onlyEnd = replaceRangeInBlocks(blocks, { start: null, end: caret }, 'X');
+    const onlyStart = replaceRangeInBlocks(blocks, { start: caret, end: null }, 'X');
+    expect(blocksToText(onlyEnd.blocks)).toBe('줄X1');
+    expect(blocksToText(onlyStart.blocks)).toBe('줄X1');
+  });
+
+  // 6. 역방향 선택.
+  it('역방향 선택(start > end)도 정규화되어 같은 결과를 낸다', () => {
+    const blocks = [textBlock('hello world')];
+    const fwd = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 6, 0, 11), 'A\nB');
+    const rev = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 11, 0, 6), 'A\nB');
+    expect(blocksToText(rev.blocks)).toBe('hello A\nB');
+    expect(blocksToText(rev.blocks)).toBe(blocksToText(fwd.blocks));
+    expect(rev.caretLineIndex).toBe(fwd.caretLineIndex);
+    // 여러 줄 역방향.
+    const multi = [textBlock('ab'), textBlock('cd'), textBlock('ef')];
+    const r = replaceRangeInBlocks(multi, rangeAt(multi, 2, 1, 0, 1), 'X');
+    expect(blocksToText(r.blocks)).toBe('aXf');
+    expect(r.caretLineIndex).toBe(0);
+  });
+
+  // 7. 임베드 보존.
+  it('범위 안의 임베드는 삭제되지 않고 병합된 줄 뒤에 원래 상대 순서로 남는다', () => {
+    const embed = embedBlock({ embedType: 'image', src: 'x.png' });
+    const blocks = [textBlock('ab'), embed, textBlock('cd')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 1, 1), 'X');
+    expect(blocksToText(r.blocks)).toBe('aXd');
+    expect(r.blocks.map((b) => b.type)).toEqual(['text', 'embed']);
+    expect(r.blocks.filter((b) => b.type === 'embed')).toEqual([{ embedType: 'image', src: 'x.png', type: 'embed' }]);
+  });
+
+  it('범위 안 임베드가 여러 개면 개수·상대 순서가 그대로 보존된다', () => {
+    const e1 = embedBlock({ embedType: 'image', src: '1.png' });
+    const e2 = embedBlock({ embedType: 'video', src: '2.mp4' });
+    const blocks = [textBlock('ab'), e1, textBlock('cd'), e2, textBlock('ef')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 2, 1), 'X');
+    expect(blocksToText(r.blocks)).toBe('aXf');
+    expect(r.blocks.map((b) => b.type)).toEqual(['text', 'embed', 'embed']);
+    expect(r.blocks.filter((b) => b.type === 'embed').map((b) => b.src)).toEqual(['1.png', '2.mp4']);
+  });
+
+  // 8. 마커 clamp.
+  it('삭제 end는 "(끝)" 줄 시작 이전으로 clamp된다 — 마커 블록이 변형되지 않는다', () => {
+    const blocks = [textBlock('본문'), textBlock('꼬리'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 2, 3), 'X'); // 마커 줄 끝까지 선택
+    expect(blocksToText(r.blocks)).toBe('본X\n(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    // 재정규화 라운드트립 — 마커가 여전히 정확히 하나·최종 블록.
+    const round = deserialize(serializeBodyFromBlocks(r.blocks));
+    expect(round.filter(isMarkerBlock)).toHaveLength(1);
+    expect(isMarkerBlock(round[round.length - 1])).toBe(true);
+  });
+
+  it('마커 줄 텍스트에 다른 문자가 붙지 않는다(오염 "(끝)X"·"X(끝)" 금지)', () => {
+    const blocks = [textBlock('본문'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 0, 1, 3), 'X');
+    const text = blocksToText(r.blocks);
+    expect(text).toContain('(끝)');
+    expect(text).not.toContain('(끝)X');
+    expect(text).not.toContain('X(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+  });
+
+  // 9. 마커 앞 삭제는 정상 동작.
+  it('마커 앞 줄들의 선택 삭제는 정상 동작하고 마커는 온전하다', () => {
+    const blocks = [textBlock('본문'), textBlock('꼬리'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 1, 2), 'X');
+    expect(blocksToText(r.blocks)).toBe('본X\n(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toHaveLength(1);
+  });
+
+  // 9-1. [리뷰 반영] start 방향 clamp — end만 clamp하고 start를 호출부(Editor.caretBlocked)에 맡기면
+  // 요소 앵커 제스처(전체 선택·문단 선택)에서 start가 마커 줄에 얹힌다: readCaret은 root 앵커에서 null을
+  // 돌려주므로 caretBlocked가 그 start를 보지 못한다(step1이 요소 앵커를 해석하게 되며 실제로 도달했다).
+  // 오염된 '(끝)'은 serializeBodyFromBlocks(trim 정확 비교)의 재정규화를 빠져나가면서 송고 가드
+  // hasEndMarker(substring)는 통과해 그대로 송고·배부(스풀 기록, 불가역)된다.
+  it('마커가 첫 텍스트 줄인 문서(빈 문서 Alt+Y 직후)의 전 범위 대체는 마커 앞에 삽입한다(결함 재현)', () => {
+    const blocks = [textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 0, 0, 3), 'X\nY'); // 전체 선택 + 붙여넣기
+    expect(blocksToText(r.blocks)).toBe('X\nY\n(끝)'); // clamp 없으면 'X\nY(끝)'
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1);
+    const round = deserialize(serializeBodyFromBlocks(r.blocks));
+    expect(round.filter(isMarkerBlock)).toHaveLength(1);
+    expect(isMarkerBlock(round[round.length - 1])).toBe(true);
+  });
+
+  it('마커 줄만 선택한 대체(문단 선택)는 마커 직전 줄 끝에 삽입한다(결함 재현)', () => {
+    const blocks = [textBlock('AAA'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 1, 0, 1, 3), 'X\nY');
+    expect(blocksToText(r.blocks)).toBe('AAAX\nY\n(끝)'); // clamp 없으면 'AAA\nX\nY(끝)'
+    expect(blocksToText(r.blocks)).not.toContain('Y(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1);
+  });
+
+  it('마커 줄 collapsed 캐럿의 삽입도 마커 앞으로 내려간다(규칙 1-b와 같은 지점)', () => {
+    const blocks = [textBlock('본문'), textBlock('(끝)')];
+    const caret = caretAt(blocks, 1, 3); // 마커 줄 끝
+    const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('본문A\nB\n(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    // 캐럿 미상 폴백(규칙 1-b)과 같은 결과 — 마커 보호 지점은 단일 출처다.
+    expect(blocksToText(r.blocks)).toBe(blocksToText(replaceRangeInBlocks(blocks, null, 'A\nB').blocks));
+  });
+
+  it('마커 뒤 블록에서 시작하는 대체도 마커와 그 뒤 블록을 전혀 바꾸지 않는다', () => {
+    const blocks = [textBlock('(끝)'), textBlock('꼬리')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 1, 0, 1, 2), 'X');
+    expect(blocksToText(r.blocks)).toBe('X\n(끝)\n꼬리');
+    expect(r.blocks.slice(1)).toEqual(blocks); // 마커 줄·그 뒤 블록 무변경(규칙 3 불변식)
+  });
+
+  // 10. 문서 전 범위 선택.
+  it('문서 전 범위 선택은 본문을 통째로 대체한다(임베드는 남는다)', () => {
+    const blocks = [textBlock('ab'), textBlock('cd'), textBlock('ef')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 0, 2, 2), 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('A\nB');
+    expect(r.caretLineIndex).toBe(1);
+    const embed = embedBlock({ embedType: 'image', src: 'x.png' });
+    const withEmbed = [textBlock('ab'), embed, textBlock('cd')];
+    const r2 = replaceRangeInBlocks(withEmbed, rangeAt(withEmbed, 0, 0, 1, 2), 'A\nB');
+    expect(blocksToText(r2.blocks)).toBe('A\nB');
+    expect(r2.blocks.filter((b) => b.type === 'embed')).toHaveLength(1);
+  });
+
+  // 11. 캐럿 미상 + 마커 폴백(결함 재현) — 삽입 지점이 마커 줄 앞으로 옮겨진다.
+  it('캐럿 미상 폴백은 "마커 줄 직전"에 삽입한다 — "(끝)A" 오염 금지(결함 재현)', () => {
+    const blocks = [textBlock('본문'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, null, 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('본문A\nB\n(끝)');
+    expect(blocksToText(r.blocks)).not.toContain('(끝)A');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1); // 삽입 대상 줄(0) + 삽입 줄 수-1 — 마커 줄이 아니다
+    const round = deserialize(serializeBodyFromBlocks(r.blocks));
+    expect(round.filter(isMarkerBlock)).toHaveLength(1);
+    expect(isMarkerBlock(round[round.length - 1])).toBe(true);
+  });
+
+  it('마커 앞에 텍스트 줄이 없으면 마커 바로 앞에 새 텍스트 줄을 만들어 삽입한다(빈 문서 Alt+Y 상태)', () => {
+    const blocks = [textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, null, 'A\nB');
+    expect(blocksToText(r.blocks)).toBe('A\nB\n(끝)');
+    expect(r.blocks.filter(isMarkerBlock)).toEqual([{ type: 'text', text: '(끝)' }]);
+    expect(r.caretLineIndex).toBe(1);
+  });
+
+  // 12. 마커 없는 문서의 폴백은 불변.
+  it('마커 없는 문서의 캐럿 미상 폴백은 오늘과 동일하다(마지막 텍스트 줄 끝)', () => {
+    const blocks = [textBlock('가'), textBlock('나')];
+    const r = replaceRangeInBlocks(blocks, null, 'X');
+    expect(blocksToText(r.blocks)).toBe('가\n나X');
+    expect(r.caretLineIndex).toBe(1);
+    expect(blocksToText(r.blocks)).toBe(blocksToText(insertTextIntoBlocks(blocks, null, 'X').blocks));
+  });
+
+  it('텍스트 줄이 하나도 없으면 블록 배열 끝(임베드 뒤)에 덧붙인다(오늘 동작 보존)', () => {
+    const blocks = [embedBlock({ embedType: 'image', src: 'x.png' })];
+    const r = replaceRangeInBlocks(blocks, null, 'A\nB');
+    expect(r.blocks.map((b) => b.type)).toEqual(['embed', 'text', 'text']);
+    expect(blocksToText(r.blocks)).toBe('A\nB');
+    expect(r.caretLineIndex).toBe(1);
+    expect(blocksToText(r.blocks)).toBe(blocksToText(insertTextIntoBlocks(blocks, null, 'A\nB').blocks));
+  });
+
+  // 13. 마커가 2개인 문서 — clamp 기준은 첫 번째 마커.
+  it('마커가 둘이면 첫 번째 마커가 clamp 기준이고 그 뒤 블록은 전혀 바뀌지 않는다', () => {
+    const blocks = [textBlock('본문'), textBlock('(끝)'), textBlock('꼬리'), textBlock('(끝)')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 3, 3), 'X');
+    expect(blocksToText(r.blocks)).toBe('본X\n(끝)\n꼬리\n(끝)');
+    expect(r.blocks.slice(1)).toEqual(blocks.slice(1));
+  });
+
+  // 14. 정렬 승계.
+  it('collapsed Enter는 두 결과 줄 모두 원본 줄의 align을 승계한다', () => {
+    const blocks = [textBlock('가운데정렬', 'center')];
+    const caret = caretAt(blocks, 0, 3);
+    const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, '\n');
+    expect(r.blocks).toEqual([
+      { type: 'text', text: '가운데', align: 'center' },
+      { type: 'text', text: '정렬', align: 'center' },
+    ]);
+  });
+
+  it('비-collapsed 병합은 첫 줄이 start 줄 align, 마지막 줄이 end 줄 align을 갖는다', () => {
+    const blocks = [textBlock('ab', 'center'), textBlock('cd', 'right')];
+    const r = replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 1, 1), 'X\nY\nZ');
+    expect(r.blocks).toEqual([
+      { type: 'text', text: 'aX', align: 'center' },
+      { type: 'text', text: 'Y', align: 'center' }, // 중간 새 줄 = start 줄 align
+      { type: 'text', text: 'Zd', align: 'right' },
+    ]);
+  });
+
+  it('무효 align은 키 자체가 생기지 않는다(isValidAlign 필터)', () => {
+    const blocks = [{ type: 'text', text: 'ab', align: 'middle' }];
+    const caret = caretAt(blocks, 0, 1);
+    const r = replaceRangeInBlocks(blocks, { start: caret, end: caret }, '\n');
+    expect(r.blocks).toEqual([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]);
+    for (const b of r.blocks) expect('align' in b).toBe(false);
+  });
+
+  // 15. 불변성.
+  it('입력 blocks 배열과 원소를 mutate하지 않는다', () => {
+    const embed = embedBlock({ embedType: 'image', src: 'x.png' });
+    const blocks = [textBlock('ab', 'center'), embed, textBlock('cd'), textBlock('(끝)')];
+    const before = snapshot(blocks);
+    replaceRangeInBlocks(blocks, rangeAt(blocks, 0, 1, 2, 1), 'X\nY');
+    replaceRangeInBlocks(blocks, null, 'Z');
+    replaceRangeInBlocks(blocks, rangeAt(blocks, 2, 1, 0, 0), '\n');
+    expect(snapshot(blocks)).toEqual(before);
+    expect(blocks[1]).toBe(embed); // 원소 교체/변형 없음
   });
 });

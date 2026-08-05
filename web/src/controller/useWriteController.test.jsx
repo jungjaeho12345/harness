@@ -9,10 +9,12 @@ import { serialize, deserialize, blocksToText, textBlock, embedBlock } from '../
 
 const IDENTITY = { userId: 'kim', name: '김기자', role: 'D', department: '정치' };
 
-function setup(seed) {
+// identity는 기본 IDENTITY(userId:'kim'). takeover 판정(phase53 step5)이 identity.userId에 의존하므로
+// 신원이 없는/다른 세션을 재현하는 테스트만 두 번째 인자로 덮어쓴다.
+function setup(seed, identity = IDENTITY) {
   const model = createFakeModel(seed);
   const wrapper = ({ children }) => (
-    <AppContext.Provider value={{ model, identity: IDENTITY, navigate: vi.fn(), replace: vi.fn(), setSession: vi.fn() }}>
+    <AppContext.Provider value={{ model, identity, navigate: vi.fn(), replace: vi.fn(), setSession: vi.fn() }}>
       {children}
     </AppContext.Provider>
   );
@@ -841,5 +843,510 @@ describe('useWriteController — 오버라이드 { body, title } 계약 위반 �
     expect(dto.role).toBeUndefined(); // role은 서버 세션에서 도출(ADR-004)
     expect(dto.articleId).toBe('AKR1'); // 편집 탭 → PUT(articleId 포함)
     expect(dto.body).toBeUndefined(); // body 키는 보내지 않는다(markupVersion만 — 기존 계약)
+  });
+});
+
+// phase53 step4 — 편집(송고/보류/KILL) 경로의 저장(PUT) 실패 게이트.
+// 저장 실패를 무시하고 전이를 진행하면 (1) 옛 본문으로 송고·배부되고(ADR-008 — 송고 성공 훅이 즉시 스풀 파일을
+// 쓰므로 되돌릴 수 없다), (2) 성공 처리로 잠금 해제 + 탭 리셋이 일어나 호출부(WriterPage.onAction)가 clearDraft까지
+// 실행해 편집분이 초안째 영구 소실된다. phase52 세션 재검증으로 401/403 저장 실패 확률은 오히려 늘었다.
+// 계약: 성공 판정은 ok === true, 실패면 전이를 전부 건너뛰고 { ok:false, reason:'save-failed', saveReason }.
+// 자동 재시도는 하지 않는다(not-holder/forbidden은 영구 실패, network-error는 중복 저장 위험). 사용자 안내는 View.
+describe('useWriteController — 편집 송고 경로 저장 실패 게이트 (phase53 step4)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 편집 탭을 열고 본문을 고친 상태(= 저장돼야 할 편집분이 있는 상태)를 만든다.
+  async function openDirtyEditTab() {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const apply = vi.spyOn(model, 'applyAction');
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    act(() => { result.current.updateField('body', '편집한 본문\n(끝)'); });
+    return { result, model, apply, unlock };
+  }
+
+  function expectNoTransition({ result, apply, unlock }) {
+    expect(apply).not.toHaveBeenCalled(); // 전이 없음 — 옛 본문 송고·배부(스풀 기록) 차단
+    expect(unlock).not.toHaveBeenCalled(); // 잠금 유지 — 사용자가 다시 시도할 수 있어야 한다
+    // 탭·본문·clientId 그대로 — 리셋되면 화면에서 편집분이 사라지고 호출부가 초안까지 지운다.
+    expect(result.current.tabs).toHaveLength(2); // 최초 빈 탭 + 편집 탭(그대로)
+    expect(result.current.tabs.filter((t) => t.articleId === 'AKR1')).toHaveLength(1);
+    expect(result.current.activeTab.articleId).toBe('AKR1');
+    expect(result.current.activeTab.mode).toBe('edit');
+    expect(result.current.activeTab.fields.body).toBe('편집한 본문\n(끝)');
+    expect(result.current.activeTab.clientId).toEqual(expect.stringMatching(/^c-/));
+  }
+
+  it("저장이 { ok:false, reason:'not-holder' }면 전이 없이 { ok:false, reason:'save-failed', saveReason:'not-holder' }", async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'not-holder' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r).toEqual({ ok: false, reason: 'save-failed', saveReason: 'not-holder' });
+    expectNoTransition(ctx);
+  });
+
+  it("저장이 { ok:false, reason:'network-error' }(httpModel 정규화)여도 전이 없이 saveReason으로 사유를 보존한다", async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'network-error' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('hold'); });
+
+    expect(r).toEqual({ ok: false, reason: 'save-failed', saveReason: 'network-error' });
+    expectNoTransition(ctx);
+  });
+
+  it('저장이 undefined(비정상 모델)여도 전이하지 않는다(reason:save-failed)', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue(undefined);
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('save-failed');
+    expect(r.saveReason ?? null).toBeNull(); // 사유 미상 — 단언을 과하게 좁히지 않는다
+    expectNoTransition(ctx);
+  });
+
+  it('저장이 null이어도 전이하지 않는다(reason:save-failed)', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue(null);
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('hold'); });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('save-failed');
+    expect(r.saveReason ?? null).toBeNull();
+    expectNoTransition(ctx);
+  });
+
+  it("저장이 truthy지만 ok !== true({ ok:'yes' })면 전이하지 않는다(성공 판정은 === true)", async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: 'yes' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('save-failed');
+    expectNoTransition(ctx);
+  });
+
+  // [리뷰 반영] saveArticle이 reject하면 종전에는 submit이 그대로 reject해 호출부(WriterPage.onAction)의
+  // 안내 결선(step6)이 통째로 건너뛰어졌다 — "실패는 반드시 알린다" 계약과 어긋나고, 같은 파일의 lockArticle이
+  // .catch(() => null)로 값화하는 규율과도 갈렸다. reject도 값(save-failed)으로 흡수한다.
+  it('저장이 reject되어도 예외를 던지지 않고 { ok:false, reason:"save-failed" }로 값화한다', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockRejectedValue(new Error('boom'));
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('save-failed');
+    expect(r.saveReason ?? null).toBeNull(); // 예외는 사유 토큰이 아니다(문구 누출 금지)
+    expectNoTransition(ctx);
+  });
+
+  it('저장 실패 시 자동 재시도를 하지 않는다(saveArticle 1회 호출)', async () => {
+    const ctx = await openDirtyEditTab();
+    const save = vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'unauthorized' });
+
+    await act(async () => { await ctx.result.current.submit('send'); });
+
+    expect(save).toHaveBeenCalledTimes(1); // 재시도 금지(영구 실패 사유 / 중복 저장 위험)
+  });
+
+  // ── 정상 플로우 무손상(회귀) ──────────────────────────────────────────────
+  it('저장 성공이면 기존대로 applyAction → 잠금 해제 → 빈 새 기사 탭 리셋', async () => {
+    const ctx = await openDirtyEditTab();
+    const clientId = ctx.result.current.activeTab.clientId;
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('hold'); });
+
+    expect(ctx.apply).toHaveBeenCalledWith('AKR1', 'hold');
+    expect(ctx.unlock).toHaveBeenCalledWith('AKR1', clientId);
+    expect(r.ok).toBe(true);
+    expect(ctx.result.current.activeTab.articleId).toBeNull();
+    expect(ctx.result.current.activeTab.mode).toBe('new');
+  });
+
+  it('저장 성공 + applyAction 실패면 applyAction 결과를 그대로 반환한다(save-failed로 바꾸지 않음)', async () => {
+    const ctx = await openDirtyEditTab();
+    ctx.apply.mockResolvedValue({ ok: false, reason: 'forbidden-transition' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.submit('send'); });
+
+    expect(r).toEqual({ ok: false, reason: 'forbidden-transition' }); // 기존 계약 유지
+    expect(ctx.unlock).not.toHaveBeenCalled(); // 전이 실패 — 잠금 유지
+    expect(ctx.result.current.activeTab.articleId).toBe('AKR1'); // 리셋 없음
+    expect(ctx.result.current.activeTab.fields.body).toBe('편집한 본문\n(끝)');
+  });
+
+  it('신규(create) 탭 경로는 무변경 — 저장 성공 시 action 동행 1회 저장 + 리셋, applyAction 미호출', async () => {
+    const { result, model } = setup({});
+    const save = vi.spyOn(model, 'saveArticle');
+    const apply = vi.spyOn(model, 'applyAction');
+    act(() => { result.current.updateField('title', '신규'); });
+
+    let r;
+    await act(async () => { r = await result.current.submit('send'); });
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(expect.any(Object), null, 'send');
+    expect(apply).not.toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+    expect(result.current.activeTab.articleId).toBeNull(); // 작성 페이지 초기화
+    expect(result.current.activeTab.fields.title).toBe('');
+  });
+
+  it('신규(create) 탭 저장 실패는 기존 동작 그대로 — 리셋 없이 모델 결과를 그대로 반환한다', async () => {
+    const { result, model } = setup({});
+    const apply = vi.spyOn(model, 'applyAction');
+    act(() => { result.current.updateField('title', '신규'); });
+    vi.spyOn(model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'unauthorized' });
+
+    let r;
+    await act(async () => { r = await result.current.submit('send'); });
+
+    expect(r).toEqual({ ok: false, reason: 'unauthorized' }); // save-failed로 감싸지 않는다(신규 경로 무변경)
+    expect(apply).not.toHaveBeenCalled();
+    expect(result.current.activeTab.fields.title).toBe('신규'); // 리셋 없음 — 작성분 보존
+  });
+
+  it('save()는 저장 실패 결과를 그대로 반환한다(가드는 submit 전용 — 무변경)', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'not-holder' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.save(); });
+
+    expect(r).toEqual({ ok: false, reason: 'not-holder' });
+    expect(ctx.result.current.activeTab.articleId).toBe('AKR1');
+  });
+
+  it('saveMapping()은 기존대로 r.ok를 확인해 실패 시 해제/리셋 없이 결과를 그대로 반환한다(무변경)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'mapping'); });
+    vi.spyOn(model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'not-holder' });
+
+    let r;
+    await act(async () => { r = await result.current.saveMapping(); });
+
+    expect(r).toEqual({ ok: false, reason: 'not-holder' }); // save-failed 래핑 없음
+    expect(unlock).not.toHaveBeenCalled();
+    expect(result.current.activeTab.articleId).toBe('AKR1');
+    expect(result.current.activeTab.mode).toBe('mapping');
+  });
+
+  it('saveAsNew()는 저장 실패 결과를 그대로 반환하고 현재 편집 탭을 건드리지 않는다(무변경)', async () => {
+    const ctx = await openDirtyEditTab();
+    vi.spyOn(ctx.model, 'saveArticle').mockResolvedValue({ ok: false, reason: 'unauthorized' });
+
+    let r;
+    await act(async () => { r = await ctx.result.current.saveAsNew(); });
+
+    expect(r).toEqual({ ok: false, reason: 'unauthorized' });
+    expect(ctx.result.current.activeTab.articleId).toBe('AKR1');
+    expect(ctx.result.current.activeTab.fields.body).toBe('편집한 본문\n(끝)');
+  });
+});
+
+// phase53 step5 (E) — 잠금 획득 실패 fail-closed.
+// 종전 openArticle은 사유가 'locked'일 때만 막고 그 외(네트워크 단절·401·403·404·서버 장애·예외)에는
+// 무잠금 편집 탭을 열었다. 사용자는 한참 편집한 뒤 저장에서 거부당한다(phase51·52가 저장 인가를 강화해
+// 거부가 확실해진 만큼 편집분 유실 위험이 커졌다). phase49 step7 이후 httpModel이 실패를 값
+// ({ ok:false, reason:'network-error'|'invalid-response' })으로 정규화하므로 사유별 판정이 가능하다.
+// 계약: lock.ok === true가 아니면(사유 불문·예외·null 포함) 탭을 열지 않고 사유별 안내 후 null.
+describe('useWriteController — 잠금 획득 실패 fail-closed (phase53 step5)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // lockArticle 결과(또는 예외)를 주입하고 편집 진입을 시도한다.
+  async function openWithLock(lockImpl) {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const lock = vi.spyOn(model, 'lockArticle').mockImplementation(lockImpl);
+
+    let returned;
+    await act(async () => { returned = await result.current.openArticle({ ...FULL }, 'edit'); });
+    return { result, model, alert, lock, returned };
+  }
+
+  // 무잠금 편집 진입이 없어야 한다 — 탭 미개방 + null 반환 + 안내 1회(문구는 사용자에게 보여줄 수 있는 문자열).
+  function expectNoEntry({ result, alert, returned }) {
+    expect(returned).toBeNull();
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false);
+    expect(result.current.activeTab.articleId).toBeNull();
+    expect(alert).toHaveBeenCalledTimes(1);
+    const msg = alert.mock.calls[0][0];
+    expect(typeof msg).toBe('string');
+    expect(msg.length).toBeGreaterThan(0);
+    expect(msg).not.toMatch(/null|undefined/); // 사유 미상이 사용자 문구로 새지 않는다
+  }
+
+  it("네트워크 단절({ ok:false, reason:'network-error' })이면 편집 탭을 열지 않고 안내한다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'network-error' }));
+    expectNoEntry(ctx);
+  });
+
+  it("비JSON 응답({ ok:false, reason:'invalid-response' })이면 편집 탭을 열지 않고 안내한다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'invalid-response' }));
+    expectNoEntry(ctx);
+  });
+
+  it("세션 만료({ ok:false, reason:'unauthenticated' })면 편집 탭을 열지 않고 안내한다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'unauthenticated' }));
+    expectNoEntry(ctx);
+  });
+
+  it("권한 없음({ ok:false, reason:'forbidden' })이면 편집 탭을 열지 않고 안내한다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'forbidden' }));
+    expectNoEntry(ctx);
+  });
+
+  it("없는 기사({ ok:false, reason:'not-found' })면 편집 탭을 열지 않고 안내한다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'not-found' }));
+    expectNoEntry(ctx);
+  });
+
+  it('lockArticle이 예외로 거부(reject)돼도 편집 탭을 열지 않고 안내한다', async () => {
+    const ctx = await openWithLock(async () => { throw new Error('boom'); });
+    expectNoEntry(ctx);
+  });
+
+  it('lockArticle이 undefined/null 같은 이상값을 줘도 편집 탭을 열지 않는다(성공 판정은 ok === true)', async () => {
+    const undef = await openWithLock(async () => undefined);
+    expectNoEntry(undef);
+
+    const nul = await openWithLock(async () => null);
+    expectNoEntry(nul);
+
+    // truthy지만 ok !== true인 값도 성공이 아니다.
+    const yes = await openWithLock(async () => ({ ok: 'yes' }));
+    expectNoEntry(yes);
+  });
+
+  it("모르는 사유 토큰도 fail-closed이며 안내에 '(null)'/'(undefined)' 문자열이 새지 않는다", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'teapot' }));
+    expectNoEntry(ctx);
+  });
+
+  // ── 정상 플로우 무손상(회귀) ──────────────────────────────────────────────
+  it("사유가 'locked'면 기존 문구 '편집중입니다.' 그대로다(문자열 계약)", async () => {
+    const ctx = await openWithLock(async () => ({ ok: false, reason: 'locked' }));
+    expect(ctx.alert).toHaveBeenCalledWith('편집중입니다.');
+    expectNoEntry(ctx);
+  });
+
+  it('잠금 성공({ ok:true })이면 기존대로 편집 탭이 열리고 clientId/필드 매핑이 유지된다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const lock = vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: true });
+
+    let returned;
+    await act(async () => { returned = await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    expect(returned).toEqual(expect.any(String));
+    expect(alert).not.toHaveBeenCalled();
+    const tab = result.current.activeTab;
+    expect(tab.articleId).toBe('AKR1');
+    expect(tab.mode).toBe('edit');
+    expect(tab.fields.title).toBe('제목');
+    expect(tab.fields.body).toBe('본문');
+    expect(tab.readOnly).toMatchObject({ articleId: 'AKR1', modifier: 'lee' });
+    expect(tab.clientId).toEqual(expect.stringMatching(/^c-/));
+    expect(lock).toHaveBeenCalledWith('AKR1', 'revise', tab.clientId);
+  });
+
+  it('이미 열린 기사 재진입(dedup)은 잠금을 다시 획득하지 않는다(실패 안내도 없다)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const lock = vi.spyOn(model, 'lockArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    const firstId = result.current.activeTab.id;
+
+    // 두 번째 진입 전에 잠금이 실패하도록 바꿔도 dedup 경로는 잠금을 호출하지 않는다.
+    lock.mockResolvedValue({ ok: false, reason: 'network-error' });
+    let returned;
+    await act(async () => { returned = await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    expect(returned).toBe(firstId);
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(alert).not.toHaveBeenCalled();
+    expect(result.current.tabs.filter((t) => t.articleId === 'AKR1')).toHaveLength(1);
+  });
+
+  it('openFromSource(후속/계속)는 잠금을 획득하지 않으므로 fail-closed의 영향을 받지 않는다', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const lock = vi.spyOn(model, 'lockArticle').mockResolvedValue({ ok: false, reason: 'network-error' });
+
+    await act(async () => { await result.current.openFromSource({ ...FULL }, 'followUp'); });
+
+    expect(lock).not.toHaveBeenCalled(); // 원본 미잠금 — 신규 생성 경로
+    expect(alert).not.toHaveBeenCalled();
+    const tab = result.current.tabs.find((t) => t.mode === 'followUp');
+    expect(tab).toBeTruthy();
+    expect(tab.articleId).toBeNull();
+    expect(tab.fields.title).toBe('제목');
+  });
+});
+
+// phase53 step5 (D) — SSE takeover 좀비 편집 탭.
+// 종전 잠금 신호 처리기는 lockYN === 'N'(강제 해제)일 때만 편집 탭을 닫았다. 타인이 강제 해제 후 곧바로
+// 재획득(takeover)하면 lockYN은 'Y'로 유지되어 내 편집 탭이 살아남고, 저장은 거부되는데 사용자는 그 사실을
+// 모른 채 계속 쓴다. 판정 신호는 lockerUserId ↔ identity.userId 단독이다 — phase51 step0이 lockerSessionId·
+// lockerClientId를 응답 투영에서 제거해 프로덕션 응답에는 그 키가 없고, lockedAt 기반 판정은 같은 사람의
+// F5·재획득까지 오탐해 미저장 탭을 닫는다. 닫기는 되돌릴 수 없으므로 신원 미상은 전부 미종료(fail-safe).
+describe('useWriteController — SSE takeover 좀비 편집 탭 (phase53 step5)', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  // 내 편집 탭(AKR1)을 연 뒤 서버 행을 mutate로 바꾸고, 다른 기사(AKR2)에 잠금을 걸어
+  // fakeModel notify('lock') = SSE 잠금 신호를 흘린다(재조회 후 판정 경로 재현).
+  async function openTabThenLockSignal(mutate, identity) {
+    const target = { ...FULL };
+    const other = { ...FULL, articleId: 'AKR2', lockYN: 'N' };
+    const { result, model } = setup({ articles: [target, other] }, identity);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const unlock = vi.spyOn(model, 'unlockArticle');
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true);
+
+    const query = vi.spyOn(model, 'queryArticles');
+    mutate(target);
+    await act(async () => { await model.lockArticle('AKR2', 'revise', 'c-other'); });
+    await waitFor(() => expect(query).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); }); // 재조회 이후 판정 루프까지 흘려보낸다
+    return { result, model, alert, unlock, query, target };
+  }
+
+  it('타인이 잠금을 가져가면(lockYN=Y, lockerUserId≠내 userId) 내 편집 탭이 닫힌다', async () => {
+    const { result, unlock } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'lee'; a.lockerClientId = 'c-lee'; a.lockedAt = '2026-08-04T00:00:00Z';
+    });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    // 남의 잠금이다 — 해제 요청을 보내지 않는다(서버는 not-holder로 거부한다).
+    expect(unlock).not.toHaveBeenCalled();
+  });
+
+  it('takeover 종료는 무음이 아니다 — 안내 1회에 "저장되지 않은 변경은 반영되지 않았다"는 사실이 들어간다', async () => {
+    const { result, alert } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'lee'; a.lockerClientId = 'c-lee';
+    });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toContain('저장되지 않은 변경');
+  });
+
+  it('서버 투영 정합 — 재조회 행에 lockerClientId 키가 아예 없어도 takeover 판정이 성립한다', async () => {
+    const { result, model } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'lee'; delete a.lockerClientId;
+    });
+
+    // 프로덕션 응답(contentsProjection)에는 lockerClientId·lockerSessionId가 없다 — fixture도 그렇다.
+    const row = model.queryArticles({}).items.find((x) => x.articleId === 'AKR1');
+    expect(Object.prototype.hasOwnProperty.call(row, 'lockerClientId')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(row, 'lockerSessionId')).toBe(false);
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+  });
+
+  // [리뷰 반영] 여러 편집 탭이 한 신호에 함께 넘어가는 경우. 종전 removeTab은 tabsRef 스냅샷을 통째로
+  // setTabs(next)하므로 같은 tick에 두 번 호출하면 첫 호출의 제거가 덮어써져 좀비 탭이 살아남는데,
+  // 안내 문구는 takenOver 전체를 나열해 "닫혔습니다"라고 단언했다(사용자에게 거짓 통지).
+  it('여러 편집 탭이 한 신호에 함께 넘어가면 전부 닫히고, 안내는 실제로 닫힌 탭만 말한다', async () => {
+    const a1 = { ...FULL };
+    const a2 = { ...FULL, articleId: 'AKR2', lockYN: 'N' };
+    const trigger = { ...FULL, articleId: 'AKR3', lockYN: 'N' };
+    const { result, model } = setup({ articles: [a1, a2, trigger] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    await act(async () => { await result.current.openArticle({ ...a1 }, 'edit'); });
+    await act(async () => { await result.current.openArticle({ ...a2 }, 'edit'); });
+    expect(result.current.tabs.filter((t) => t.articleId)).toHaveLength(2);
+
+    // 두 기사 모두 타인(lee)이 보유 — 잠금 신호 1개로 두 탭이 같은 tick에 판정된다.
+    a1.lockYN = 'Y'; a1.lockerUserId = 'lee';
+    a2.lockYN = 'Y'; a2.lockerUserId = 'lee';
+    const query = vi.spyOn(model, 'queryArticles');
+    await act(async () => { await model.lockArticle('AKR3', 'revise', 'c-other'); });
+    await waitFor(() => expect(query).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    // 좀비 탭 0 — 하나만 닫히면(스냅샷 덮어쓰기) 안내가 거짓이 된다.
+    await waitFor(() => expect(result.current.tabs.filter((t) => t.articleId)).toHaveLength(0));
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toContain('AKR1');
+    expect(alert.mock.calls[0][0]).toContain('AKR2');
+  });
+
+  it('열려 있지 않은(닫히지 않은) 기사아이디는 안내 문구에 들어가지 않는다', async () => {
+    const { result, alert } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'lee';
+    });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toContain('AKR1');
+    expect(alert.mock.calls[0][0]).not.toContain('AKR2'); // 편집 탭이 아니었던 기사
+  });
+
+  // ── 정상 플로우 무손상(회귀) ──────────────────────────────────────────────
+  it('보유자가 나 자신이면(같은 userId 재획득·F5) 탭을 닫지 않는다 — lockedAt이 바뀌어도 유지', async () => {
+    const { result, alert } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerUserId = 'kim'; a.lockerClientId = 'c-other-tab'; a.lockedAt = '2026-08-04T09:00:00Z';
+    });
+
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('lockerUserId가 없으면(레거시 NULL) 닫지 않는다(fail-safe — 닫기는 되돌릴 수 없다)', async () => {
+    const { result, alert } = await openTabThenLockSignal((a) => {
+      a.lockYN = 'Y'; a.lockerClientId = 'c-lee'; delete a.lockerUserId;
+    });
+
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('내 신원(identity.userId)이 없으면 닫지 않는다(fail-safe)', async () => {
+    const { result, alert } = await openTabThenLockSignal(
+      (a) => { a.lockYN = 'Y'; a.lockerUserId = 'lee'; },
+      { name: '김기자', role: 'D', department: '정치' }, // userId 없는 신원
+    );
+
+    expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(true);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("강제 해제(lockYN='N') 경로는 기존대로 무음 자동 종료다(안내 추가 금지 — news.md 계약)", async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    await act(async () => { await result.current.openArticle({ ...FULL }, 'edit'); });
+
+    await act(async () => { model.forceUnlockArticle('AKR1'); });
+
+    await waitFor(() => expect(result.current.tabs.some((t) => t.articleId === 'AKR1')).toBe(false));
+    expect(alert).not.toHaveBeenCalled(); // 무음 종료 유지
+  });
+
+  it('편집 탭이 없으면 잠금 신호가 와도 재조회조차 하지 않는다(early return 유지)', async () => {
+    const { result, model } = setup({ articles: [{ ...FULL }] });
+    const query = vi.spyOn(model, 'queryArticles');
+    expect(result.current.tabs.every((t) => !t.articleId)).toBe(true); // 빈 새 기사 탭뿐
+
+    await act(async () => { await model.lockArticle('AKR1', 'revise', 'c-other'); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(query).not.toHaveBeenCalled();
   });
 });

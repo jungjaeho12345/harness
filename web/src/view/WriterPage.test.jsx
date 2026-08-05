@@ -725,6 +725,207 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
   });
 });
 
+// 53-3(B 결함 결선): 편집>드래그앤드롭(edit.dragDrop, 기본 true — news.md 192행)을 Editor의 onDropImageFile prop에
+// 결선한다. on이면 드롭 이미지가 Ctrl+V와 완전히 같은 경로(pasteImageAtCaret: model.uploadFile → /uploads 경로 임베드)로
+// 들어가고, off면 prop 자체를 넘기지 않아 Editor가 차단만 한다(업로드·본문 변경 0). 게이트는 다른 편집 설정(columnLimit/
+// lineSpacing)과 동형 — 마운트 lazy-init + 마운트 effect 복원 + onPrefsClose(applied) 갱신(취소 시 불변).
+describe('WriterPage — 편집>드래그앤드롭(edit.dragDrop) 게이트 결선', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+  afterEach(() => { resetEditorColors(); });
+
+  const imageFile = () => new File(['x'], 'pic.png', { type: 'image/png' });
+
+  // 드롭 이벤트 — Editor.test.jsx(step 2)와 동형 dataTransfer(files 우선, items 파생).
+  function dropEvent(el, { files = [], items = null, text = 'dropped text' } = {}) {
+    const ev = createEvent.drop(el, {});
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: {
+        files,
+        items: items ?? files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })),
+        getData: () => text,
+      },
+    });
+    return ev;
+  }
+
+  const textDropEvent = (el, text = 'dropped text') => dropEvent(el, {
+    files: [], items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }], text,
+  });
+
+  function pasteImageEvent(el) {
+    const ev = createEvent.paste(el, {});
+    const file = imageFile();
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    });
+    return ev;
+  }
+
+  function caretAtLine(container, lineIndex) {
+    const lineEls = container.querySelectorAll('.yh-editor__line');
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(lineEls[lineIndex]);
+    range.collapse(true);
+    sel.addRange(range);
+  }
+
+  const blockTypes = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line, .yh-editor .yh-embed'),
+  ).map((el) => (el.classList.contains('yh-embed') ? 'embed' : 'text'));
+
+  const lineTexts = (container) => Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
+
+  // 편집 탭의 dragDrop만 저장(다른 카테고리는 기본값 유지) — columnLimit 저장 헬퍼와 동형.
+  const saveDragDrop = (dragDrop) => saveEditorPrefs({
+    ...loadEditorPrefs(),
+    edit: { ...loadEditorPrefs().edit, dragDrop },
+  });
+
+  async function openPrefsViaMenu() {
+    await openTopMenu('도움말');
+    await userEvent.click(screen.getByText('환경설정'));
+  }
+
+  async function openWith(blocks, { mode = 'edit', status = 'RDS', role = 'R' } = {}) {
+    const body = serialize(blocks);
+    const utils = setup({
+      identity: { role },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status }, mode },
+      seed: { articles: [{ articleId: 'AKR1', status, lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  it('기본 설정(dragDrop 미설정=true)에서 이미지 드롭 → 업로드 1회 + 반환 path로 임베드 삽입(붙여넣기와 같은 경로)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/drop.png' });
+    caretAtLine(container, 0); // 제목 줄
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0][0]).toBeInstanceOf(File);
+    // 캐럿 줄(제목) 뒤에 삽입 — 붙여넣기 케이스와 동일한 구조.
+    expect(blockTypes(container)).toEqual(['text', 'embed', 'text', 'text']);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/drop.png');
+    expect(container.querySelector('.yh-editor img[src^="data:"]')).toBeFalsy(); // base64 없음
+    expect(lineTexts(container)).toContain('제목');
+    expect(lineTexts(container)).toContain('본문');
+  });
+
+  it('드롭으로 삽입된 이미지는 저장 본문(markupVersion)에 실린다(임시 DOM이 아니라 실제 본문 반영)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/saved.png' });
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 1);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+
+    await userEvent.click(actionBtn('보류'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(deserialize(dto.markupVersion).some(
+      (b) => b.type === 'embed' && b.embedType === 'image' && b.src === '/uploads/saved.png',
+    )).toBe(true);
+  });
+
+  it('dragDrop=false로 저장된 상태로 마운트하면 이미지 드롭이 차단만 된다(업로드 0회·본문 불변)', async () => {
+    saveDragDrop(false);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile');
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    const ev = dropEvent(box, { files: [imageFile()] });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    fireEvent(box, ev);
+
+    expect(prevent).toHaveBeenCalled(); // 네이티브 드롭 차단은 설정과 무관하게 유지(step 2 가드)
+    expect(upload).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    expect(blockTypes(container)).toEqual(['text', 'text']);
+    expect(lineTexts(container)).toEqual(['제목', '본문']);
+  });
+
+  it("환경설정에서 드래그앤드롭을 끄고 '적용'하면 즉시 반영된다(드롭 차단 — columnLimit 동형 게이트)", async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/x.png' });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-dragDrop')); // 기본 on → off
+    fireEvent.click(screen.getByTestId('prefs-apply'));
+    await waitFor(() => expect(loadEditorPrefs().edit.dragDrop).toBe(false));
+
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    expect(upload).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-embed-type="image"]')).toBeFalsy();
+    expect(lineTexts(container)).toEqual(['제목', '본문']);
+  });
+
+  it("'취소'로 닫으면 드래그앤드롭 설정이 바뀌지 않는다(드롭 계속 동작 — 적용 시에만 갱신)", async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/keep.png' });
+
+    await openPrefsViaMenu();
+    await userEvent.click(screen.getByTestId('prefs-tab-edit'));
+    fireEvent.click(screen.getByTestId('pref-edit-dragDrop')); // 껐다가
+    fireEvent.click(screen.getByTestId('prefs-cancel')); // 취소
+    expect(loadEditorPrefs().edit.dragDrop).toBe(true); // 저장 불변
+
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, dropEvent(box, { files: [imageFile()] }));
+
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/keep.png'));
+  });
+
+  it('텍스트 드롭은 dragDrop 설정과 무관하게 본문을 바꾸지 않는다(on/off 양쪽 — 마커 오염 경로 차단)', async () => {
+    // (1) 기본(on)
+    const on = await openWith([textBlock('본문'), textBlock('(끝)')]);
+    const uploadOn = vi.spyOn(on.model, 'uploadFile');
+    const boxOn = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(on.container, 1); // 마커 줄 안쪽
+    fireEvent(boxOn, textDropEvent(boxOn, '단어'));
+    expect(uploadOn).not.toHaveBeenCalled();
+    expect(lineTexts(on.container)).toEqual(['본문', '(끝)']);
+    on.unmount();
+
+    // (2) off
+    saveDragDrop(false);
+    const off = await openWith([textBlock('본문'), textBlock('(끝)')]);
+    const uploadOff = vi.spyOn(off.model, 'uploadFile');
+    const boxOff = screen.getByRole('textbox', { name: '본문' });
+    caretAtLine(off.container, 1);
+    fireEvent(boxOff, textDropEvent(boxOff, '단어'));
+    expect(uploadOff).not.toHaveBeenCalled();
+    expect(lineTexts(off.container)).toEqual(['본문', '(끝)']);
+  });
+
+  it('dragDrop=false여도 Ctrl+V 이미지 붙여넣기는 그대로 동작한다(설정 대상은 드롭뿐 — news.md 192행)', async () => {
+    saveDragDrop(false);
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    const upload = vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/paste.png' });
+    caretAtLine(container, 0);
+    const box = screen.getByRole('textbox', { name: '본문' });
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-embed-type="image"] img').getAttribute('src')).toBe('/uploads/paste.png');
+  });
+});
+
 // 검색패널(이미지/영상/글기사) 임베드 — 마지막 커서 텍스트 줄 "뒤"에 삽입 + 빈 줄 + 커서를 빈 줄로 이동(edit 모드, news.md 156행).
 describe('WriterPage — 검색패널 임베드: 커서 줄 뒤 삽입 + 개행 + 커서 이동', () => {
   beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
@@ -7798,5 +7999,242 @@ describe('WriterPage — 엠바고 datetime-local 피커', () => {
     fireEvent.change(container.querySelector('#meta-embargo'), { target: { value: '2026-07-31T14:30' } });
     const dto = await holdAndGetDto(model);
     expect(dto.embargoAt).toBe(new Date(2026, 6, 31, 14, 30).toISOString());
+  });
+});
+
+// 53-6(C 결함 마무리): 송고/보류/KILL 실패 안내. step4가 저장(PUT) 실패 시 전이(applyAction·unlock·탭 리셋)를
+// 막은 뒤로, 실패는 화면상 "아무 일도 일어나지 않음"으로만 나타난다 — 사용자는 송고된 줄 알거나 같은 버튼을
+// 반복해 누른다. WriterPage.onAction이 컨트롤러 반환 계약({ ok:false, reason:'save-failed', saveReason } /
+// 전이 실패 결과 그대로)을 소비해 (1) 요청이 중단됐다는 사실과 (2) 편집분이 보존됐다는 사실을 alert로 알린다.
+// 성공 시에는 어떤 메시지도 띄우지 않는다(news.md 149행 — 성공 상태 메시지 금지). 실패 시 초안·본문·탭 불변.
+describe('WriterPage — 송고/보류 실패 안내(submit 실패 피드백)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); });
+
+  const EDIT_BODY = serialize([textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]);
+
+  // 편집 탭 진입(초안이 심어진 상태) — 실패 시 초안 보존을 단언하려면 초안이 미리 있어야 한다.
+  async function openEditWithDraft() {
+    saveDraft('AKR1', { title: '헤드', body: EDIT_BODY }, 1000);
+    const utils = setup({
+      identity: { role: 'R', name: '김기자' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '헤드', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', title: '헤드', status: 'RDS', lockYN: 'Y', markupVersion: EDIT_BODY }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    return utils;
+  }
+
+  const editorLines = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+  const tabLabels = (container) => Array.from(
+    container.querySelectorAll('[data-testid="writer-tabs"] .yh-tab__label'),
+  ).map((el) => el.textContent);
+  // 읽기전용 메타(기사아이디 등) 값 — 탭 정체성이 유지됐는지 확인한다.
+  function readonlyValue(container, label) {
+    const field = Array.from(container.querySelectorAll('[data-testid="readonly-meta"] .yh-field'))
+      .find((el) => el.querySelector('label')?.textContent === label);
+    return field ? field.querySelector('input').value : null;
+  }
+  const lastAlert = (alert) => alert.mock.calls[alert.mock.calls.length - 1][0];
+
+  it('저장(PUT) 실패로 송고가 중단되면 저장 실패 + 송고되지 않음 + 편집분 보존을 알린다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model, container } = await openEditWithDraft();
+    const save = vi.spyOn(model, 'saveArticle').mockReturnValue({ ok: false, reason: 'not-holder' });
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const msg = lastAlert(alert);
+    expect(msg).toContain('저장에 실패');          // 무엇이 실패했는지
+    expect(msg).toContain('송고하지 않았습니다');   // 전이가 일어나지 않았다는 사실
+    expect(msg).toContain('편집 내용은 그대로');    // 편집분 보존(이 phase의 목적)
+    expect(msg).not.toContain('undefined');
+    expect(msg).not.toContain('null');
+    // 전이 미발생 + 탭/본문/정체성 유지 + 초안 보존(복구 수단).
+    expect(apply).not.toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문', '(끝)']);
+    expect(readonlyValue(container, '기사아이디')).toBe('AKR1');
+    expect(tabLabels(container)).toContain('헤드');
+    expect(loadDraft('AKR1')).not.toBeNull();
+  });
+
+  it('저장 실패 안내의 동사는 누른 액션을 따른다(보류 → "보류하지 않았습니다")', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openEditWithDraft();
+    vi.spyOn(model, 'saveArticle').mockReturnValue({ ok: false, reason: 'network-error' });
+
+    await userEvent.click(actionBtn('보류'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const msg = lastAlert(alert);
+    expect(msg).toContain('보류하지 않았습니다');
+    expect(msg).not.toContain('송고');
+    expect(msg).toContain('network-error'); // 사유 토큰은 참고 정보로만 노출(서버 내부 정보 아님)
+  });
+
+  it('저장 실패 사유가 미상이면 사유 없이 안내한다(null/undefined 문구 누출 금지)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model, container } = await openEditWithDraft();
+    vi.spyOn(model, 'saveArticle').mockReturnValue(undefined); // 모델 이상값 — saveReason=null
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const msg = lastAlert(alert);
+    expect(msg).toContain('저장에 실패');
+    expect(msg).not.toContain('undefined');
+    expect(msg).not.toContain('null');
+    expect(msg).not.toContain('사유'); // 미상이면 괄호 자체를 붙이지 않는다
+    expect(editorLines(container)).toEqual(['헤드', '본문', '(끝)']);
+    expect(loadDraft('AKR1')).not.toBeNull();
+  });
+
+  it('저장은 됐지만 전이(applyAction)가 거부되면 저장 실패와 구분되는 일반 안내를 띄운다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model, container } = await openEditWithDraft();
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(model, 'applyAction').mockReturnValue({ ok: false, reason: 'forbidden-transition' });
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const msg = lastAlert(alert);
+    expect(msg).toContain('송고에 실패했습니다');
+    expect(msg).not.toContain('저장');           // 저장 실패 문구와 구분된다(저장은 성공했다)
+    expect(msg).toContain('forbidden-transition');
+    expect(msg).not.toContain('undefined');
+    // 저장은 실제로 나갔고(본문 영속), 탭·초안은 그대로 남는다.
+    expect(save).toHaveBeenCalled();
+    expect(editorLines(container)).toEqual(['헤드', '본문', '(끝)']);
+    expect(tabLabels(container)).toContain('헤드');
+    expect(loadDraft('AKR1')).not.toBeNull();
+  });
+
+  it('전이 결과 자체가 없어도(모델 이상값) 죽지 않고 일반 안내 1회를 띄운다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model, container } = await openEditWithDraft();
+    vi.spyOn(model, 'applyAction').mockReturnValue(undefined); // submit이 undefined를 그대로 반환
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    const msg = lastAlert(alert);
+    expect(msg).toContain('송고에 실패했습니다');
+    expect(msg).not.toContain('undefined');
+    expect(msg).not.toContain('null');
+    expect(tabLabels(container)).toContain('헤드');
+    expect(loadDraft('AKR1')).not.toBeNull();
+  });
+
+  it('송고가 성공하면 아무 메시지도 띄우지 않고 빈 새 기사 탭으로 리셋되며 초안이 삭제된다', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model, container } = await openEditWithDraft();
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'send'));
+    await waitFor(() => expect(loadDraft('AKR1')).toBeNull()); // 성공 → 초안 무효화(기존 계약)
+    await waitFor(() => expect(tabLabels(container)).not.toContain('헤드')); // 빈 새 기사 탭으로 리셋
+    expect(alert).not.toHaveBeenCalled(); // news.md 149행 — 성공 시 상태 메시지 금지
+  });
+
+  it('보류가 성공해도 아무 메시지도 띄우지 않는다(성공 무메시지 — news.md 149행)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openEditWithDraft();
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('보류'));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'hold'));
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('제목 없음 가드의 기존 ALERT 문구가 그대로다(저장 요청 없음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = setup({ identity: { role: 'R' } }); // 신규 빈 탭 — 제목 없음
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('송고'));
+
+    expect(alert).toHaveBeenCalledWith('제목이 없어 송고할 수 없습니다');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('"(끝)" 없음 가드의 기존 ALERT 문구가 그대로다(저장 요청 없음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '헤드', status: 'RDS' }, mode: 'edit' },
+      seed: {
+        articles: [{
+          articleId: 'AKR1', title: '헤드', status: 'RDS', lockYN: 'Y',
+          markupVersion: serialize([textBlock('헤드'), textBlock('본문')]),
+        }],
+      },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('송고'));
+
+    expect(alert).toHaveBeenCalledWith('본문에 "(끝)" 표시가 없어 송고할 수 없습니다');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('확인창에서 취소하면 요청도 안내도 없다(기존 동작)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openEditWithDraft();
+    const save = vi.spyOn(model, 'saveArticle');
+
+    await userEvent.click(actionBtn('송고'));
+
+    expect(save).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+    expect(loadDraft('AKR1')).not.toBeNull();
+  });
+
+  it('매핑 저장(onSaveMapping)은 실패해도 기존대로 안내하지 않는다(onAction 안내가 새지 않음)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    saveDraft('AKR9', { title: '제목', body: EDIT_BODY }, 1000);
+    const { model } = setup({
+      identity: { role: 'D', name: '김기자' },
+      pendingEdit: { article: { articleId: 'AKR9', title: '제목', status: 'DPS' }, mode: 'mapping' },
+      seed: { articles: [{ articleId: 'AKR9', status: 'DPS', lockYN: 'Y', markupVersion: EDIT_BODY }] },
+    });
+    await waitFor(() => expect(actionBtn('저장')).toBeInTheDocument());
+    const save = vi.spyOn(model, 'saveArticle').mockReturnValue({ ok: false, reason: 'not-holder' });
+
+    await userEvent.click(actionBtn('저장'));
+
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(alert).not.toHaveBeenCalled();
+    expect(loadDraft('AKR9')).not.toBeNull(); // 실패 → 초안 유지(기존 계약)
+  });
+
+  it('파일>저장 실패 안내 문구는 그대로다(saveDocument 무변경)', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { model } = await openEditWithDraft();
+    vi.spyOn(model, 'saveArticle').mockReturnValue({ ok: false, reason: 'not-holder' });
+
+    await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText('저장').closest('button'));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('저장에 실패했습니다.'));
   });
 });
