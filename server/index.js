@@ -74,11 +74,17 @@ const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173
 
 // env.ALLOWED_ORIGINS(콤마 구분)가 있으면 트림·빈 값 제외 후 기본 목록 뒤에 append 한다.
 // 별도 출처 SPA 배포/호스트 재작성 프록시는 이 변수로 명시 등록해야 한다(미설정 시 프로덕션 쓰기 403 — ADR-009).
+// 프로덕션에서는 기본 loopback(:5173)을 제외한다 — 프로덕션 쿠키가 SameSite=None; Secure라 cross-site
+// 요청에도 붙고, 이 목록은 CORS(응답 판독)와 CSRF 가드(쓰기 실행)가 공유한다. 그대로 두면 피해자 PC의
+// http://localhost:5173으로 열린 임의의 로컬 페이지가 운영 API를 피해자 세션으로 호출·판독할 수 있다
+// (Origin 위조가 필요 없다 — 브라우저가 진짜로 그 값을 보낸다). 프로덕션 정당 사용처는 없다.
+// 판정은 인자로 받은 env만 본다(주입 seam 유지 — 함수 안에서 process.env를 따로 읽지 않는다).
 export function allowedOrigins(env = process.env) {
   const extra = String(env?.ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  if (env?.NODE_ENV === 'production') return extra;
   return [...DEFAULT_ALLOWED_ORIGINS, ...extra];
 }
 
