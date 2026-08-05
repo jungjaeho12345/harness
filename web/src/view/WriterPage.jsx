@@ -50,7 +50,9 @@ import { HelpDialog } from './HelpDialog.jsx';
 import { AboutDialog } from './AboutDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
-import { saveDraft, loadDraft, clearDraft, expireDrafts, draftKeyFor } from './editorDraft.js';
+import {
+  saveDraft, clearDraft, expireDrafts, draftKeyFor, loadDraftForRecover,
+} from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
@@ -997,12 +999,14 @@ export function WriterPage() {
     // 리셋이 없다(편집 유지) — submit/applyAction/saveMapping 경로가 아니다. async지만 fire-and-forget(openHistoryCompare 패턴).
     if (id === 'file.save') { saveDocument(); return; }      // 기존=PUT / 신규=로컬 초안만(DB 미생성 — POST 금지)
     if (id === 'file.saveAs') { saveAsDocument(); return; }  // 현재 본문을 새 기사로 POST(복제본, 현재 탭 articleId 불변)
-    // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
+    // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraftForRecover → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
       const tab = activeTab;
-      const key = draftKeyFor(tab.articleId, tab.id);
-      const draft = loadDraft(key);
-      if (!draft) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
+      // 조회는 loadDraftForRecover — 새 키(draftKeyFor)에 없으면 스코프 접두사 도입 이전의 옛 신규 탭 키(tab.id)까지
+      // 한 번 더 본다(배포 전 초안 구제, 54-5 리뷰 반영). 폴백은 읽기 전용이고 저장은 아래·다른 경로 모두 새 키로만 한다.
+      const found = loadDraftForRecover(tab.articleId, tab.id);
+      if (!found) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
+      const { key, data: draft } = found; // key = 실제로 찾은 키(옛 키일 수 있다) — 복구 후 이 키를 지운다.
       if (!window.confirm('자동저장된 내용으로 복구하시겠습니까?')) return;
       // body만 commitBody 경로로 — 복구가 하나의 undo 단계가 되고(복구 전으로 되돌리기 가능) 히스토리
       // 베이스라인과 불일치가 없다. title은 commitBody가 body에서 재동기화(updateField 이중 기록 방지).
@@ -1010,7 +1014,7 @@ export function WriterPage() {
         if (k === 'body') commitBody(v);
         else if (k !== 'title') updateField(k, v); // updateField가 EDITABLE_FIELDS만 통과(메타 무시)
       });
-      clearDraft(key); // 복구 후 초안 제거 — 재복구로 부활 방지.
+      clearDraft(key); // 복구 후 초안 제거(찾은 키 그대로 — 옛 키였다면 옛 키를 지운다) — 재복구로 부활 방지.
       return;
     }
     // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).

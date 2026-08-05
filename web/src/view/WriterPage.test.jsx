@@ -2580,6 +2580,70 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
     expect(loadDraft(draftKeyFor(null, 'tab-9'))).not.toBeNull();
     expect(loadDraft('AKR2')).not.toBeNull();
   });
+
+  // 54-5 리뷰 반영: 스코프 접두사 배포 '이전'에 만들어진 신규 탭 초안은 옛 키('tab-N', 스코프 없음)로 남아 있어
+  // 새 키만 보는 파일>복구로는 도달할 수 없다(=저장하지 않은 본문의 조용한 유실). 읽기 폴백으로 구제하되
+  // 쓰기는 새 키로만 한다. 옛 키를 심으려면 이 실행의 tab.id가 필요한데 tab.id는 컨트롤러 모듈 카운터라
+  // 값을 고정할 수 없다 — 자동저장이 쓴 새 키에서 스코프 접두사를 떼어 얻는다(구현 상수 복제 금지).
+  function setupNewTabWithTabId() {
+    enableAutosave();
+    vi.useFakeTimers();
+    const utils = setup({ identity: { role: 'R' } }); // 신규 빈 탭
+    const editor = utils.container.querySelector('.yh-editor');
+    editor.textContent = '스냅샷본문';
+    fireEvent.input(editor);
+    vi.advanceTimersByTime(30000); // 자동저장 1회 → 새 키 노출
+    const scopedKey = Object.keys(readDraftsStore())[0];
+    vi.useRealTimers();
+    localStorage.removeItem('yh.editorDrafts'); // 새 키 초안 제거 → '옛 키만 남은 배포 이전' 상태 재현
+    return { ...utils, tabId: scopedKey.slice(scopedKey.indexOf(':') + 1) };
+  }
+
+  // 파일 메뉴의 다른 항목 클릭(복구 외 — 저장 등). 메뉴는 선택 즉시 닫히므로 닫혀 있으면 다시 연다.
+  async function clickFileItem(label) {
+    if (!screen.queryByTestId('menu-파일')) await openTopMenu('파일');
+    await userEvent.click(within(screen.getByTestId('menu-파일')).getByText(label).closest('button'));
+  }
+
+  it('파일>복구: 새 키에 없으면 스코프 접두사 이전의 옛 키(tab.id) 초안을 되살린다(읽기 폴백)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, tabId } = setupNewTabWithTabId();
+    const body = serialize([textBlock('옛초안제목'), textBlock('옛초안본문')]);
+    saveDraft(tabId, { title: '옛초안제목', body }, 1000); // 배포 이전 형식(스코프 없는 tab-N 키)
+
+    await clickRecover();
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['옛초안제목', '옛초안본문']));
+    expect(loadDraft(tabId)).toBeNull(); // 복구에 실제로 쓴 키를 지운다 — 재복구 부활 방지(기존 계약)
+  });
+
+  it('파일>복구: 새 키 초안이 있으면 옛 키는 읽지도 지우지도 않는다(폴백은 새 키가 빌 때만)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, tabId } = setupNewTabWithTabId();
+    saveDraft(draftKeyFor(null, tabId), { title: '새초안', body: serialize([textBlock('새초안')]) }, 2000);
+    saveDraft(tabId, { title: '옛초안', body: serialize([textBlock('옛초안')]) }, 1000);
+
+    await clickRecover();
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['새초안']));
+    expect(loadDraft(tabId)).not.toBeNull(); // 옛 키 초안은 그대로 남는다
+  });
+
+  it('옛 키 초안을 복구한 뒤의 파일>저장은 새 키로만 쓴다(옛 키 재기록 금지 — 창 간 충돌 재발 방지)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container, tabId } = setupNewTabWithTabId();
+    const body = serialize([textBlock('옛초안제목'), textBlock('옛초안본문')]);
+    saveDraft(tabId, { title: '옛초안제목', body }, 1000);
+
+    await clickRecover();
+    await waitFor(() => expect(editorLines(container)).toEqual(['옛초안제목', '옛초안본문']));
+    await clickFileItem('저장');
+
+    // 저장 산출물은 새 키 1개뿐 — 옛 키는 되살아나지 않는다.
+    expect(Object.keys(readDraftsStore())).toEqual([draftKeyFor(null, tabId)]);
+    expect(loadDraft(draftKeyFor(null, tabId)).title).toBe('옛초안제목');
+  });
 });
 
 // Step 0(34-editor-file-menu): 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 —
