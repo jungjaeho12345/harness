@@ -70,7 +70,8 @@ function pick(src, keys) {
 // override(선택): 뷰가 저장/송고 직전에 만든 본문 교체 값. shape은 { body, title }(phase43·45·49).
 //   body  — markupVersion으로 실린다. commitBody의 setState는 같은 tick에 tabsRef에 반영되지 않아(effect 지연)
 //           save/submit이 stale 본문을 읽으므로, 자동 기업코드 변환 본문은 오버라이드로 직접 싣는다.
-//   title — 그 본문에서 뷰가 bodyTitle(단일 출처)로 파생한 제목. 미전달이면 tab.fields.title 유지(문서화된 폴백).
+//   title — 그 본문에서 뷰가 bodyTitle(단일 출처)로 파생한 제목. body·title은 쌍으로만 적용되며,
+//           한쪽이라도 없으면 오버라이드 전체를 무시하고 tab.fields를 그대로 싣는다.
 // 제목 파생은 뷰의 bodyTitle 단일 출처가 담당한다 — 컨트롤러는 뷰를 import하지 않는다(의존 방향 View ← Controller ← Model).
 // 계약 위반은 "전부 아니면 전무"로 수렴한다: 객체가 아닌 오버라이드(옛 문자열 계약 등)는 통째로 무시하고
 // (문자열을 body로 받아들이면 본문만 바뀌고 제목은 stale인 무음 반쪽 적용이 된다), body 없는 title-only도
@@ -78,9 +79,10 @@ function pick(src, keys) {
 // != null 판정만 쓴다(truthy 체크 금지).
 function toSaveDto(tab, override) {
   const { body, ...rest } = tab.fields;
-  const ov = override && typeof override === 'object' ? override : null;
-  const dto = { ...rest, markupVersion: ov?.body ?? body };
-  if (ov && ov.body != null && ov.title != null) dto.title = ov.title;
+  const ov = override && typeof override === 'object'
+    && override.body != null && override.title != null ? override : null;
+  const dto = { ...rest, markupVersion: ov ? ov.body : body };
+  if (ov) dto.title = ov.title;
   if (tab.articleId) dto.articleId = tab.articleId;
   return dto;
 }
@@ -328,10 +330,13 @@ export function useWriteController() {
 
   // 저장 — 신규는 생성(POST), 편집은 잠금 보유자 부분 수정(PUT). Model이 articleId 유무로 분기한다.
   // override(선택): 뷰가 만든 { body, title } 오버라이드(toSaveDto 계약 참조).
+  // 모델 reject는 값(null)으로 흡수한다 — 그러지 않으면 호출부(뷰 핸들러)가 통째로 중단돼 실패 안내가
+  // 건너뛰어진다("실패는 반드시 알린다"). 새 사유 토큰은 만들지 않는다(사유 어휘는 서버·모델 소유).
   const save = useCallback(async (override) => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab, override), tab.clientId);
+    const r = await Promise.resolve(model.saveArticle(toSaveDto(tab, override), tab.clientId))
+      .catch(() => null);
     if (r && r.ok && r.articleId && !tab.articleId) {
       setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, articleId: r.articleId } : t)));
     }
@@ -346,7 +351,8 @@ export function useWriteController() {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
     const { articleId, ...dto } = toSaveDto(tab); // eslint-disable-line no-unused-vars -- articleId 제거 → POST(새 발번)
-    return model.saveArticle(dto); // clientId 미전달 — 원본 잠금과 무관한 신규 생성.
+    // clientId 미전달 — 원본 잠금과 무관한 신규 생성. reject는 값으로 흡수(save와 같은 규율).
+    return Promise.resolve(model.saveArticle(dto)).catch(() => null);
   }, [model]);
 
   // 매핑 저장 — 본문 텍스트는 그대로(readOnly) 두고 추가된 임베드만 PUT으로 저장한다. 생애주기 전이가 없으므로
@@ -355,7 +361,8 @@ export function useWriteController() {
   const saveMapping = useCallback(async () => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab) return { ok: false, reason: 'no-tab' };
-    const r = await model.saveArticle(toSaveDto(tab), tab.clientId); // PUT(articleId 포함) — 원본 미삭제(DB 비파괴).
+    // PUT(articleId 포함) — 원본 미삭제(DB 비파괴). reject는 값으로 흡수(save와 같은 규율).
+    const r = await Promise.resolve(model.saveArticle(toSaveDto(tab), tab.clientId)).catch(() => null);
     if (r && r.ok) {
       if (tab.articleId) await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
       resetTabToBlank(tab.id);
@@ -373,7 +380,8 @@ export function useWriteController() {
     if (!tab.articleId) {
       // 신규(create)는 누른 의도 action(send/hold)을 함께 넘긴다 — 서버 initialStatus가 Z+hold만 DDH로,
       // 그 외/송고는 RDS로 저장한다(전이 없음). 편집 경로(아래)는 action을 PUT에 싣지 않는다.
-      const r = await model.saveArticle(toSaveDto(tab, override), tab.clientId, action);
+      const r = await Promise.resolve(model.saveArticle(toSaveDto(tab, override), tab.clientId, action))
+        .catch(() => null); // reject는 값으로 흡수(편집 경로와 같은 규율).
       if (r && r.ok) resetTabToBlank(tab.id); // 작성 페이지 초기화.
       return r;
     }
@@ -393,7 +401,8 @@ export function useWriteController() {
     if (!saved || saved.ok !== true) {
       return { ok: false, reason: 'save-failed', saveReason: (saved && saved.reason) ?? null };
     }
-    const r = await model.applyAction(tab.articleId, action);
+    // 전이도 reject를 값으로 흡수한다 — 저장은 이미 성공했으므로 되돌리지 않고(해제·리셋 생략) 실패만 알린다.
+    const r = await Promise.resolve(model.applyAction(tab.articleId, action)).catch(() => null);
     if (r && r.ok) {
       await Promise.resolve(model.unlockArticle(tab.articleId, tab.clientId)).catch(() => {});
       resetTabToBlank(tab.id);
@@ -442,7 +451,8 @@ export function useWriteController() {
       if (signal && signal.kind && signal.kind !== 'lock') return;
       const editTabs = tabsRef.current.filter((t) => t.articleId);
       if (editTabs.length === 0) return;
-      const r = await model.queryArticles({});
+      // 재조회 reject도 값으로 흡수한다 — 신호 처리기가 통째로 중단되면 이후 판정이 조용히 사라진다.
+      const r = await Promise.resolve(model.queryArticles({})).catch(() => null);
       const list = (r && r.items) || [];
       const myUserId = userIdRef.current;
       const closing = []; // 닫을 탭 id — 강제 해제 + takeover를 모아 removeTabs 1회로 닫는다.
