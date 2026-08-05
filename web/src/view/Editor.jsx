@@ -600,6 +600,8 @@ export function Editor({
   // 원본 삭제 여부를 UA 구현에 맡기지 않도록 시작점에서 닫는다: 편집 영역 안에서 시작하는 드래그(텍스트 선택·
   // 임베드 이미지)를 dragstart에서 열지 않는다. 외부(OS·다른 앱)에서 끌어온 이미지 파일 드롭은 dragstart가
   // 여기서 나지 않으므로 영향받지 않는다(news.md 192행 스펙 유지).
+  // 잔여(미차단): selection이 편집 영역 "밖"에서 시작해 안까지 걸치면 dragstart가 바깥 노드에서 나 여기에
+  //   도달하지 않는다. 대개 UA가 non-editable source를 copy로 강등해 원본을 지우지 않지만 보장은 아니다.
   const handleDragStart = (e) => {
     e.preventDefault();
   };

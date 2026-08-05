@@ -101,7 +101,8 @@ export function logOriginDiagnostics({ env = process.env, origins = allowedOrigi
   }
   logService.warn(
     'ALLOWED_ORIGINS is empty in production — every cross-origin write will be rejected with 403 forbidden-origin. '
-    + 'Set ALLOWED_ORIGINS when the SPA is served from an origin other than this API (ADR-009).',
+    + 'This is expected for same-origin deployments (reverse proxy serving the SPA and /api together); '
+    + 'set ALLOWED_ORIGINS only when the SPA is served from a different origin (ADR-009).',
   );
   return true;
 }
@@ -286,7 +287,8 @@ function createSseCloser(res) {
 //   기본값 제공으로 미주입 기존 테스트도 무회귀. 로그 message에는 식별용 최소 필드만 담는다
 //   (비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지 — 마스킹 규율).
 // origins: CORS allowlist와 CSRF 가드가 공유하는 허용 출처 목록(ADR-009). 미주입 시 allowedOrigins()
-//   = 기본 두 항목 + process.env.ALLOWED_ORIGINS. env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
+//   = 비프로덕션은 기본 두 항목 + process.env.ALLOWED_ORIGINS, 프로덕션은 ALLOWED_ORIGINS만(기본값 없음).
+//   env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
 // sessionService 파라미터는 두지 않는다 — 신원 도출 경로가 둘이면 한쪽만 재검증되는 구멍이 생긴다.
 //   세션 스토어는 createControllers가 가드로 감싸 보유하고, transport는 controllers.auth로만 신원을 얻는다.
 export function createApp({

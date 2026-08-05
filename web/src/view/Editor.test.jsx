@@ -1412,10 +1412,24 @@ describe('Editor — 드래그앤드롭 가드(네이티브 드롭 차단 + 이�
     expect(fireWithPreventSpy(box, 'dragStart')).toHaveBeenCalled();
   });
 
-  it('읽기전용(readOnly)에서도 dragstart는 차단된다(임베드 이미지 드래그 포함)', () => {
+  it('읽기전용(readOnly)에서도 dragstart는 차단된다', () => {
     const { container } = render(<Editor blocks={[textBlock('헤드')]} readOnly />);
     const box = container.querySelector('.yh-editor');
     expect(fireWithPreventSpy(box, 'dragStart')).toHaveBeenCalled();
+  });
+
+  // 임베드 <img>는 기본 draggable이라 UA가 드래그를 열어준다. 차단은 오직 편집 div까지의 bubbling에 의존하므로
+  // 실제 img 노드에서 발화시켜 잠근다 — InlineEmbed가 나중에 자체 dragstart(stopPropagation)를 달면 여기서 깨진다.
+  it('임베드 이미지 노드에서 시작한 dragstart도 차단된다(bubbling 계약 고정)', () => {
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('헤드'), embedBlock({ embedType: 'image', src: 'x.png' })]}
+        onTextChange={() => {}}
+      />,
+    );
+    const img = container.querySelector('img');
+    expect(img).toBeTruthy();
+    expect(fireWithPreventSpy(img, 'dragStart')).toHaveBeenCalled();
   });
 
   it('텍스트 드롭은 dropEffect를 none으로 확정한다(출처 문서에서 원본이 삭제되지 않게)', () => {
