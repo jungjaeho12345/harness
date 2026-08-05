@@ -50,7 +50,7 @@ import { HelpDialog } from './HelpDialog.jsx';
 import { AboutDialog } from './AboutDialog.jsx';
 import { createTranslator, UI_LANGUAGES } from './i18n.js';
 import { normalizeLanguage } from './editorLanguage.js';
-import { saveDraft, loadDraft, clearDraft, expireDrafts } from './editorDraft.js';
+import { saveDraft, loadDraft, clearDraft, expireDrafts, draftKeyFor } from './editorDraft.js';
 import { setEditorColors } from './editorColoring.js';
 import { submitButtons, SUBMIT_LABELS } from './writerButtons.js';
 import { deserialize, serialize, hasEndMarker, blocksToText, isEmbedBlock } from './editorContent.js';
@@ -473,7 +473,7 @@ export function WriterPage() {
     const ms = autosaveCfg.intervalSec * 1000;
     const id = setInterval(() => {
       const tab = activeTabRef.current; // 최신 활성 탭(미러 ref)
-      const key = tab.articleId || tab.id; // 기존=articleId(안정), 신규=tab.id(best-effort)
+      const key = draftKeyFor(tab.articleId, tab.id); // 기존=articleId(안정), 신규='<브라우저 탭 스코프>:tab.id'(창 간 초안 충돌 방지)
       const hasContent = !!(tab.fields.body || tab.fields.title);
       if (!hasContent) return; // 빈 탭은 스냅샷 안 함
       saveDraft(key, { ...tab.fields }, Date.now()); // 시각은 런타임에서 주입(저장소는 시계를 모름).
@@ -855,7 +855,7 @@ export function WriterPage() {
   // 파일>저장 — 기사 상태로 갈린다. 기존 기사(articleId 有)는 컨트롤러 save()로 서버 PUT 부분 수정(잠금 보유자)
   // — 상태 전이·잠금 해제·탭 리셋 없이 편집을 이어간다(save의 기존 계약). 신규 기사(articleId 無)는 saveDraft로
   // 로컬 초안만 저장한다 — 절대 save()/POST를 부르지 않는다(송고 전 DB에 draft 행이 생겨 DB를 오염시킴).
-  // 초안 key는 tab.articleId || tab.id(신규=tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
+  // 초안 key는 draftKeyFor(tab.articleId, tab.id) — 자동저장·파일>복구와 동일 규약이라 복구로 되살릴 수 있다.
   const saveDocument = async () => {
     const tab = activeTab;
     const auto = autoCompanyCodeOverride(); // auto 모드면 변환+commitBody 후 { body, title } 오버라이드, 아니면 null.
@@ -865,7 +865,7 @@ export function WriterPage() {
     } else {
       // 초안에도 변환 본문+제목 한 쌍(신규) — body만 바꾸면 title이 변환 전 값으로 남는 자기모순 스냅샷이 된다.
       const draftFields = auto ? { ...tab.fields, body: auto.body, title: auto.title } : { ...tab.fields };
-      saveDraft(tab.articleId || tab.id, draftFields, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
+      saveDraft(draftKeyFor(tab.articleId, tab.id), draftFields, Date.now()); // 신규 → 로컬 초안만(DB 미생성)
       window.alert('임시 저장했습니다. (송고 전에는 DB에 생성되지 않으며, 파일>복구로 되살릴 수 있습니다.)');
     }
   };
@@ -1000,7 +1000,7 @@ export function WriterPage() {
     // 파일>복구 — 활성 탭의 최신 초안(localStorage)을 되살린다(loadDraft → updateField). 본문을 바꾸므로 매핑 가드 뒤.
     if (id === 'file.recover') {
       const tab = activeTab;
-      const key = tab.articleId || tab.id;
+      const key = draftKeyFor(tab.articleId, tab.id);
       const draft = loadDraft(key);
       if (!draft) { window.alert('복구할 자동저장 내용이 없습니다.'); return; }
       if (!window.confirm('자동저장된 내용으로 복구하시겠습니까?')) return;
@@ -1523,7 +1523,7 @@ export function WriterPage() {
     }
     if (!window.confirm(`${ACTION_VERB[action]}하시겠습니까?`)) return;
     // 전이 직전 탭 키를 잡아둔다 — 성공 후 초안을 무효화(빈 새 기사 탭에서 복구 시 송고/제출 내용 부활 방지).
-    const key = activeTab.articleId || activeTab.id;
+    const key = draftKeyFor(activeTab.articleId, activeTab.id);
     const histTabId = activeTab.id; // 리셋 대상 탭 id(resetTabToBlank가 유지) — key와 대칭으로 await 전 캡처.
     const auto = autoCompanyCodeOverride(); // 송고/보류 직전 자동 변환(auto 모드) — commitBody(화면·undo) 후 { body, title } 오버라이드로 전달(null=기존 필드).
     const r = await submit(action, auto);
@@ -1538,7 +1538,7 @@ export function WriterPage() {
   // 매핑 '저장' — 송고 가드(제목/"(끝)")·전이(applyAction) 없이 추가된 임베드만 PUT 저장한다.
   const onSaveMapping = async () => {
     if (!window.confirm('저장하시겠습니까?')) return;
-    const key = activeTab.articleId || activeTab.id; // 저장 직전 키 — 성공 후 초안 무효화.
+    const key = draftKeyFor(activeTab.articleId, activeTab.id); // 저장 직전 키 — 성공 후 초안 무효화.
     const histTabId = activeTab.id; // 성공 시 히스토리 폐기 — onAction과 동일(resetTabToBlank로 문서가 바뀜).
     const r = await saveMapping();
     if (r && r.ok) { clearDraft(key); historiesRef.current.delete(histTabId); }

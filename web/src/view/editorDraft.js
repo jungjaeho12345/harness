@@ -45,6 +45,46 @@ export function clearDraft(key) {
   }
 }
 
+// 브라우저 탭 스코프 id — sessionStorage에 1회 만들어 보관한다(창/탭마다 다르고 F5에는 유지된다).
+// 왜 필요한가: 초안 저장소(localStorage)는 같은 출처의 모든 창이 공유하므로 신규 탭 키(tab-1…)가 창 사이에서
+// 충돌한다(서로 덮어쓰기·다른 문서 오복구·남의 초안 삭제). 스코프는 절대 localStorage에 두지 않는다(다시 공유돼 무의미).
+const SCOPE_KEY = 'yh.draftScope';
+let scopeSeq = 0;
+let memoScope = null; // sessionStorage 불가 시 폴백 — 이 페이지 로드 동안만 안정(F5 후 그 초안은 복구되지 않을 수 있다).
+
+// 스코프 id 생성 — useWriteController.newClientId 관례(crypto.randomUUID 우선, 없으면 시간+카운터).
+// 여기의 Date.now()는 id 생성 전용이다 — savedAt 등 저장 데이터의 시각은 여전히 호출자가 주입한다.
+function newScopeId() {
+  try {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) return `w-${uuid}`;
+  } catch { /* crypto 불가 — 폴백 */ }
+  scopeSeq += 1;
+  return `w-${Date.now().toString(36)}-${scopeSeq}`;
+}
+
+export function draftScopeId() {
+  try {
+    const store = globalThis.sessionStorage;
+    if (store) {
+      const saved = store.getItem(SCOPE_KEY);
+      if (saved) return saved;
+      const next = newScopeId();
+      store.setItem(SCOPE_KEY, next);
+      return next;
+    }
+  } catch { /* sessionStorage 접근 불가/throw — 아래 메모리 폴백(readAll/writeAll과 같은 graceful 규율) */ }
+  if (!memoScope) memoScope = newScopeId();
+  return memoScope;
+}
+
+// 초안 키 단일 출처 — 기존 기사는 articleId 그대로(전역 고유라 창을 옮겨도 같은 초안을 찾는다),
+// 신규 탭은 '<스코프>:<탭id>'. 옛 'tab-N' 초안은 마이그레이션하지 않는다(expireDrafts가 자연 정리).
+export function draftKeyFor(articleId, tabId) {
+  if (typeof articleId === 'string' && articleId !== '') return articleId;
+  return `${draftScopeId()}:${tabId}`;
+}
+
 // savedAt이 retentionDays(일)보다 오래된 항목 제거 후 저장(savedAt < nowMs - retentionDays*86400000).
 export function expireDrafts(retentionDays, nowMs) {
   const all = readAll();

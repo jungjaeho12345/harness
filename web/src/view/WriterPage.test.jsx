@@ -13,7 +13,7 @@ import { loadAbbrevs, saveAbbrevs } from './abbrevStore.js';
 import {
   loadEditorPrefs, saveEditorPrefs, setEditorPref, DEFAULT_EDITOR_PREFS, fontFamilyCss, fontSizeCss,
 } from './editorPrefs.js';
-import { saveDraft, loadDraft } from './editorDraft.js';
+import { saveDraft, loadDraft, draftKeyFor } from './editorDraft.js';
 import { colorForRole, resetEditorColors } from './editorColoring.js';
 
 function setup({ identity = { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, pendingEdit, seed } = {}) {
@@ -2514,6 +2514,72 @@ describe('WriterPage — 자동저장 타이머 + 파일>복구', () => {
     await waitFor(() => expect(save).toHaveBeenCalled());
     await waitFor(() => expect(loadDraft('AKR9')).toBeNull());
   });
+
+  // 54-5: localStorage는 같은 출처의 모든 창이 공유한다 — 신규 탭 키가 'tab-1'이면 창 A와 창 B가 같은 초안 슬롯을
+  // 놓고 서로 덮어쓰고, 파일>복구가 다른 창의 기사를 되살리며, 한쪽의 clearDraft가 남의 초안까지 지운다.
+  // 신규 탭 키에만 브라우저 탭 스코프(sessionStorage 보관) 접두사를 붙여 격리한다(기존 기사 키는 그대로).
+  it('신규 탭 자동저장 키는 tab.id가 아니라 브라우저 탭 스코프 접두사를 포함한다(창 간 충돌 방지)', () => {
+    enableAutosave();
+    vi.useFakeTimers();
+    const { container } = setup({ identity: { role: 'R' } }); // 신규 빈 탭(tab-1)
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '창격리본문';
+    fireEvent.input(editor);
+
+    vi.advanceTimersByTime(30000);
+
+    const keys = Object.keys(readDraftsStore());
+    expect(keys).toHaveLength(1);
+    // tab.id는 컨트롤러 모듈 카운터라 파일 단위 실행에서 값이 달라진다 — 뒤쪽 tab.id를 떼어내
+    // 키 조합을 계약(draftKeyFor)으로 대조한다(구현 상수 복제 금지).
+    const tabId = keys[0].slice(keys[0].indexOf(':') + 1);
+    expect(tabId).toMatch(/^tab-\d+$/);
+    expect(keys[0]).not.toBe(tabId); // 더 이상 tab.id 단독 키가 아니다(창 간 충돌 지점)
+    expect(keys[0]).toBe(draftKeyFor(null, tabId));
+  });
+
+  it('신규 탭 자동저장 초안을 파일>복구가 되살린다(같은 창·같은 탭이면 키가 일치한다)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    enableAutosave();
+    vi.useFakeTimers();
+    const { container } = setup({ identity: { role: 'R' } });
+    const editor = container.querySelector('.yh-editor');
+    editor.textContent = '자동저장복구본문';
+    fireEvent.input(editor);
+    vi.advanceTimersByTime(30000);
+    const key = Object.keys(readDraftsStore())[0];
+    vi.useRealTimers();
+
+    // 본문을 다른 내용으로 바꾼 뒤 복구 → 초안 내용으로 되돌아온다.
+    editor.textContent = '덮어쓴본문';
+    fireEvent.input(editor);
+    await clickRecover();
+
+    await waitFor(() => expect(editorLines(container)).toEqual(['자동저장복구본문']));
+    expect(loadDraft(key)).toBeNull(); // 복구 후 초안 제거(기존 동작 유지)
+  });
+
+  it('송고 성공 시 그 탭 키의 초안만 지운다(다른 키의 초안은 남는다)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const body = serialize([textBlock('헤드'), textBlock('본문'), textBlock('(끝)')]);
+    saveDraft('AKR1', { title: '헤드', body }, 1000);
+    saveDraft(draftKeyFor(null, 'tab-9'), { title: '다른탭', body }, 1000); // 같은 창의 다른 신규 탭 초안
+    saveDraft('AKR2', { title: '다른기사', body }, 1000);
+    const { model } = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '헤드', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: body }] },
+    });
+    await waitFor(() => expect(actionBtn('송고')).toBeInTheDocument());
+    const apply = vi.spyOn(model, 'applyAction');
+
+    await userEvent.click(actionBtn('송고'));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('AKR1', 'send'));
+    await waitFor(() => expect(loadDraft('AKR1')).toBeNull());
+    expect(loadDraft(draftKeyFor(null, 'tab-9'))).not.toBeNull();
+    expect(loadDraft('AKR2')).not.toBeNull();
+  });
 });
 
 // Step 0(34-editor-file-menu): 파일 메뉴 '새문서'(file.new)·'닫기'(file.close) 결선 —
@@ -2739,7 +2805,11 @@ describe('WriterPage — 파일 메뉴(저장/다른이름으로 저장)', () =>
     const store = readDraftsStore();
     const keys = Object.keys(store);
     expect(keys).toHaveLength(1); // 활성(신규) 탭 1개의 초안만
-    expect(keys[0]).toMatch(/^tab-/); // 신규 탭 key=tab.id(자동저장/파일>복구와 동일 규약)
+    // 신규 탭 key='<브라우저 탭 스코프>:tab.id'(자동저장/파일>복구와 동일 규약, 54-5).
+    // tab.id는 모듈 카운터라 값을 고정하지 않고 키 조합을 계약(draftKeyFor)으로 대조한다.
+    const tabId = keys[0].slice(keys[0].indexOf(':') + 1);
+    expect(keys[0]).toBe(draftKeyFor(null, tabId));
+    expect(keys[0]).not.toBe(tabId);
     expect(blocksToText(deserialize(store[keys[0]].data.body))).toContain('신규본문');
   });
 
