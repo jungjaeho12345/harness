@@ -19,7 +19,10 @@ export const PRIVATE_CONTENTS_COLS = Object.freeze(['lockerSessionId', 'lockerCl
 
 // Contents 행 → 클라이언트로 내보낼 안전한 사본. 원본은 변형하지 않는다.
 // 방어: null/undefined/비객체 입력은 그대로 돌려준다(투영이 호출자를 깨뜨리지 않는다).
+// 방어: 배열 입력은 원소별로 투영한다 — 오용이 무음 토큰 유출로 번지지 않게 하는 안전망이며,
+//       호출부(articleService.query/search)는 계속 명시적으로 map 한다(투영 책임의 소재를 드러낸다).
 export function toPublicContents(contents) {
+  if (Array.isArray(contents)) return contents.map((item) => toPublicContents(item));
   if (contents === null || typeof contents !== 'object') return contents;
   const out = {};
   for (const [key, value] of Object.entries(contents)) {
