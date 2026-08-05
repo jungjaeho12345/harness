@@ -4,30 +4,26 @@
 
 import { useEffect, useState } from 'react';
 import { useUserMgmtController } from '../controller/useUserMgmtController.js';
+import { createReasonMessage } from './mgmtMessages.js';
 
 const BLANK = {
   userId: '', name: '', password: '', role: 'R', department: '', departmentCode: '', active: 'Y',
 };
 
-// 서버 거부 사유(Z 게이트·전역 에러 핸들러·httpModel 정규화 토큰) → 사용자 문구 (DistMgmtPage 동형).
+// 서버 거부 사유(Z 게이트·전역 에러 핸들러·httpModel 정규화 토큰) → 사용자 문구.
+// 공통 토큰은 mgmtMessages가 갖고 여기서는 이 화면 전용 문구만 얹는다(모듈 스코프 1회 생성).
 // CRITICAL: 사유 토큰만 문구로 매핑한다 — 비밀번호·서버 응답의 임의 필드는 절대 렌더하지 않는다.
-const REASON_MESSAGE = {
-  unauthenticated: '로그인이 필요합니다. 다시 로그인해 주세요.',
+const reasonMessage = createReasonMessage({
   forbidden: '권한이 없습니다. 사용자 관리는 관리자(Z) 전용입니다.',
-  'internal-error': '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
-  'network-error': '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-  'invalid-response': '서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-};
-
-function reasonMessage(reason) {
-  return REASON_MESSAGE[reason] ?? `요청을 처리하지 못했습니다 (${reason}).`;
-}
+});
 
 export function UserMgmtPage() {
   const { users, refresh, createUser, updateUser } = useUserMgmtController();
   const [form, setForm] = useState(BLANK);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
+  // 제출 in-flight 가드 — 더블클릭이 같은 폼으로 두 번 POST해 중복 행을 만드는 것을 막는다(서버 유일성 검사 없음).
+  const [submitting, setSubmitting] = useState(false);
 
   // 진입 시 조회 실패도 표시한다 — 이 refresh만 조회 실패 메시지를 띄운다. 쓰기 핸들러의 내부
   // 재조회 결과는 관찰하지 않는다(관찰하면 성공한 재조회가 쓰기 실패 메시지를 지우는 회귀가 생긴다).
@@ -57,16 +53,22 @@ export function UserMgmtPage() {
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    let r;
-    if (editing) {
-      const { userId, ...fields } = form;
-      r = await updateUser(userId, fields); // 빈 비밀번호는 컨트롤러가 제거.
-    } else {
-      r = await createUser(form);
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      let r;
+      if (editing) {
+        const { userId, ...fields } = form;
+        r = await updateUser(userId, fields); // 빈 비밀번호는 컨트롤러가 제거.
+      } else {
+        r = await createUser(form);
+      }
+      if (r && r.ok) { reset(); return; }
+      // 실패 시 폼·편집 상태를 유지한다(고쳐서 재제출). 문구는 사유 토큰 매핑뿐 — 입력값 미포함.
+      setError(reasonMessage(r && r.reason));
+    } finally {
+      setSubmitting(false); // 실패해도 반드시 푼다 — 가드는 in-flight 동안만 유효하다.
     }
-    if (r && r.ok) { reset(); return; }
-    // 실패 시 폼·편집 상태를 유지한다(고쳐서 재제출). 문구는 사유 토큰 매핑뿐 — 입력값 미포함.
-    setError(reasonMessage(r && r.reason));
   };
 
   return (
@@ -116,7 +118,7 @@ export function UserMgmtPage() {
             <option value="N">N</option>
           </select>
         </div>
-        <button type="submit" className="yh-btn yh-btn--primary">{editing ? '수정' : '생성'}</button>
+        <button type="submit" className="yh-btn yh-btn--primary" disabled={submitting}>{editing ? '수정' : '생성'}</button>
         {editing && (
           <button type="button" className="yh-btn" onClick={reset}>취소</button>
         )}

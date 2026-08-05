@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { useDistMgmtController } from '../controller/useDistMgmtController.js';
+import { createReasonMessage } from './mgmtMessages.js';
 
 const BLANK = { name: '', kind: 'press', spoolDir: '', active: 'Y' };
 
@@ -12,8 +13,9 @@ const BLANK = { name: '', kind: 'press', spoolDir: '', active: 'Y' };
 const KIND_LABEL = { press: '언론사', nonpress: '비언론사' };
 
 // 서버 거부 사유(distributionTargetService) → 사용자 문구. 검증의 진실은 서버이며 여기서는 안내만 한다.
-const REASON_MESSAGE = {
-  unauthenticated: '로그인이 필요합니다. 다시 로그인해 주세요.',
+// 공통 토큰(unauthenticated·internal-error·network-error·invalid-response)은 mgmtMessages가 갖고,
+// 여기서는 이 화면 전용 문구만 얹는다. 모듈 스코프에서 1회 생성한다(렌더마다 재생성 금지).
+const reasonMessage = createReasonMessage({
   forbidden: '권한이 없습니다. 배부 대상 관리는 관리자(Z) 전용입니다.',
   'not-found': '대상을 찾을 수 없습니다. 목록을 새로 조회해 주세요.',
   'invalid-name': '수신처명을 확인해 주세요(1~100자).',
@@ -21,15 +23,7 @@ const REASON_MESSAGE = {
   'invalid-spool-dir': '스풀 폴더명을 확인해 주세요(소문자 영문·숫자로 시작, 영문·숫자와 - _ 만, 1~64자).',
   'duplicate-spool-dir': '이미 사용 중인 스풀 폴더명입니다. 다른 이름을 입력해 주세요.',
   'invalid-active': '활성 값은 Y 또는 N만 가능합니다.',
-  // 전역 에러 핸들러·httpModel 정규화 토큰(step7) — 화면 공통 안내 문구.
-  'internal-error': '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
-  'network-error': '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-  'invalid-response': '서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-};
-
-function reasonMessage(reason) {
-  return REASON_MESSAGE[reason] ?? `요청을 처리하지 못했습니다 (${reason}).`;
-}
+});
 
 export function DistMgmtPage() {
   const { targets, refresh, createTarget, updateTarget, deactivateTarget } = useDistMgmtController();
@@ -37,6 +31,8 @@ export function DistMgmtPage() {
   // 수정 대상 id — 폼 입력이 아니라 행 객체에서 받는다(문자열화 없이 숫자 그대로 서버·계약의 엄격 비교에 맞춘다).
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
+  // 제출 in-flight 가드 — 더블클릭이 같은 폼으로 두 번 POST해 중복 행을 만드는 것을 막는다(서버 유일성 검사 없음).
+  const [submitting, setSubmitting] = useState(false);
 
   // 진입 시 조회 실패도 표시한다 — 이 refresh만 조회 실패 메시지를 띄운다. 쓰기 핸들러의 내부
   // 재조회 결과는 관찰하지 않는다(관찰하면 성공한 재조회가 쓰기 실패 메시지를 지우는 회귀가 생긴다).
@@ -64,10 +60,16 @@ export function DistMgmtPage() {
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    // id는 body에 싣지 않는다 — 대상 식별은 URL(PUT /:id)이 하고, 서버는 id를 수정 대상 필드로 받지 않는다.
-    const r = editing ? await updateTarget(editingId, form) : await createTarget(form);
-    if (r && r.ok) { reset(); return; }
-    setError(reasonMessage(r && r.reason)); // 실패 시 입력값을 유지해 고쳐서 재제출할 수 있게 한다.
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // id는 body에 싣지 않는다 — 대상 식별은 URL(PUT /:id)이 하고, 서버는 id를 수정 대상 필드로 받지 않는다.
+      const r = editing ? await updateTarget(editingId, form) : await createTarget(form);
+      if (r && r.ok) { reset(); return; }
+      setError(reasonMessage(r && r.reason)); // 실패 시 입력값을 유지해 고쳐서 재제출할 수 있게 한다.
+    } finally {
+      setSubmitting(false); // 실패해도 반드시 푼다 — 가드는 in-flight 동안만 유효하다.
+    }
   };
 
   // 확인 대화상자를 두지 않는다 — 비활성은 되돌릴 수 있는 조작이다(행이 남고 '수정' 폼의 활성 select로 재활성화).
@@ -109,7 +111,7 @@ export function DistMgmtPage() {
             <option value="N">N</option>
           </select>
         </div>
-        <button type="submit" className="yh-btn yh-btn--primary">{editing ? '수정' : '생성'}</button>
+        <button type="submit" className="yh-btn yh-btn--primary" disabled={submitting}>{editing ? '수정' : '생성'}</button>
         {editing && (
           <button type="button" className="yh-btn" onClick={reset}>취소</button>
         )}
