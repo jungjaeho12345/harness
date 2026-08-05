@@ -176,6 +176,20 @@ describe('editorShortcuts — insert "(계속)" (Ctrl+Y)', () => {
     const twice = insertContinueMarker(once.blocks, 0);
     expect(blocksToText(twice.blocks).split('\n')).toEqual(['a', '(계속)', '(계속)']);
   });
+
+  it('마커 재생성 시 "(끝)" 줄의 정렬(align)을 승계한다', () => {
+    const r = insertContinueMarker([textBlock('a'), textBlock(END_MARKER, 'center')], 0);
+    const last = r.blocks[r.blocks.length - 1];
+    expect(last.text).toBe(END_MARKER);
+    expect(last.align).toBe('center');
+    expect(r.caretTextLine).toBe(1); // 회귀: 삽입된 '(계속)' 줄 인덱스 불변
+  });
+
+  it('삽입된 "(계속)" 줄에는 align 키가 없고, 미정렬 마커에도 생기지 않는다', () => {
+    const r = insertContinueMarker([textBlock('a'), textBlock(END_MARKER)], 0);
+    expect('align' in r.blocks[1]).toBe(false); // 새로 만든 '(계속)' 줄
+    expect('align' in r.blocks[r.blocks.length - 1]).toBe(false); // 미정렬 마커
+  });
 });
 
 describe('editorShortcuts — 기업코드변환 (Ctrl+B)', () => {

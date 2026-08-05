@@ -15,12 +15,13 @@ export function bodyTitle(body) {
 
 // 에디터가 읽어 보낸 블록(텍스트 + 임베드)을 본문 문자열로 직렬화한다.
 // 임베드는 커서/DOM 순서를 그대로 보존하고(news.md 156·167행), "(끝)" 마커만 항상 최종 블록으로 보낸다(news.md 159행).
+// 마커 재생성 시 정렬(align)은 승계한다(문서 순서상 첫 마커 — editorEditOps.sortDocument와 동일 규칙).
 export function serializeBodyFromBlocks(blocks) {
   const list = deserialize(blocks); // 배열/문자열/객체 모두 정규화
   const isEnd = (b) => b.type === 'text' && String(b.text).trim() === END_MARKER;
-  const hasEnd = list.some(isEnd);
+  const prevMarker = list.find(isEnd);
   const rest = list.filter((b) => !isEnd(b));
-  if (hasEnd) rest.push(textBlock(END_MARKER));
+  if (prevMarker) rest.push(textBlock(END_MARKER, prevMarker.align));
   return serialize(rest);
 }
 
@@ -54,10 +55,11 @@ export function insertEmbedAfterLine(currentBody, embed, textLineIndex) {
     next.splice(blockIndex + 1, 0, embed, emptyLine); // 지정 텍스트 줄 블록 다음에 임베드 + 빈 줄.
   }
   // "(끝)"을 최종 블록으로 정규화(serializeBodyFromBlocks와 동일 규칙)한 블록 순서를 직접 만들어, 그 위에서 빈 줄의 텍스트-줄 인덱스를 센다.
+  // 마커 재생성 시 정렬(align)은 승계한다(문서 순서상 첫 마커).
   const isEnd = (b) => b.type === 'text' && String(b.text).trim() === END_MARKER;
-  const hasEnd = next.some(isEnd);
+  const prevMarker = next.find(isEnd);
   const ordered = next.filter((b) => !isEnd(b));
-  if (hasEnd) ordered.push(textBlock(END_MARKER));
+  if (prevMarker) ordered.push(textBlock(END_MARKER, prevMarker.align));
   let caretTextLine = null;
   let count = -1;
   for (const b of ordered) {
