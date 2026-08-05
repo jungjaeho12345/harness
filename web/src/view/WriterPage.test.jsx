@@ -723,6 +723,106 @@ describe('WriterPage — Ctrl+V 이미지 붙여넣기: 업로드→경로 임�
     const texts = Array.from(container.querySelectorAll('.yh-editor__line')).map((el) => el.textContent);
     expect(texts).not.toContain('제목'); // 이전 탭(T0) 본문이 새 탭으로 새지 않음
   });
+
+  // 54-4(B): 탭 이월(위)은 phase 20이 막았지만 같은 탭 안의 '줄 구조 변경'은 보지 않았다. 업로드 왕복 중 대상 줄보다
+  // 앞에서 줄이 늘거나 줄면 붙여넣기 시점의 caret.lineIndex가 다른 줄을 가리켜 사용자가 지목한 적 없는 줄 뒤에
+  // 임베드가 들어간다. 판정은 '대상 줄 앞쪽(prefix) 동일 + 인덱스 범위'만 본다 — 대상 줄 텍스트/줄 수는 보지 않는다.
+  const lineTextsOf = (container) => Array.from(
+    container.querySelectorAll('.yh-editor .yh-editor__line'),
+  ).map((el) => el.textContent);
+
+  it('업로드 대기 중 대상 줄 앞쪽에 줄이 늘면 임베드를 문서 끝에 넣고 1회 안내한다(엉뚱한 줄 삽입 방지)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('꼬리')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 2); // 대상 = '꼬리'
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    // 대기 중 첫 줄 앞에서 Enter — 줄이 하나 늘어 대상 인덱스(2)가 '본문'을 가리키게 된다.
+    caretAtLine(container, 0);
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(lineTextsOf(container)).toEqual(['', '제목', '본문', '꼬리']));
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    // 폴백 = 문서 끝(업로드본은 폐기하지 않는다) + 안내 1회. 원래 인덱스(2) 뒤에는 임베드가 없다.
+    expect(blockTypes(container)).toEqual(['text', 'text', 'text', 'text', 'embed']);
+    expect(alert).toHaveBeenCalledTimes(1);
+  });
+
+  it('업로드 대기 중 본문을 건드리지 않으면 캐럿 줄 뒤에 삽입되고 안내가 없다(정상 플로우 회귀)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('꼬리')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 2);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'text', 'text', 'embed', 'text']); // '꼬리' 뒤 + 빈 줄
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('업로드 대기 중 대상 줄 자체에 이어서 타이핑해도 캐럿 줄 뒤 삽입이 유지된다(가장 흔한 시나리오 — 회귀)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('꼬리')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 2);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    // 대상 줄에 이어 타이핑 — 인덱스를 밀지 않으므로 오늘처럼 그 줄 뒤에 삽입돼야 한다.
+    container.querySelectorAll('.yh-editor__line')[2].textContent = '꼬리추가';
+    fireEvent.input(box);
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'text', 'text', 'embed', 'text']);
+    expect(lineTextsOf(container)[2]).toBe('꼬리추가');
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('업로드 대기 중 대상 줄 뒤쪽에서만 줄이 늘어도 캐럿 줄 뒤 삽입이 유지된다(연속 붙여넣기 계열 — 회귀)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문'), textBlock('꼬리')]);
+    let resolveUpload;
+    vi.spyOn(model, 'uploadFile').mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    caretAtLine(container, 1); // 대상 = '본문'
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+    await waitFor(() => expect(typeof resolveUpload).toBe('function'));
+
+    // 대상 줄 '뒤'에서 Enter — 앞쪽 prefix는 그대로라 대상 인덱스(1)는 여전히 '본문'이다.
+    caretAtLine(container, 2);
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(lineTextsOf(container)).toEqual(['제목', '본문', '', '꼬리']));
+
+    await act(async () => { resolveUpload({ ok: true, path: '/uploads/x.png' }); });
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container).indexOf('embed')).toBe(2); // '제목','본문' 다음 = 캐럿 줄 뒤
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('캐럿이 없으면(caret null) 오늘처럼 문서 끝에 삽입하고 안내하지 않는다(좌표가 어긋난 게 아니다)', async () => {
+    const { container, model } = await openWith([textBlock('제목'), textBlock('본문')]);
+    vi.spyOn(model, 'uploadFile').mockResolvedValue({ ok: true, path: '/uploads/x.png' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    window.getSelection().removeAllRanges(); // 에디터에 캐럿 없음
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, pasteImageEvent(box));
+
+    await waitFor(() => expect(container.querySelector('[data-embed-type="image"]')).toBeTruthy());
+    expect(blockTypes(container)).toEqual(['text', 'text', 'embed']);
+    expect(alert).not.toHaveBeenCalled();
+  });
 });
 
 // 53-3(B 결함 결선): 편집>드래그앤드롭(edit.dragDrop, 기본 true — news.md 192행)을 Editor의 onDropImageFile prop에
@@ -2917,6 +3017,50 @@ describe('WriterPage — 찾기/바꾸기 + 전체 선택 결선(editorFind·Fin
       const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
       expect(lines).toEqual(['X and foo']); // 첫 매치만
     });
+  });
+
+  // 54-4(C): replaceOne의 caretOffset은 '치환 후' 텍스트 좌표인데 focusMatchLine이 '치환 전' bodyText로 줄을
+  // 환산하면 대체문이 길수록 캐럿이 뒷줄로 밀린다(이후 '다음 찾기' 순서까지 교란). 캐럿 줄은 Editor의
+  // focusLineStart가 그 줄에 collapsed 캐럿을 두는 것으로 관찰한다(Editor.test.jsx 관례).
+  const caretLineIndex = (container) => {
+    const sel = window.getSelection();
+    const lineEls = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line'));
+    return lineEls.findIndex((el) => el === sel.anchorNode || el.contains(sel.anchorNode));
+  };
+
+  it("'바꾸기': 대체문이 원문보다 길어도 캐럿이 치환된 줄에 머문다(치환 후 텍스트로 줄 환산)", async () => {
+    const { container } = await openWith([textBlock('가나다'), textBlock('라마바'), textBlock('사아자')]);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    const long = 'X'.repeat(50); // 원문(1자)보다 훨씬 긴 대체문 — 오프셋이 앞 줄들의 개행 경계를 넘는다.
+    await userEvent.type(screen.getByTestId('find-query'), '다');
+    fireEvent.change(screen.getByTestId('find-replacement'), { target: { value: long } });
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual([`가나${long}`, '라마바', '사아자']);
+    });
+    expect(caretLineIndex(container)).toBe(0); // 치환 전 텍스트로 환산하면 마지막 줄(2)로 밀린다.
+  });
+
+  it("'바꾸기': 길이가 같거나 짧은 대체문에서도 캐럿 줄이 그대로다(회귀)", async () => {
+    const { container } = await openWith([textBlock('가나다'), textBlock('라마바'), textBlock('사아자')]);
+    const box = container.querySelector('.yh-editor');
+    fireEvent(box, createEvent.keyDown(box, { key: 'f', ctrlKey: true }));
+    await waitFor(() => expect(findDialog()).toBeInTheDocument());
+
+    await userEvent.type(screen.getByTestId('find-query'), '마');
+    await userEvent.type(screen.getByTestId('find-replacement'), 'Z');
+    await userEvent.click(screen.getByTestId('find-replace-one'));
+
+    await waitFor(() => {
+      const lines = Array.from(container.querySelectorAll('.yh-editor .yh-editor__line')).map((el) => el.textContent);
+      expect(lines).toEqual(['가나다', '라Z바', '사아자']);
+    });
+    expect(caretLineIndex(container)).toBe(1); // 치환된 줄 그대로
   });
 
   it('빈 query로 바꾸기/모두 바꾸기 클릭 시 본문이 바뀌지 않는다(updateField 미호출)', async () => {
@@ -5378,6 +5522,80 @@ describe('WriterPage — 기사이력비교(tools.historyCompare) 결선', () =>
     await clickHistoryCompare();
     fireEvent.keyDown(screen.getByRole('dialog', { name: '기사 이력 비교' }), { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '기사 이력 비교' })).not.toBeInTheDocument();
+  });
+
+  // 54-4(A): 이력비교 state(목록·좌/우 key·비교 텍스트)는 전부 문서(탭)-로컬이다. 비모달이라 열린 채 탭을 바꿀 수
+  // 있고, 그러면 이전 기사의 이력이 새 탭 위에 떠 있다 — 항목을 고르면 새 탭의 articleId로 이전 기사의 이력 id를
+  // 조회하고, '현재 본문'을 고르면 새 탭 본문이 남의 이력과 나란히 비교돼 오독을 부른다.
+  // 캐럿/맞춤법/표/메타/사진발행/URL임베드와 동일 계열 처리(탭 전환 시 닫는다).
+  it('열린 채 탭을 전환하면 이력비교 다이얼로그가 닫힌다(문서-로컬 상태 이월 방지)', async () => {
+    await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    await clickHistoryCompare();
+    expect(screen.getByTestId('history-compare')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('history-compare')).toBeNull());
+  });
+
+  it('탭 전환 후 되돌아와 다시 열면 좌/우 선택과 비교 텍스트가 비어 있고 이력을 다시 조회한다', async () => {
+    const { container, model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    const query = vi.spyOn(model, 'queryHistory');
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+
+    // 새 탭으로 이동(닫힘) → 원래 탭으로 복귀 → 재개방.
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('history-compare')).toBeNull());
+    const articleTab = Array.from(container.querySelectorAll('.yh-tab__label')).find((b) => b.textContent === '제목');
+    await userEvent.click(articleTab); // 편집 탭(AKR1) 라벨 = 기사 제목
+    await waitFor(() => expect(container.querySelector('.yh-editor__line').textContent).toBe('헤드'));
+    await clickHistoryCompare();
+
+    // 선택·비교 텍스트가 초기화됐다(이전 선택이 남지 않는다) — diff는 아직 없다.
+    expect(screen.getByTestId('history-compare-left')).toHaveValue('');
+    expect(screen.getByTestId('history-compare-right')).toHaveValue('');
+    expect(screen.queryByTestId('history-compare-diff')).toBeNull();
+    expect(query).toHaveBeenCalledWith('AKR1'); // 재개방 시 그 탭 기준으로 다시 조회
+  });
+
+  it('탭 전환 후 도착한 지연 스냅샷 응답은 폐기된다(늦은 텍스트가 어디에도 렌더되지 않음)', async () => {
+    const { model } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    const real = model.getHistorySnapshot.bind(model);
+    let resolveSnap;
+    vi.spyOn(model, 'getHistorySnapshot').mockImplementation((articleId, id) => {
+      const result = real(articleId, id);
+      return new Promise((resolve) => { resolveSnap = () => resolve(result); });
+    });
+
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11'); // 조회 in-flight
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('history-compare')).toBeNull());
+
+    await act(async () => { resolveSnap(); }); // 늦게 도착 — 폐기돼야 한다(크래시 없음)
+    expect(screen.queryByTestId('history-compare')).toBeNull();
+    expect(screen.queryByText('옛본문')).toBeNull();
+  });
+
+  it('같은 탭에 머무는 동안(본문 편집 포함)에는 닫히지 않고 좌/우 선택·비교 텍스트가 유지된다(회귀)', async () => {
+    const { container } = await openWith([textBlock('헤드'), textBlock('본문')], { histories: HISTORIES });
+    await clickHistoryCompare();
+    await userEvent.selectOptions(screen.getByTestId('history-compare-left'), '11');
+    await userEvent.selectOptions(screen.getByTestId('history-compare-right'), 'current');
+    await waitFor(() => expect(screen.getByTestId('history-compare-diff')).toBeInTheDocument());
+
+    // 같은 탭에서의 재렌더(본문 편집 커밋)로는 닫히지 않는다 — 조정 블록은 활성 탭 id 변화에만 반응한다.
+    const box = container.querySelector('.yh-editor');
+    container.querySelectorAll('.yh-editor__line')[1].textContent = '본문수정';
+    fireEvent.input(box);
+
+    expect(screen.getByTestId('history-compare')).toBeInTheDocument();
+    expect(screen.getByTestId('history-compare-left')).toHaveValue('11');
+    expect(screen.getByTestId('history-compare-right')).toHaveValue('current');
   });
 });
 
