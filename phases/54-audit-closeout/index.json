@@ -3,7 +3,7 @@
   "phase": "54-audit-closeout",
   "steps": [
     { "step": 0, "name": "projection-array-guard", "status": "completed", "summary": "src/services/contentsProjection.js의 toPublicContents 맨 앞에 배열 분기 추가 — 배열 입력 = 원소별 재귀 투영(새 배열·새 객체, 원본 무변형), throw 금지(비객체 원소는 원본 규칙대로 통과), 호출부(articleService.getById/query/search)의 명시적 map 유지. test/contentsProjection.test.js에 신규 4케이스(배열 투영·토큰 문자열 0건/원본 불변/비객체 원소/중첩 객체 참조 유지). 백엔드 755 pass(751+4), 웹 2124 불변, lint·build clean." },
-    { "step": 1, "name": "history-write-visibility", "status": "pending" },
+    { "step": 1, "name": "history-write-visibility", "status": "completed", "summary": "ArticleHistory insert 실패를 선택 주입 콜백 onHistoryError로 표면화 — 콜백 shape { articleId, eventType, action, reason }(reason은 err.message 문자열, 에러 객체·markupVersion·토큰 미포함). articleService/distributionService 양쪽 record()의 catch에서 호출하고 콜백 호출 자체를 try/catch로 격리(알림 실패가 본 기능을 막지 않는다). distributionService의 기존 onFailure(수신처 미발송)와 분리 — 이력 실패는 failed에 넣지 않고 반환 shape·distributedAt 갱신 불변. createControllers가 historyErrorLogger 하나로 두 서비스를 logService.warn('history write failed articleId=… eventType=… action=… reason=…')에 결선(미주입 시 ?.로 조용히 생략). 예외 승격·재시도·타이머 0건. 백엔드 765 pass(755+10), 웹 2124 불변, lint·build clean." },
     { "step": 2, "name": "origin-allowlist-prod", "status": "pending" },
     { "step": 3, "name": "marker-align", "status": "pending" },
     { "step": 4, "name": "writer-stale-coords", "status": "pending" },
