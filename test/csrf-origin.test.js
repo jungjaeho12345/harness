@@ -124,6 +124,27 @@ test('allowedOrigins: 프로덕션에서는 기본 loopback을 내보내지 않�
   assert.deepEqual(allowedOrigins({ NODE_ENV: 'production' }), []);
 });
 
+// 프로덕션 부트스트랩의 실제 배선 확인 — server/index.js는 createApp에 origins를 주입하지 않으므로
+// 기본값 `origins = allowedOrigins()`(무인자 = process.env)가 쓰인다. 즉 이 함수가 process.env.NODE_ENV를
+// 실제로 읽어야 운영에서 loopback이 빠진다. 인자 주입 테스트만으로는 이 결선이 검증되지 않는다.
+test('allowedOrigins: 무인자 호출은 process.env를 읽는다(프로덕션 기본 배선에서 loopback 제외)', () => {
+  const prevEnv = process.env.NODE_ENV;
+  const prevList = process.env.ALLOWED_ORIGINS;
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.ALLOWED_ORIGINS;
+    assert.deepEqual(allowedOrigins(), []);
+
+    process.env.ALLOWED_ORIGINS = 'https://spa.example';
+    assert.deepEqual(allowedOrigins(), ['https://spa.example']);
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prevEnv;
+    if (prevList === undefined) delete process.env.ALLOWED_ORIGINS; else process.env.ALLOWED_ORIGINS = prevList;
+  }
+  // 환경 복원 확인 — 뒤따르는 테스트(무인자 기본값 계약)가 오염되지 않는다.
+  assert.ok(allowedOrigins().includes('http://localhost:5173'));
+});
+
 test('allowedOrigins: 프로덕션에서도 ALLOWED_ORIGINS 파싱 규칙(트림·빈 값 제외·순서)은 그대로다', () => {
   assert.deepEqual(
     allowedOrigins({ NODE_ENV: 'production', ALLOWED_ORIGINS: ' https://spa.example , ,https://admin.example ' }),

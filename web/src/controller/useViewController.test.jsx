@@ -236,6 +236,24 @@ describe('useViewController', () => {
     expect(alertSpy).toHaveBeenCalledWith('편집 잠금을 얻지 못해 편집할 수 없습니다.');
   });
 
+  // 실패 경로에서 잠금을 "정리"하려 들면 남의 잠금을 푸는 시도가 된다(locked = 내 잠금이 아니라는 뜻).
+  // fail-closed 전환이 이 금지선을 넘지 않았는지 사유별로 못박는다.
+  it('잠금 실패 시 unlockArticle을 호출하지 않는다(남의 잠금 해제 금지)', async () => {
+    for (const lockResult of [{ ok: false, reason: 'locked' }, { ok: false, reason: 'forbidden' }, { ok: 'yes' }, null]) {
+      sessionStorage.clear();
+      const { result, model } = setup({ articles: rds(1) });
+      await waitFor(() => expect(result.current.items).toHaveLength(1));
+      vi.spyOn(model, 'lockArticle').mockResolvedValue(lockResult);
+      const unlock = vi.spyOn(model, 'unlockArticle');
+      vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+
+      await act(async () => { await result.current.editArticle({ articleId: 'AKR0' }); });
+
+      expect(unlock).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('고침·포털고침·매핑 진입도 같은 fail-closed 규칙을 탄다', async () => {
     const { result, model, navigate } = setup({ articles: rds(1) });
     await waitFor(() => expect(result.current.items).toHaveLength(1));
