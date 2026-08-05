@@ -2,7 +2,7 @@
   "project": "기사 작성기",
   "phase": "54-audit-closeout",
   "steps": [
-    { "step": 0, "name": "projection-array-guard", "status": "pending" },
+    { "step": 0, "name": "projection-array-guard", "status": "completed", "summary": "src/services/contentsProjection.js의 toPublicContents 맨 앞에 배열 분기 추가 — 배열 입력 = 원소별 재귀 투영(새 배열·새 객체, 원본 무변형), throw 금지(비객체 원소는 원본 규칙대로 통과), 호출부(articleService.getById/query/search)의 명시적 map 유지. test/contentsProjection.test.js에 신규 4케이스(배열 투영·토큰 문자열 0건/원본 불변/비객체 원소/중첩 객체 참조 유지). 백엔드 755 pass(751+4), 웹 2124 불변, lint·build clean." },
     { "step": 1, "name": "history-write-visibility", "status": "pending" },
     { "step": 2, "name": "origin-allowlist-prod", "status": "pending" },
     { "step": 3, "name": "marker-align", "status": "pending" },
