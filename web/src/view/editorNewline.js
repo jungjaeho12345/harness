@@ -66,7 +66,8 @@ export function overwriteExtendLength(text, offset) {
 // blocks: 텍스트/임베드가 섞인 현재 DOM 블록. caret: { lineIndex, offset }(텍스트-only 기준) 또는 null.
 // text: 삽입할 문자열('\n'이면 Enter 분할). 반환 { blocks: 다음블록, caretLineIndex: 캐럿을 둘 텍스트-라인 인덱스(라인 시작) }.
 // 캐럿이 속한 텍스트 블록을 오프셋 기준 head/tail로 나누고, 삽입 줄들을 그 사이에 끼워 "1줄 = 1 텍스트 블록"을 유지한다.
-// 임베드는 위치를 보존한다(텍스트 블록만 분할/삽입). 캐럿이 없거나(빈/비래핑 본문) 범위를 벗어나면 마지막 텍스트 줄 끝에
+// 임베드는 삭제되지 않는다(텍스트 블록만 분할/삽입 — 범위 대체 시 병합 결과 뒤로 밀릴 수 있다: 규칙 4 참조).
+// 캐럿이 없거나(빈/비래핑 본문) 범위를 벗어나면 마지막 텍스트 줄 끝에
 // 덧붙인다 — 단, 그 줄이 "(끝)" 마커면 마커 줄 직전에 삽입한다(replaceRangeInBlocks 규칙 1-b — 마커 오염 금지).
 // collapsed 캐럿 삽입은 "start === end인 범위 대체"의 특수형이다 — 규칙을 두 벌 유지하지 않도록 위임한다.
 // 시그니처·반환 shape은 계약이다(Editor.jsx emitInsert·editorClipboard.insertPasteTextAtCaret 두 호출부).
@@ -98,8 +99,10 @@ const isMarkerBlock = (b) => isTextBlock(b) && String(b.text).trim() === END_MAR
 //    문단 선택 setStartBefore/setEndAfter), 그 제스처가 정확히 start를 마커 줄에 얹는다 — 가드가 볼 수 없는 start가
 //    실제로 도달한다('[(끝)] + Ctrl+A + 붙여넣기' → 'X\nY(끝)'). 보호를 순수 계층 한 곳에 모아 A-3(caretBlocked
 //    무접촉)을 지키면서 호출부 좌표계 차이와 무관하게 마커를 지킨다.
-//  - 규칙 4(임베드 보존): 미디어가 무음으로 사라지면 복구 수단이 없다. 삭제 수단은 임베드 × 버튼과 줄 삭제로 이미
-//    존재한다(news.md 173·174행). phase29 editorEditOps의 '임베드 제자리' 관례와 동일하다.
+//  - 규칙 4(임베드 보존): 삭제 범위 안의 임베드는 삭제되지 않고, 병합된 텍스트 블록들 **뒤**에 원래 상대 순서로
+//    남는다('제자리'가 아니다 — 범위가 텍스트 한 덩어리로 합쳐지므로 그 뒤가 유일하게 안정적인 자리다).
+//    미디어가 무음으로 사라지면 복구 수단이 없어서다. 삭제 수단은 임베드 × 버튼과 줄 삭제로 이미 존재한다
+//    (news.md 173·174행).
 //  - 규칙 5(정렬 승계): 결과 첫 줄 = start 줄 align, 마지막 줄 = end 줄 align, 중간 새 줄 = start 줄 align.
 //    editorDate.js L86~92·editorGlyph.js L84~90의 "새 줄 생성 분기는 승계 대상 아님"과 반대인 이유는 대상이 다르기
 //    때문이다 — 그 둘의 '새 줄'은 삽입할 줄이 아예 없어 만들어내는 무연고 줄이지만, Enter/범위 대체가 만드는 줄은

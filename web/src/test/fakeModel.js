@@ -126,6 +126,9 @@ export function createFakeModel(seed = {}) {
     },
     // clientId(편집 탭 식별자)는 PUT 저장 시 잠금 보유 탭 검증(assertLockHolder)에 쓰인다 — in-memory에선
     // 보유 탭(lockerClientId)이 다르면 거부해 "2번째 탭 저장 차단" 계약을 단위테스트에서 재현할 수 있게 한다.
+    // 경고(축소 모사): 이 더블은 clientId만 본다. 서버는 phase51·52 이후 세션에서 도출한 userId ↔
+    // Contents.lockerUserId까지 대조하므로, 여기서 통과한 시나리오가 서버에서 통과한다는 보장이 없다.
+    // 저장/잠금 인가 계약의 진실은 백엔드 테스트(test/editLock.test.js·test/server.test.js)다.
     saveArticle(dto = {}, clientId) {
       // 서버는 본문을 markupVersion 컬럼에만 저장하고 body 키는 버린다(ARTICLE_FIELDS pick 이음새).
       // 같은 정규화를 해야 contract 불일치(본문이 body로 전송되는 버그)가 단위테스트에서도 드러난다.
@@ -194,6 +197,8 @@ export function createFakeModel(seed = {}) {
 
     // clientId(편집 탭 식별자)-aware in-memory 잠금. acquire 규칙(편집 잠금 계약 a/b/c 모델의 축소판):
     // 이미 다른 clientId가 잠그고 있으면 'locked' 거부(같은 세션 다른 탭/다른 사용자), 같은 clientId면 재획득 허용.
+    // 경고: 서버는 여기에 더해 세션 userId ↔ lockerUserId를 대조한다(saveArticle 주석 참조) — 인가 판정의
+    // 진실은 백엔드 테스트다. 이 더블의 판정을 실제 서버 규칙으로 오해하지 마라.
     lockArticle(articleId, action, clientId) { // action은 서버 게이트용 — fake는 잠금 식별(clientId)만 검증
       const a = findArticle(articleId);
       if (a) {
