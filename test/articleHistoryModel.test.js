@@ -113,3 +113,89 @@ test('articleHistoryModel: 행 삭제 함수를 노출하지 않는다 (DB 비�
   assert.equal(history.delete, undefined);
   assert.equal(history.remove, undefined);
 });
+
+// --- phase 56 step1: querySnapshotsByArticle — 이력 '제목' 파생(서비스)용 스냅샷 본문 별도 조회 ---
+// queryByArticle의 경량 계약(blob 미포함)은 그대로 두고, 스냅샷 보유 행만 두 컬럼으로 읽는다.
+
+test('articleHistoryModel: querySnapshotsByArticle는 스냅샷 보유 행만 {id, markupVersion}으로 반환한다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:01.000Z', markupVersion: 'SNAP-1',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-06-16T00:00:02.000Z',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:03.000Z', markupVersion: 'SNAP-2',
+  });
+
+  const rows = history.querySnapshotsByArticle('AKR1');
+  assert.equal(rows.length, 2, '스냅샷 없는 status 행은 제외된다');
+  for (const r of rows) {
+    assert.deepEqual(Object.keys(r).sort(), ['id', 'markupVersion'], '두 컬럼만 반환한다');
+  }
+  // id DESC — 최근 스냅샷이 먼저.
+  assert.deepEqual(rows.map((r) => r.markupVersion), ['SNAP-2', 'SNAP-1'], '본문 문자열이 그대로다');
+});
+
+test('articleHistoryModel: querySnapshotsByArticle는 markupVersion이 빈 문자열인 행을 제외한다(hasSnapshot 동형)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:01.000Z', markupVersion: '',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:02.000Z', markupVersion: 'SNAP-1',
+  });
+
+  const rows = history.querySnapshotsByArticle('AKR1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].markupVersion, 'SNAP-1');
+});
+
+test('articleHistoryModel: querySnapshotsByArticle는 다른 기사의 스냅샷을 섞지 않는다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-06-16T00:00:01.000Z', markupVersion: 'SNAP-AKR1',
+  });
+  history.insert({
+    articleId: 'AKR2', eventType: 'edit', actorUserId: 'lee',
+    createdAt: '2026-06-16T00:00:02.000Z', markupVersion: 'SNAP-AKR2',
+  });
+
+  const rows = history.querySnapshotsByArticle('AKR1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].markupVersion, 'SNAP-AKR1');
+});
+
+test('articleHistoryModel: querySnapshotsByArticle는 이력/스냅샷이 없으면 빈 배열이다', () => {
+  const { history } = setup();
+  // 이력 자체가 없는 기사.
+  assert.deepEqual(history.querySnapshotsByArticle('AKR-NONE'), []);
+  // 이력은 있으나 스냅샷이 하나도 없는 기사.
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-06-16T00:00:01.000Z',
+  });
+  assert.deepEqual(history.querySnapshotsByArticle('AKR1'), []);
+});
+
+test('articleHistoryModel: querySnapshotsByArticle 반환 순서는 id DESC로 결정적이다', () => {
+  const { history } = setup();
+  for (let i = 1; i <= 3; i += 1) {
+    history.insert({
+      articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+      createdAt: '2026-06-16T00:00:01.000Z', markupVersion: `SNAP-${i}`, // 같은 createdAt — id로만 정렬
+    });
+  }
+  const first = history.querySnapshotsByArticle('AKR1');
+  assert.deepEqual(first.map((r) => r.markupVersion), ['SNAP-3', 'SNAP-2', 'SNAP-1']);
+  assert.ok(first[0].id > first[1].id && first[1].id > first[2].id, 'id DESC');
+  // 같은 입력에 항상 같은 순서.
+  assert.deepEqual(history.querySnapshotsByArticle('AKR1'), first);
+});

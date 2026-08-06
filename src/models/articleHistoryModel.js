@@ -42,5 +42,16 @@ export function createArticleHistoryModel(db) {
     ).get(id, articleId);
   }
 
-  return { insert, queryByArticle, querySnapshotById };
+  // 스냅샷 보유 이력의 본문만 별도 조회 — 이력 목록의 '제목' 파생(서비스)용.
+  // queryByArticle은 경량 계약(blob 미포함)을 유지해야 하고, 그 결과는 배부 멱등 판정도 공유하므로
+  // blob 로딩을 그 경로에 끼워 넣지 않는다. 필터는 hasSnapshot 판정과 동형(IS NOT NULL AND != '').
+  function querySnapshotsByArticle(articleId) {
+    return db.prepare(
+      `SELECT id, markupVersion FROM ArticleHistory
+        WHERE articleId = ? AND markupVersion IS NOT NULL AND markupVersion != ''
+        ORDER BY id DESC`,
+    ).all(articleId);
+  }
+
+  return { insert, queryByArticle, querySnapshotById, querySnapshotsByArticle };
 }
