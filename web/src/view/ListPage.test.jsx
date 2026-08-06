@@ -706,6 +706,22 @@ describe('ListPage', () => {
       expect(within(backdrops[backdrops.length - 1]).getByRole('dialog', { name: '이력 목록설정' }))
         .toBeInTheDocument();
     });
+
+    // 테스트 게이트 보강(phase 56) — SSE 재조회(모델 변경 신호)가 열린 이력 모달을 닫거나
+    // 서버 파생 셀(제목/버전/상태)을 지우지 않는다: 모달 items는 열 때 조회한 상태로 유지된다.
+    it('케이스17: SSE 재조회 후에도 열린 이력 모달과 파생 셀(제목/버전/상태)이 유지된다', async () => {
+      const { model, container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
+
+      await act_save(model); // 모델 변경 신호 → 목록 재조회(SSE 무효화 흉내)
+      // 목록 tbody가 2행(기존 1 + 신규 1)이 될 때까지 대기 — container에는 모달 tbody 2행이 함께 잡힌다(합 4).
+      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(4));
+
+      expect(screen.getByRole('dialog', { name: '이력보기' })).toBeInTheDocument();
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전']);
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
+    });
   });
 });
 

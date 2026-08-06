@@ -399,6 +399,49 @@ test('derive: querySnapshotsByArticle가 없는 부분 스텁이어도 throw 없
   assert.deepEqual(rows.map((r) => r.version), [2, 2], '버전은 hasSnapshot만으로 정확하다');
 });
 
+// 테스트 게이트 보강(phase 56) — 서비스의 가드 try/catch 두 곳(스냅샷 조회 실패·v1 본문 조회 실패)이
+// 무검증이었다. 실패는 제목만 비우고 이력보기 자체는 죽지 않아야 한다(record() 실패 격리와 같은 정신).
+
+test('derive: querySnapshotsByArticle가 throw해도 이력보기는 죽지 않는다(제목만 빈 값·버전/상태 정확)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const real = createArticleHistoryModel(db);
+  const historyModel = { ...real, querySnapshotsByArticle() { throw new Error('snapshot query down'); } };
+  const service = createArticleService({ articleModel, db, historyModel });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('새 제목\n본문', true), modifier: 'kim' }); // 스냅샷 1건
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.title), ['', ''], '스냅샷 조회 실패 시 제목만 빈다');
+  assert.deepEqual(rows.map((r) => r.version), [2, 2], '버전은 hasSnapshot 플래그만으로 정확하다');
+  assert.deepEqual(rows.map((r) => r.status), ['DPS', 'RDS'], '상태 승계/역승계도 그대로다');
+});
+
+test('derive: v1 본문 조회(getById)가 throw해도 이력보기는 죽지 않는다(제목만 빈 값)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  // 정상 서비스로 데이터를 만든 뒤(편집 0회 + 송고 1회 = 스냅샷 0건 → v1Body 조회 경로),
+  // getById만 던지는 조립으로 같은 db를 다시 읽는다.
+  const writer = createArticleService({ articleModel, db, historyModel });
+  const { articleId } = writer.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  writer.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const failingArticleModel = { ...articleModel, getById() { throw new Error('article read down'); } };
+  const service = createArticleService({ articleModel: failingArticleModel, db, historyModel });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, '', 'v1 본문을 못 읽으면 제목만 빈다');
+  assert.equal(rows[0].version, 1);
+  assert.equal(rows[0].status, 'DPS');
+});
+
 test('derive: v1 본문 예외 — 편집 0회 송고 기사는 현재 본문에서 v1 제목을 파생한다', () => {
   const { service } = setup();
   const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });

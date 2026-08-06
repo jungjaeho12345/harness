@@ -156,6 +156,22 @@ test('historyMeta.decorate: 반환 행 어디에도 markupVersion 키가 없다(
   for (const r of out) assert.equal('markupVersion' in r, false);
 });
 
+// 테스트 게이트 보강(phase 56) — 변이 검증에서 delete out.markupVersion 제거가 기존 스위트를 전부
+// 통과(생존 변이)했다: 위 테스트는 snapshots 인자로만 blob을 넘겨 '행 자신'의 blob 방어가 무검증이었다.
+// 모델(queryByArticle)이 실수로 blob을 SELECT해도 파생 계층이 마지막 방어선으로 벗겨내야 한다.
+test('historyMeta.decorate: 입력 행 자신에 실린 markupVersion도 반환 행에서 벗겨낸다(마지막 방어선)', () => {
+  const rows = [
+    row(2, { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', markupVersion: 'LEAK-2' }),
+    row(1, { hasSnapshot: 1, markupVersion: 'LEAK-1' }),
+  ];
+  const out = decorateHistoryRows(rows, [{ id: 1, markupVersion: markup(textBlock('가')) }]);
+  for (const r of out) assert.equal('markupVersion' in r, false);
+  assert.equal(JSON.stringify(out).includes('LEAK'), false, '직렬화 문자열 어디에도 blob이 없다');
+  // 벗겨내기는 복사본에만 — 입력 행은 변형하지 않는다(불변 규약 유지).
+  assert.equal(rows[0].markupVersion, 'LEAK-2');
+  assert.equal(rows[1].markupVersion, 'LEAK-1');
+});
+
 test('historyMeta.decorate: snapshots가 비거나 undefined여도(v1Body 미제공 전제) version은 정확하고 title만 빈다', () => {
   // 전제: v1Body 미제공. (v1Body를 제공하는 스냅샷 0건 케이스는 별도 — 그때만 v1 구간 제목이 채워진다.)
   const rows = [
