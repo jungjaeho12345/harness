@@ -88,6 +88,25 @@ export function allowedOrigins(env = process.env) {
   return [...DEFAULT_ALLOWED_ORIGINS, ...extra];
 }
 
+// 부트 진단 — 프로덕션에서 허용 목록이 비면 자기 출처(리버스 프록시 동일 출처 배포) 외 모든 쓰기가
+// 403 forbidden-origin이 된다(ADR-009 "가정과 실패 모드"). 이 실패는 조용하다: 로그인·조회는 되는데
+// 저장/송고만 막혀 원인 추적이 어렵다. 동일 출처 배포는 정상 구성이므로 부팅을 막지 않고 경고만 남긴다.
+// 반환값은 "경고를 남겼는가" — 테스트가 분기를 직접 확인하기 위한 것이고 호출부는 쓰지 않는다.
+export function logOriginDiagnostics({ env = process.env, origins = allowedOrigins(env), logService }) {
+  if (env?.NODE_ENV !== 'production') return false; // 비프로덕션 기본값은 공백이 아니다 — 경고가 소음이 된다.
+  if (origins.length > 0) {
+    // 출처 목록은 비밀이 아니다(브라우저가 그대로 보내는 값) — 실제 적용분을 남겨야 오탈자를 잡을 수 있다.
+    logService.info(`allowed origins (CORS/CSRF): ${origins.join(', ')}`);
+    return false;
+  }
+  logService.warn(
+    'ALLOWED_ORIGINS is empty in production — every cross-origin write will be rejected with 403 forbidden-origin. '
+    + 'This is expected for same-origin deployments (reverse proxy serving the SPA and /api together); '
+    + 'set ALLOWED_ORIGINS only when the SPA is served from a different origin (ADR-009).',
+  );
+  return true;
+}
+
 // 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
 // 브라우저가 보내는 Origin은 http://localhost:5173(포트가 밀리면 5174 등)이다.
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -268,7 +287,8 @@ function createSseCloser(res) {
 //   기본값 제공으로 미주입 기존 테스트도 무회귀. 로그 message에는 식별용 최소 필드만 담는다
 //   (비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지 — 마스킹 규율).
 // origins: CORS allowlist와 CSRF 가드가 공유하는 허용 출처 목록(ADR-009). 미주입 시 allowedOrigins()
-//   = 기본 두 항목 + process.env.ALLOWED_ORIGINS. env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
+//   = 비프로덕션은 기본 두 항목 + process.env.ALLOWED_ORIGINS, 프로덕션은 ALLOWED_ORIGINS만(기본값 없음).
+//   env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
 // sessionService 파라미터는 두지 않는다 — 신원 도출 경로가 둘이면 한쪽만 재검증되는 구멍이 생긴다.
 //   세션 스토어는 createControllers가 가드로 감싸 보유하고, transport는 controllers.auth로만 신원을 얻는다.
 export function createApp({
@@ -999,8 +1019,11 @@ function bootstrap() {
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
   const forceHttps = process.env.FORCE_HTTPS === 'true'
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
+  // 허용 출처는 여기서 한 번 계산해 앱과 진단이 같은 값을 보게 한다(경고가 실제 적용분과 어긋나지 않도록).
+  const origins = allowedOrigins();
   // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
-  const app = createApp({ controllers, logService, forceHttps });
+  const app = createApp({ controllers, logService, forceHttps, origins });
+  logOriginDiagnostics({ origins, logService });
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {

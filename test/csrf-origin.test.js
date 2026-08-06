@@ -19,7 +19,7 @@ import { createUserModel } from '../src/models/userModel.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createReceiverConfigModel } from '../src/models/receiverConfigModel.js';
 import { createControllers } from '../src/controllers/index.js';
-import { createApp, allowedOrigins, SESSION_COOKIE_NAME } from '../server/index.js';
+import { createApp, allowedOrigins, logOriginDiagnostics, SESSION_COOKIE_NAME } from '../server/index.js';
 
 // media 분기용 기본 env(API 키) — NODE_ENV와는 별개 축이다.
 const ENV = { GOOGLE_API_KEY: 'gk', GOOGLE_CSE_ID: 'cse', YOUTUBE_API_KEY: 'yk' };
@@ -124,8 +124,8 @@ test('allowedOrigins: 프로덕션에서는 기본 loopback을 내보내지 않�
   assert.deepEqual(allowedOrigins({ NODE_ENV: 'production' }), []);
 });
 
-// 프로덕션 부트스트랩의 실제 배선 확인 — server/index.js는 createApp에 origins를 주입하지 않으므로
-// 기본값 `origins = allowedOrigins()`(무인자 = process.env)가 쓰인다. 즉 이 함수가 process.env.NODE_ENV를
+// 프로덕션 부트스트랩의 실제 배선 확인 — bootstrap()이 `allowedOrigins()`(무인자 = process.env)를 한 번
+// 계산해 createApp(origins)와 부트 진단에 같은 값으로 넘긴다. 즉 이 함수가 process.env.NODE_ENV를
 // 실제로 읽어야 운영에서 loopback이 빠진다. 인자 주입 테스트만으로는 이 결선이 검증되지 않는다.
 test('allowedOrigins: 무인자 호출은 process.env를 읽는다(프로덕션 기본 배선에서 loopback 제외)', () => {
   const prevEnv = process.env.NODE_ENV;
@@ -160,6 +160,64 @@ test('allowedOrigins: 비프로덕션(미지정/development/test)은 기본 두 
   assert.deepEqual(allowedOrigins({ NODE_ENV: 'development', ALLOWED_ORIGINS: 'https://a.example' }), [
     'http://localhost:5173', 'http://127.0.0.1:5173', 'https://a.example',
   ]);
+});
+
+// --- phase 54 리뷰 후속: 프로덕션 허용 목록 공백을 부트 시점에 표면화 ---
+// step2가 프로덕션 기본 loopback을 제거한 뒤로, ALLOWED_ORIGINS를 잊은 배포는 "자기 출처 외 모든 쓰기 403"이
+// 된다(ADR-009 가정과 실패 모드). 이 실패는 조용하다 — 로그인은 되는데 저장/송고만 403이라 원인 추적이 어렵다.
+// 동일 출처 배포는 정상 구성이므로 부팅을 막지 않고 경고로만 남긴다.
+function fakeLog() {
+  const warns = [];
+  const infos = [];
+  return { warns, infos, warn: (m) => warns.push(m), info: (m) => infos.push(m) };
+}
+
+test('logOriginDiagnostics: 프로덕션 + 허용 목록 공백 → 경고 1회(원인·조치가 문구에 있다)', () => {
+  const logService = fakeLog();
+  const flagged = logOriginDiagnostics({ env: { NODE_ENV: 'production' }, origins: [], logService });
+
+  assert.equal(flagged, true);
+  assert.equal(logService.warns.length, 1);
+  assert.match(logService.warns[0], /ALLOWED_ORIGINS/);
+  assert.match(logService.warns[0], /403/); // 증상(무엇이 실패하는지)이 문구에 있어야 추적이 가능하다
+  assert.deepEqual(logService.infos, []);
+});
+
+test('logOriginDiagnostics: 프로덕션 + 허용 목록 있음 → 경고 없이 실제 적용 목록을 info로 남긴다', () => {
+  const logService = fakeLog();
+  const flagged = logOriginDiagnostics({
+    env: { NODE_ENV: 'production' },
+    origins: ['https://spa.example', 'https://admin.example'],
+    logService,
+  });
+
+  assert.equal(flagged, false);
+  assert.deepEqual(logService.warns, []);
+  assert.equal(logService.infos.length, 1);
+  assert.match(logService.infos[0], /https:\/\/spa\.example/);
+  assert.match(logService.infos[0], /https:\/\/admin\.example/);
+});
+
+test('logOriginDiagnostics: 비프로덕션은 아무것도 남기지 않는다(dev 기본값은 공백이 아니고 경고가 소음이 된다)', () => {
+  for (const env of [{}, { NODE_ENV: 'development' }, { NODE_ENV: 'test' }]) {
+    const logService = fakeLog();
+    assert.equal(logOriginDiagnostics({ env, origins: [], logService }), false, JSON.stringify(env));
+    assert.deepEqual(logService.warns, [], JSON.stringify(env));
+    assert.deepEqual(logService.infos, [], JSON.stringify(env));
+  }
+});
+
+// origins 미주입 시 env에서 파생한다 — 부트 배선이 createApp과 같은 규칙을 보게 하는 안전망.
+test('logOriginDiagnostics: origins 미주입이면 env로 allowedOrigins를 파생한다', () => {
+  const empty = fakeLog();
+  assert.equal(logOriginDiagnostics({ env: { NODE_ENV: 'production' }, logService: empty }), true);
+
+  const filled = fakeLog();
+  assert.equal(
+    logOriginDiagnostics({ env: { NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://spa.example' }, logService: filled }),
+    false,
+  );
+  assert.match(filled.infos[0], /https:\/\/spa\.example/);
 });
 
 test('19) 프로덕션 기본 구성: Origin http://localhost:5173의 상태 변경은 403이고 status가 그대로다', async () => {

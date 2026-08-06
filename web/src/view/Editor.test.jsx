@@ -1401,6 +1401,80 @@ describe('Editor — 드래그앤드롭 가드(네이티브 드롭 차단 + 이�
     expect(fireWithPreventSpy(box, 'dragOver')).toHaveBeenCalled();
   });
 
+  // phase 53 후속(drag-move 원본 삭제) — 드롭 차단만으로는 부족하다.
+  // 브라우저의 드래그 이동은 "드롭 수락 → dragend에서 원본 범위 삭제"가 한 쌍이라, 드롭을 취소해도
+  // 최종 drag operation이 'move'로 남으면 UA가 원본 선택을 지운다(삽입 없이 삭제만 = 본문 유실).
+  // 잠금 2겹: (1) 편집 영역에서 시작하는 드래그를 dragstart에서 아예 열지 않는다,
+  //           (2) 드롭 시 dropEffect를 'move'가 아닌 값으로 확정한다(출처 문서에 이동 수락으로 보이지 않게).
+  it('편집 영역에서 시작하는 드래그는 dragstart에서 차단된다(drag-move 원본 삭제 경로 봉쇄)', () => {
+    const { container } = render(<Editor blocks={[textBlock('hello world')]} onTextChange={() => {}} />);
+    const box = container.querySelector('.yh-editor');
+    expect(fireWithPreventSpy(box, 'dragStart')).toHaveBeenCalled();
+  });
+
+  it('읽기전용(readOnly)에서도 dragstart는 차단된다', () => {
+    const { container } = render(<Editor blocks={[textBlock('헤드')]} readOnly />);
+    const box = container.querySelector('.yh-editor');
+    expect(fireWithPreventSpy(box, 'dragStart')).toHaveBeenCalled();
+  });
+
+  // 임베드 <img>는 기본 draggable이라 UA가 드래그를 열어준다. 차단은 오직 편집 div까지의 bubbling에 의존하므로
+  // 실제 img 노드에서 발화시켜 잠근다 — InlineEmbed가 나중에 자체 dragstart(stopPropagation)를 달면 여기서 깨진다.
+  it('임베드 이미지 노드에서 시작한 dragstart도 차단된다(bubbling 계약 고정)', () => {
+    const { container } = render(
+      <Editor
+        blocks={[textBlock('헤드'), embedBlock({ embedType: 'image', src: 'x.png' })]}
+        onTextChange={() => {}}
+      />,
+    );
+    const img = container.querySelector('img');
+    expect(img).toBeTruthy();
+    expect(fireWithPreventSpy(img, 'dragStart')).toHaveBeenCalled();
+  });
+
+  it('텍스트 드롭은 dropEffect를 none으로 확정한다(출처 문서에서 원본이 삭제되지 않게)', () => {
+    const { container } = render(<Editor blocks={[textBlock('hello')]} onTextChange={() => {}} />);
+    const box = container.querySelector('.yh-editor');
+
+    const ev = textDropEvent(box);
+    fireEvent(box, ev);
+
+    expect(ev.dataTransfer.dropEffect).toBe('none');
+  });
+
+  it('이미지 드롭은 dropEffect를 copy로 확정한다(복사 삽입 — 어떤 경우에도 move가 아니다)', () => {
+    const onDropImageFile = vi.fn();
+    const { container } = render(
+      <Editor blocks={[textBlock('헤드')]} onTextChange={() => {}} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+    caretAtLine(container, 0);
+
+    const ev = dropEvent(box, { files: [imageFile()] });
+    fireEvent(box, ev);
+
+    expect(onDropImageFile).toHaveBeenCalledTimes(1);
+    expect(ev.dataTransfer.dropEffect).toBe('copy');
+  });
+
+  it('dataTransfer가 없는 드롭에도 예외 없이 차단만 한다(합성 이벤트 방어)', () => {
+    const onTextChange = vi.fn();
+    const onDropImageFile = vi.fn(); // 위임이 켜진 상태로 들어가야 dropEffect 대입 경로를 실제로 지난다
+    const { container } = render(
+      <Editor blocks={[textBlock('hello')]} onTextChange={onTextChange} onDropImageFile={onDropImageFile} />,
+    );
+    const box = container.querySelector('.yh-editor');
+
+    const ev = createEvent.drop(box, {});
+    Object.defineProperty(ev, 'dataTransfer', { value: null });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    expect(() => fireEvent(box, ev)).not.toThrow();
+
+    expect(prevent).toHaveBeenCalled();
+    expect(onTextChange).not.toHaveBeenCalled();
+    expect(onDropImageFile).not.toHaveBeenCalled();
+  });
+
   it('이미지 파일 드롭 → preventDefault 1회 + onDropImageFile(raw File, caret) 1회(FileReader 미사용·onTextChange 없음)', () => {
     // FileReader가 호출되면 즉시 실패(Editor가 base64를 만들지 않음을 보증 — phase 20 결정).
     globalThis.FileReader = class { readAsDataURL() { throw new Error('Editor must not create base64'); } };
