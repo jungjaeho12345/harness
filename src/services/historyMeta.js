@@ -9,6 +9,8 @@ export const MAX_HISTORY_TITLE_LEN = 200;
 // 규칙은 프론트 bodyTitle(blocksToText(deserialize(body)) 첫 줄)과 동형이어야 한다 —
 // 텍스트 블록(type:'text')만 세고, 임베드의 title 같은 필드는 제목으로 오인하지 않는다.
 // 깨진 JSON·평문 레거시는 문자열 그대로 취급한다(hasEndMarker의 방어 패턴과 동일).
+// 동형의 한계(의도): 200자 상한은 이 파생에만 있고(Article.title은 무상한 — 표시 절단일 뿐),
+// text 비문자열·blocks 없는 JSON 객체 같은 serialize() 불능 입력의 처리도 프론트와 다를 수 있다.
 export function snapshotTitle(markupVersion) {
   if (markupVersion === null || markupVersion === undefined || markupVersion === '') return '';
   const raw = String(markupVersion);

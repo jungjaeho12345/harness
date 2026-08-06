@@ -305,8 +305,9 @@
     },
     {
       "dir": "56-history-view-columns",
-      "status": "pending",
-      "note": "docs/news.md 114~115행 신규 스펙(이력보기) 구현 — 이력보기/송고이력보기 모달을 '수정시간/제목/수정자/상태/버전' 5열 기본값으로 전환하고, 모달 우클릭 '이력 목록설정'으로 다른 이력 메타데이터 컬럼을 추가/제거(이력 종류별 localStorage 영속)한다. 제목·버전·상태는 ArticleHistory에 저장 컬럼이 없어 백엔드가 이력 로그 + 편집 스냅샷에서 파생해 응답에 싣는다(스키마 변경 0·행 삭제 0, 목록 응답에 markupVersion blob 미포함, 파생은 sendOnly 필터 이전 계산). 7 step — backend 패스(step0 순수 파생 historyMeta.js → step1 articleHistoryModel 스냅샷 조회 additive → step2 articleService.queryHistory 결선 → step3 라우트 계약 테스트) → web 패스(step4 historyColumns.js 순수 카탈로그/영속 → step5 fakeModel 계약 동기화 → step6 ListPage 모달 결선). 기준선 실측 backend 777/777·web 89 files 2218/2218·lint·build clean(feat-56-history-view, 2022f55). 리뷰 반영: 컬럼 카탈로그는 이력 그룹 13 + 기사 그룹 4(작성자·부서·작성시간·송고시간, 목록 행 재사용으로 추가 조회 0건) = 17컬럼, 스냅샷 0건 기사는 현재 본문을 v1 본문으로 주입해 제목 파생, 설정 모달은 이력 모달 뒤 형제(z-index 신설 없이 DOM 순서), 전 step diff scope는 시작 시점 git status --porcelain 스냅샷 대비 증분 판정(git add -A 및 미커밋 사용자 파일 restore/stash/clean 금지, docs/news.md 미커밋)."
+      "status": "completed",
+      "note": "docs/news.md 114~115행 신규 스펙(이력보기) 구현 — 이력보기/송고이력보기 모달을 '수정시간/제목/수정자/상태/버전' 5열 기본값으로 전환하고, 모달 우클릭 '이력 목록설정'으로 다른 이력 메타데이터 컬럼을 추가/제거(이력 종류별 localStorage 영속)한다. 제목·버전·상태는 ArticleHistory에 저장 컬럼이 없어 백엔드가 이력 로그 + 편집 스냅샷에서 파생해 응답에 싣는다(스키마 변경 0·행 삭제 0, 목록 응답에 markupVersion blob 미포함, 파생은 sendOnly 필터 이전 계산). 7 step — backend 패스(step0 순수 파생 historyMeta.js → step1 articleHistoryModel 스냅샷 조회 additive → step2 articleService.queryHistory 결선 → step3 라우트 계약 테스트) → web 패스(step4 historyColumns.js 순수 카탈로그/영속 → step5 fakeModel 계약 동기화 → step6 ListPage 모달 결선). 기준선 실측 backend 777/777·web 89 files 2218/2218·lint·build clean(feat-56-history-view, 2022f55). 리뷰 반영: 컬럼 카탈로그는 이력 그룹 13 + 기사 그룹 4(작성자·부서·작성시간·송고시간, 목록 행 재사용으로 추가 조회 0건) = 17컬럼, 스냅샷 0건 기사는 현재 본문을 v1 본문으로 주입해 제목 파생, 설정 모달은 이력 모달 뒤 형제(z-index 신설 없이 DOM 순서), 전 step diff scope는 시작 시점 git status --porcelain 스냅샷 대비 증분 판정(git add -A 및 미커밋 사용자 파일 restore/stash/clean 금지, docs/news.md 미커밋). [완료: 게이트 2 approve(revise 9 반영) / 4 PASS(테스터 15변이 독립 수행, 1생존=행 자신 blob 제거 무검증 → 보강 4건) / 5 pass(med 1=이력 조회당 스냅샷 blob 전량 읽기 비용 → 후속 백로그, low 주석 정정 2건 즉시 반영). 최종 backend 817 · web 2256(90 files) · lint·build clean. DB 스키마 무변경.]",
+      "completed_at": "2026-08-06T18:30:00+0900"
     }
   ]
 }

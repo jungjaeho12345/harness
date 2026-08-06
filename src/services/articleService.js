@@ -338,7 +338,9 @@ export function createArticleService({ articleModel, db, historyModel, distribut
       catch { snapshots = []; }
     }
 
-    // v1 본문 예외: 스냅샷 0건 = 최초 저장 이후 본문이 안 바뀌었다는 뜻이므로 현재 본문 = v1 본문(동치).
+    // v1 본문 예외: 스냅샷 0건이면 현재 본문을 v1 본문으로 쓴다 — "모든 본문 쓰기(update)가 스냅샷
+    // 이력을 남긴다"는 전제하의 근사다(record() insert 실패가 삼켜진 뒤에는 어긋날 수 있다 —
+    // onHistoryError로 관측 가능. 빈 문자열 본문 저장도 hasSnapshot=0이라 예외지만 현 UI에선 도달 불가).
     // 그때만(이력 1건 이상 + 스냅샷 0건) 현재 본문을 읽어 넘긴다 — 그 외에는 결과에 쓰이지 않는 조회다.
     let v1Body;
     if (rows.length > 0 && snapshots.length === 0) {
