@@ -377,6 +377,52 @@ test('createSchema: DistributionTarget이 없는 구버전 DB에 additive로 생
   assert.equal(row.title, '옛 기사', '기존 행은 보존되어야 함 (비파괴)');
 });
 
+// --- phase 57 step0: ArticleHistory 배부 실패 영속 컬럼 (targetId INTEGER · reason VARCHAR) ---
+
+test('createSchema: ArticleHistory에 targetId·reason 컬럼이 있다 (배부 실패 영속 — additive)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const cols = columns(db, 'ArticleHistory');
+  assert.ok(cols.includes('targetId'), 'ArticleHistory.targetId');
+  assert.ok(cols.includes('reason'), 'ArticleHistory.reason');
+  // targetId는 INTEGER 선언이어야 한다 — VARCHAR(TEXT affinity)면 숫자 id가 문자열로 저장되어
+  // DistributionTarget.id(숫자)와의 === 매칭이 조용히 깨진다.
+  const info = db.prepare('PRAGMA table_info(ArticleHistory)').all();
+  assert.equal(info.find((c) => c.name === 'targetId').type, 'INTEGER', 'targetId는 INTEGER');
+  assert.equal(info.find((c) => c.name === 'reason').type, 'VARCHAR', 'reason은 VARCHAR');
+});
+
+test('createSchema: 멱등 — 2회 호출해도 targetId·reason이 중복 생성되지 않는다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  assert.doesNotThrow(() => createSchema(db));
+  const info = db.prepare('PRAGMA table_info(ArticleHistory)').all();
+  assert.equal(info.filter((c) => c.name.toLowerCase() === 'targetid').length, 1, 'targetId는 1개만');
+  assert.equal(info.filter((c) => c.name.toLowerCase() === 'reason').length, 1, 'reason은 1개만');
+});
+
+test('createSchema: 구버전 ArticleHistory(targetId·reason 없음)에 additive 마이그레이션 시 기존 행 보존', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 버전: 배부 실패 컬럼이 없는 ArticleHistory + 기존 행
+  db.exec(
+    'CREATE TABLE ArticleHistory (id INTEGER PRIMARY KEY, articleId VARCHAR, eventType VARCHAR, action VARCHAR, fromStatus VARCHAR, toStatus VARCHAR, actorUserId VARCHAR, createdAt VARCHAR, markupVersion VARCHAR)',
+  );
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, action, createdAt) VALUES ('a1', 'distribute', 'press', '2026-08-06T00:00:00Z')",
+  ).run();
+
+  createSchema(db);
+
+  const cols = columns(db, 'ArticleHistory');
+  assert.ok(cols.includes('targetId'), '누락된 targetId 컬럼이 추가되어야 함');
+  assert.ok(cols.includes('reason'), '누락된 reason 컬럼이 추가되어야 함');
+  const rows = db.prepare('SELECT * FROM ArticleHistory').all();
+  assert.equal(rows.length, 1, '기존 행은 삭제되지 않는다 (비파괴)');
+  assert.equal(rows[0].action, 'press', '기존 컬럼 값이 보존되어야 함');
+  assert.equal(rows[0].targetId, null, '기존 행의 targetId는 NULL');
+  assert.equal(rows[0].reason, null, '기존 행의 reason은 NULL');
+});
+
 test('createSchema: 부분 컬럼 구버전 DistributionTarget에 누락 컬럼을 추가하고 기존 행을 보존한다', () => {
   const db = new DatabaseSync(':memory:');
   // 구버전: id/name만 있는 DistributionTarget + 기존 행.

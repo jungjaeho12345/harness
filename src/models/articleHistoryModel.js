@@ -6,7 +6,11 @@
 const HISTORY_COLS = [
   'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
   'markupVersion',
+  'targetId', 'reason', // 배부 실패/재전송 이벤트 전용 — 그 외 이벤트는 NULL
 ];
+
+// 배부 이벤트 조회 기본 창 — 보조 인덱스 없이 id DESC 스캔 + LIMIT(비용 인식, SCHEMA.md).
+const DISTRIBUTION_EVENTS_DEFAULT_LIMIT = 500;
 
 function insertInto(db, table, cols, obj) {
   const present = cols.filter((c) => obj[c] !== undefined);
@@ -53,5 +57,22 @@ export function createArticleHistoryModel(db) {
     ).all(articleId);
   }
 
-  return { insert, queryByArticle, querySnapshotById, querySnapshotsByArticle };
+  // 배부 실패/재전송 이벤트만 읽는다 — 실패 목록(Z 전용)과 재전송 대상 확인의 유일한 조회 경로.
+  // queryByArticle에 targetId/reason을 싣지 않는 이유: 그 응답은 전 사용자에게 열린 이력보기 계약이다.
+  // eventType 어휘 단일 출처: src/services/distributionFailureLog.js (모델은 도메인 비의존 — 문자열만 둔다).
+  function queryDistributionEvents({ articleId, limit } = {}) {
+    const max = Number.isInteger(limit) && limit >= 1 ? limit : DISTRIBUTION_EVENTS_DEFAULT_LIMIT;
+    const where = ['eventType IN (?, ?)'];
+    const params = ['distribute-failed', 'distribute-retry'];
+    if (articleId !== undefined) {
+      where.push('articleId = ?');
+      params.push(articleId);
+    }
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, targetId, reason, actorUserId, createdAt
+         FROM ArticleHistory WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`,
+    ).all(...params, max);
+  }
+
+  return { insert, queryByArticle, querySnapshotById, querySnapshotsByArticle, queryDistributionEvents };
 }

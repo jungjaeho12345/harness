@@ -66,6 +66,9 @@ const SCHEMA = {
     ['actorUserId', 'VARCHAR'],
     ['createdAt', 'VARCHAR'],
     ['markupVersion', 'VARCHAR'], // 편집(edit) 시점 본문 스냅샷 — status 전이는 NULL(본문 불변)
+    // INTEGER인 이유: VARCHAR(TEXT affinity)면 숫자 id가 문자열로 저장되어 DistributionTarget.id와의 매칭이 조용히 깨진다.
+    ['targetId', 'INTEGER'], // 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id) — 그 외 이벤트는 NULL
+    ['reason', 'VARCHAR'], // 배부 실패 사유 고정 토큰 — 경로·본문·예외 원문 금지
   ],
   ReceiverConfig: [
     ['id', 'INTEGER PRIMARY KEY'],

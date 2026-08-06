@@ -199,3 +199,137 @@ test('articleHistoryModel: querySnapshotsByArticle 반환 순서는 id DESC로 �
   // 같은 입력에 항상 같은 순서.
   assert.deepEqual(history.querySnapshotsByArticle('AKR1'), first);
 });
+
+// --- phase 57 step0: 배부 실패 영속 컬럼(targetId·reason) + queryDistributionEvents ---
+// 일반 이력 계약(queryByArticle)은 불변 — 배부 실패/재전송 이벤트는 별도 조회로만 읽는다.
+
+test('articleHistoryModel: insert가 targetId·reason을 저장하고, 미전달 시 NULL이다 (present-only)', () => {
+  const { db, history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 12, reason: 'spool-write-failed',
+    actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim', createdAt: '2026-08-06T00:00:01.000Z',
+  });
+  const rows = db.prepare('SELECT * FROM ArticleHistory ORDER BY id').all();
+  assert.equal(rows[0].targetId, 12);
+  assert.equal(rows[0].reason, 'spool-write-failed');
+  assert.equal(rows[1].targetId, null, '미전달 시 targetId는 NULL');
+  assert.equal(rows[1].reason, null, '미전달 시 reason은 NULL');
+});
+
+test('articleHistoryModel: queryDistributionEvents의 targetId는 숫자다 (INTEGER affinity — 타입 함정 잠금)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 12, reason: 'spool-write-failed',
+    actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  const [row] = history.queryDistributionEvents();
+  assert.strictEqual(row.targetId, 12, "숫자 12여야 한다 — '12'(문자열)면 대상 매칭이 조용히 깨진다");
+});
+
+test('articleHistoryModel: queryByArticle 반환 행에 targetId·reason 키가 없다 (일반 이력 계약 불변)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 12, reason: 'spool-write-failed',
+    actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  const rows = history.queryByArticle('AKR1');
+  assert.equal(rows.length, 1);
+  const keys = Object.keys(rows[0]);
+  assert.ok(!keys.includes('targetId'), '일반 이력 응답에 targetId를 싣지 않는다');
+  assert.ok(!keys.includes('reason'), '일반 이력 응답에 reason을 싣지 않는다');
+});
+
+test('articleHistoryModel: queryDistributionEvents는 distribute-failed/distribute-retry 행만 반환한다', () => {
+  const { history } = setup();
+  const base = { articleId: 'AKR1', actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z' };
+  history.insert({ ...base, eventType: 'distribute-failed', action: 'press', targetId: 1, reason: 'spool-write-failed' });
+  history.insert({ ...base, eventType: 'distribute-retry', action: 'press', targetId: 1 });
+  history.insert({ ...base, eventType: 'distribute', action: 'press' });
+  history.insert({ ...base, eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS' });
+  history.insert({ ...base, eventType: 'edit' });
+
+  const rows = history.queryDistributionEvents();
+  assert.equal(rows.length, 2, 'distribute/status/edit 행은 섞이지 않는다');
+  assert.deepEqual(
+    rows.map((r) => r.eventType).sort(),
+    ['distribute-failed', 'distribute-retry'],
+  );
+});
+
+test('articleHistoryModel: queryDistributionEvents 반환 shape (markupVersion 미노출)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 3, reason: 'spool-write-failed',
+    actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  const [row] = history.queryDistributionEvents();
+  assert.deepEqual(
+    Object.keys(row).sort(),
+    ['action', 'actorUserId', 'articleId', 'createdAt', 'eventType', 'id', 'reason', 'targetId'],
+    '정확히 8개 키 — 본문 blob(markupVersion) 미노출',
+  );
+});
+
+test('articleHistoryModel: queryDistributionEvents 정렬은 id DESC로 결정적이다', () => {
+  const { history } = setup();
+  for (let i = 1; i <= 3; i += 1) {
+    history.insert({
+      articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+      targetId: i, reason: 'spool-write-failed',
+      actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z', // 같은 createdAt — id로만 정렬
+    });
+  }
+  const rows = history.queryDistributionEvents();
+  assert.deepEqual(rows.map((r) => r.targetId), [3, 2, 1], '최근 insert(id 최대)가 먼저');
+  assert.ok(rows[0].id > rows[1].id && rows[1].id > rows[2].id, 'id DESC');
+});
+
+test('articleHistoryModel: queryDistributionEvents({ articleId })는 그 기사 행만 준다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 1, reason: 'spool-write-failed', actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  history.insert({
+    articleId: 'AKR2', eventType: 'distribute-failed', action: 'nonpress',
+    targetId: 2, reason: 'spool-write-failed', actorUserId: 'admin', createdAt: '2026-08-06T00:00:01.000Z',
+  });
+  const rows = history.queryDistributionEvents({ articleId: 'AKR1' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].articleId, 'AKR1', '다른 기사 미혼입');
+});
+
+test('articleHistoryModel: queryDistributionEvents({ limit })는 최신 N건만, 미지정이면 기본값', () => {
+  const { history } = setup();
+  for (let i = 1; i <= 3; i += 1) {
+    history.insert({
+      articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+      targetId: i, reason: 'spool-write-failed',
+      actorUserId: 'admin', createdAt: '2026-08-06T00:00:00.000Z',
+    });
+  }
+  const limited = history.queryDistributionEvents({ limit: 2 });
+  assert.equal(limited.length, 2, 'limit 2 → 최신 2건');
+  assert.deepEqual(limited.map((r) => r.targetId), [3, 2], '최신 우선');
+  // 미지정 → 기본값 적용(3건 전부 반환 — 기본값은 100 이상).
+  assert.equal(history.queryDistributionEvents().length, 3);
+  // 비정수·1 미만 limit도 기본값으로 정규화되어 throw 없이 동작한다.
+  assert.equal(history.queryDistributionEvents({ limit: 'abc' }).length, 3);
+  assert.equal(history.queryDistributionEvents({ limit: 0 }).length, 3);
+});
+
+test('articleHistoryModel: queryDistributionEvents는 대상 이벤트가 없으면 빈 배열이다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  assert.deepEqual(history.queryDistributionEvents(), []);
+  assert.deepEqual(history.queryDistributionEvents({ articleId: 'AKR-NONE' }), []);
+});
