@@ -310,6 +310,114 @@ test('GET /api/articles/:id/history: 이벤트 없는 기사는 빈 items, 단�
   } finally { await ctx.close(); }
 });
 
+// --- phase 56 step3: /history 응답의 파생 필드(title/version/status) 계약 — HTTP 경계에서 잠근다 ---
+
+// 본문 빌더 — 표식은 반드시 '둘째 줄 이후'에 심는다(첫 줄은 제목으로 응답에 실리는 것이 정상).
+function bodyWithSecret(title, secretLine) {
+  return JSON.stringify({
+    format: 'yh-editor', version: 1,
+    blocks: [
+      { type: 'text', text: title },
+      { type: 'text', text: secretLine },
+      { type: 'text', text: '(끝)' },
+    ],
+  });
+}
+
+test('GET /history: 파생 필드(title/version/status)가 실리고 본문 blob은 응답 어디에도 없다', async () => {
+  const SECRET = '대외비본문표식-편집';
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    // 본문 편집 2회(잠금 보유 탭) — 두 번째 편집 본문의 둘째 줄에 표식을 심는다.
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab1' });
+    const put1 = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid, clientId: 'tab1', body: { markupVersion: bodyWithSecret('중간 제목', '중간 본문') },
+    });
+    assert.equal(put1.status, 200);
+    const put2 = await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid, clientId: 'tab1', body: { markupVersion: bodyWithSecret('최신 제목', SECRET) },
+    });
+    assert.equal(put2.status, 200);
+    const sent = await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+    assert.equal(sent.body.status, 'DPS');
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 3, 'edit 2건 + status/send 1건');
+    for (const item of r.body.items) {
+      assert.equal(typeof item.title, 'string');
+      assert.equal(typeof item.version, 'number');
+      assert.equal(typeof item.status, 'string');
+      assert.equal('markupVersion' in item, false, '목록 item에 본문 blob이 없다');
+    }
+    // 최신 편집 행(id 최대 edit)의 제목 = 그 편집으로 저장된 본문의 첫 줄.
+    const edits = r.body.items.filter((h) => h.eventType === 'edit');
+    assert.equal(edits[0].title, '최신 제목');
+    assert.equal(edits[0].version, 3, 'v1(최초 저장) + 편집 2회');
+    // 응답 본문 문자열 전체에 편집 본문의 표식이 등장하지 않는다(키 이름 단언보다 강한 blob 누출 스캔).
+    assert.equal(JSON.stringify(r.body).includes(SECRET), false);
+
+    // 미인증 401 회귀 — 파생 추가와 무관하게 세션 없는 요청은 거부되고 items가 없다.
+    const unauth = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`);
+    assert.equal(unauth.status, 401);
+    assert.equal(unauth.body.items, undefined);
+  } finally { await ctx.close(); }
+});
+
+test('GET /history: 편집 없이 송고한 기사(v1 경로)도 제목이 오고 생성 본문 blob은 새지 않는다', async () => {
+  const SECRET = '대외비본문표식-생성';
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    // 생성 본문 '둘째 줄'에 표식 — 첫 줄(제목)은 응답에 실리는 것이 정상이므로 표식이 아니다.
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: bodyWithSecret('생성 제목', SECRET) },
+    })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 1, '생성은 이력을 남기지 않는다 — 송고 1건뿐');
+    assert.equal(r.body.items[0].version, 1, '편집 0회 = 최초 저장 본문이 곧 v1');
+    assert.equal(r.body.items[0].title, '생성 제목', 'v1 본문 예외가 HTTP 경계까지 이어진다');
+    // v1Body 경로에서도 본문 blob이 응답 문자열 어디에도 새지 않는다.
+    assert.equal(JSON.stringify(r.body).includes(SECRET), false);
+  } finally { await ctx.close(); }
+});
+
+test('GET /history?sendOnly=1: 송고 item의 파생 값이 전체 조회와 일치한다', async () => {
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab1' });
+    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid, clientId: 'tab1', body: { markupVersion: bodyWithSecret('송고 제목', '본문') },
+    });
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/action`, { sid, body: { action: 'send' } });
+
+    const sendOnly = await api(ctx.base, 'GET', `/api/articles/${articleId}/history?sendOnly=1`, { sid });
+    assert.equal(sendOnly.status, 200);
+    assert.equal(sendOnly.body.items.length, 1);
+    assert.equal(sendOnly.body.items[0].version, 2, '필터로 잘린 edit 스냅샷까지 센 버전');
+    assert.equal(sendOnly.body.items[0].title, '송고 제목');
+
+    const full = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    const same = full.body.items.find((h) => h.id === sendOnly.body.items[0].id);
+    assert.deepEqual(sendOnly.body.items[0], same, '전체 조회의 같은 id item과 값이 일치한다');
+  } finally { await ctx.close(); }
+});
+
 test('PUT /api/articles/:id: 잠금 보유 탭(clientId)만 수정할 수 있다', async () => {
   const ctx = await start();
   try {
