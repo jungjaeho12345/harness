@@ -26,6 +26,7 @@ import { createPhotoService } from '../services/photoService.js';
 import { createDistributionTargetService } from '../services/distributionTargetService.js';
 import { createDistributionService } from '../services/distributionService.js';
 import { createDistributionTickService } from '../services/distributionTickService.js';
+import { createDistributionRetryService } from '../services/distributionRetryService.js';
 import { createSpoolWriter } from '../services/spoolWriter.js';
 
 // spoolFs(선택): 배부 스풀의 파일 조작(mkdir/writeFile/rename)을 주입한다 — fetchFn과 같은 이유로,
@@ -123,6 +124,21 @@ export function createControllers(db, {
     })
     : undefined;
 
+  // 배부 실패 조회·재전송(ADR-008 MVP-4). 조회는 스풀 설정과 무관하므로 **항상** 결선한다.
+  // spoolWriter가 없으면 retry가 스스로 spool-disabled를 반환한다(설정 판정 단일 지점).
+  const distributionRetryService = createDistributionRetryService({
+    articleHistoryModel,
+    distributionTargetModel,
+    articleModel,
+    spoolWriter,
+    now,
+    // 재전송 실패도 미발송이다 — 식별자·고정 사유만 담는다(본문·경로·세션 토큰 금지, LOGS.md 마스킹 규율).
+    onFailure: ({ articleId, targetId, kind, reason }) => {
+      logService?.warn?.(`distribution retry failed articleId=${articleId} targetId=${targetId} kind=${kind} reason=${reason}`);
+    },
+    onHistoryError: historyErrorLogger,
+  });
+
   // 인증/세션 — 로그인은 자격 검증(userService) → 세션 발급(sessionService) 오케스트레이션.
   const auth = {
     async login(userId, password) {
@@ -194,6 +210,24 @@ export function createControllers(db, {
       if (!distributionTickService) return { ok: false, reason: 'spool-disabled' };
       // actorUserId는 검증된 세션에서만 온다(클라이언트 값 불신 — ADR-004).
       return distributionTickService.run({ actorUserId: gate.userId ?? null });
+    },
+    // 미해소 배부 실패 목록(Z 전용, ADR-008 MVP-4) — 인가 먼저, limit만 화이트리스트로 위임(ADR-006).
+    // 투영·정렬·판정은 전부 서비스가 단일 출처다 — 여기서 가공하지 않는다(경로 유출 방지 투영 포함).
+    failures(sessionId, filters) {
+      const gate = authorization.manageDistributionFailure(sessionId);
+      if (!gate.ok) return gate;
+      return distributionRetryService.list({ limit: filters?.limit });
+    },
+    // 실패 수신처 1건 재전송(Z 전용) — payload에서 articleId·targetId만 뽑는다(통짜 스프레드 금지:
+    // actorUserId/kind 주입 경로가 열린다). actorUserId는 검증된 세션에서만 온다(ADR-004).
+    async retry(sessionId, payload) {
+      const gate = authorization.manageDistributionFailure(sessionId);
+      if (!gate.ok) return gate;
+      return distributionRetryService.retry({
+        articleId: payload?.articleId,
+        targetId: payload?.targetId,
+        actorUserId: gate.userId ?? null,
+      });
     },
   };
 
