@@ -163,6 +163,82 @@ describe('createFakeModel', () => {
     expect(await fake.getHistorySnapshot('NOPE', 2)).toEqual({ ok: false, reason: 'not-found' });
   });
 
+  // --- /history 경량 목록 계약(phase 56 step5) — 서버는 목록에 blob을 싣지 않고 title/version/status를 파생해 준다 ---
+  it('queryHistory omits markupVersion from list items (sendOnly 경로 포함 — blob 없는 경량 계약)', async () => {
+    const fake = createFakeModel({
+      histories: {
+        AKR1: [
+          {
+            id: 3, articleId: 'AKR1', eventType: 'status', action: 'send',
+            fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z',
+            hasSnapshot: 0, title: '헤드라인', version: 3, status: 'DPS',
+            markupVersion: 'blob-should-not-leak',
+          },
+          {
+            id: 2, articleId: 'AKR1', eventType: 'edit', action: null,
+            actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z',
+            hasSnapshot: 1, title: '헤드라인', version: 3, status: 'RDS',
+            markupVersion: '{"format":"yh-editor","version":1,"blocks":[]}',
+          },
+        ],
+      },
+    });
+
+    const all = await fake.queryHistory('AKR1');
+    expect(all.ok).toBe(true);
+    expect(all.items).toHaveLength(2);
+    for (const item of all.items) expect('markupVersion' in item).toBe(false);
+
+    const sent = await fake.queryHistory('AKR1', { sendOnly: true });
+    expect(sent.items).toHaveLength(1);
+    for (const item of sent.items) expect('markupVersion' in item).toBe(false);
+  });
+
+  it('queryHistory passes through server-derived title/version/status and preserves the 9 base fields', async () => {
+    const fake = createFakeModel({
+      histories: {
+        AKR1: [
+          {
+            id: 3, articleId: 'AKR1', eventType: 'status', action: 'send',
+            fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z',
+            hasSnapshot: 0, title: '헤드라인', version: 3, status: 'DPS',
+            markupVersion: 'blob',
+          },
+        ],
+      },
+    });
+
+    const { items } = await fake.queryHistory('AKR1');
+    // 파생 필드는 fake가 계산하지 않고 시드 값 그대로(파생 규칙의 진실은 백엔드 historyMeta) +
+    // 기존 9필드(id/articleId/eventType/action/fromStatus/toStatus/actorUserId/createdAt/hasSnapshot) 보존.
+    expect(items[0]).toEqual({
+      id: 3, articleId: 'AKR1', eventType: 'status', action: 'send',
+      fromStatus: 'RDS', toStatus: 'DPS', actorUserId: 'kim', createdAt: '2026-06-14T03:00:00Z',
+      hasSnapshot: 0, title: '헤드라인', version: 3, status: 'DPS',
+    });
+  });
+
+  it('queryHistory leaves the seed blob intact so getHistorySnapshot still returns the body (같은 배열 공유)', async () => {
+    const BODY = '{"format":"yh-editor","version":1,"blocks":[{"type":"text","text":"옛본문"}]}';
+    const seed = {
+      histories: {
+        AKR1: [
+          { id: 2, articleId: 'AKR1', eventType: 'edit', action: null, actorUserId: 'lee', createdAt: '2026-06-14T02:00:00Z', hasSnapshot: 1, markupVersion: BODY },
+        ],
+      },
+    };
+    const fake = createFakeModel(seed);
+
+    await fake.queryHistory('AKR1');
+    // 원본 시드 객체는 변형되지 않는다(목록 반환에서만 blob 제외 — delete/대입 금지).
+    expect(seed.histories.AKR1[0].markupVersion).toBe(BODY);
+
+    // 이어서 같은 배열을 읽는 단건 스냅샷 조회가 본문을 정상 반환한다(기사이력비교 경로).
+    const snap = await fake.getHistorySnapshot('AKR1', 2);
+    expect(snap.ok).toBe(true);
+    expect(snap.item.markupVersion).toBe(BODY);
+  });
+
   it('deriveArticle creates a new article without mutating the source', async () => {
     const fake = createFakeModel({ articles: [{ articleId: 'AKR1', title: '원본', status: 'DPS' }] });
     const onChange = vi.fn();
