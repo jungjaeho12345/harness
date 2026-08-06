@@ -167,7 +167,9 @@ test('부분 실패: 한 수신처가 실패해도 나머지는 배부되고 fai
   assert.equal(r.failed.length, 1);
   assert.equal(r.failed[0].reason, 'spool-write-failed');
   assert.equal(contentsOf(db).distributedAt, NOW, '1건이라도 성공하면 배부 시각을 기록한다');
-  assert.equal(historyOf(db).length, 1);
+  const hist = historyOf(db);
+  assert.equal(hist.filter((h) => h.eventType === 'distribute').length, 1, 'kind 단위 distribute 행은 1건 그대로');
+  assert.equal(hist.filter((h) => h.eventType === 'distribute-failed').length, 1, '실패 수신처의 distribute-failed 행이 1건 남는다');
 });
 
 test('전량 실패: distributedAt을 갱신하지 않고 이력도 남기지 않는다(거짓 기록 금지)', async () => {
@@ -186,7 +188,8 @@ test('전량 실패: distributedAt을 갱신하지 않고 이력도 남기지 �
   assert.equal(r.distributed.length, 0);
   assert.equal(r.failed.length, 2);
   assert.equal(contentsOf(db).distributedAt, null);
-  assert.equal(historyOf(db).length, 0);
+  assert.equal(historyOf(db).filter((h) => h.eventType === 'distribute').length, 0, '거짓 기록 금지 — distribute 행 0건');
+  assert.equal(historyOf(db).filter((h) => h.eventType === 'distribute-failed').length, 2, '수신처 단위 실패 2건은 영속된다');
 });
 
 test('spoolWriter 미주입: spool-disabled로 거부하고 DB를 건드리지 않는다', async () => {
@@ -622,4 +625,228 @@ test('onHistoryError: 이력 insert가 성공하는 정상 경로에서는 호�
 
   assert.deepEqual(seen, []);
   assert.equal(historyOf(db).length, 1);
+});
+
+// --- phase 57 step2: 수신처 단위 스풀 쓰기 실패의 영속(distribute-failed, append-only) ---
+// 기록 대상: targetId가 있고 reason이 재전송 가능 allowlist인 실패만.
+// 비기록: status-changed 안전 중단·targetId:null kind 단위 항목(기존대로 onFailure로만 표면화).
+
+const failedHistoryOf = (db) => db
+  .prepare("SELECT * FROM ArticleHistory WHERE articleId = ? AND eventType = 'distribute-failed' ORDER BY id")
+  .all(ARTICLE_ID);
+
+// 케이스 1
+test('실패 영속: 부분 실패 시 distribute-failed 1행 — action=kind, targetId 숫자, reason·actor·createdAt', async () => {
+  const writer = fakeWriter({ failFor: new Set(['mbc']) });
+  const { service, db, distributionTargetModel } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  const mbc = distributionTargetModel.query({ kind: 'press', active: 'Y' }).find((t) => t.spoolDir === 'mbc');
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'], actorUserId: 'desk1' });
+
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].eventType, 'distribute-failed');
+  assert.equal(rows[0].action, 'press', 'action=kind');
+  assert.strictEqual(rows[0].targetId, mbc.id, 'targetId는 숫자(INTEGER)');
+  assert.equal(rows[0].reason, 'spool-write-failed');
+  assert.equal(rows[0].actorUserId, 'desk1');
+  assert.equal(rows[0].createdAt, NOW, '주입한 now()로 stamp');
+});
+
+// 케이스 3
+test('실패 영속: 성공한 수신처에는 distribute-failed 행이 생기지 않는다 (성공 2/실패 1 → 실패 행 1건)', async () => {
+  const writer = fakeWriter({ failFor: new Set(['sbs']) });
+  const { service, db, distributionTargetModel } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+      { name: 'SBS', kind: 'press', spoolDir: 'sbs' },
+    ],
+  });
+  const sbs = distributionTargetModel.query({ kind: 'press', active: 'Y' }).find((t) => t.spoolDir === 'sbs');
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.distributed.length, 2);
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 1, '실패한 수신처 1곳만 기록된다');
+  assert.strictEqual(rows[0].targetId, sbs.id);
+});
+
+// 케이스 4
+test('실패 영속: status-changed 중단 항목은 기록하지 않는다 (targetId 있는 잔여 수신처 포함, onFailure는 유지)', async () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  distributionTargetModel.insert({ name: 'MBC', kind: 'press', spoolDir: 'mbc', active: 'Y' });
+  distributionTargetModel.insert({ name: '포털', kind: 'nonpress', spoolDir: 'portal', active: 'Y' });
+
+  const hooks = {};
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: hookedWriter(hooks),
+    now: () => NOW,
+    onFailure: (info) => seen.push(info),
+  });
+  hooks.onWrite = (args, n) => {
+    if (n === 1) articleModel.update(ARTICLE_ID, { contents: { status: 'EEK' } });
+  };
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  assert.equal(failedHistoryOf(db).length, 0, '안전 중단은 영속하지 않는다 — 영원히 미해소로 남는 항목을 만들지 않는다');
+  assert.equal(seen.length, 2, 'onFailure 통지는 기존대로 유지된다(무음 삼킴 아님)');
+  assert.ok(seen.every((f) => f.reason === 'status-changed'));
+});
+
+// 케이스 5
+test('실패 영속: invalid-spool-dir(레거시 거부 값)도 distribute-failed로 기록된다', async () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({
+    article: { articleId: ARTICLE_ID, title: '제목' },
+    contents: { articleId: ARTICLE_ID, status: 'DPS' },
+  });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: '수상한 대상', kind: 'press', spoolDir: '../../etc', active: 'Y' });
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  const bad = db.prepare("SELECT id FROM DistributionTarget WHERE name = '수상한 대상'").get();
+
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: createArticleHistoryModel(db),
+    spoolWriter: createSpoolWriter({
+      rootDir: SPOOL_ROOT,
+      mkdir: async () => {},
+      writeFile: async () => {},
+      rename: async () => {},
+      now: () => NOW,
+    }),
+    now: () => NOW,
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].reason, 'invalid-spool-dir');
+  assert.strictEqual(rows[0].targetId, bad.id);
+});
+
+// 케이스 6
+test('실패 영속: 재실행 시 실패 행이 누적된다 (append-only — 갱신·삭제 없음)', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs']) });
+  const { service, db, distributionTargetModel } = setup({
+    writer,
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  const kbs = distributionTargetModel.query({ kind: 'press', active: 'Y' })[0];
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 2, '같은 수신처의 두 번째 실패도 새 행으로 append된다');
+  assert.ok(rows.every((r) => r.targetId === kbs.id && r.reason === 'spool-write-failed'));
+  assert.ok(rows[1].id > rows[0].id);
+});
+
+// 케이스 7
+test('실패 영속: 이력 insert 실패가 배부를 되돌리지 않는다 (onHistoryError 표면화 — 본문 미포함)', async () => {
+  const seen = [];
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  articleModel.insert({ article: { articleId: ARTICLE_ID }, contents: { articleId: ARTICLE_ID, status: 'DPS' } });
+  const distributionTargetModel = createDistributionTargetModel(db);
+  distributionTargetModel.insert({ name: 'KBS', kind: 'press', spoolDir: 'kbs', active: 'Y' });
+  distributionTargetModel.insert({ name: 'MBC', kind: 'press', spoolDir: 'mbc', active: 'Y' });
+
+  const service = createDistributionService({
+    distributionTargetModel,
+    articleModel,
+    historyModel: { insert() { throw new Error('db locked'); } },
+    spoolWriter: fakeWriter({ failFor: new Set(['mbc']) }),
+    now: () => NOW,
+    onHistoryError: (info) => seen.push(info),
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.equal(r.ok, true, '이력 실패는 배부 실패가 아니다');
+  assert.equal(r.distributed.length, 1);
+  assert.equal(r.failed.length, 1);
+  assert.equal(contentsOf(db).distributedAt, NOW, 'distributedAt은 그대로 갱신된다');
+  // distribute-failed insert + distribute insert 두 건 모두 표면화된다.
+  const types = seen.map((s) => s.eventType).sort();
+  assert.deepEqual(types, ['distribute', 'distribute-failed']);
+  for (const info of seen) {
+    assert.deepEqual(
+      Object.keys(info).sort(),
+      ['action', 'articleId', 'eventType', 'reason'],
+      '사유·식별자만 담긴다 — 본문·페이로드 금지',
+    );
+  }
+});
+
+// 케이스 8
+test('실패 영속: 반환 shape 불변 — { ok, distributed, failed }와 failed 항목 필드 그대로', async () => {
+  const writer = fakeWriter({ failFor: new Set(['mbc']) });
+  const { service } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+
+  const r = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.deepEqual(Object.keys(r).sort(), ['distributed', 'failed', 'ok']);
+  assert.deepEqual(
+    Object.keys(r.failed[0]).sort(),
+    ['articleId', 'kind', 'reason', 'spoolDir', 'targetId'],
+    'tick의 화이트리스트 투영이 이 shape에 묶여 있다',
+  );
+});
+
+// 케이스 9
+test('실패 영속: DB 비파괴 — 배부 전후 행 수 불변, 기존 이력 보존', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs']) });
+  const { service, db, historyModel } = setup({
+    writer,
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  historyModel.insert({
+    articleId: ARTICLE_ID, eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk1', createdAt: '2026-07-28T04:00:00.000Z',
+  });
+  const counts = () => ({
+    article: db.prepare('SELECT COUNT(*) c FROM Article').get().c,
+    contents: db.prepare('SELECT COUNT(*) c FROM Contents').get().c,
+    targets: db.prepare('SELECT COUNT(*) c FROM DistributionTarget').get().c,
+  });
+  const before = counts();
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  assert.deepEqual(counts(), before);
+  const hist = historyOf(db);
+  assert.equal(hist[0].action, 'send', '기존 송고 이력이 보존된다');
+  assert.equal(hist.filter((h) => h.eventType === 'distribute-failed').length, 1);
 });

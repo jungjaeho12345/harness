@@ -4,7 +4,8 @@
 // 책임은 셋뿐이다:
 //  (1) 주어진 kind의 **활성** DistributionTarget 선정
 //  (2) 수신처별 스풀 파일 쓰기(주입된 spoolWriter — 파일 shape/allowlist는 그쪽이 단일 출처)
-//  (3) 사실 기록 — Contents.distributedAt 갱신 + ArticleHistory 배부 이력(append-only)
+//  (3) 사실 기록 — Contents.distributedAt 갱신 + ArticleHistory 배부 이력(append-only).
+//      수신처 단위 쓰기 실패의 영속(distribute-failed 행 — MVP-4 재전송의 유일한 근거)도 이 사실 기록의 일부다.
 //
 // 책임이 아닌 것(넘겨받거나 다음 phase):
 //  - "지금이 엠바고 시각인가" 시점 판정과 주기 실행 → phase 48의 tick pull(ADR-008 (3)). 여기엔 타이머가 없다.
@@ -13,6 +14,7 @@
 //    쓰기 직전 status 재확인(아래 TOCTOU 가드)은 전이가 아니라 **배부 안전 중단**이다 — status를 읽기만 한다.
 
 import { EMBARGO_DISTRIBUTABLE_STATUSES } from './embargoPolicy.js';
+import { DISTRIBUTE_FAILED_EVENT, isRetryableFailureReason } from './distributionFailureLog.js';
 
 // 배부 대상 종류 — news.md 엠바고 규칙의 두 축(1차→언론사, 2차→비언론사).
 const KINDS = ['press', 'nonpress'];
@@ -66,6 +68,16 @@ export function createDistributionService({
     }
   }
 
+  // 수신처 단위 미발송 사실을 영속한다(append-only) — MVP-4 재전송의 유일한 근거.
+  // 기록 조건은 이 한 곳뿐이다: targetId가 있고(수신처 특정) 재전송 가능한 사유일 때만.
+  // status-changed(안전 중단)·targetId:null(kind 단위 항목)은 기록하지 않는다 —
+  // 재전송 대상이 아니며, 영속하면 영원히 해소되지 않는 항목이 된다(onFailure 로그로만 표면화).
+  // reason은 spoolWriter의 고정 토큰 그대로다 — 예외 메시지·경로를 넣지 않는다.
+  function recordTargetFailure({ articleId, targetId, kind, reason }, actorUserId) {
+    if (targetId == null || !isRetryableFailureReason(reason)) return;
+    record({ articleId, eventType: DISTRIBUTE_FAILED_EVENT, action: kind, targetId, reason, actorUserId });
+  }
+
   // 지금 이 kind들로 배부한다. 언제 부를지는 호출자가 정한다(송고 훅 / phase 48 tick).
   // 반환: { ok:true, distributed:[{targetId, kind, spoolDir, file}], failed:[{targetId, kind, reason}] }
   //       (상태 가드 중단 시 failed에 시작도 못 한 kind가 targetId:null 항목으로 추가된다)
@@ -87,10 +99,13 @@ export function createDistributionService({
     // 배부 불가로 전이된 기사는 어떤 kind로도 나가면 안 된다.
     let aborted = false;
 
-    // 중단된 항목도 failed에 남기고 onFailure로 표면화한다(무음 삼킴 금지 — 기존 실패 정책과 동일).
-    function abortEntry(info) {
+    // 실패 표면화의 단일 경로 — 쓰기 실패·중단 항목 전부 여기를 지난다.
+    // failed 반환 + onFailure 통지(무음 삼킴 금지)에 더해, 기록 여부는 recordTargetFailure의
+    // 한 조건(targetId 있음 + 재전송 가능 사유)으로만 판정된다 — 중단 항목이 실수로 새는 경로를 만들지 않는다.
+    function reportFailure(info) {
       failed.push(info);
       notifyFailure(info);
+      recordTargetFailure(info, actorUserId);
     }
 
     for (const kind of wanted) {
@@ -98,7 +113,7 @@ export function createDistributionService({
       // tick은 distributed∪failed에 등장한 kind만 "처리됨"으로 보므로, 빠뜨리면 활성 수신처가
       // 있는데도 no-active-target으로 오보한다(distributionTickService.js touched 판정).
       if (aborted) {
-        abortEntry({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
+        reportFailure({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
         continue;
       }
 
@@ -116,11 +131,11 @@ export function createDistributionService({
           aborted = true;
           if (i === 0) {
             // 이 kind는 쓰기를 하나도 시작하지 않았다 — kind 단위 항목(targetId:null)로 남긴다.
-            abortEntry({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
+            reportFailure({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
           } else {
             // 처리하지 못하고 남은 수신처들 — 기존 failed 항목과 같은 shape로 남긴다.
             for (const rest of targets.slice(i)) {
-              abortEntry({ articleId, targetId: rest.id, kind, spoolDir: rest.spoolDir, reason: STATUS_CHANGED });
+              reportFailure({ articleId, targetId: rest.id, kind, spoolDir: rest.spoolDir, reason: STATUS_CHANGED });
             }
           }
           break;
@@ -143,10 +158,9 @@ export function createDistributionService({
           okInKind += 1;
           distributed.push({ targetId: t.id, kind, spoolDir: t.spoolDir, file: res.file });
         } else {
-          const info = { articleId, targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' };
-          failed.push(info);
-          // 미발송은 운영자가 알아야 한다 — 무음 삼킴 금지(재전송은 후속 MVP-4).
-          notifyFailure(info);
+          // 미발송은 운영자가 알아야 한다 — 무음 삼킴 금지. 재전송 가능한 실패는
+          // reportFailure를 거쳐 이력에도 영속된다(MVP-4) — 서버 재시작 후에도 복구 근거가 남는다.
+          reportFailure({ articleId, targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' });
         }
       }
 
