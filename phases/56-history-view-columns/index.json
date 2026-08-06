@@ -1,0 +1,17 @@
+{
+  "project": "기사 작성기",
+  "phase": "56-history-view-columns",
+  "scope": "docs/news.md 114~115행 신규 스펙(이력보기)을 구현한다 — 이력보기/송고이력보기 모달을 '수정시간/제목/수정자/상태/버전' 5열 기본값으로 바꾸고, 모달 안에서 우클릭 → '이력 목록설정'으로 다른 메타데이터 컬럼을 추가/제거(이력 종류별 localStorage 영속)할 수 있게 한다. 스펙의 '제목'·'버전'·'상태'는 ArticleHistory에 저장 컬럼이 없으므로 백엔드 서비스가 이력 로그에서 파생해 응답에 싣는다(스키마 변경 0 — DB 비파괴). 배부(ADR-008) 무관, 앱 내 타이머·egress 0.",
+  "baseline": "브랜치 feat-56-history-view(feat-0-mvp 분기, HEAD 2022f55) 실측: npm test 777/777 pass, npm run test:web 89 files / 2218 tests pass, npm run lint clean, npm run build clean.",
+  "order": "backend 패스(step0 순수 파생 모듈 → step1 model → step2 service → step3 라우트 계약) → web 패스(step4 순수 컬럼 카탈로그 → step5 fakeModel 계약 동기화 → step6 ListPage 결선). 파일 소유는 step 간 겹치지 않는다: step0=src/services/historyMeta.js, step1=src/models/articleHistoryModel.js, step2=src/services/articleService.js, step3=test/server.test.js(라우트 무변경 예상), step4=web/src/view/historyColumns.js, step5=web/src/test/fakeModel.js+web/src/model/contract.test.js, step6=web/src/view/ListPage.jsx(+테스트, CSS 무변경).",
+  "decisions": "(1) 제목·버전·상태는 백엔드 파생 — sendOnly 필터가 서버에서 걸리므로 클라이언트는 승계 계산에 필요한 행(스냅샷 edit 행)을 볼 수 없다. 파생은 반드시 sendOnly 필터 '전에' 전체 이력 기준으로 수행한다. (2) 목록 응답에 markupVersion blob은 절대 싣지 않는다(기존 경량 계약 유지) — 제목만 200자 상한으로 파생해 싣는다. (3) 기존 articleHistoryModel.queryByArticle 계약(blob 미포함)은 손대지 않고, 스냅샷 조회용 메서드를 additive로 추가한다(tick 멱등 판정·엠바고 사이클 경로가 queryByArticle을 공유하므로 blob 로딩을 그 경로에 밀어넣지 않는다). (4) 버전은 '최초 저장 본문 = v1' 기준 1-base 정수, 스냅샷 행마다 증가. (5) 컬럼 설정은 이력 종류('history'|'sendHistory')별로 localStorage에 저장(목록 페이지 columnConfig 선례와 동형, 저장 키는 분리 — 'yh.historyColumnConfig'). (6) [리뷰 반영] 제목 v1 구간 예외 — 편집 스냅샷이 0건인 기사는 현재 Article.markupVersion이 곧 v1 본문이므로(그 뒤 본문이 바뀐 적 없다는 뜻), 그때에 한해 서비스가 현재 본문을 v1Body로 주입해 제목을 파생한다. 스냅샷이 1건 이상이면 현재 본문은 최신 버전이지 v1이 아니므로 무시한다(v1 구간은 '' → 뷰 '—'). create→send만 있는 흔한 경로에서 제목이 비는 문제를 닫는다. (7) [리뷰 반영] '다른 기사의 메타데이터' 해석 — 이력 이벤트 필드(종류·동작·전이·이전/이후상태·기사아이디·이력번호·본문스냅샷)를 '이력' 그룹으로, 우클릭한 기사 자체의 메타데이터 소수(작성자·부서·작성시간·송고시간)를 '기사' 그룹으로 카탈로그에 함께 넣는다(총 17컬럼, 기본 표시 5). 기사 그룹 값은 모든 이력 행에 동일하게 반복 표시되지만, ListPage.showHistory(article, …)가 이미 목록 행 객체를 들고 있어 추가 조회는 0건이다(N+1 없음). key 충돌(이력 createdAt=수정시간 vs 기사 createdAt=작성시간)을 피하려 기사 그룹 key에는 article 접두어를 붙인다. (8) [리뷰 반영] 이력 목록설정 모달은 이력 모달의 '형제'이면서 JSX 상 '뒤'에 배치한다 — .yh-modal__backdrop의 z-index가 60 단일 값이라 형제 중 DOM 뒤쪽이 위에 그려진다. CSS(z-index·새 클래스)는 도입하지 않는다. (9) [리뷰 반영] 커밋 위생 — 작업 트리에 사용자 소유 미커밋 파일(docs/news.md·.claude/skills/**·phases/49-mini-backlog-cleanup/step0.md·phases/50-hygiene-cleanup/**)이 이미 있으므로, 각 step의 diff scope AC는 'step 시작 전 git status --porcelain 스냅샷 대비 증분'으로 판정하고(절대 목록 비교 금지), git add -A/git add . 및 미커밋 사용자 파일의 restore/checkout/stash/clean을 전 step에서 금지한다. docs/news.md는 이 phase에서 커밋하지 않는다. (10) 알려진 잔여(별도 phase) — fakeModel의 sendOnly 필터 조건(action==='send')이 서버(eventType==='status' && action==='send')와 미세하게 다르다. 이번 phase에서는 건드리지 않는다.",
+  "steps": [
+    { "step": 0, "name": "history-derive", "status": "pending" },
+    { "step": 1, "name": "history-model", "status": "pending" },
+    { "step": 2, "name": "history-service", "status": "pending" },
+    { "step": 3, "name": "route-contract", "status": "pending" },
+    { "step": 4, "name": "history-columns", "status": "pending" },
+    { "step": 5, "name": "fake-history-contract", "status": "pending" },
+    { "step": 6, "name": "history-modal", "status": "pending" }
+  ]
+}
