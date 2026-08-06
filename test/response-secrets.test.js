@@ -122,12 +122,17 @@ function routesFor({ articleId, historyId }) {
     ['POST', `/api/articles/${articleId}/force-unlock`, { clientId: 'tab-r' }, '/api/articles/:id/force-unlock'],
     // 스풀 미설정이라 spool-disabled/403이어도 응답 본문을 검사한다.
     ['POST', '/api/distribution/tick', {}, '/api/distribution/tick'],
+    // 배부 실패 조회/재전송(phase 57) — R 세션이라 403이어도 응답 본문 위생은 검사된다.
+    ['GET', '/api/distribution/failures', {}, '/api/distribution/failures'],
+    ['POST', '/api/distribution/retry', { body: { articleId: 'AKRX', targetId: 1 } }, '/api/distribution/retry'],
   ];
 }
 
 // 감사 대상 범위 — Contents 행(잠금 컬럼 보유)이 응답에 실릴 수 있는 라우트군.
 // /api/stream(SSE)은 무효화 신호만 보내므로(ADR-005) 제외한다.
-const inAuditScope = (path) => path.startsWith('/api/articles') || path === '/api/distribution/tick';
+// '/api/distribution/'는 끝 슬래시 필수 — tick/failures/retry만 묶고,
+// '/api/distribution-targets'(하이픈) 4개 라우트는 이 감사 범위에 넣지 않는다.
+const inAuditScope = (path) => path.startsWith('/api/articles') || path.startsWith('/api/distribution/');
 
 // Express 라우터에 실제 등록된 (METHOD, 템플릿) 전수. 반영(reflection)이라 목록을 손으로 관리하지 않는다.
 function registeredRoutes(app) {

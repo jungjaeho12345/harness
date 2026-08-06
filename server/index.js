@@ -186,6 +186,12 @@ const STATUS_BY_REASON = {
   'spool-disabled': 503,
   // tick의 후보 조회 자체가 실패한 서버 장애 — 4xx(폴백 400)로 보고하면 운영 cron이 클라이언트 잘못으로 오인한다.
   'tick-failed': 500,
+  // 배부 실패 재전송(ADR-008 MVP-4) — 재전송할 미해소 실패가 없다(대상 없음).
+  'no-failure': 404,
+  // 기사 상태가 배부 불가로 바뀐 상태 충돌.
+  'status-changed': 409,
+  // 수신처의 현재 kind가 실패 이력의 kind와 달라진 상태 충돌.
+  'kind-changed': 409,
 };
 
 function fail(res, result, fallback = 400) {
@@ -576,6 +582,33 @@ export function createApp({
       if (!r.ok) return fail(res, r);
       // 실제 배부가 있었을 때만 무효화 신호 — 목록의 상태 배지가 갱신돼야 한다(변경 0건이면 재조회 낭비).
       if (Array.isArray(r.distributed) && r.distributed.length > 0) app.notifyChange('status');
+      return res.json(r);
+    } catch (e) { next(e); } // async 라우트의 rejection은 Express 4가 잡지 못한다 — 반드시 next로 넘긴다.
+  });
+
+  // --- 배부 실패 조회/재전송 (Z 전용 — 게이트는 authorization.manageDistributionFailure, ADR-008 MVP-4) ---
+  // 조회는 부수효과가 없으므로 GET, 재전송은 스풀 파일을 쓰므로 POST다(프리페치 트리거 금지).
+  // body에서 읽는 값은 articleId·targetId뿐이다 — role·kind·시각·경로를 받으면 인가가 무력화된다(ADR-004).
+  // 판정(실패 존재·kind 일치·상태·활성)은 전부 서비스가 한다 — 라우트는 shape 매핑·게이트 위임뿐이다(ADR-006).
+  app.get('/api/distribution/failures', (req, res, next) => {
+    try {
+      // 쿼리는 limit만 화이트리스트로 넘긴다(통짜 전달 금지). 정규화·클램프는 서비스 책임.
+      const r = controllers.distribution.failures(readSessionToken(req), { limit: Number(req.query.limit) });
+      return r.ok ? res.json(r) : fail(res, r);
+    } catch (e) { next(e); }
+  });
+
+  app.post('/api/distribution/retry', async (req, res, next) => {
+    try {
+      const body = req.body ?? {};
+      const r = await controllers.distribution.retry(readSessionToken(req), {
+        articleId: body.articleId,
+        targetId: Number(body.targetId), // 숫자 정규화(Number(req.params.id) 선례)
+      });
+      if (!r.ok) return fail(res, r);
+      // 재전송이 성공했을 때만 무효화 신호 — distributedAt이 바뀌어 목록 재조회가 필요하다.
+      // 거부·실패에는 보내지 않는다(변경 0건 재조회 낭비 + 실패 오신호 방지).
+      app.notifyChange('status');
       return res.json(r);
     } catch (e) { next(e); } // async 라우트의 rejection은 Express 4가 잡지 못한다 — 반드시 next로 넘긴다.
   });
