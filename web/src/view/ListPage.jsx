@@ -14,7 +14,10 @@ import {
 } from './columnConfig.js';
 import { renderDetailHtml } from './articleDetail.js';
 import { blocksToText, deserialize } from './editorContent.js';
-import { formatDateTime } from './listFormat.js';
+import {
+  HISTORY_COLUMNS, loadHistoryColumnConfig, saveHistoryColumnConfig,
+  toggleHistoryColumn, visibleHistoryColumns, historyCellText,
+} from './historyColumns.js';
 
 const MENU_LABELS = {
   deskUnsent: '데스크 미송고',
@@ -62,8 +65,14 @@ export function ListPage() {
   const [ctx, setCtx] = useState(null); // 우클릭 컨텍스트 메뉴 { article, x, y }
   const [colConfig, setColConfig] = useState(() => loadColumnConfig(menu));
   const [showColModal, setShowColModal] = useState(false);
-  // 이력보기/송고이력보기 모달 { title, items } — null이면 닫힘. (step8, 컬럼 설정 모달과 동일 패턴)
+  // 이력보기/송고이력보기 모달 { title, kind, article, items } — null이면 닫힘. (컬럼 설정 모달과 동일 패턴)
+  // kind('history'|'sendHistory')는 컬럼 설정 저장 스코프, article은 우클릭한 목록 행 객체 그대로
+  // (기사 그룹 컬럼 값의 출처 — 추가 조회 없음, phase 56 news.md 114~115행).
   const [historyModal, setHistoryModal] = useState(null);
+  // 이력 모달의 컬럼 설정 — 모달을 '열 때' loadHistoryColumnConfig(kind)로 세팅한다(이력 종류별 영속).
+  const [histColConfig, setHistColConfig] = useState(null);
+  // '이력 목록설정' 모달 열림 여부 — 이력 모달 콘텐츠 우클릭으로 연다.
+  const [showHistoryColModal, setShowHistoryColModal] = useState(false);
   // 번역 결과 모달 { text, ok, reason } — null이면 닫힘. (step10, in-app 모달 — React 자동 escape, 새 창 아님)
   const [translateModal, setTranslateModal] = useState(null);
 
@@ -77,9 +86,12 @@ export function ListPage() {
 
   // 이력보기/송고이력보기 — 컨트롤러로 이력을 조회(model.queryHistory 경유, ADR-003)해 모달로 표시.
   // 모달 렌더는 React가 escape하므로 별도 HTML 이스케이프 불필요(새 창이 아닌 in-app 모달).
-  const showHistory = async (article, title, sendOnly) => {
-    const rows = await loadHistory(article, { sendOnly });
-    setHistoryModal({ title, items: rows });
+  // title/version/status는 서버 파생 값을 표시만 한다(뷰에서 계산 금지 — 단일 출처는 백엔드 historyMeta).
+  const showHistory = async (article, title, kind) => {
+    const rows = await loadHistory(article, { sendOnly: kind === 'sendHistory' });
+    setHistColConfig(loadHistoryColumnConfig(kind));
+    setShowHistoryColModal(false);
+    setHistoryModal({ title, kind, article, items: rows });
   };
 
   // 번역 — 컨트롤러로 model.translate(ADR-003)를 호출해 in-app 모달로 표시(이력 모달과 동일 패턴, React 자동 escape).
@@ -98,8 +110,8 @@ export function ListPage() {
       case 'requestDelete': requestDelete(article); break;
       case 'releaseLock': releaseLock(article); break;
       case 'detail': await openDetail(article, loadDetail); break;
-      case 'history': showHistory(article, '이력보기', false); break;
-      case 'sendHistory': showHistory(article, '송고이력보기', true); break;
+      case 'history': showHistory(article, '이력보기', 'history'); break;
+      case 'sendHistory': showHistory(article, '송고이력보기', 'sendHistory'); break;
       // 번역 — 결과를 in-app 모달로 표시. 실패해도 throw 없이 원문+안내(showTranslate가 graceful 처리).
       case 'translate': await showTranslate(article); break;
       // 후속/계속기사작성 — deriveArticle이 만든 새 기사로 편집 진입(컨트롤러). 원본 비파괴.
@@ -130,6 +142,21 @@ export function ListPage() {
     setColConfig(next);
     saveColumnConfig(menu, next);
   };
+
+  // 이력 모달 컬럼 토글 — state 갱신 + 이력 종류(kind)별 즉시 저장(toggleCol과 동일 패턴).
+  const toggleHistCol = (key) => {
+    const next = toggleHistoryColumn(histColConfig, key);
+    setHistColConfig(next);
+    saveHistoryColumnConfig(historyModal.kind, next);
+  };
+
+  // 이력 모달을 닫는 모든 경로에서 설정 모달도 함께 닫는다(고아 모달 금지).
+  const closeHistoryModal = () => {
+    setHistoryModal(null);
+    setShowHistoryColModal(false);
+  };
+
+  const histCols = historyModal && histColConfig ? visibleHistoryColumns(histColConfig) : [];
 
   const renderCell = (col, row) => {
     if (col.key === 'status') {
@@ -256,34 +283,60 @@ export function ListPage() {
       )}
 
       {historyModal && (
-        <div className="yh-modal__backdrop" onClick={() => setHistoryModal(null)}>
-          <div className="yh-modal" role="dialog" aria-label={historyModal.title} onClick={(e) => e.stopPropagation()}>
+        <div className="yh-modal__backdrop" onClick={closeHistoryModal}>
+          {/* 우클릭 진입점은 콘텐츠 컨테이너 전체 — 이력 0건/컬럼 0개로 표가 없어도 목록설정에 진입할 수 있다. */}
+          <div
+            className="yh-modal"
+            role="dialog"
+            aria-label={historyModal.title}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => { e.preventDefault(); setShowHistoryColModal(true); }}
+          >
             <h2>{historyModal.title}</h2>
             {historyModal.items.length === 0 ? (
               <p className="yh-history__empty">이력이 없습니다.</p>
+            ) : histCols.length === 0 ? (
+              <p className="yh-history__empty">표시할 컬럼이 없습니다 — 우클릭 목록설정에서 선택하세요.</p>
             ) : (
               <table className="yh-table yh-history__table">
                 <thead>
                   <tr>
-                    <th>시각</th>
-                    <th>종류</th>
-                    <th>전이</th>
-                    <th>작성자</th>
+                    {histCols.map((c) => <th key={c.key}>{c.label}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {historyModal.items.map((h, i) => (
                     <tr key={h.id ?? i}>
-                      <td>{formatDateTime(h.createdAt)}</td>
-                      <td>{h.eventType ?? h.action ?? ''}</td>
-                      <td>{h.fromStatus || h.toStatus ? `${h.fromStatus ?? ''}→${h.toStatus ?? ''}` : ''}</td>
-                      <td>{h.actorUserId ?? ''}</td>
+                      {/* 상태는 배지가 아니라 텍스트 — 목록 테이블의 status-badge 단수 조회와 충돌하지 않는다. */}
+                      {histCols.map((c) => <td key={c.key}>{historyCellText(c.key, h, historyModal.article)}</td>)}
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
-            <button type="button" className="yh-btn yh-btn--primary" onClick={() => setHistoryModal(null)}>닫기</button>
+            <button type="button" className="yh-btn yh-btn--primary" onClick={closeHistoryModal}>닫기</button>
+          </div>
+        </div>
+      )}
+
+      {/* 이력 목록설정 — 이력 모달의 '형제'로, JSX상 이력 모달 '뒤'에 둔다: 백드롭 z-index가 60 단일 값이라
+          형제 중 DOM 뒤쪽이 위에 그려진다(CSS 무변경 — DOM 순서로만 해결). 자식으로 넣으면 백드롭 클릭이
+          이력 모달 백드롭으로 버블링돼 함께 닫히고, 설정 모달 안 우클릭이 부모 onContextMenu를 재발화시킨다. */}
+      {historyModal && showHistoryColModal && (
+        <div className="yh-modal__backdrop" onClick={() => setShowHistoryColModal(false)}>
+          <div className="yh-modal" role="dialog" aria-label="이력 목록설정" onClick={(e) => e.stopPropagation()}>
+            <h2>이력 목록설정</h2>
+            {HISTORY_COLUMNS.map((c) => (
+              <label key={c.key} style={{ display: 'block' }}>
+                <input
+                  type="checkbox"
+                  checked={!!histColConfig.visible[c.key]}
+                  onChange={() => toggleHistCol(c.key)}
+                />
+                {c.label}
+              </label>
+            ))}
+            <button type="button" className="yh-btn yh-btn--primary" onClick={() => setShowHistoryColModal(false)}>닫기</button>
           </div>
         </div>
       )}

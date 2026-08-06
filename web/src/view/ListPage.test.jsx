@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppContext } from '../app/context.js';
 import { ListPage } from './ListPage.jsx';
@@ -472,6 +472,240 @@ describe('ListPage', () => {
     await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
     fireEvent.contextMenu(container.querySelector('thead tr'));
     expect(screen.getByRole('dialog', { name: '컬럼 설정' })).toBeInTheDocument();
+  });
+
+  // --- 이력보기 모달 컬럼 카탈로그 결선(phase 56, news.md 114~115행) ---
+  // 단언 스코프 규칙: 모달 오픈 후의 헤더/셀 단언은 within(dialog)로 스코프한다 —
+  // bodyRows(container)는 목록 tbody와 모달 tbody가 섞이므로 모달 오픈 '전'에만 쓴다.
+  describe('이력보기 모달 — 기본 5열 + 이력 목록설정', () => {
+    const HIST_ARTICLE = {
+      articleId: 'AKR9', title: 't', status: 'RDS', lockYN: 'N',
+      author: 'kim', department: '정치', createdAt: '2026-06-14T01:00:00Z', sentAt: '2026-06-14T05:00:00Z',
+    };
+    // 서버가 주는 shape 그대로(step2 계약) — title/version/status는 서버 파생, blob 없음.
+    const HIST_ROWS = [
+      {
+        id: 3, articleId: 'AKR9', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+        actorUserId: '김기자', createdAt: '2026-06-14T03:09:06Z', hasSnapshot: 0,
+        title: '헤드라인', version: 2, status: 'DPS',
+      },
+      {
+        id: 2, articleId: 'AKR9', eventType: 'edit', action: null, actorUserId: '이기자',
+        createdAt: '2026-06-14T02:00:00Z', hasSnapshot: 1, title: '헤드라인', version: 2, status: 'RDS',
+      },
+    ];
+    const histSeed = () => ({
+      articles: [{ ...HIST_ARTICLE }],
+      histories: { AKR9: HIST_ROWS.map((r) => ({ ...r })) },
+    });
+
+    // 이력 모달 오픈 — bodyRows는 모달이 열리기 전이라 안전하다.
+    async function openHistory(container, name = '이력보기') {
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+      fireEvent.contextMenu(bodyRows(container)[0]);
+      await userEvent.click(screen.getByRole('menuitem', { name }));
+      return screen.findByRole('dialog', { name });
+    }
+
+    // 이력 모달 콘텐츠 영역 우클릭 → 이력 목록설정 모달.
+    async function openSettings(dialog) {
+      fireEvent.contextMenu(dialog);
+      return screen.findByRole('dialog', { name: '이력 목록설정' });
+    }
+
+    const headerTexts = (dialog) => within(dialog).getAllByRole('columnheader').map((th) => th.textContent);
+    const rowCells = (dialog, i) => [...dialog.querySelectorAll('tbody tr')[i].querySelectorAll('td')]
+      .map((td) => td.textContent);
+
+    it('케이스1: 이력보기 헤더가 정확히 수정시간/제목/수정자/상태/버전(순서 포함)이다', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전']);
+    });
+
+    it('케이스2: 첫 행에 수정시간·제목·수정자·상태·버전 값이 보인다', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
+    });
+
+    it("케이스3: title이 빈 문자열·version 없음인 행은 해당 셀이 '—'다", async () => {
+      const seed = histSeed();
+      seed.histories.AKR9 = [{
+        id: 1, articleId: 'AKR9', eventType: 'edit', action: null, actorUserId: '박기자',
+        createdAt: '2026-06-14T01:30:00Z', hasSnapshot: 0, title: '', status: '',
+      }];
+      const { container } = setup(seed);
+      const dialog = await openHistory(container);
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 01:30', '—', '박기자', '—', '—']);
+    });
+
+    it("케이스4: 이력 모달 안 우클릭 → '이력 목록설정'이 열리고 이력 모달은 그대로다", async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      expect(settings).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: '이력보기' })).toBeInTheDocument();
+    });
+
+    it('케이스5: 이력 0건(이력이 없습니다) 상태에서도 우클릭으로 설정 모달이 열린다', async () => {
+      const { container } = setup({ articles: [{ ...HIST_ARTICLE }] });
+      const dialog = await openHistory(container);
+      expect(dialog).toHaveTextContent('이력이 없습니다');
+      const settings = await openSettings(dialog);
+      expect(settings).toBeInTheDocument();
+    });
+
+    it("케이스6: 설정에서 '종류'를 체크하면 헤더에 종류가 추가되고 셀에 원값이 보인다", async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('종류'));
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전', '종류']);
+      expect(rowCells(dialog, 0)[5]).toBe('status');
+      expect(rowCells(dialog, 1)[5]).toBe('edit');
+    });
+
+    it("케이스7: 설정에서 기본 컬럼 '버전'을 해제하면 헤더에서 사라진다", async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('버전'));
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태']);
+    });
+
+    it('케이스8: 컬럼 변경은 영속돼 같은 종류(이력보기)를 다시 열면 유지된다', async () => {
+      const { container } = setup(histSeed());
+      let dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('버전')); // 해제
+      await userEvent.click(within(settings).getByLabelText('종류')); // 추가
+      await userEvent.click(within(dialog).getByRole('button', { name: '닫기' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력보기' })).toBeNull());
+
+      dialog = await openHistory(container);
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '종류']);
+    });
+
+    it('케이스9: 이력보기에서 켠 컬럼은 송고이력보기에 적용되지 않는다(종류별 저장)', async () => {
+      const seed = histSeed();
+      seed.articles[0].status = 'DPS'; // 부서별 송고 목록에 노출 + 송고이력보기 항목이 있는 메뉴.
+      const { container } = setup(seed);
+      await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+
+      let dialog = await openHistory(container, '이력보기');
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('종류'));
+      expect(headerTexts(dialog)).toContain('종류');
+      await userEvent.click(within(dialog).getByRole('button', { name: '닫기' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력보기' })).toBeNull());
+
+      dialog = await openHistory(container, '송고이력보기');
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전']);
+    });
+
+    it("케이스10: 이력 설정 변경이 목록 테이블 헤더·'컬럼 설정' 모달과 격리된다", async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('버전'));
+      await userEvent.click(within(settings).getByLabelText('종류'));
+      await userEvent.click(within(dialog).getByRole('button', { name: '닫기' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력보기' })).toBeNull());
+
+      // 목록 테이블 헤더는 그대로다(모달이 닫혀 thead는 목록 테이블뿐).
+      expect([...container.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+        '기사아이디', '제목', '작성자', '수정자', '부서', '부서코드',
+        '작성시간', '수정시간', '송고시간', '기사상태', 'LockYN',
+      ]);
+      // 헤더 우클릭으로 열리는 '컬럼 설정' 모달의 체크 상태도 오염되지 않는다(전부 기본 체크).
+      fireEvent.contextMenu(container.querySelector('thead tr'));
+      const colModal = screen.getByRole('dialog', { name: '컬럼 설정' });
+      expect(within(colModal).getByLabelText('제목')).toBeChecked();
+      expect(within(colModal).getByLabelText('기사상태')).toBeChecked();
+      expect(within(colModal).getByLabelText('송고시간')).toBeChecked();
+    });
+
+    it('케이스11: 설정 모달 백드롭 클릭은 설정만 닫고 이력 모달은 남긴다', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      await openSettings(dialog);
+      const backdrops = container.querySelectorAll('.yh-modal__backdrop');
+      fireEvent.click(backdrops[backdrops.length - 1]); // 설정 모달 백드롭(마지막 형제)
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력 목록설정' })).toBeNull());
+      expect(screen.getByRole('dialog', { name: '이력보기' })).toBeInTheDocument();
+    });
+
+    it('케이스12: 설정 모달을 열어 둔 채 이력 모달을 닫으면 설정 모달도 함께 사라진다', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      await openSettings(dialog);
+      await userEvent.click(within(dialog).getByRole('button', { name: '닫기' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력보기' })).toBeNull());
+      expect(screen.queryByRole('dialog', { name: '이력 목록설정' })).toBeNull();
+    });
+
+    it('케이스13: 모든 컬럼을 해제하면 안내 문구가 보이고, 그 상태에서도 설정을 다시 열 수 있다', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      let settings = await openSettings(dialog);
+      for (const label of ['수정시간', '제목', '수정자', '상태', '버전']) {
+        await userEvent.click(within(settings).getByLabelText(label));
+      }
+      expect(dialog).toHaveTextContent('표시할 컬럼이 없습니다');
+      await userEvent.click(within(settings).getByRole('button', { name: '닫기' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '이력 목록설정' })).toBeNull());
+      // 표가 없어도 컨테이너 우클릭으로 재진입할 수 있다(막다른 골목 없음).
+      settings = await openSettings(dialog);
+      expect(settings).toBeInTheDocument();
+    });
+
+    it('케이스14: 송고이력보기 — sendOnly 조회가 유지되고 새 모달에서 제목/버전이 렌더된다', async () => {
+      const seed = histSeed();
+      seed.articles[0].status = 'DPS';
+      const { model, container } = setup(seed);
+      const spy = vi.spyOn(model, 'queryHistory');
+      await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+
+      const dialog = await openHistory(container, '송고이력보기');
+      expect(spy).toHaveBeenCalledWith('AKR9', { sendOnly: true });
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전']);
+      expect(dialog.querySelectorAll('tbody tr')).toHaveLength(1); // send 행만
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
+    });
+
+    it('케이스15: 기사 그룹 컬럼(작성자·작성시간)은 목록 행 값으로 모든 이력 행에 렌더되고 추가 조회가 없다', async () => {
+      const { model, container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      // 모달 오픈 이후 어떤 추가 기사 조회도 없어야 한다(목록 행 객체 재사용 — N+1 금지).
+      const qa = vi.spyOn(model, 'queryArticles');
+      const ga = vi.spyOn(model, 'getArticle');
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('작성자'));
+      await userEvent.click(within(settings).getByLabelText('작성시간'));
+
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전', '작성자', '작성시간']);
+      const rows = dialog.querySelectorAll('tbody tr');
+      expect(rows).toHaveLength(2);
+      for (let i = 0; i < rows.length; i += 1) {
+        const cells = rowCells(dialog, i);
+        expect(cells[5]).toBe('kim'); // article.author — 모든 행 동일 반복
+        expect(cells[6]).toBe('2026-06-14 01:00'); // article.createdAt(작성시간) — 이력 행 시각과 다르다
+      }
+      expect(qa).not.toHaveBeenCalled();
+      expect(ga).not.toHaveBeenCalled();
+    });
+
+    it('케이스16: 설정 모달 백드롭이 문서 순서상 이력 모달 백드롭보다 뒤다(같은 z-index에서 위에 그려짐)', async () => {
+      const { container } = setup(histSeed());
+      const dialog = await openHistory(container);
+      await openSettings(dialog);
+      const backdrops = [...container.querySelectorAll('.yh-modal__backdrop')];
+      expect(backdrops).toHaveLength(2);
+      expect(within(backdrops[0]).getByRole('dialog', { name: '이력보기' })).toBeInTheDocument();
+      expect(within(backdrops[backdrops.length - 1]).getByRole('dialog', { name: '이력 목록설정' }))
+        .toBeInTheDocument();
+    });
   });
 });
 
