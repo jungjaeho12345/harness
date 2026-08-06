@@ -9,6 +9,7 @@ import {
   requiredKinds, distributedKinds, cycleDistributedKinds, embargoStatusFor,
 } from './embargoPolicy.js';
 import { toPublicContents } from './contentsProjection.js';
+import { decorateHistoryRows } from './historyMeta.js';
 
 // 30분 무갱신이면 stale 잠금으로 보고 다음 시도자가 가져갈 수 있다.
 const LOCK_TTL_MS = 30 * 60 * 1000;
@@ -323,12 +324,34 @@ export function createArticleService({ articleModel, db, historyModel, distribut
     return create(dto);
   }
 
-  // 이력 조회 — 모델에 얇게 위임. 송고이력 필터(sendOnly)는 도메인 규칙이므로 서비스에서 처리.
+  // 이력 조회 — 모델에 얇게 위임 + 표시용 파생(title/version/status) 부여(historyMeta 순수 코어).
+  // 송고이력 필터(sendOnly)는 도메인 규칙이므로 서비스에서 처리.
   function queryHistory(articleId, { sendOnly = false } = {}) {
     if (!historyModel) return [];
     const rows = historyModel.queryByArticle(articleId);
-    if (!sendOnly) return rows;
-    return rows.filter((r) => r.eventType === 'status' && r.action === 'send');
+
+    // 스냅샷(제목 소재) 조회는 가드 호출 — 부분 스텁·조회 실패에도 이력보기는 죽지 않는다
+    // (제목만 비고 버전·상태는 정확 — record()가 insert 실패를 격리하는 것과 같은 정신).
+    let snapshots = [];
+    if (typeof historyModel.querySnapshotsByArticle === 'function') {
+      try { snapshots = historyModel.querySnapshotsByArticle(articleId) ?? []; }
+      catch { snapshots = []; }
+    }
+
+    // v1 본문 예외: 스냅샷 0건이면 현재 본문을 v1 본문으로 쓴다 — "모든 본문 쓰기(update)가 스냅샷
+    // 이력을 남긴다"는 전제하의 근사다(record() insert 실패가 삼켜진 뒤에는 어긋날 수 있다 —
+    // onHistoryError로 관측 가능. 빈 문자열 본문 저장도 hasSnapshot=0이라 예외지만 현 UI에선 도달 불가).
+    // 그때만(이력 1건 이상 + 스냅샷 0건) 현재 본문을 읽어 넘긴다 — 그 외에는 결과에 쓰이지 않는 조회다.
+    let v1Body;
+    if (rows.length > 0 && snapshots.length === 0) {
+      try { v1Body = articleModel.getById(articleId)?.article?.markupVersion; }
+      catch { v1Body = undefined; }
+    }
+
+    // 파생은 sendOnly 필터 '전에' 전체 이력 기준 — 승계 규칙이 필터로 잘린 edit 스냅샷 행에 의존한다.
+    const decorated = decorateHistoryRows(rows, snapshots, { v1Body });
+    if (!sendOnly) return decorated;
+    return decorated.filter((r) => r.eventType === 'status' && r.action === 'send');
   }
 
   // 단건 이력 스냅샷 조회 — 본문(markupVersion) 포함. 기사이력비교가 사용자가 고른 스냅샷만 지연 조회한다.

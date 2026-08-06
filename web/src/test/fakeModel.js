@@ -156,8 +156,13 @@ export function createFakeModel(seed = {}) {
 
     // --- 메뉴 액션: 이력 / 파생 / 번역 ---
     // 이력보기/송고이력보기 — seed의 이력 배열을 반환. sendOnly면 송고(action==='send') 항목만 필터.
+    // 서버 /history 계약(phase 56): 목록은 본문 blob(markupVersion) 없는 경량 응답이다 — 여기서도 제외한다
+    // (blob을 되살리지 마라 — 뷰가 실서버에 없는 필드에 의존해도 테스트가 못 잡는다). title/version/status는
+    // 서버가 파생해 싣는 값이라 fake는 계산하지 않고 시드 값 그대로 통과시킨다(파생 규칙의 진실은
+    // 백엔드 src/services/historyMeta.js). 원본 시드는 변형 금지 — getHistorySnapshot이 같은 배열에서 본문을 읽는다.
     queryHistory(articleId, { sendOnly } = {}) {
-      const items = (histories[articleId] ?? []).map((h) => ({ ...h }));
+      const items = (histories[articleId] ?? [])
+        .map(({ markupVersion, ...rest }) => rest); // eslint-disable-line no-unused-vars
       const filtered = sendOnly ? items.filter((h) => h.action === 'send') : items;
       return { ok: true, items: filtered };
     },

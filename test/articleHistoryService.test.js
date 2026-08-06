@@ -295,6 +295,215 @@ test('onHistoryError: 미주입(오늘의 조립)이어도 이력 실패가 예�
   );
 });
 
+// --- phase 56 step2: queryHistory 파생 필드(title/version/status) — sendOnly 필터 '전' 전체 이력 기준 ---
+
+test('derive: queryHistory가 편집 스냅샷에서 제목(title)을 파생한다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('새 제목\n본문'), modifier: 'kim' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows[0].title, '새 제목');
+});
+
+test('derive: 버전은 본문 편집마다 증가하고(최신순 [3,2]) 편집 0회 송고 행은 v1이다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판'), modifier: 'kim' });
+  service.update(articleId, { markupVersion: markup('3판'), modifier: 'kim' });
+  assert.deepEqual(service.queryHistory(articleId).map((r) => r.version), [3, 2]);
+
+  // 편집 0회 + 송고 1회 — 최초 저장 본문 = v1.
+  const { service: s2 } = setup();
+  const { articleId: id2 } = s2.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  s2.applyAction(id2, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+  assert.equal(s2.queryHistory(id2)[0].version, 1);
+});
+
+test('derive: 메타 전용 편집(본문 미포함)은 버전을 올리지 않는다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판'), modifier: 'kim' }); // 스냅샷 → v2
+  service.update(articleId, { title: '메타만 수정', modifier: 'kim' });          // 스냅샷 없음 — 직전 값 유지
+  assert.deepEqual(service.queryHistory(articleId).map((r) => r.version), [2, 2]);
+});
+
+test('derive: 상태는 전이 행 toStatus·이전 edit 행은 fromStatus 역승계다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('새 본문', true), modifier: 'kim' }); // edit
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });      // status/send
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows[0].status, 'DPS', 'status 행은 전이 후 상태');
+  assert.equal(rows[1].status, 'RDS', '그보다 오래된 edit 행은 전이의 fromStatus 역승계');
+});
+
+test('derive: sendOnly는 파생 이후 필터다 — 송고 행의 버전·제목이 전체 조회와 정확히 일치한다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판\n본문'), modifier: 'kim' });
+  service.update(articleId, { markupVersion: markup('마지막 제목\n본문', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const sendOnly = service.queryHistory(articleId, { sendOnly: true });
+  assert.equal(sendOnly.length, 1);
+  assert.equal(sendOnly[0].version, 3, '필터로 잘린 edit 스냅샷까지 센 버전이다');
+  assert.equal(sendOnly[0].title, '마지막 제목');
+
+  const full = service.queryHistory(articleId);
+  const same = full.find((r) => r.id === sendOnly[0].id);
+  assert.deepEqual(sendOnly[0], same, '전체 조회의 같은 행과 값이 정확히 일치한다');
+});
+
+test('derive: sendOnly 여부와 무관하게 반환 행에 markupVersion이 없고 hasSnapshot은 남는다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  for (const opts of [undefined, { sendOnly: true }]) {
+    for (const r of service.queryHistory(articleId, opts)) {
+      assert.equal('markupVersion' in r, false, '목록은 blob 없는 경량 계약');
+      assert.notEqual(r.hasSnapshot, undefined);
+    }
+  }
+});
+
+test('derive: querySnapshotsByArticle가 없는 부분 스텁이어도 throw 없이 배열을 반환한다(title은 빈 값)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  // 기존 throwingHistoryModel 형태 — querySnapshotsByArticle 미구현.
+  const stubHistory = {
+    insert() {},
+    queryByArticle() {
+      return [
+        {
+          id: 2, articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS',
+          toStatus: 'DPS', actorUserId: 'desk', createdAt: '2026-06-16T00:00:02.000Z', hasSnapshot: 0,
+        },
+        {
+          id: 1, articleId: 'AKR1', eventType: 'edit', action: null, fromStatus: null,
+          toStatus: null, actorUserId: 'kim', createdAt: '2026-06-16T00:00:01.000Z', hasSnapshot: 1,
+        },
+      ];
+    },
+    querySnapshotById() { return undefined; },
+  };
+  const service = createArticleService({ articleModel, db, historyModel: stubHistory });
+
+  const rows = service.queryHistory('AKR1');
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.title), ['', ''], '스냅샷을 못 읽으면 제목만 빈다');
+  assert.deepEqual(rows.map((r) => r.version), [2, 2], '버전은 hasSnapshot만으로 정확하다');
+});
+
+// 테스트 게이트 보강(phase 56) — 서비스의 가드 try/catch 두 곳(스냅샷 조회 실패·v1 본문 조회 실패)이
+// 무검증이었다. 실패는 제목만 비우고 이력보기 자체는 죽지 않아야 한다(record() 실패 격리와 같은 정신).
+
+test('derive: querySnapshotsByArticle가 throw해도 이력보기는 죽지 않는다(제목만 빈 값·버전/상태 정확)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const real = createArticleHistoryModel(db);
+  const historyModel = { ...real, querySnapshotsByArticle() { throw new Error('snapshot query down'); } };
+  const service = createArticleService({ articleModel, db, historyModel });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('새 제목\n본문', true), modifier: 'kim' }); // 스냅샷 1건
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.title), ['', ''], '스냅샷 조회 실패 시 제목만 빈다');
+  assert.deepEqual(rows.map((r) => r.version), [2, 2], '버전은 hasSnapshot 플래그만으로 정확하다');
+  assert.deepEqual(rows.map((r) => r.status), ['DPS', 'RDS'], '상태 승계/역승계도 그대로다');
+});
+
+test('derive: v1 본문 조회(getById)가 throw해도 이력보기는 죽지 않는다(제목만 빈 값)', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const historyModel = createArticleHistoryModel(db);
+  // 정상 서비스로 데이터를 만든 뒤(편집 0회 + 송고 1회 = 스냅샷 0건 → v1Body 조회 경로),
+  // getById만 던지는 조립으로 같은 db를 다시 읽는다.
+  const writer = createArticleService({ articleModel, db, historyModel });
+  const { articleId } = writer.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  writer.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const failingArticleModel = { ...articleModel, getById() { throw new Error('article read down'); } };
+  const service = createArticleService({ articleModel: failingArticleModel, db, historyModel });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, '', 'v1 본문을 못 읽으면 제목만 빈다');
+  assert.equal(rows[0].version, 1);
+  assert.equal(rows[0].status, 'DPS');
+});
+
+test('derive: v1 본문 예외 — 편집 0회 송고 기사는 현재 본문에서 v1 제목을 파생한다', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, '첫 제목', '스냅샷 0건 = 현재 본문이 곧 v1 본문(동치)');
+  assert.equal(rows[0].version, 1);
+
+  const sendOnly = service.queryHistory(articleId, { sendOnly: true });
+  assert.equal(sendOnly[0].title, '첫 제목');
+  assert.equal(sendOnly[0].version, 1);
+});
+
+test('derive: 편집 스냅샷이 생기면 v1 구간 제목은 다시 빈다(현재 본문이 과거로 새지 않는다)', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+  service.update(articleId, { markupVersion: markup('새 제목\n본문'), modifier: 'kim' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows[0].title, '새 제목', '편집 행은 자기 스냅샷의 제목');
+  assert.equal(rows[1].title, '', '송고 행(v1 구간)은 현재 본문 제목을 받지 않는다');
+});
+
+test('derive: 기사 본문 조회는 스냅샷 0건일 때만 — 스냅샷 보유/이력 0건 기사에서는 getById 0회', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const real = createArticleModel(db);
+  let getByIdCalls = 0;
+  const articleModel = { ...real, getById(id) { getByIdCalls += 1; return real.getById(id); } };
+  const historyModel = createArticleHistoryModel(db);
+  const service = createArticleService({ articleModel, db, historyModel });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판'), modifier: 'kim' }); // 스냅샷 1건
+  const { articleId: emptyId } = service.create({ title: '이력 없음', markupVersion: markup('본문'), author: 'kim' });
+
+  // setup 호출분(applyAction 등)이 섞이지 않게 queryHistory 직전 카운터를 리셋해 비교한다.
+  getByIdCalls = 0;
+  service.queryHistory(articleId);
+  assert.equal(getByIdCalls, 0, '스냅샷이 1건 이상이면 본문을 조회하지 않는다');
+
+  getByIdCalls = 0;
+  service.queryHistory(emptyId);
+  assert.equal(getByIdCalls, 0, '이력 0건이면 본문을 조회하지 않는다');
+});
+
+test('derive: 기존 필드가 모두 보존된다(파생은 추가일 뿐 대체가 아니다)', () => {
+  const { service } = setup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const base = ['id', 'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt', 'hasSnapshot'];
+  for (const r of service.queryHistory(articleId)) {
+    for (const key of base) assert.ok(key in r, `${key} 보존`);
+    for (const key of ['title', 'version', 'status']) assert.ok(key in r, `${key} 추가`);
+  }
+});
+
 test('onHistoryError: 정상 경로(insert 성공)에서는 호출 0회다(무소음)', () => {
   const seen = [];
   const db = new DatabaseSync(':memory:');
