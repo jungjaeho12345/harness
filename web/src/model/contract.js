@@ -29,6 +29,10 @@ export const MODEL_KEYS = Object.freeze([
   'createDistributionTarget',
   'updateDistributionTarget',
   'deactivateDistributionTarget',
+  // 배부 실패 복구/실행(phase 57, MVP-4) — Z 전용. /api/distribution/{failures,retry,tick} 라우트와 1:1.
+  'queryDistributionFailures',
+  'retryDistribution',
+  'runDistributionTick',
   'subscribe',
   // 메뉴 액션(phase 1) — 이력보기/송고이력보기·후속/계속기사작성·번역. 백엔드 라우트와 1:1.
   'queryHistory',

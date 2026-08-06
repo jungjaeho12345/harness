@@ -284,6 +284,22 @@ export function createHttpModel({ base = '' } = {}) {
       return request(`/api/distribution-targets/${encodeURIComponent(id)}/deactivate`, { method: 'POST' });
     },
 
+    // --- 배부 실패 복구/실행 (Z 전용 — 서버 게이트, ADR-008 MVP-4) ---
+    // 검증·인가의 진실은 서버다(manageDistributionFailure 게이트 + 4중 판정). 여기서는 요청/응답을
+    // 그대로 잇기만 하며, role·kind·시각 등 신원/판정 값은 body·query에 싣지 않는다(ADR-004).
+    queryDistributionFailures(filters = {}) {
+      return request('/api/distribution/failures', { query: filters });
+    },
+    // 배부 kind는 서버가 실패 이력의 action에서 도출한다 — 클라이언트가 정하면 임의 배부 경로가 열린다.
+    retryDistribution(articleId, targetId) {
+      return request('/api/distribution/retry', { method: 'POST', body: { articleId, targetId } });
+    },
+    // body를 보내지 않는다 — 서버가 body를 읽지 않으며(파라미터를 클라가 정하면 엠바고 무력화),
+    // 실행 트리거는 외부 cron과 Z의 명시 조작뿐이다(ADR-008 (3) — 타이머/자동 폴링 금지).
+    runDistributionTick() {
+      return request('/api/distribution/tick', { method: 'POST' });
+    },
+
     // --- 실시간 무효화 스트림 (SSE) ---
     // 인증 수단은 HttpOnly 세션 쿠키뿐이다 — EventSource는 커스텀 헤더를 못 보내므로 withCredentials:true로
     // 쿠키를 자동 전송한다(server /api/stream은 쿠키 우선 readSessionToken으로만 인증한다).
