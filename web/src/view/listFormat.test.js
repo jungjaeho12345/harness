@@ -4,6 +4,7 @@ import {
   formatCell,
   applyDateFormat,
   setDateFormat,
+  rangeInstant,
   DATE_FORMATS,
   DEFAULT_DATE_FORMAT,
   KST_OFFSET_MS,
@@ -113,5 +114,58 @@ describe('formatCell', () => {
     expect(formatCell('sentAt', '2026-06-14T03:09:06Z')).toBe('2026-06-14 03:09');
     expect(formatCell('title', '제목')).toBe('제목');
     expect(formatCell('lockYN', 'Y')).toBe('Y');
+  });
+
+  it('distributedAt도 시간 컬럼으로 포맷한다(createdAt과 동일 결과)', () => {
+    expect(formatCell('distributedAt', '2026-08-06T09:30:00.000Z'))
+      .toBe(formatCell('createdAt', '2026-08-06T09:30:00.000Z'));
+    expect(formatCell('distributedAt', '2026-08-06T09:30:00.000Z')).toBe('2026-08-06 09:30');
+  });
+
+  it('distributedAt 빈 값은 빈 문자열이다(기존 시간 컬럼과 동형)', () => {
+    expect(formatCell('distributedAt', null)).toBe('');
+    expect(formatCell('distributedAt', undefined)).toBe('');
+    expect(formatCell('distributedAt', '')).toBe('');
+  });
+});
+
+describe('rangeInstant — 조회조건(datetime-local) → 서버 필터용 ISO-8601 UTC 문자열(순수)', () => {
+  it("from은 ':00.000Z'로 분의 시작을 만든다", () => {
+    expect(rangeInstant('2026-08-06T09:30', 'from')).toBe('2026-08-06T09:30:00.000Z');
+  });
+
+  it("to는 ':59.999Z'로 선택한 분의 끝까지 포함한다", () => {
+    expect(rangeInstant('2026-08-06T09:30', 'to')).toBe('2026-08-06T09:30:59.999Z');
+  });
+
+  it('값이 없거나 비문자열이면 undefined(조건 미포함 — null·빈 문자열이 아니다)', () => {
+    expect(rangeInstant('', 'from')).toBeUndefined();
+    expect(rangeInstant(undefined, 'to')).toBeUndefined();
+    expect(rangeInstant(null, 'from')).toBeUndefined();
+    expect(rangeInstant(42, 'to')).toBeUndefined();
+  });
+
+  // 초까지 들어온 값은 분 단위로 정규화한다 — from/to 순서 규약(to >= from)이 유지된다.
+  it('초가 있는 값은 분 단위로 정규화한다(유효한 ISO·to >= from 유지)', () => {
+    expect(rangeInstant('2026-08-06T09:30:15', 'from')).toBe('2026-08-06T09:30:00.000Z');
+    expect(rangeInstant('2026-08-06T09:30:15', 'to')).toBe('2026-08-06T09:30:59.999Z');
+  });
+
+  it('잘못된 형식은 undefined(서버에 쓰레기 필터를 보내지 않는다)', () => {
+    expect(rangeInstant('2026-13-99', 'from')).toBeUndefined();
+    expect(rangeInstant('abc', 'to')).toBeUndefined();
+    expect(rangeInstant('2026-13-01T09:30', 'from')).toBeUndefined(); // 13월
+    expect(rangeInstant('2026-08-06T25:30', 'to')).toBeUndefined(); // 25시
+  });
+
+  it("edge가 'from'/'to' 외의 값이면 undefined(안전 기본값)", () => {
+    expect(rangeInstant('2026-08-06T09:30')).toBeUndefined();
+    expect(rangeInstant('2026-08-06T09:30', 'between')).toBeUndefined();
+  });
+
+  it('순수성 — 같은 입력이면 항상 같은 출력이고 날짜형식 설정과 무관하다', () => {
+    const before = rangeInstant('2026-08-06T09:30', 'from');
+    setDateFormat('YYYY년 MM월 DD일 HH:mm'); // module-scope currentFormat 변경 — 결과 불변이어야 한다.
+    expect(rangeInstant('2026-08-06T09:30', 'from')).toBe(before);
   });
 });

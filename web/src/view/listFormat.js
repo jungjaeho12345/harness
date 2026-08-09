@@ -55,6 +55,24 @@ export function formatDateTime(iso) {
 
 // 컬럼 키에 따라 셀 값을 표시 문자열로 변환한다(시간 컬럼만 포맷).
 export function formatCell(key, value) {
-  if (key === 'createdAt' || key === 'editedAt' || key === 'sentAt') return formatDateTime(value);
+  if (key === 'createdAt' || key === 'editedAt' || key === 'sentAt' || key === 'distributedAt') {
+    return formatDateTime(value);
+  }
   return value === undefined || value === null ? '' : String(value);
+}
+
+// 조회조건(datetime-local 'YYYY-MM-DDTHH:mm') → 서버 필터용 ISO-8601 UTC 문자열(phase 57 MVP-4).
+// 표시 규약과 동형이다: 저장 문자열의 자릿수를 그대로 쓰고 타임존 변환을 하지 않는다
+// (applyDateFormat과 같은 규약 — 여기서만 KST 변환을 하면 화면 값과 필터 결과가 어긋난다).
+// 초가 붙은 입력은 분 단위로 정규화한다(from=:00.000Z·to=:59.999Z — to >= from 순서 규약 유지).
+// 값이 없거나 형식이 아니면 undefined(=조건 미포함 — 빈 문자열/null이 아니라 필터에서 키가 빠져야 한다).
+const DATETIME_LOCAL_RE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/;
+
+export function rangeInstant(value, edge) {
+  if (edge !== 'from' && edge !== 'to') return undefined; // 안전 기본값.
+  if (typeof value !== 'string') return undefined;
+  const m = value.match(DATETIME_LOCAL_RE);
+  if (!m) return undefined;
+  const minute = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`;
+  return edge === 'from' ? `${minute}:00.000Z` : `${minute}:59.999Z`;
 }
