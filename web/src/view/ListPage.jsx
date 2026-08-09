@@ -7,7 +7,7 @@ import { useAppContext } from '../app/context.js';
 import { useViewController, visibleMenus } from '../controller/useViewController.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { statusBadge } from './statusBadge.js';
-import { formatCell, setDateFormat } from './listFormat.js';
+import { formatCell, rangeInstant, setDateFormat } from './listFormat.js';
 import { loadEditorPrefs } from './editorPrefs.js';
 import {
   COLUMNS, loadColumnConfig, saveColumnConfig, toggleColumn, setGap, visibleColumns,
@@ -56,7 +56,7 @@ export function ListPage() {
   const ctrl = useViewController();
   const {
     menu, selectMenu, departments, setDepartments, deptOptions, refresh,
-    live,
+    live, setDistributedRange,
     page, setPage, totalPages, pageItems,
     editArticle, reviseArticle, releaseLock, requestDelete, loadHistory, loadDetail,
     createFollowUp, createContinue, resend, runTranslate, mapArticle,
@@ -75,6 +75,12 @@ export function ListPage() {
   const [showHistoryColModal, setShowHistoryColModal] = useState(false);
   // 번역 결과 모달 { text, ok, reason } — null이면 닫힘. (step10, in-app 모달 — React 자동 escape, 새 창 아님)
   const [translateModal, setTranslateModal] = useState(null);
+  // 배부시간 범위 조회조건 입력(news.md 12행, phase 57 MVP-4) — 로컬 state가 진실이다(컨트롤러의
+  // distributedRange에서 파생하지 않는다: 저장값은 ISO, 입력값은 datetime-local로 형이 다르다).
+  // 반영은 '배부시간 조회' 클릭 시에만 — 타이핑마다 컨트롤러 상태를 갱신하면 필터 정체성이 바뀔 때마다
+  // 재조회+SSE 재구독이 폭주한다. 메뉴 전환은 언마운트가 아니라 입력값이 화면에 유지된다(step10 유지 계약).
+  const [fromInput, setFromInput] = useState('');
+  const [toInput, setToInput] = useState('');
 
   // 메뉴별 컬럼 설정 로드(설정은 메뉴별로 저장 — columnConfig).
   useEffect(() => { setColConfig(loadColumnConfig(menu)); }, [menu]);
@@ -167,7 +173,7 @@ export function ListPage() {
         </span>
       );
     }
-    if (col.key === 'createdAt' || col.key === 'editedAt' || col.key === 'sentAt') {
+    if (col.key === 'createdAt' || col.key === 'editedAt' || col.key === 'sentAt' || col.key === 'distributedAt') {
       return <span className="yh-col--time">{formatCell(col.key, row[col.key])}</span>;
     }
     return formatCell(col.key, row[col.key]);
@@ -175,6 +181,14 @@ export function ListPage() {
 
   const showDeptSelector = menu === 'deskUnsent' || menu === 'deptWrite' || menu === 'deptSend'
     || menu === 'killArticles' || menu === 'embargoMgmt';
+
+  // 조회조건 — 배부시간 범위 적용(값 변환은 listFormat.rangeInstant 단일 출처 — 화면에서 문자열을
+  // 직접 이어 붙이지 않는다). 값이 바뀌지 않았을 때도 사용자가 기대하는 재조회가 일어나게 refresh()를 동반한다.
+  // 입력을 비우고 조회하면 rangeInstant가 undefined를 돌려줘 조건이 필터에서 빠진다(해제 경로).
+  const applyDistributedRange = () => {
+    setDistributedRange(rangeInstant(fromInput, 'from'), rangeInstant(toInput, 'to'));
+    refresh();
+  };
 
   return (
     <main className="yh-page">
@@ -213,6 +227,27 @@ export function ListPage() {
           <button type="button" className="yh-btn yh-btn--primary" onClick={() => refresh()}>조회</button>
         </div>
       )}
+
+      {/* 조회조건 — 배부시간 범위(news.md 12행). 전 메뉴 공통 노출(개인별 수정 포함 — 12행은 메뉴를 한정하지
+          않는다). 입력은 로컬 state, 반영은 '배부시간 조회' 클릭 시에만(타이핑마다 필터가 바뀌면 재조회·SSE
+          재구독이 폭주한다). 값 변환은 listFormat.rangeInstant 단일 출처. */}
+      <div className="yh-dept-bar" data-testid="dist-range-bar" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label htmlFor="dist-range-from">배부시간 시작</label>
+        <input
+          id="dist-range-from"
+          type="datetime-local"
+          value={fromInput}
+          onChange={(e) => setFromInput(e.target.value)}
+        />
+        <label htmlFor="dist-range-to">배부시간 종료</label>
+        <input
+          id="dist-range-to"
+          type="datetime-local"
+          value={toInput}
+          onChange={(e) => setToInput(e.target.value)}
+        />
+        <button type="button" className="yh-btn yh-btn--primary" onClick={applyDistributedRange}>배부시간 조회</button>
+      </div>
 
       <table className="yh-table">
         <thead>

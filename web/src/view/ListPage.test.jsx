@@ -723,6 +723,162 @@ describe('ListPage', () => {
       expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
     });
   });
+
+  // --- phase 57 MVP-4: 배부시간 조회조건(news.md 12행) + 배부시간 컬럼(기본 숨김) ---
+  describe('배부시간 조회조건 + 배부시간 컬럼', () => {
+    const FROM_INPUT = '2026-08-01T09:00';
+    const TO_INPUT = '2026-08-06T18:30';
+    const FROM_ISO = '2026-08-01T09:00:00.000Z'; // rangeInstant(FROM_INPUT, 'from')와 동형.
+    const TO_ISO = '2026-08-06T18:30:59.999Z'; // rangeInstant(TO_INPUT, 'to')와 동형.
+
+    const setRange = (from, to) => {
+      fireEvent.change(screen.getByLabelText('배부시간 시작'), { target: { value: from } });
+      fireEvent.change(screen.getByLabelText('배부시간 종료'), { target: { value: to } });
+    };
+
+    it('조회조건 바가 전 메뉴에서 보인다(부서 셀렉터 없는 개인별 수정 포함)', async () => {
+      setup({ articles: [] });
+      expect(await screen.findByLabelText('배부시간 시작')).toBeInTheDocument();
+      expect(screen.getByLabelText('배부시간 종료')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '배부시간 조회' })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: '개인별 수정' }));
+      expect(screen.queryByTestId('dept-selector')).toBeNull(); // 부서 셀렉터는 없어도
+      expect(screen.getByLabelText('배부시간 시작')).toBeInTheDocument(); // 배부시간 조회조건은 있다.
+      expect(screen.getByRole('button', { name: '배부시간 조회' })).toBeInTheDocument();
+    });
+
+    it('입력만 하고 조회를 누르지 않으면 재조회가 일어나지 않는다(타이핑마다 재조회 금지)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await new Promise((r) => { setTimeout(r, 20); });
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('시작만 입력하고 조회 → distributedAtFrom만 실린 필터로 호출된다(To 키 없음)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, '');
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO }));
+      const withRange = spy.mock.calls.filter(([f]) => f.distributedAtFrom !== undefined);
+      for (const [f] of withRange) expect('distributedAtTo' in f).toBe(false);
+    });
+
+    it("시작+종료 입력하고 조회 → 두 키가 실리고 to는 ':59.999Z'로 끝난다", async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO, distributedAtTo: TO_ISO,
+      }));
+    });
+
+    it('입력을 비우고 다시 조회 → 두 키가 모두 빠진 필터로 재조회된다(해제 경로)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith(expect.objectContaining({ distributedAtFrom: FROM_ISO })));
+
+      setRange('', '');
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => {
+        const last = spy.mock.calls.at(-1)[0];
+        expect(last).toEqual({ status: ['RDS', 'DDH'] });
+      });
+    });
+
+    it('값이 같아도 조회를 다시 누르면 재조회가 일어난다(refresh 동반 호출)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' })); // 값 동일 — 필터 불변.
+
+      await waitFor(() => expect(spy).toHaveBeenCalled());
+    });
+
+    it('메뉴를 바꿔도 입력값이 화면에 유지된다(step10 유지 계약과 일치)', async () => {
+      setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      setRange(FROM_INPUT, TO_INPUT);
+
+      await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+
+      expect(screen.getByLabelText('배부시간 시작')).toHaveValue(FROM_INPUT);
+      expect(screen.getByLabelText('배부시간 종료')).toHaveValue(TO_INPUT);
+    });
+
+    it("컬럼 설정 모달에 '배부시간' 체크박스가 있고 기본 해제 상태다", async () => {
+      const { container } = setup({ articles: rds(1) });
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+      fireEvent.contextMenu(container.querySelector('thead tr'));
+
+      const modal = screen.getByRole('dialog', { name: '컬럼 설정' });
+      expect(within(modal).getByLabelText('배부시간')).not.toBeChecked();
+      expect(within(modal).getByLabelText('송고시간')).toBeChecked(); // 나머지는 기본 체크 그대로.
+    });
+
+    it("체크하면 목록 헤더에 '배부시간'이 송고시간 바로 뒤에 나타난다", async () => {
+      const { container } = setup({ articles: rds(1) });
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+      fireEvent.contextMenu(container.querySelector('thead tr'));
+      const modal = screen.getByRole('dialog', { name: '컬럼 설정' });
+      await userEvent.click(within(modal).getByLabelText('배부시간'));
+      await userEvent.click(within(modal).getByRole('button', { name: '닫기' }));
+
+      expect([...container.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+        '기사아이디', '제목', '작성자', '수정자', '부서', '부서코드',
+        '작성시간', '수정시간', '송고시간', '배부시간', '기사상태', 'LockYN',
+      ]);
+    });
+
+    it('배부시간 셀은 날짜형식 포맷 + yh-col--time이고(다른 시간 컬럼 동형), 값이 없으면 빈 셀이다', async () => {
+      const rows = rds(2);
+      rows[0].distributedAt = '2026-08-05T11:22:33.000Z';
+      // rows[1]은 distributedAt 없음 — 빈 셀이어야 한다.
+      const { container } = setup({ articles: rows });
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(2));
+      fireEvent.contextMenu(container.querySelector('thead tr'));
+      const modal = screen.getByRole('dialog', { name: '컬럼 설정' });
+      await userEvent.click(within(modal).getByLabelText('배부시간'));
+      await userEvent.click(within(modal).getByRole('button', { name: '닫기' }));
+
+      const headers = [...container.querySelectorAll('thead th')].map((th) => th.textContent);
+      const idx = headers.indexOf('배부시간');
+      const cell0 = bodyRows(container)[0].querySelectorAll('td')[idx];
+      expect(cell0.textContent).toBe('2026-08-05 11:22');
+      expect(cell0.querySelector('.yh-col--time')).not.toBeNull();
+      expect(bodyRows(container)[1].querySelectorAll('td')[idx].textContent).toBe('');
+    });
+
+    it('회귀 — 기본 상태의 목록 헤더는 기존 11개 그대로다(배부시간 기본 숨김)', async () => {
+      const { container } = setup({ articles: rds(1) });
+      await waitFor(() => expect(bodyRows(container)).toHaveLength(1));
+      expect([...container.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+        '기사아이디', '제목', '작성자', '수정자', '부서', '부서코드',
+        '작성시간', '수정시간', '송고시간', '기사상태', 'LockYN',
+      ]);
+    });
+  });
 });
 
 // 모델 변경 신호를 발생시켜 SSE 무효화를 흉내낸다(act로 감싼다).
