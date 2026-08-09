@@ -87,6 +87,12 @@ function text(v) {
   return (v === undefined || v === null || v === '') ? HISTORY_EMPTY : String(v);
 }
 
+// 배부 계열 이력 어휘의 표시 라벨(phase 57 MVP-4). 그 외 어휘(status·edit·send…)와 미지의 값은
+// 원값을 그대로 보여준다 — 서버가 진실이고 화면이 값을 숨기지 않는다(DistMgmtPage KIND_LABEL 선례).
+// 조회는 Object.hasOwn으로만 한다 — 'toString' 같은 프로토타입 체인 키가 라벨로 새지 않게(mgmtMessages 규율).
+const DISTRIBUTE_EVENT_LABEL = { distribute: '배부', 'distribute-failed': '배부실패', 'distribute-retry': '배부재전송' };
+const DISTRIBUTE_KIND_LABEL = { press: '언론사', nonpress: '비언론사' };
+
 // 셀 표시 문자열 변환 — 이력 그룹 key는 row만, 기사 그룹 key는 세 번째 인자(article)만 읽는다
 // (두 소스가 섞이면 값 출처를 추적할 수 없다). 빈 값은 항상 HISTORY_EMPTY, 알 수 없는 key도 throw 없이 동일.
 export function historyCellText(key, row, article) {
@@ -97,8 +103,21 @@ export function historyCellText(key, row, article) {
     case 'actorUserId': return text(r.actorUserId);
     case 'status': return text(r.status);
     case 'version': return Number.isFinite(r.version) ? `v${r.version}` : HISTORY_EMPTY;
-    case 'eventType': return text(r.eventType);
-    case 'action': return text(r.action);
+    case 'eventType': {
+      if (typeof r.eventType === 'string' && Object.hasOwn(DISTRIBUTE_EVENT_LABEL, r.eventType)) {
+        return DISTRIBUTE_EVENT_LABEL[r.eventType];
+      }
+      return text(r.eventType);
+    }
+    case 'action': {
+      // 행 인지(row-aware) — 그 행의 eventType이 배부 계열일 때만 kind 라벨을 씌운다.
+      // 이유: 다른 이벤트가 나중에 같은 문자열(press 등)을 쓰면 오역이 된다(정확도 우선).
+      const isDistributeRow = typeof r.eventType === 'string' && Object.hasOwn(DISTRIBUTE_EVENT_LABEL, r.eventType);
+      if (isDistributeRow && typeof r.action === 'string' && Object.hasOwn(DISTRIBUTE_KIND_LABEL, r.action)) {
+        return DISTRIBUTE_KIND_LABEL[r.action];
+      }
+      return text(r.action);
+    }
     case 'transition': {
       // 둘 다 있으면 from→to, 한쪽만 있으면 그 값만('RDS→' 같은 잘린 형태 금지), 둘 다 없으면 —.
       const from = (r.fromStatus === undefined || r.fromStatus === null) ? '' : String(r.fromStatus);
