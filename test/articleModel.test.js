@@ -179,3 +179,64 @@ test('articleModel: 행 삭제 함수를 노출하지 않는다 (DB 비파괴)',
   assert.equal(articles.delete, undefined);
   assert.equal(articles.remove, undefined);
 });
+
+// --- phase 58 step3: getStatusById — status 한 컬럼만 읽는 경량 조회 ---
+// 배부 실패 목록(distributionRetryService.list)이 status 하나를 위해 getById(본문 blob 포함
+// 2쿼리 전체 로드)를 부르는 N+1을 없애기 위한 조회. 반환 3분기: 문자열 / null(컬럼 NULL) / undefined(행 부재).
+
+test('articleModel: getStatusById가 해당 기사의 status 문자열을 반환한다', () => {
+  const { articles } = setup();
+  articles.insert(makeArticle('AKR1', { status: 'DPS' }));
+  assert.strictEqual(articles.getStatusById('AKR1'), 'DPS');
+});
+
+test('articleModel: getStatusById는 없는 기사면 undefined다(부재와 NULL 구분)', () => {
+  const { articles } = setup();
+  assert.strictEqual(articles.getStatusById('AKR-NONE'), undefined);
+});
+
+test('articleModel: getStatusById는 status가 NULL인 행에서 null이다', () => {
+  const { db, articles } = setup();
+  db.prepare('INSERT INTO Contents (articleId, title) VALUES (?, ?)').run('AKR1', '상태 미지정');
+  assert.strictEqual(articles.getStatusById('AKR1'), null);
+});
+
+test('articleModel: getStatusById는 update 직후 값을 즉시 반영한다(캐시 없음)', () => {
+  const { articles } = setup();
+  articles.insert(makeArticle('AKR1', { status: 'RDS' }));
+  assert.strictEqual(articles.getStatusById('AKR1'), 'RDS');
+  articles.update('AKR1', { contents: { status: 'DPS' } });
+  assert.strictEqual(articles.getStatusById('AKR1'), 'DPS');
+});
+
+test('articleModel: getStatusById는 Contents에서 status만 SELECT한다(blob 미접촉 — 경량 잠금)', () => {
+  const { db, articles } = setup();
+  articles.insert(makeArticle('AKR1', { status: 'DPS' }));
+
+  // db.prepare 래핑 — getStatusById 실행 중 준비된 SQL을 수집한다.
+  const prepared = [];
+  const spyDb = {
+    prepare(sql) { prepared.push(sql); return db.prepare(sql); },
+    exec(sql) { return db.exec(sql); },
+  };
+  const spyModel = createArticleModel(spyDb);
+
+  assert.strictEqual(spyModel.getStatusById('AKR1'), 'DPS');
+  assert.equal(prepared.length, 1, '쿼리는 1건뿐이다');
+  const sql = prepared[0];
+  assert.match(sql, /SELECT\s+status\s+FROM\s+Contents/i, 'Contents에서 status만 선택한다');
+  assert.equal(sql.includes('*'), false, 'SELECT * 금지');
+  assert.equal(sql.includes('Article'), false, 'Article 테이블 미접촉');
+  assert.equal(sql.includes('markupVersion'), false, '본문 blob 미접촉');
+});
+
+test('articleModel: getStatusById 신설 후에도 getById는 { article, contents } 전 컬럼을 반환한다(회귀)', () => {
+  const { articles } = setup();
+  articles.insert(makeArticle('AKR1', { status: 'DPS' }));
+  const row = articles.getById('AKR1');
+  assert.ok(row.article && row.contents);
+  assert.equal(row.article.markupVersion, '{"format":"yh-editor","version":1,"blocks":[]}', '본문 포함');
+  for (const c of ['articleId', 'title', 'author', 'status', 'lockYN', 'department', 'createdAt']) {
+    assert.ok(c in row.contents, `contents.${c} 포함`);
+  }
+});
