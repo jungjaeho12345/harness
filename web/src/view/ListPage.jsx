@@ -81,6 +81,11 @@ export function ListPage() {
   // 재조회+SSE 재구독이 폭주한다. 메뉴 전환은 언마운트가 아니라 입력값이 화면에 유지된다(step10 유지 계약).
   const [fromInput, setFromInput] = useState('');
   const [toInput, setToInput] = useState('');
+  // 직전에 '적용한' ISO 범위(rangeInstant 출력 그대로 — 문자열 또는 undefined). 값이 실제로 바뀌면
+  // filter 변경 → 기존 재조회 effect가 조회를 수행하므로 여기서 refresh()를 부르면 이전 filter
+  // 클로저로 조회가 1건 더 나간다(중복 요청). 값이 그대로면 effect가 돌지 않으므로 그때만 명시
+  // 재조회한다('배부시간 조회' 버튼의 재조회 보장 계약 — 서버 상태 캐시가 아니라 입력값 기록일 뿐이다).
+  const appliedRangeRef = useRef({ from: undefined, to: undefined });
 
   // 메뉴별 컬럼 설정 로드(설정은 메뉴별로 저장 — columnConfig).
   useEffect(() => { setColConfig(loadColumnConfig(menu)); }, [menu]);
@@ -183,11 +188,19 @@ export function ListPage() {
     || menu === 'killArticles' || menu === 'embargoMgmt';
 
   // 조회조건 — 배부시간 범위 적용(값 변환은 listFormat.rangeInstant 단일 출처 — 화면에서 문자열을
-  // 직접 이어 붙이지 않는다). 값이 바뀌지 않았을 때도 사용자가 기대하는 재조회가 일어나게 refresh()를 동반한다.
-  // 입력을 비우고 조회하면 rangeInstant가 undefined를 돌려줘 조건이 필터에서 빠진다(해제 경로).
+  // 직접 이어 붙이지 않는다). 입력을 비우고 조회하면 rangeInstant가 undefined를 돌려줘 조건이 필터에서
+  // 빠진다(해제 경로). 비교는 from·to 둘 다 본다 — 한쪽만 보면 to만 바뀐 클릭이 잘못 분기된다.
   const applyDistributedRange = () => {
-    setDistributedRange(rangeInstant(fromInput, 'from'), rangeInstant(toInput, 'to'));
-    refresh();
+    const from = rangeInstant(fromInput, 'from');
+    const to = rangeInstant(toInput, 'to');
+    const applied = appliedRangeRef.current;
+    const changed = applied.from !== from || applied.to !== to;
+    appliedRangeRef.current = { from, to };
+    setDistributedRange(from, to);
+    // 값이 바뀌면 refresh()를 부르지 않는다 — 이 시점의 refresh는 이전 filter 클로저라 범위가 빠진
+    // 필터로 조회 1건이 낭비되고, 새 필터 조회는 filter 변경 → 기존 effect가 수행한다.
+    // 값이 같으면 effect가 돌지 않으므로 명시 재조회한다(조회 버튼의 재조회 보장 — L849 계약).
+    if (!changed) refresh();
   };
 
   return (

@@ -859,6 +859,141 @@ describe('ListPage', () => {
       await waitFor(() => expect(spy).toHaveBeenCalled());
     });
 
+    // --- phase 58 step5: 값이 바뀐 클릭의 중복 조회(이전 filter 클로저 refresh) 제거 ---
+    // 값이 실제로 바뀌면 filter 변경 → 기존 effect가 재조회하므로 같은 렌더의 refresh()는
+    // 범위가 빠진 이전 필터로의 낭비 조회다. 동일값 재조회 보장(L849)은 유지한다.
+
+    const settle = () => new Promise((r) => { setTimeout(r, 20); });
+
+    it('값이 바뀐 클릭은 조회 정확히 1건 — 이전(범위 키 없는) 필터로의 조회가 0건이다', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      await settle(); // 초기 자동조회 정착 후 스파이 설치.
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO, distributedAtTo: TO_ISO,
+      }));
+      await settle(); // 늦게 도착하는 중복 호출 검출 창.
+      const noRange = spy.mock.calls.filter(
+        ([f]) => f.distributedAtFrom === undefined && f.distributedAtTo === undefined,
+      );
+      expect(noRange).toHaveLength(0); // 이전 필터({ status:['RDS','DDH'] })로의 조회 0건.
+      expect(spy).toHaveBeenCalledTimes(1); // 총 1건 — 2건이면 클로저 중복이 부활한 것.
+    });
+
+    it('종료만 바꿔 클릭해도 1건이고 새 distributedAtTo가 실린다(양쪽 비교 잠금)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ distributedAtTo: TO_ISO }),
+      ));
+      await settle();
+      spy.mockClear();
+
+      // 시작은 그대로, 종료만 변경 — from만 비교하는 구현이면 '같은 값' 분기로 오판된다.
+      fireEvent.change(screen.getByLabelText('배부시간 종료'), { target: { value: '2026-08-07T10:00' } });
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO, distributedAtTo: '2026-08-07T10:00:59.999Z',
+      }));
+      await settle();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('값이 실린 상태에서 입력을 비우고 클릭 → 두 키가 빠진 필터로 1건(이전 필터 중복 없음)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ distributedAtFrom: FROM_ISO }),
+      ));
+      await settle();
+      spy.mockClear();
+
+      setRange('', '');
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({ status: ['RDS', 'DDH'] }));
+      await settle();
+      expect(spy).toHaveBeenCalledTimes(1); // 범위가 남은 이전 필터로의 조회가 없다.
+    });
+
+    it('같은 값으로 다시 클릭하면 재조회가 정확히 1건이다(동일값 재조회 보장 유지)', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await settle();
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' })); // 값 동일.
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO, distributedAtTo: TO_ISO,
+      }));
+      await settle();
+      expect(spy).toHaveBeenCalledTimes(1); // 명시 재조회 1건뿐 — effect 중복 없음.
+    });
+
+    it('서로 다른 값으로 연속 클릭 → 각 클릭당 1건, 마지막 호출 인자가 최신 범위다', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      await settle();
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      await settle();
+
+      setRange('2026-08-02T00:00', '2026-08-08T12:00');
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+      await settle();
+
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.calls.at(-1)[0]).toEqual({
+        status: ['RDS', 'DDH'],
+        distributedAtFrom: '2026-08-02T00:00:00.000Z',
+        distributedAtTo: '2026-08-08T12:00:59.999Z',
+      });
+    });
+
+    it('범위 적용 후 메뉴 전환 → 새 메뉴 필터+범위로 조회되고, 같은 값 재클릭도 다시 1건이다', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+
+      setRange(FROM_INPUT, TO_INPUT);
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+      await settle();
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      await userEvent.click(screen.getByRole('button', { name: '부서별 송고' }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['DPS'], distributedAtFrom: FROM_ISO, distributedAtTo: TO_ISO,
+      })); // 컨트롤러 유지 계약 — 범위가 새 메뉴 조회에도 실린다.
+      await settle();
+      spy.mockClear();
+
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' })); // 값 동일.
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
     it('메뉴를 바꿔도 입력값이 화면에 유지된다(step10 유지 계약과 일치)', async () => {
       setup({ articles: [] });
       await screen.findByLabelText('배부시간 시작');
