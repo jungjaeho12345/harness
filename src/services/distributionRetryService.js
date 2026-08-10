@@ -82,6 +82,25 @@ export function createDistributionRetryService({
     const rows = articleHistoryModel.queryDistributionEvents({ limit: normalizeListLimit(limit) });
     const items = unresolvedFailures(rows);
 
+    // 호출당 캐시 — 같은 수신처가 여러 실패 항목에 걸쳐도 조회는 1회다(실패는 특정 수신처에 몰린다).
+    // 호출 사이에 캐시하지 않는다: 수신처의 active·kind 변경이 다음 조회에 즉시 보여야 한다
+    // (재전송 가능 여부 안내의 근거값이다 — phase 57 step15의 getFailureContext 규율과 동형).
+    const targetCache = new Map();
+    function targetOf(targetId) {
+      // 미조회면 findById 후 캐시 — undefined(대상 행 부재)도 캐시해 재조회를 막는다.
+      if (!targetCache.has(targetId)) targetCache.set(targetId, distributionTargetModel.findById(targetId));
+      return targetCache.get(targetId);
+    }
+
+    // status는 한 컬럼만 읽는 경량 조회(getStatusById)로 얻는다 — getById는 Article 전체(본문 blob 포함)
+    // + Contents 전체 2쿼리다. 주입 모델이 경량 조회가 없는 부분 스텁이면 getById 폴백
+    // (articleService.queryHistory의 스냅샷 조회 가드와 동형의 house style — 기존 테스트 스텁을 깨지 않는다).
+    function statusOf(articleId) {
+      if (typeof articleModel.getStatusById === 'function') return articleModel.getStatusById(articleId);
+      const row = articleModel.getById(articleId);
+      return row && row.contents ? row.contents.status : undefined;
+    }
+
     // kindDistributed = "다음 tick이 이 kind를 이미 배부됐다고 보는가" — tick의 실판정 함수
     // (cycleDistributedKinds, distributionTickService.distributedOf와 동일 입력)를 재사용한다.
     // ⚠️ distributedKinds(전체 이력) 금지: 재송고로 새 사이클이 열린 기사에서 이번 사이클 전량 실패가
@@ -90,9 +109,8 @@ export function createDistributionRetryService({
     const articleCache = new Map();
     function tickView(articleId) {
       if (!articleCache.has(articleId)) {
-        const row = articleModel.getById(articleId);
         articleCache.set(articleId, {
-          status: row && row.contents ? row.contents.status : undefined,
+          status: statusOf(articleId),
           historyRows: articleHistoryModel.queryByArticle(articleId),
         });
       }
@@ -102,7 +120,7 @@ export function createDistributionRetryService({
     return {
       ok: true,
       items: items.map((it) => {
-        const target = distributionTargetModel.findById(it.targetId);
+        const target = targetOf(it.targetId);
         const view = tickView(it.articleId);
         return {
           articleId: it.articleId,

@@ -56,6 +56,12 @@ test/                   # 백엔드 테스트 (node --test)
          → distributionTickService(도래+미배부 스캔 — embargoPolicy.dueKinds, 이력 기준 멱등)
          → distributionService → spoolWriter(위 [배부]와 동일 경로)
          → articleService.syncEmbargoStatus(DES→EPS→DPS 승격) → 배부 발생 시에만 SSE 'status' 무효화
+
+[실패복구] 수신처 단위 배부 실패 이력 → Z가 실패 목록 조회 → 명시적 재전송(스풀 재기록) — 자동 재시도·타이머 없음(ADR-008)
+         목록의 failedAt = 그 그룹의 최신 미해소 실패 행의 시각. 단 tick/송고의 자동 배부 기록 경로는 같은
+         사이클·같은 사유의 반복 실패를 중복 억제해 새 행을 남기지 않으므로 그 구간에서는 첫 실패 시각으로
+         고정된다(사유 변경·해소 후 재실패·재송고로 새 사이클이 열리면 새 행 → 갱신). Z의 재전송이 다시
+         실패하는 경우는 억제 없이 항상 새 행이 생겨 failedAt이 갱신된다
 ```
 
 ## 상태 관리

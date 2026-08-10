@@ -55,8 +55,9 @@ ContentsVO에 대한 명세서
 ## ArticleHistory Table
 기사 편집/생애주기 전이/배부 이벤트 로그에 대한 명세서. append-only — 행 삭제·수정 없음(DB 비파괴).
 # property
-- id(INTEGER PK, ROWID alias, 자동 증가), 기사아이디(articleId), 이벤트유형(eventType), 액션(action), 이전상태(fromStatus), 이후상태(toStatus), 행위자(actorUserId), 생성시간(createdAt), 마크업버전(markupVersion), 수신처(targetId), 실패사유(reason) 컬럼을 가진다.
+- id(INTEGER PK, ROWID alias, 자동 증가), 기사아이디(articleId), 이벤트유형(eventType), 액션(action), 이전상태(fromStatus), 이후상태(toStatus), 행위자(actorUserId), 생성시간(createdAt), 마크업버전(markupVersion), 표시제목(snapshotTitle), 수신처(targetId), 실패사유(reason) 컬럼을 가진다.
 - markupVersion은 편집(edit) 시점 본문 스냅샷이다 — 상태 전이 행은 NULL(본문 불변).
+- snapshotTitle(VARCHAR)은 스냅샷 기록 시점에 본문 첫 줄에서 파생해 저장하는 표시용 제목이다 — 이력 조회가 본문(blob)을 읽지 않게 하는 것이 목적이다. 이전 버전에서 기록된 행은 NULL이고, 조회가 그 행에 한해 본문을 함께 읽어 파생하는 폴백을 유지한다(백필·행 재작성 없음 — 이력은 append-only 원장이다). 파생 규칙이 바뀌어도 이미 저장된 행은 옛 규칙의 값을 유지한다(재파생·백필 없음).
 - targetId(INTEGER)는 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id)이고, 그 외 이벤트는 NULL이다.
 - reason(VARCHAR)은 배부 실패 사유 고정 토큰이다 — 경로·본문·예외 원문을 담지 않는다.
 - eventType 어휘: create / edit / status(전이 — action에 send·hold·kill·approveDelete·embargo) / distribute(kind 단위 배부 — action=press|nonpress) / distribute-failed(수신처 단위 실패) / distribute-retry(수신처 단위 재전송 성공). 배부 멱등·사이클 경계 판정은 eventType='distribute' 행만 본다(ADR-008).

@@ -418,6 +418,45 @@ test('GET /history?sendOnly=1: 송고 item의 파생 값이 전체 조회와 일
   } finally { await ctx.close(); }
 });
 
+// --- phase 58 테스트 게이트 보강: 레거시(snapshotTitle NULL) 행 혼재 기사의 HTTP 왕복 ---
+// 레거시 행은 유일하게 본문 blob이 모델→서비스 JS 경계를 넘는 경로다(단일 CASE 조회의 폴백 입력).
+// 그 blob이 HTTP 응답까지 새지 않는 것은 decorateHistoryRows의 방어 제거뿐이 지킨다 —
+// 서비스 레벨 잠금(titleColumn 키 집합)에 더해 HTTP 경계에서도 누출 스캔·키 부재를 잠근다.
+test('GET /history: 레거시+신규 혼재 기사 — 레거시 제목은 본문 첫 줄, blob·snapshotTitle은 HTTP로 새지 않는다', async () => {
+  const LEGACY_SECRET = '대외비본문표식-레거시행';
+  const ctx = await start();
+  try {
+    seedUser(ctx.db, { userId: 'desk', role: 'D', department: '편집부', password: 'pw' });
+    const sid = (await login(ctx.base, 'desk', 'pw')).sessionId;
+    const { articleId } = (await api(ctx.base, 'POST', '/api/articles', {
+      sid, body: { title: 't', markupVersion: END_MARKUP },
+    })).body;
+
+    // 신규 기록 경로: PUT 편집 1회(snapshotTitle 컬럼 저장) — 이후 레거시 행을 직접 심는다
+    // (컬럼 도입 이전에 기록된 행과 동형: snapshotTitle NULL + markupVersion 보유. 표식은 둘째 줄).
+    await api(ctx.base, 'POST', `/api/articles/${articleId}/lock`, { sid, clientId: 'tab1' });
+    await api(ctx.base, 'PUT', `/api/articles/${articleId}`, {
+      sid, clientId: 'tab1', body: { markupVersion: bodyWithSecret('신규 제목', '신규 본문') },
+    });
+    ctx.db.prepare(
+      "INSERT INTO ArticleHistory (articleId, eventType, actorUserId, createdAt, markupVersion) VALUES (?, 'edit', 'desk', ?, ?)",
+    ).run(articleId, '2026-08-10T00:00:02.000Z', bodyWithSecret('레거시 제목', LEGACY_SECRET));
+
+    const r = await api(ctx.base, 'GET', `/api/articles/${articleId}/history`, { sid });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 2, '신규 edit 1건 + 레거시 edit 1건');
+    // id DESC — 레거시 행(나중 insert)이 먼저 온다. 제목은 각자 자기 출처에서.
+    assert.equal(r.body.items[0].title, '레거시 제목', '레거시 행은 CASE 폴백 본문의 첫 줄');
+    assert.equal(r.body.items[1].title, '신규 제목', '신규 행은 저장 컬럼 값');
+    for (const item of r.body.items) {
+      assert.equal('markupVersion' in item, false, '본문 blob 키가 item에 없다');
+      assert.equal('snapshotTitle' in item, false, '저장 컬럼 키가 item에 없다');
+    }
+    // 레거시 행의 본문은 JS 경계를 넘는 유일한 blob이다 — 응답 문자열 전체에서 표식이 없어야 한다.
+    assert.equal(JSON.stringify(r.body).includes(LEGACY_SECRET), false, '레거시 blob이 HTTP로 새지 않는다');
+  } finally { await ctx.close(); }
+});
+
 test('PUT /api/articles/:id: 잠금 보유 탭(clientId)만 수정할 수 있다', async () => {
   const ctx = await start();
   try {

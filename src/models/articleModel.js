@@ -51,6 +51,13 @@ export function createArticleModel(db) {
     return { article, contents };
   }
 
+  // status 한 컬럼만 읽는 경량 조회 — 상태 판정만 필요한 경로(배부 실패 목록 등)가 본문 blob을 읽지 않게 한다.
+  // 반환: 기사 status 문자열 / 컬럼이 NULL이면 null / Contents 행이 없으면 undefined.
+  function getStatusById(articleId) {
+    const row = db.prepare('SELECT status FROM Contents WHERE articleId = ?').get(articleId);
+    return row === undefined ? undefined : row.status;
+  }
+
   function insert({ article, contents } = {}) {
     tx(db, () => {
       if (article) insertInto(db, 'Article', ARTICLE_COLS, article);
@@ -159,5 +166,5 @@ export function createArticleModel(db) {
     ).run(articleId).changes;
   }
 
-  return { getById, insert, update, query, searchByText, setLock, clearLock };
+  return { getById, getStatusById, insert, update, query, searchByText, setLock, clearLock };
 }

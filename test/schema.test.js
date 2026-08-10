@@ -423,6 +423,51 @@ test('createSchema: 구버전 ArticleHistory(targetId·reason 없음)에 additiv
   assert.equal(rows[0].reason, null, '기존 행의 reason은 NULL');
 });
 
+// --- phase 58 step0: ArticleHistory 이력 표시제목 컬럼 (snapshotTitle VARCHAR — additive) ---
+
+test('createSchema: ArticleHistory — snapshotTitle 표시제목 컬럼이 있다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  assert.ok(
+    columns(db, 'ArticleHistory').includes('snapshotTitle'),
+    'ArticleHistory에 snapshotTitle 컬럼이 있어야 함',
+  );
+});
+
+test('createSchema: 구버전 ArticleHistory(snapshotTitle 없음)에 additive 마이그레이션 시 기존 행 보존', () => {
+  const db = new DatabaseSync(':memory:');
+  // 옛 버전: 표시제목 컬럼이 없는 ArticleHistory + 기존 행
+  db.exec(
+    'CREATE TABLE ArticleHistory (id INTEGER PRIMARY KEY, articleId VARCHAR, eventType VARCHAR, action VARCHAR, fromStatus VARCHAR, toStatus VARCHAR, actorUserId VARCHAR, createdAt VARCHAR, markupVersion VARCHAR)',
+  );
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt, markupVersion) VALUES ('a1', 'edit', '2026-08-10T00:00:00Z', 'SNAP-OLD')",
+  ).run();
+
+  createSchema(db);
+
+  assert.ok(columns(db, 'ArticleHistory').includes('snapshotTitle'), '누락된 snapshotTitle 컬럼이 추가되어야 함');
+  const row = db.prepare("SELECT * FROM ArticleHistory WHERE articleId='a1'").get();
+  assert.equal(row.markupVersion, 'SNAP-OLD', '기존 행은 보존되어야 함');
+  assert.equal(row.snapshotTitle, null, '기존 행의 snapshotTitle은 NULL(레거시 — 조회 시 본문 파생 폴백 대상)');
+});
+
+test('createSchema: 멱등 — 2회 호출해도 snapshotTitle이 중복 생성되지 않고 데이터가 보존된다', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, createdAt, snapshotTitle) VALUES ('a1', 'edit', '2026-08-10T00:00:00Z', '제목1')",
+  ).run();
+  assert.doesNotThrow(() => createSchema(db));
+  const info = db.prepare('PRAGMA table_info(ArticleHistory)').all();
+  assert.equal(info.filter((c) => c.name.toLowerCase() === 'snapshottitle').length, 1, 'snapshotTitle은 1개만');
+  assert.equal(
+    db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId='a1'").get().snapshotTitle,
+    '제목1',
+    '기존 데이터는 보존되어야 함',
+  );
+});
+
 test('createSchema: 부분 컬럼 구버전 DistributionTarget에 누락 컬럼을 추가하고 기존 행을 보존한다', () => {
   const db = new DatabaseSync(':memory:');
   // 구버전: id/name만 있는 DistributionTarget + 기존 행.
