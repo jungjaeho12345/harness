@@ -6,6 +6,7 @@
 const HISTORY_COLS = [
   'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
   'markupVersion',
+  'snapshotTitle', // 이력 목록 표시용 제목(기록 시점 파생 저장) — 스냅샷 없는 행은 NULL
   'targetId', 'reason', // 배부 실패/재전송 이벤트 전용 — 그 외 이벤트는 NULL
 ];
 
@@ -58,6 +59,21 @@ export function createArticleHistoryModel(db) {
     ).all(articleId);
   }
 
+  // 이력 목록 '제목' 파생의 입력을 한 번에 읽는다 — 저장된 파생 제목이 있으면 그것만, 없으면(레거시 행)
+  // 그 행에 한해 본문을 함께 싣는다. 행 단위 폴백을 SQL에서 끝내므로 서비스에 2차 blob 조회가 없다:
+  //   신규 행만 있는 기사 = 본문 0건 / 혼재 = 레거시 행 본문만 / 순수 레거시 = 현행과 동수(회귀 0).
+  // 필터 length(markupVersion) > 0은 hasSnapshot 판정(IS NOT NULL AND != '')과 동치다(NULL→NULL, ''→0).
+  // snapshotTitle 기준으로 거르면 레거시 행이 사라져 폴백 대상을 식별할 수 없다 — 금지.
+  function querySnapshotTitlesByArticle(articleId) {
+    return db.prepare(
+      `SELECT id, snapshotTitle,
+              CASE WHEN snapshotTitle IS NULL THEN markupVersion END AS markupVersion
+         FROM ArticleHistory
+        WHERE articleId = ? AND length(markupVersion) > 0
+        ORDER BY id DESC`,
+    ).all(articleId);
+  }
+
   // 배부 실패/재전송 이벤트만 읽는다 — 실패 목록(Z 전용)과 재전송 대상 확인의 유일한 조회 경로.
   // queryByArticle에 targetId/reason을 싣지 않는 이유: 그 응답은 전 사용자에게 열린 이력보기 계약이다.
   // eventType 어휘 단일 출처: src/services/distributionFailureLog.js (모델은 도메인 비의존 — 문자열만 둔다).
@@ -87,6 +103,7 @@ export function createArticleHistoryModel(db) {
 
   return {
     insert, queryByArticle, querySnapshotById, querySnapshotsByArticle,
+    querySnapshotTitlesByArticle,
     queryDistributionEvents, getDistributionEventById,
   };
 }

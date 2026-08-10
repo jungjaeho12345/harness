@@ -66,6 +66,10 @@ const SCHEMA = {
     ['actorUserId', 'VARCHAR'],
     ['createdAt', 'VARCHAR'],
     ['markupVersion', 'VARCHAR'], // 편집(edit) 시점 본문 스냅샷 — status 전이는 NULL(본문 불변)
+    // 이력 목록 표시용 제목 — 스냅샷 기록 시점에 historyMeta.snapshotTitle(markupVersion)로 파생해 저장한다.
+    // 조회가 blob(markupVersion)을 읽지 않게 하는 것이 목적이다. 이전 버전에서 기록된 행은 NULL이고
+    // 조회가 그 행에 한해 본문을 함께 읽어 파생한다(백필 없음 — 파생 규칙이 바뀌어도 저장된 행은 옛 규칙 값 유지).
+    ['snapshotTitle', 'VARCHAR'],
     // INTEGER인 이유: VARCHAR(TEXT affinity)면 숫자 id가 문자열로 저장되어 DistributionTarget.id와의 매칭이 조용히 깨진다.
     ['targetId', 'INTEGER'], // 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id) — 그 외 이벤트는 NULL
     ['reason', 'VARCHAR'], // 배부 실패 사유 고정 토큰 — 경로·본문·예외 원문 금지

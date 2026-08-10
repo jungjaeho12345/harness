@@ -200,6 +200,184 @@ test('articleHistoryModel: querySnapshotsByArticle 반환 순서는 id DESC로 �
   assert.deepEqual(history.querySnapshotsByArticle('AKR1'), first);
 });
 
+// --- phase 58 step0: snapshotTitle 컬럼 + querySnapshotTitlesByArticle ---
+// 이력 목록 '제목' 파생 입력을 단일 조회로 읽는다 — 저장된 제목이 있으면 그것만,
+// 레거시 행(snapshotTitle NULL)에만 본문을 함께 싣는다(행 단위 폴백을 SQL에서 종료).
+
+test('articleHistoryModel: insert가 snapshotTitle을 저장한다', () => {
+  const { db, history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-1', snapshotTitle: '헤드라인',
+  });
+  const row = db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId='AKR1'").get();
+  assert.equal(row.snapshotTitle, '헤드라인');
+});
+
+test('articleHistoryModel: insert에 snapshotTitle 미전달 시 NULL이다 (present-only)', () => {
+  const { db, history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-1',
+  });
+  const row = db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId='AKR1'").get();
+  assert.equal(row.snapshotTitle, null);
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle는 스냅샷 보유 행만 3키로 id DESC 반환한다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-1', snapshotTitle: '제목1',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-08-10T00:00:02.000Z',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:03.000Z', markupVersion: 'SNAP-2', snapshotTitle: '제목2',
+  });
+
+  const rows = history.querySnapshotTitlesByArticle('AKR1');
+  assert.equal(rows.length, 2, '스냅샷 없는 status 행은 제외된다');
+  for (const r of rows) {
+    assert.deepEqual(Object.keys(r).sort(), ['id', 'markupVersion', 'snapshotTitle'], '3키만 반환한다');
+  }
+  assert.deepEqual(rows.map((r) => r.snapshotTitle), ['제목2', '제목1'], 'id DESC — 최근이 먼저');
+  assert.ok(rows[0].id > rows[1].id, 'id DESC');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle — 신규 행은 제목 그대로 + markupVersion null (본문 미전송)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-본문전문', snapshotTitle: '저장된 제목',
+  });
+  const [row] = history.querySnapshotTitlesByArticle('AKR1');
+  assert.equal(row.snapshotTitle, '저장된 제목');
+  assert.strictEqual(row.markupVersion, null, '신규 행의 본문은 JS 경계를 넘지 않는다');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle — 레거시 행(snapshotTitle NULL)은 본문 전문을 싣는다 (폴백 입력)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-레거시본문',
+  });
+  const [row] = history.querySnapshotTitlesByArticle('AKR1');
+  assert.strictEqual(row.snapshotTitle, null, '레거시 식별자');
+  assert.equal(row.markupVersion, 'SNAP-레거시본문', '레거시 행에는 본문 전문이 실린다');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle — 혼재 기사에서 한 번의 조회로 신규 행만 markupVersion null이다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-레거시',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:02.000Z', markupVersion: 'SNAP-신규', snapshotTitle: '신규 제목',
+  });
+
+  const rows = history.querySnapshotTitlesByArticle('AKR1');
+  assert.equal(rows.length, 2, '한 번의 조회로 두 행이 모두 온다');
+  // id DESC — 신규(나중 insert)가 먼저.
+  assert.equal(rows[0].snapshotTitle, '신규 제목');
+  assert.strictEqual(rows[0].markupVersion, null, '신규 행의 본문만 null (reviewer 확정 케이스)');
+  assert.strictEqual(rows[1].snapshotTitle, null);
+  assert.equal(rows[1].markupVersion, 'SNAP-레거시', '레거시 행 본문만 실린다');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle — 빈 제목(\'\')은 레거시가 아니다 (IS NULL만 폴백)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-1', snapshotTitle: '',
+  });
+  const [row] = history.querySnapshotTitlesByArticle('AKR1');
+  assert.strictEqual(row.snapshotTitle, '', '빈 제목은 정당한 저장값');
+  assert.strictEqual(row.markupVersion, null, '빈 제목 행의 본문은 실리지 않는다');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle — markupVersion이 빈 문자열/NULL인 행은 제외한다 (hasSnapshot 동형)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: '',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-08-10T00:00:02.000Z',
+  });
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:03.000Z', markupVersion: 'SNAP-1', snapshotTitle: '제목',
+  });
+
+  const rows = history.querySnapshotTitlesByArticle('AKR1');
+  assert.equal(rows.length, 1, "markupVersion ''/NULL 행은 제외");
+  assert.equal(rows[0].snapshotTitle, '제목');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle는 다른 기사의 행을 섞지 않는다', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-AKR1', snapshotTitle: '제목1',
+  });
+  history.insert({
+    articleId: 'AKR2', eventType: 'edit', actorUserId: 'lee',
+    createdAt: '2026-08-10T00:00:02.000Z', markupVersion: 'SNAP-AKR2', snapshotTitle: '제목2',
+  });
+  const rows = history.querySnapshotTitlesByArticle('AKR1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].snapshotTitle, '제목1');
+});
+
+test('articleHistoryModel: querySnapshotTitlesByArticle는 이력/스냅샷이 없으면 빈 배열이다', () => {
+  const { history } = setup();
+  assert.deepEqual(history.querySnapshotTitlesByArticle('AKR-NONE'), []);
+  history.insert({
+    articleId: 'AKR1', eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS',
+    actorUserId: 'desk', createdAt: '2026-08-10T00:00:01.000Z',
+  });
+  assert.deepEqual(history.querySnapshotTitlesByArticle('AKR1'), []);
+});
+
+test('articleHistoryModel: 기존 조회 계약 불변 — snapshotTitle이 다른 경로로 새지 않는다 (phase 58 잠금)', () => {
+  const { history } = setup();
+  history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-10T00:00:01.000Z', markupVersion: 'SNAP-1', snapshotTitle: '제목',
+  });
+  const failedId = history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 1, reason: 'spool-write-failed', actorUserId: 'sys', createdAt: '2026-08-10T00:00:02.000Z',
+  });
+
+  // queryByArticle — 경량 계약 유지: snapshotTitle 미노출.
+  for (const r of history.queryByArticle('AKR1')) {
+    assert.ok(!Object.keys(r).includes('snapshotTitle'), 'queryByArticle에 snapshotTitle을 싣지 않는다');
+  }
+  // querySnapshotsByArticle — 여전히 {id, markupVersion} 2키.
+  for (const r of history.querySnapshotsByArticle('AKR1')) {
+    assert.deepEqual(Object.keys(r).sort(), ['id', 'markupVersion'], 'querySnapshotsByArticle 2키 불변');
+  }
+  // queryDistributionEvents / getDistributionEventById — 8키 불변.
+  const [ev] = history.queryDistributionEvents({ articleId: 'AKR1' });
+  assert.deepEqual(
+    Object.keys(ev).sort(),
+    ['action', 'actorUserId', 'articleId', 'createdAt', 'eventType', 'id', 'reason', 'targetId'],
+  );
+  const one = history.getDistributionEventById(failedId);
+  assert.deepEqual(
+    Object.keys(one).sort(),
+    ['action', 'actorUserId', 'articleId', 'createdAt', 'eventType', 'id', 'reason', 'targetId'],
+  );
+});
+
 // --- phase 57 step0: 배부 실패 영속 컬럼(targetId·reason) + queryDistributionEvents ---
 // 일반 이력 계약(queryByArticle)은 불변 — 배부 실패/재전송 이벤트는 별도 조회로만 읽는다.
 
