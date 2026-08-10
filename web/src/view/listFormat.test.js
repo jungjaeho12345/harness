@@ -168,4 +168,17 @@ describe('rangeInstant — 조회조건(datetime-local) → 서버 필터용 ISO
     setDateFormat('YYYY년 MM월 DD일 HH:mm'); // module-scope currentFormat 변경 — 결과 불변이어야 한다.
     expect(rangeInstant('2026-08-06T09:30', 'from')).toBe(before);
   });
+
+  // 계약 잠금: 반환은 "undefined 또는 비어 있지 않은 ISO 문자열"뿐 — ''를 절대 돌려주지 않는다.
+  // ListPage.appliedRangeRef의 값 변경 판정이 이 계약에 의존한다: ''가 새면 "바뀜" 판정인데
+  // 컨트롤러 정규화(''→undefined)로 filter는 불변 → effect 미실행 + refresh 생략 = 조회 0건(무음).
+  it("어떤 입력에서도 ''(빈 문자열)를 반환하지 않는다(undefined 또는 비지 않은 ISO만)", () => {
+    const inputs = ['', undefined, null, 42, 'abc', '2026-13-99', '2026-08-06T09:30', '2026-08-06T09:30:15'];
+    for (const v of inputs) {
+      for (const edge of ['from', 'to', 'between', undefined]) {
+        const out = rangeInstant(v, edge);
+        expect(out === undefined || (typeof out === 'string' && out.length > 0)).toBe(true);
+      }
+    }
+  });
 });

@@ -48,7 +48,9 @@ export function createArticleHistoryModel(db) {
     ).get(id, articleId);
   }
 
-  // 스냅샷 보유 이력의 본문만 별도 조회 — 이력 목록의 '제목' 파생(서비스)용.
+  // 스냅샷 보유 이력의 본문만 별도 조회 — 현재 src 소비자 없음(phase 58이 querySnapshotTitlesByArticle로
+  // 대체). 레거시 폴백 설계 복구용으로 보존한다(phase 58 결정 — 제거는 별도 백로그). 2차 폴백으로
+  // 재결선하지 마라: 장애 시 blob 전량 읽기 비용이 부활한다(articleService의 단일 폴백 규율 참조).
   // queryByArticle은 경량 계약(blob 미포함)을 유지해야 하고, 그 결과는 배부 멱등 판정도 공유하므로
   // blob 로딩을 그 경로에 끼워 넣지 않는다. 필터는 hasSnapshot 판정과 동형(IS NOT NULL AND != '').
   function querySnapshotsByArticle(articleId) {
@@ -64,6 +66,8 @@ export function createArticleHistoryModel(db) {
   //   신규 행만 있는 기사 = 본문 0건 / 혼재 = 레거시 행 본문만 / 순수 레거시 = 현행과 동수(회귀 0).
   // 필터 length(markupVersion) > 0은 hasSnapshot 판정(IS NOT NULL AND != '')과 동치다(NULL→NULL, ''→0).
   // snapshotTitle 기준으로 거르면 레거시 행이 사라져 폴백 대상을 식별할 수 없다 — 금지.
+  // WHERE의 markupVersion은 CASE alias가 아니라 실컬럼이다(SQLite 이름 해석은 FROM 테이블 우선) —
+  // alias 이름을 바꾸면 이 사실이 무의미해지는 게 아니라 필터 의미 자체가 바뀔 수 있다. alias 변경 금지.
   function querySnapshotTitlesByArticle(articleId) {
     return db.prepare(
       `SELECT id, snapshotTitle,

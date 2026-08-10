@@ -122,6 +122,9 @@ export function createArticleService({ articleModel, db, historyModel, distribut
       // 목적: 이력 조회가 본문을 읽지 않게 하는 것. 스냅샷 없는 행(상태 전이 등)은 컬럼을 싣지 않는다(NULL 유지).
       // 파생 결과가 ''여도 그대로 저장한다 — NULL로 바꾸면(|| undefined 류) 그 행이 영구 레거시로 오판되어
       // 이력보기마다 본문을 다시 읽는다("스냅샷 없음"과 "제목이 빈 스냅샷"은 다르다).
+      // 이 게이트는 DB의 hasSnapshot 술어보다 좁다(조건부 동형): 비문자열 본문(예: JSON 숫자)은 TEXT
+      // affinity로 저장돼 hasSnapshot=1인데 제목 컬럼은 NULL이라 그 행만 레거시 폴백을 탄다 — 표시는
+      // 정확하고 성능만 현행 유지라 수용(정상 클라이언트는 문자열만 보낸다).
       // 파생도 이 try 안에서 한다 — 실패해도 편집을 깨뜨리지 않고 onHistoryError로 표면화(현행 격리 정책).
       if (typeof row.markupVersion === 'string' && row.markupVersion !== '') {
         row.snapshotTitle = snapshotTitle(row.markupVersion);
