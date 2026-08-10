@@ -206,6 +206,115 @@ test('historyMeta.decorate: 같은 입력으로 두 번 호출하면 완전히 �
   assert.deepEqual(decorateHistoryRows(rows, snapshots), decorateHistoryRows(rows, snapshots));
 });
 
+// --- phase 58 step1: 저장된 파생 제목(snapshotTitle 컬럼)이 1차 출처 ---
+// snapshots 항목 계약 확장: { id, snapshotTitle?, markupVersion? }.
+// 문자열 snapshotTitle이면 그대로(재파생 금지), null/undefined/비문자열이면 markupVersion 폴백.
+
+test('historyMeta.decorate: 저장된 snapshotTitle 문자열을 그대로 제목으로 쓴다', () => {
+  const rows = [row(1, { hasSnapshot: 1 })];
+  const out = decorateHistoryRows(rows, [{ id: 1, snapshotTitle: '저장된 제목' }]);
+  assert.equal(out[0].title, '저장된 제목');
+});
+
+test('historyMeta.decorate: snapshotTitle이 빈 문자열이면 폴백 없이 빈 제목이다(정당한 저장값)', () => {
+  const rows = [row(1, { hasSnapshot: 1 })];
+  // 같은 항목에 제목이 있는 본문이 함께 있어도 ''가 이긴다 — ''는 "값 없음"이 아니다.
+  const out = decorateHistoryRows(rows, [
+    { id: 1, snapshotTitle: '', markupVersion: markup(textBlock('본문에 있는 제목')) },
+  ]);
+  assert.strictEqual(out[0].title, '');
+});
+
+test('historyMeta.decorate: snapshotTitle이 null인 레거시 항목은 markupVersion에서 파생한다', () => {
+  const rows = [row(1, { hasSnapshot: 1 })];
+  const out = decorateHistoryRows(rows, [
+    { id: 1, snapshotTitle: null, markupVersion: markup(textBlock('레거시 제목'), textBlock('본문')) },
+  ]);
+  assert.equal(out[0].title, '레거시 제목');
+});
+
+test('historyMeta.decorate: snapshotTitle 키 자체가 없는 기존 형태({id, markupVersion})도 그대로 동작한다(하위 호환)', () => {
+  const rows = [row(1, { hasSnapshot: 1 })];
+  const out = decorateHistoryRows(rows, [{ id: 1, markupVersion: markup(textBlock('기존 형태 제목')) }]);
+  assert.equal(out[0].title, '기존 형태 제목');
+});
+
+test('historyMeta.decorate: 저장된 제목에 snapshotTitle()을 재적용하지 않는다(JSON처럼 보이는 제목 보존)', () => {
+  const rows = [row(1, { hasSnapshot: 1 })];
+  // '[1,2]'는 snapshotTitle()을 다시 적용하면 JSON 배열로 파싱되어 ''가 된다 — 재파생 금지 잠금.
+  const out = decorateHistoryRows(rows, [{ id: 1, snapshotTitle: '[1,2]' }]);
+  assert.equal(out[0].title, '[1,2]');
+});
+
+test('historyMeta.decorate: snapshotTitle이 비문자열이면 무시하고 markupVersion 폴백, 그것도 없으면 빈 제목(throw 금지)', () => {
+  for (const bad of [7, { t: 1 }, [1]]) {
+    const withBody = decorateHistoryRows(
+      [row(1, { hasSnapshot: 1 })],
+      [{ id: 1, snapshotTitle: bad, markupVersion: markup(textBlock('폴백 제목')) }],
+    );
+    assert.equal(withBody[0].title, '폴백 제목', `비문자열(${JSON.stringify(bad)})은 폴백`);
+    const withoutBody = decorateHistoryRows(
+      [row(1, { hasSnapshot: 1 })],
+      [{ id: 1, snapshotTitle: bad }],
+    );
+    assert.strictEqual(withoutBody[0].title, '', '폴백 본문도 없으면 빈 제목');
+  }
+});
+
+test('historyMeta.decorate: 레거시·신규 혼재 입력에서 각 행이 자기 출처의 제목을 받는다(버전·상태 승계 그대로)', () => {
+  const rows = [
+    row(3, { hasSnapshot: 1 }), // 신규 — 저장된 제목
+    row(2, { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS' }),
+    row(1, { hasSnapshot: 1 }), // 레거시 — 본문 파생
+  ];
+  const out = decorateHistoryRows(rows, [
+    { id: 3, snapshotTitle: '신규 저장 제목', markupVersion: null },
+    { id: 1, snapshotTitle: null, markupVersion: markup(textBlock('레거시 파생 제목')) },
+  ]);
+  assert.equal(out[0].title, '신규 저장 제목');
+  assert.equal(out[1].title, '레거시 파생 제목', 'status 행은 직전(더 오래된) 스냅샷 제목 승계');
+  assert.equal(out[2].title, '레거시 파생 제목');
+  assert.deepEqual(out.map((r) => r.version), [3, 2, 2], '버전 증가 규칙 불변');
+  assert.deepEqual(out.map((r) => r.status), ['DPS', 'DPS', 'RDS'], '상태 승계/역승계 불변');
+});
+
+test('historyMeta.decorate: 반환 행에 markupVersion도 snapshotTitle도 없다(입력 행이 그 키를 가져도 제거)', () => {
+  const rows = [
+    row(2, { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS', snapshotTitle: 'LEAK-T', markupVersion: 'LEAK-B' }),
+    row(1, { hasSnapshot: 1, snapshotTitle: 'LEAK-T', markupVersion: 'LEAK-B' }),
+  ];
+  const out = decorateHistoryRows(rows, [{ id: 1, snapshotTitle: '제목' }]);
+  for (const r of out) {
+    assert.equal('markupVersion' in r, false);
+    assert.equal('snapshotTitle' in r, false);
+  }
+  assert.equal(JSON.stringify(out).includes('LEAK'), false);
+  // 제거는 복사본에만 — 입력 행은 변형하지 않는다.
+  assert.equal(rows[0].snapshotTitle, 'LEAK-T');
+  assert.equal(rows[1].markupVersion, 'LEAK-B');
+});
+
+test('historyMeta.decorate: 신규 입력 형태에서도 v1Body 예외 규칙이 그대로다(스냅샷 0건일 때만)', () => {
+  // 스냅샷 0건 → v1Body에서 v1 제목 파생.
+  const noSnap = decorateHistoryRows(
+    [row(1, { eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DPS' })],
+    [],
+    { v1Body: markup(textBlock('v1 제목')) },
+  );
+  assert.equal(noSnap[0].title, 'v1 제목');
+  // 신규 형태 스냅샷이 1건이라도 있으면 v1Body는 무시된다.
+  const withSnap = decorateHistoryRows(
+    [
+      row(2, { hasSnapshot: 1 }),
+      row(1, { eventType: 'status', action: 'hold', fromStatus: 'RDS', toStatus: 'DDH' }),
+    ],
+    [{ id: 2, snapshotTitle: '저장 제목', markupVersion: null }],
+    { v1Body: markup(textBlock('현재 제목')) },
+  );
+  assert.equal(withSnap[0].title, '저장 제목');
+  assert.equal(withSnap[1].title, '', 'v1 구간에 현재 본문 제목이 새지 않는다');
+});
+
 // --- v1Body 경계(스냅샷 0건 예외) ---
 
 test('historyMeta.decorate: 스냅샷 0건 + v1Body 제공이면 전 행의 title이 v1 제목이고 version은 1이다', () => {
