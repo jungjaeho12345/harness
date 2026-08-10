@@ -402,7 +402,11 @@ test('derive: querySnapshotsByArticle가 없는 부분 스텁이어도 throw 없
 // 테스트 게이트 보강(phase 56) — 서비스의 가드 try/catch 두 곳(스냅샷 조회 실패·v1 본문 조회 실패)이
 // 무검증이었다. 실패는 제목만 비우고 이력보기 자체는 죽지 않아야 한다(record() 실패 격리와 같은 정신).
 
-test('derive: querySnapshotsByArticle가 throw해도 이력보기는 죽지 않는다(제목만 빈 값·버전/상태 정확)', () => {
+// phase 58 step2 의미 이전(축소가 아니라 등가 이전 + 개선): 이 케이스는 제목 출처가 blob 조회
+// (querySnapshotsByArticle)였을 때의 방어 계약이었다. 새 설계에서 제목 출처는 기록 시점에 저장된
+// snapshotTitle 컬럼(querySnapshotTitlesByArticle)이므로, blob 조회가 throw해도 제목은 **유지**된다.
+// 방어 계약 자체는 새 출처의 throw 케이스(아래 phase 58 묶음)로 그대로 이전해 잠갔다.
+test('derive: querySnapshotsByArticle가 throw해도 제목이 유지된다(blob 조회 비의존 — 개선 계약)', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   const articleModel = createArticleModel(db);
@@ -416,7 +420,7 @@ test('derive: querySnapshotsByArticle가 throw해도 이력보기는 죽지 않�
 
   const rows = service.queryHistory(articleId);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((r) => r.title), ['', ''], '스냅샷 조회 실패 시 제목만 빈다');
+  assert.deepEqual(rows.map((r) => r.title), ['새 제목', '새 제목'], '신규 기록 경로 기사는 blob 없이 제목이 나온다');
   assert.deepEqual(rows.map((r) => r.version), [2, 2], '버전은 hasSnapshot 플래그만으로 정확하다');
   assert.deepEqual(rows.map((r) => r.status), ['DPS', 'RDS'], '상태 승계/역승계도 그대로다');
 });
@@ -501,6 +505,196 @@ test('derive: 기존 필드가 모두 보존된다(파생은 추가일 뿐 대�
   for (const r of service.queryHistory(articleId)) {
     for (const key of base) assert.ok(key in r, `${key} 보존`);
     for (const key of ['title', 'version', 'status']) assert.ok(key in r, `${key} 추가`);
+  }
+});
+
+// --- phase 58 step2: 이력 제목의 기록 경로(snapshotTitle 컬럼 저장) + 조회 경로(단일 조회) ---
+// 기록: record()가 스냅샷 있는 행에만 historyMeta.snapshotTitle 파생값을 함께 저장한다.
+// 조회: queryHistory가 querySnapshotTitlesByArticle 하나만 읽는다(레거시 행 본문은 그 조회가 실어 준다
+// — 2차 폴백 금지: 장애 시 최악 비용(blob 전량)이 되살아나는 경로를 만들지 않는다).
+
+// 실제 모델을 래핑해 조회 호출 수와 단일 조회가 돌려준 항목을 관찰한다.
+function spyingSetup() {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const real = createArticleHistoryModel(db);
+  const calls = { titles: 0, snapshots: 0 };
+  const returnedItems = [];
+  const historyModel = {
+    ...real,
+    querySnapshotTitlesByArticle(id) {
+      calls.titles += 1;
+      const r = real.querySnapshotTitlesByArticle(id);
+      returnedItems.push(...r);
+      return r;
+    },
+    querySnapshotsByArticle(id) {
+      calls.snapshots += 1;
+      return real.querySnapshotsByArticle(id);
+    },
+  };
+  const service = createArticleService({ articleModel, db, historyModel });
+  return { db, articleModel, service, calls, returnedItems };
+}
+
+test('titleColumn: 본문 편집(update) 시 edit 행에 본문 첫 줄이 snapshotTitle로 저장된다', () => {
+  const { db, service } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('저장될 제목\n본문'), modifier: 'kim' });
+
+  const row = db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId = ? AND eventType = 'edit'").get(articleId);
+  assert.equal(row.snapshotTitle, '저장될 제목');
+});
+
+test('titleColumn: 메타 전용 편집·상태 전이 행의 snapshotTitle은 NULL이다(스냅샷 없는 행은 컬럼 미적재)', () => {
+  const { db, service } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('본문', true), author: 'kim' });
+  service.update(articleId, { title: '메타만 수정', modifier: 'kim' });                 // markupVersion 미포함
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });     // status 전이
+
+  const rows = db.prepare('SELECT eventType, snapshotTitle FROM ArticleHistory WHERE articleId = ? ORDER BY id').all(articleId);
+  assert.equal(rows.length, 2);
+  for (const r of rows) assert.equal(r.snapshotTitle, null, `${r.eventType} 행은 NULL`);
+});
+
+test('titleColumn: 첫 줄이 공백뿐인 본문의 snapshotTitle은 NULL이 아니라 빈 문자열이다(영구 레거시 오판 봉쇄)', () => {
+  const { db, service, calls, returnedItems } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('   \n본문'), modifier: 'kim' });
+
+  // 기록: '' 그대로 저장 — || undefined 류로 NULL이 되면 그 행이 영구 레거시가 된다.
+  const row = db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId = ? AND eventType = 'edit'").get(articleId);
+  assert.strictEqual(row.snapshotTitle, '', "빈 제목은 ''로 저장된다(NULL 금지)");
+
+  // 조회: 제목 ''가 그대로 나오고 본문 폴백이 쓰이지 않는다.
+  const rows = service.queryHistory(articleId);
+  assert.strictEqual(rows[0].title, '');
+  assert.equal(calls.snapshots, 0, 'blob 전량 조회는 호출되지 않는다');
+  const item = returnedItems.find((s) => s.snapshotTitle === '');
+  assert.ok(item, "단일 조회 항목의 snapshotTitle이 ''다");
+  assert.strictEqual(item.markupVersion, null, '빈 제목 행의 본문은 JS 경계를 넘지 않는다');
+});
+
+test('titleColumn: 신규 기록만 있는 기사는 단일 조회 1회·blob 조회 0회·본문 전송 0건이다(핵심 성능 잠금)', () => {
+  const { service, calls, returnedItems } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('제목 v2\n본문'), modifier: 'kim' });
+  service.update(articleId, { markupVersion: markup('제목 v3\n본문', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  calls.titles = 0; calls.snapshots = 0; returnedItems.length = 0;
+  const rows = service.queryHistory(articleId);
+
+  assert.equal(calls.titles, 1, '단일 조회 정확히 1회');
+  assert.equal(calls.snapshots, 0, 'blob 전량 조회 0회');
+  assert.equal(returnedItems.length, 2, '스냅샷 항목 2건');
+  for (const s of returnedItems) assert.strictEqual(s.markupVersion, null, '본문이 JS 경계를 넘지 않는다');
+  assert.deepEqual(rows.map((r) => r.title), ['제목 v3', '제목 v3', '제목 v2'], '제목은 정확하다');
+});
+
+test('titleColumn: 레거시 행(snapshotTitle NULL)은 단일 조회가 실어 준 본문에서 파생된다(blob 전량 조회 0회)', () => {
+  const { db, service, calls } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  // 이전 버전에서 기록된 레거시 edit 행 — snapshotTitle 없음(NULL).
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, actorUserId, createdAt, markupVersion) VALUES (?, 'edit', 'kim', ?, ?)",
+  ).run(articleId, '2026-08-10T00:00:01.000Z', markup('레거시 제목\n본문'));
+
+  calls.snapshots = 0;
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, '레거시 제목', '레거시 행은 본문 첫 줄에서 파생된다');
+  assert.equal(calls.snapshots, 0, '폴백 본문은 단일 조회가 실어 준다 — 2차 조회 없음');
+});
+
+test('titleColumn: 평문 레거시 본문도 첫 줄이 제목이고 JSON 접두어가 제목으로 노출되지 않는다', () => {
+  const { db, service } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, actorUserId, createdAt, markupVersion) VALUES (?, 'edit', 'kim', ?, ?)",
+  ).run(articleId, '2026-08-10T00:00:01.000Z', '평문 제목줄\n평문 본문');
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, actorUserId, createdAt, markupVersion) VALUES (?, 'edit', 'kim', ?, ?)",
+  ).run(articleId, '2026-08-10T00:00:02.000Z', markup('블록 제목\n본문'));
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows[1].title, '평문 제목줄', '평문 레거시는 첫 줄 그대로');
+  assert.equal(rows[0].title, '블록 제목', 'JSON 레거시는 파싱된 텍스트 첫 줄');
+  for (const r of rows) assert.ok(!r.title.startsWith('{"'), 'JSON 접두어가 제목으로 새지 않는다(blob 절단 회귀 봉쇄)');
+});
+
+test('titleColumn: 레거시+신규 혼재 기사에서 두 행 모두 정확하고 레거시 행에만 본문이 실린다', () => {
+  const { db, service, returnedItems } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  db.prepare(
+    "INSERT INTO ArticleHistory (articleId, eventType, actorUserId, createdAt, markupVersion) VALUES (?, 'edit', 'kim', ?, ?)",
+  ).run(articleId, '2026-08-10T00:00:01.000Z', markup('레거시 제목\n본문'));
+  service.update(articleId, { markupVersion: markup('신규 제목\n본문'), modifier: 'kim' });
+
+  returnedItems.length = 0;
+  const rows = service.queryHistory(articleId);
+  assert.deepEqual(rows.map((r) => r.title), ['신규 제목', '레거시 제목']);
+  assert.deepEqual(rows.map((r) => r.version), [3, 2]);
+
+  assert.equal(returnedItems.length, 2);
+  const [newer, older] = returnedItems; // id DESC
+  assert.strictEqual(newer.markupVersion, null, '신규 행 본문은 실리지 않는다');
+  assert.equal(typeof older.markupVersion, 'string', '레거시 행에만 본문이 실린다');
+});
+
+test('titleColumn: querySnapshotTitlesByArticle가 throw하면 제목만 빈 값이고 blob 조회로 재시도하지 않는다(방어 이전)', () => {
+  // 405행 케이스(구 blob 조회 방어)의 등가 이전 — 새 출처(단일 조회)의 장애에서 같은 계약을 잠근다.
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const articleModel = createArticleModel(db);
+  const real = createArticleHistoryModel(db);
+  let blobCalls = 0;
+  const historyModel = {
+    ...real,
+    querySnapshotTitlesByArticle() { throw new Error('title query down'); },
+    querySnapshotsByArticle(id) { blobCalls += 1; return real.querySnapshotsByArticle(id); },
+  };
+  const service = createArticleService({ articleModel, db, historyModel });
+
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('첫 제목\n본문', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('새 제목\n본문', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const rows = service.queryHistory(articleId);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.title), ['', ''], '조회 실패 시 제목만 빈다');
+  assert.deepEqual(rows.map((r) => r.version), [2, 2]);
+  assert.deepEqual(rows.map((r) => r.status), ['DPS', 'RDS']);
+  assert.equal(blobCalls, 0, '2차 폴백 금지 — 장애 시 최악 비용(blob 전량)이 되살아나면 안 된다');
+});
+
+test('titleColumn: 200자 초과 제목은 저장 컬럼도 조회 결과도 상한으로 절단된다', () => {
+  const { db, service } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판'), author: 'kim' });
+  const long = '가'.repeat(300);
+  service.update(articleId, { markupVersion: markup(`${long}\n본문`), modifier: 'kim' });
+
+  const row = db.prepare("SELECT snapshotTitle FROM ArticleHistory WHERE articleId = ? AND eventType = 'edit'").get(articleId);
+  assert.equal(row.snapshotTitle.length, 200, '기록 시점에 절단되어 저장된다');
+  assert.equal(row.snapshotTitle, '가'.repeat(200));
+  assert.equal(service.queryHistory(articleId)[0].title, '가'.repeat(200), '조회 결과도 같다');
+});
+
+test('titleColumn: queryHistory 반환 행 키 집합이 불변이다(snapshotTitle·markupVersion 미노출)', () => {
+  const { service } = spyingSetup();
+  const { articleId } = service.create({ title: '제목', markupVersion: markup('초판', true), author: 'kim' });
+  service.update(articleId, { markupVersion: markup('2판', true), modifier: 'kim' });
+  service.applyAction(articleId, 'D', 'send', { userId: 'desk', sessionId: 's1' });
+
+  const base = ['id', 'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt', 'hasSnapshot'];
+  for (const opts of [undefined, { sendOnly: true }]) {
+    for (const r of service.queryHistory(articleId, opts)) {
+      for (const key of base) assert.ok(key in r, `${key} 보존`);
+      for (const key of ['title', 'version', 'status']) assert.ok(key in r, `${key} 추가`);
+      assert.equal('snapshotTitle' in r, false, '저장 컬럼 값은 응답에 싣지 않는다');
+      assert.equal('markupVersion' in r, false, 'blob은 응답에 싣지 않는다');
+    }
   }
 });
 
