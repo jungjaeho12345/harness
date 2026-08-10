@@ -549,11 +549,13 @@ test('createControllers: 이력 쓰기 실패는 logService.warn으로 표면화
 // distribution.tick의 규율 승계: 인가가 먼저(비-Z에 설정 상태 비노출), actorUserId는 검증된 세션에서만.
 
 // 실패 이력 1행을 직접 시드한다 — step2의 distributionService가 남기는 행과 같은 shape.
+// 반환값은 새 행의 historyId다(재전송 식별자 — payload의 유일한 값).
 function seedFailureRow(db, { articleId, targetId, kind = 'press', reason = 'spool-write-failed' }) {
-  db.prepare(
+  const info = db.prepare(
     `INSERT INTO ArticleHistory (articleId, eventType, action, targetId, reason, actorUserId, createdAt)
      VALUES (?, 'distribute-failed', ?, ?, ?, 'sys', '2026-08-06T00:00:00.000Z')`,
   ).run(articleId, kind, targetId, reason);
+  return Number(info.lastInsertRowid);
 }
 
 async function setupRetryWiring({ spool = true } = {}) {
@@ -620,9 +622,9 @@ test('distribution.retry: Z 세션이면 서비스에 위임되고 actorUserId�
   const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
   controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
   await flushSpool();
-  seedFailureRow(db, { articleId: c.articleId, targetId: 1 });
+  const historyId = seedFailureRow(db, { articleId: c.articleId, targetId: 1 });
 
-  const r = await controllers.distribution.retry(zSid, { articleId: c.articleId, targetId: 1 });
+  const r = await controllers.distribution.retry(zSid, { historyId });
 
   assert.equal(r.ok, true);
   assert.equal(r.kind, 'press');
@@ -634,20 +636,24 @@ test('distribution.retry: Z 세션이면 서비스에 위임되고 actorUserId�
 });
 
 // 케이스 10
-test('distribution.retry: payload의 actorUserId/role/kind는 무시된다 (ADR-004 잠금)', async () => {
+test('distribution.retry: payload의 actorUserId/role/kind/articleId/targetId는 무시된다 (ADR-004 잠금)', async () => {
   const { db, controllers, zSid } = await setupRetryWiring();
   controllers.distributionTarget.create(zSid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
   const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
   controllers.article.applyAction(c.articleId, 'D', 'send', { userId: 'desk' });
   await flushSpool();
-  seedFailureRow(db, { articleId: c.articleId, targetId: 1, kind: 'press' });
+  const historyId = seedFailureRow(db, { articleId: c.articleId, targetId: 1, kind: 'press' });
 
   const r = await controllers.distribution.retry(zSid, {
-    articleId: c.articleId, targetId: 1,
+    historyId,
+    // 전부 주입 시도 값 — historyId 외에는 어떤 키도 서비스로 흘러가면 안 된다.
+    articleId: 'AKR-EVIL', targetId: 999,
     actorUserId: 'evil', role: 'Z', kind: 'nonpress',
   });
 
   assert.equal(r.ok, true);
+  assert.equal(r.articleId, c.articleId, '기사는 실패 행에서 도출된다 — 클라이언트 값 무시');
+  assert.strictEqual(r.targetId, 1, '수신처도 실패 행에서 도출된다');
   assert.equal(r.kind, 'press', 'kind는 실패 이력에서 도출된다 — 클라이언트 값 무시');
   const retryRow = db.prepare("SELECT * FROM ArticleHistory WHERE eventType = 'distribute-retry'").get();
   assert.equal(retryRow.actorUserId, 'admin', '세션 파생 값만 서비스로 전달된다');
@@ -659,13 +665,13 @@ test('distribution: 스풀 미설정이면 failures는 정상 동작하고 retry
   const { db, controllers, zSid } = await setupRetryWiring({ spool: false });
   controllers.distributionTarget.create(zSid, { name: 'KBS', kind: 'press', spoolDir: 'kbs' });
   const c = controllers.article.create({ title: '제목', markupVersion: END_MARKUP, author: 'kim' });
-  seedFailureRow(db, { articleId: c.articleId, targetId: 1 });
+  const historyId = seedFailureRow(db, { articleId: c.articleId, targetId: 1 });
 
   const l = controllers.distribution.failures(zSid);
   assert.equal(l.ok, true, '조회는 스풀 설정과 무관하다 — 항상 결선');
   assert.equal(l.items.length, 1);
 
-  const r = await controllers.distribution.retry(zSid, { articleId: c.articleId, targetId: 1 });
+  const r = await controllers.distribution.retry(zSid, { historyId });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'spool-disabled');
 });
@@ -674,14 +680,14 @@ test('distribution: 스풀 미설정이면 failures는 정상 동작하고 retry
 test('distribution.retry: 비-Z는 스풀 설정과 무관하게 forbidden (설정 상태 비노출 — 인가 먼저)', async () => {
   for (const spool of [true, false]) {
     const { db, controllers, rSid, spoolFs } = await setupRetryWiring({ spool });
-    seedFailureRow(db, { articleId: 'AKR1', targetId: 1 });
+    const historyId = seedFailureRow(db, { articleId: 'AKR1', targetId: 1 });
 
-    const r = await controllers.distribution.retry(rSid, { articleId: 'AKR1', targetId: 1 });
+    const r = await controllers.distribution.retry(rSid, { historyId });
     assert.equal(r.ok, false, `spool=${spool}`);
     assert.equal(r.reason, 'forbidden', `spool=${spool}: spool-disabled가 아니라 forbidden`);
     assert.deepEqual(spoolFs.calls.writeFile, [], `spool=${spool}: FS 무접촉`);
 
-    const anon = await controllers.distribution.retry(undefined, { articleId: 'AKR1', targetId: 1 });
+    const anon = await controllers.distribution.retry(undefined, { historyId });
     assert.equal(anon.reason, 'unauthenticated', `spool=${spool}`);
   }
 });

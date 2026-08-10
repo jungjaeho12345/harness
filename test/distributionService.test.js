@@ -748,8 +748,9 @@ test('실패 영속: invalid-spool-dir(레거시 거부 값)도 distribute-faile
   assert.strictEqual(rows[0].targetId, bad.id);
 });
 
-// 케이스 6
-test('실패 영속: 재실행 시 실패 행이 누적된다 (append-only — 갱신·삭제 없음)', async () => {
+// 케이스 6 (코드리뷰 반려 [med]로 의미 갱신 — 과거: "재실행 시 실패 행 누적"을 잠갔으나, 그 행동이
+// 지속 실패에서 distribute-failed 무제한 누적 결함으로 판정됐다. 이제 같은 사유의 미해소 실패는 접힌다.)
+test('실패 영속: 재실행이 기존 실패 행을 갱신·삭제하지 않는다 (append-only 불변 + 같은 사유는 억제)', async () => {
   const writer = fakeWriter({ failFor: new Set(['kbs']) });
   const { service, db, distributionTargetModel } = setup({
     writer,
@@ -758,12 +759,15 @@ test('실패 영속: 재실행 시 실패 행이 누적된다 (append-only — �
   const kbs = distributionTargetModel.query({ kind: 'press', active: 'Y' })[0];
 
   await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  const [first] = failedHistoryOf(db);
   await service.distribute(ARTICLE_ID, { kinds: ['press'] });
 
   const rows = failedHistoryOf(db);
-  assert.equal(rows.length, 2, '같은 수신처의 두 번째 실패도 새 행으로 append된다');
-  assert.ok(rows.every((r) => r.targetId === kbs.id && r.reason === 'spool-write-failed'));
-  assert.ok(rows[1].id > rows[0].id);
+  assert.equal(rows.length, 1, '같은 사유의 미해소 실패가 최신이면 새 행을 만들지 않는다(케이스 10과 동형)');
+  // 억제는 "insert 생략"일 뿐이다 — 기존 행은 한 바이트도 바뀌지 않는다(갱신·삭제 없음).
+  assert.deepEqual({ ...rows[0] }, { ...first }, '기존 실패 행이 그대로 보존된다');
+  assert.strictEqual(rows[0].targetId, kbs.id);
+  assert.equal(rows[0].reason, 'spool-write-failed');
 });
 
 // 케이스 7
@@ -849,4 +853,80 @@ test('실패 영속: DB 비파괴 — 배부 전후 행 수 불변, 기존 이�
   const hist = historyOf(db);
   assert.equal(hist[0].action, 'send', '기존 송고 이력이 보존된다');
   assert.equal(hist.filter((h) => h.eventType === 'distribute-failed').length, 1);
+});
+
+// --- 코드리뷰 반려 [med]: 지속 실패의 distribute-failed 중복 억제 ---
+// tick은 주기 실행이다 — 같은 수신처가 같은 사유로 계속 실패하면 주기마다 실패 행이 무제한 누적된다.
+// 그 그룹((articleId,targetId,action))의 최신 행이 이미 같은 reason의 미해소 실패면 insert를 생략한다.
+// 판정은 distributionFailureLog의 기존 파생(unresolvedFailures)을 재사용한다 — 새 판정 규칙 금지.
+
+// 케이스 10
+test('실패 중복 억제: 같은 실패 2연속이면 distribute-failed 행은 1개다 (표면화는 매번 유지)', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs']) });
+  const { service, db } = setup({ writer, targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }] });
+
+  const r1 = await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  const r2 = await service.distribute(ARTICLE_ID, { kinds: ['press'] }); // tick 반복 상황
+
+  assert.equal(r1.failed.length, 1);
+  assert.equal(r2.failed.length, 1, '기록을 생략해도 failed 반환(운영 표면화)은 매번 남는다');
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 1, '같은 reason의 미해소 실패가 최신이면 새 행을 만들지 않는다');
+  assert.equal(rows[0].reason, 'spool-write-failed');
+});
+
+// 케이스 11
+test('실패 중복 억제: reason이 달라지면 새 행이 남는다 (원인 변화는 사실 기록이다)', async () => {
+  const state = { reason: 'spool-write-failed' };
+  const writer = {
+    calls: [],
+    async write(args) { writer.calls.push(args); return { ok: false, reason: state.reason }; },
+  };
+  const { service, db } = setup({ writer, targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }] });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  state.reason = 'invalid-spool-dir';
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+
+  const rows = failedHistoryOf(db);
+  assert.deepEqual(rows.map((r) => r.reason), ['spool-write-failed', 'invalid-spool-dir'], '사유가 다르면 각각 남는다');
+});
+
+// 케이스 12
+test('실패 중복 억제: 해소(distribute-retry) 후 재실패면 새 행이 남는다', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs']) });
+  const { service, db, historyModel, distributionTargetModel } = setup({
+    writer, targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  const kbs = distributionTargetModel.query({})[0];
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  // 재전송으로 해소 — 그룹 최신이 distribute-retry가 된다.
+  historyModel.insert({
+    articleId: ARTICLE_ID, eventType: 'distribute-retry', action: 'press',
+    targetId: kbs.id, actorUserId: 'z1', createdAt: NOW,
+  });
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] }); // 다시 실패
+
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 2, '해소 이후의 재실패는 새 사실이다 — 반드시 남는다');
+});
+
+// 케이스 13
+test('실패 중복 억제: 다른 수신처·다른 kind의 실패는 억제되지 않는다 (그룹 단위 판정)', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs', 'mbc', 'portal']) });
+  const { service, db } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+      { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+    ],
+  });
+
+  await service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 3, '수신처 3곳 각각의 첫 실패는 전부 남는다');
+  assert.equal(new Set(rows.map((r) => `${r.targetId}:${r.action}`)).size, 3);
 });

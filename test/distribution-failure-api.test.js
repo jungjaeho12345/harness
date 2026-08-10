@@ -102,11 +102,13 @@ function seedArticle(db, articleId = ARTICLE_ID, { status = 'DPS' } = {}) {
 }
 
 // 수신처 단위 실패 이력 시드 — step2의 distributionService가 남기는 행과 같은 shape.
+// 반환값은 새 행의 historyId다(재전송 식별자 — 목록의 키이자 POST body의 유일한 값).
 function seedFailure(db, { articleId = ARTICLE_ID, targetId, kind = 'press', reason = 'spool-write-failed' }) {
-  db.prepare(
+  const info = db.prepare(
     `INSERT INTO ArticleHistory (articleId, eventType, action, targetId, reason, actorUserId, createdAt)
      VALUES (?, 'distribute-failed', ?, ?, ?, 'sys', '2026-08-06T09:00:00.000Z')`,
   ).run(articleId, kind, targetId, reason);
+  return Number(info.lastInsertRowid);
 }
 function seedRetryEvent(db, { articleId = ARTICLE_ID, targetId, kind = 'press' }) {
   db.prepare(
@@ -219,15 +221,15 @@ test('POST /api/distribution/retry: 미인증 401 · 비-Z 403(body role:"Z" 무
   try {
     const targetId = seedTarget(ctx.db);
     seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    const historyId = seedFailure(ctx.db, { targetId });
 
-    const anon = await retry(ctx, { body: { articleId: ARTICLE_ID, targetId } });
+    const anon = await retry(ctx, { body: { historyId } });
     assert.equal(anon.status, 401);
     assert.equal(anon.body.reason, 'unauthenticated');
 
     for (const role of ['R', 'D']) {
       const sid = await loginAs(ctx, role, `u${role}`);
-      const r = await retry(ctx, { sid, body: { articleId: ARTICLE_ID, targetId, role: 'Z' } });
+      const r = await retry(ctx, { sid, body: { historyId, role: 'Z' } });
       assert.equal(r.status, 403, `${role} 세션 — body role 위조 무시(ADR-004)`);
       assert.equal(r.body.reason, 'forbidden');
     }
@@ -242,10 +244,10 @@ test('POST /api/distribution/retry: Z + 유효 실패 → 200, FS 1세트, 응�
   try {
     const targetId = seedTarget(ctx.db);
     const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
 
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true, articleId, targetId, kind: 'press', at: NOW });
@@ -269,27 +271,30 @@ test('POST /api/distribution/retry: 성공 후 GET failures에서 항목이 사�
   const ctx = await start();
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
     assert.equal((await failures(ctx, { sid: zsid })).body.items.length, 1);
-    await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    await retry(ctx, { sid: zsid, body: { historyId } });
     assert.deepEqual((await failures(ctx, { sid: zsid })).body.items, []);
   } finally { await ctx.close(); }
 });
 
 // 케이스 12
-test('POST /api/distribution/retry: 미해소 실패가 없는 쌍은 404 no-failure, FS 0회', async () => {
+test('POST /api/distribution/retry: 미해소 실패 행이 아닌 historyId는 404 no-failure, FS 0회', async () => {
   const ctx = await start();
   try {
-    const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
+    seedTarget(ctx.db);
+    seedArticle(ctx.db);
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
-    assert.equal(r.status, 404);
-    assert.deepEqual(r.body, { ok: false, reason: 'no-failure' });
+    // 존재하지 않는 id·비정수 id 모두 같은 어휘로 거부된다(전역 스캔 봉쇄).
+    for (const historyId of [424242, 'abc', '', undefined]) {
+      const r = await retry(ctx, { sid: zsid, body: { historyId } });
+      assert.equal(r.status, 404, `historyId=${JSON.stringify(historyId)}`);
+      assert.deepEqual(r.body, { ok: false, reason: 'no-failure' });
+    }
     assert.equal(fsCallCount(ctx), 0);
     assert.deepEqual(ctx.signals, []);
   } finally { await ctx.close(); }
@@ -300,11 +305,11 @@ test('POST /api/distribution/retry: 기사 status가 EEK면 409 status-changed, 
   const ctx = await start();
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db, ARTICLE_ID, { status: 'EEK' });
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db, ARTICLE_ID, { status: 'EEK' });
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
     assert.equal(r.status, 409);
     assert.deepEqual(r.body, { ok: false, reason: 'status-changed' });
     assert.equal(fsCallCount(ctx), 0);
@@ -316,12 +321,12 @@ test('POST /api/distribution/retry: 비활성 수신처는 403 inactive', async 
   const ctx = await start();
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
     createDistributionTargetModel(ctx.db).update(targetId, { active: 'N' });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
     assert.equal(r.status, 403);
     assert.deepEqual(r.body, { ok: false, reason: 'inactive' });
     assert.equal(fsCallCount(ctx), 0);
@@ -335,16 +340,16 @@ test('POST /api/distribution/retry: 없는 수신처·없는 기사는 404 not-f
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
     // 수신처 행 없음(실패 이력만 존재).
-    seedFailure(ctx.db, { targetId: 777 });
+    const ghostTargetHid = seedFailure(ctx.db, { targetId: 777 });
     seedArticle(ctx.db);
-    const noTarget = await retry(ctx, { sid: zsid, body: { articleId: ARTICLE_ID, targetId: 777 } });
+    const noTarget = await retry(ctx, { sid: zsid, body: { historyId: ghostTargetHid } });
     assert.equal(noTarget.status, 404);
     assert.equal(noTarget.body.reason, 'not-found');
 
     // 기사 행 없음.
     const targetId = seedTarget(ctx.db);
-    seedFailure(ctx.db, { articleId: 'AKR-GHOST', targetId });
-    const noArticle = await retry(ctx, { sid: zsid, body: { articleId: 'AKR-GHOST', targetId } });
+    const ghostArticleHid = seedFailure(ctx.db, { articleId: 'AKR-GHOST', targetId });
+    const noArticle = await retry(ctx, { sid: zsid, body: { historyId: ghostArticleHid } });
     assert.equal(noArticle.status, 404);
     assert.equal(noArticle.body.reason, 'not-found');
     assert.equal(fsCallCount(ctx), 0);
@@ -356,11 +361,11 @@ test('POST /api/distribution/retry: 스풀 미설정 + Z → 503 spool-disabled,
   const ctx = await start({ spool: false });
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
     assert.equal(r.status, 503);
     assert.deepEqual(r.body, { ok: false, reason: 'spool-disabled' });
 
@@ -386,38 +391,80 @@ test('GET /api/distribution/retry: 라우트가 없어 404다 (부수효과 연�
   } finally { await ctx.close(); }
 });
 
-// 케이스 18(실패·거부는 무신호)
-test('POST /api/distribution/retry: 재전송 실패·거부 응답에는 SSE 신호가 없다', async () => {
+// 케이스 18(실패·거부는 무신호 + 서버측 장애 5xx — 코드리뷰 반려 [low]: 폴백 400은 운영 cron·화면이
+// 클라이언트 잘못으로 오독한다. tick-failed:500 선례를 따른다.)
+test('POST /api/distribution/retry: 스풀 기록 실패는 500 — SSE 신호 없음', async () => {
   const ctx = await start({ spoolFs: fakeSpoolFs({ fail: true }) });
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
-    assert.equal(r.status, 400, 'spool-write-failed는 매핑 밖 — 폴백 400');
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
+    assert.equal(r.status, 500, 'spool-write-failed는 서버측 장애다(tick-failed:500 선례)');
     assert.deepEqual(r.body, { ok: false, reason: 'spool-write-failed' });
     assert.deepEqual(ctx.signals, [], '실패에는 신호를 보내지 않는다');
 
-    const denied = await retry(ctx, { body: { articleId, targetId } });
+    const denied = await retry(ctx, { body: { historyId } });
     assert.equal(denied.status, 401);
     assert.deepEqual(ctx.signals, [], '거부에도 신호 없음');
   } finally { await ctx.close(); }
 });
 
+// 케이스 18-1 (코드리뷰 반려 [low] — invalid-spool-dir도 재전송 경로에서는 서버측 장애다.
+// 배부 대상 CRUD의 입력 검증 400(distribution-targets-api)과 같은 토큰이지만 문맥이 다르다 —
+// 저장된 spoolDir가 잘못된 것은 클라이언트가 고칠 수 있는 요청 오류가 아니다.)
+test('POST /api/distribution/retry: 저장된 spoolDir가 무효(invalid-spool-dir)면 500', async () => {
+  const ctx = await start();
+  try {
+    // 모델 직접 시드로 검증을 우회한 무효 slug — spoolWriter의 sanitize가 거부한다.
+    const targetId = seedTarget(ctx.db, { spoolDir: 'BAD DIR' });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
+    const zsid = await loginAs(ctx, 'Z', 'admin');
+
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
+    assert.equal(r.status, 500);
+    assert.deepEqual(r.body, { ok: false, reason: 'invalid-spool-dir' });
+    assert.deepEqual(ctx.signals, []);
+  } finally { await ctx.close(); }
+});
+
 // 케이스 19
-test('POST /api/distribution/retry: targetId를 JSON 문자열로 보내도 정상 처리된다 (HTTP 경계 정규화)', async () => {
+test('POST /api/distribution/retry: historyId를 JSON 문자열로 보내도 정상 처리된다 (HTTP 경계 정규화)', async () => {
   const ctx = await start();
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId: String(targetId) } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId: String(historyId) } });
     assert.equal(r.status, 200);
     assert.strictEqual(r.body.targetId, targetId, '응답 targetId는 숫자다');
+  } finally { await ctx.close(); }
+});
+
+// 코드리뷰 반려 [high] — stale-cycle의 HTTP 매핑(409 상태 충돌).
+test('POST /api/distribution/retry: 재송고 경계 이전 사이클의 실패는 409 stale-cycle, FS 0회', async () => {
+  const ctx = await start();
+  try {
+    const targetId = seedTarget(ctx.db);
+    seedArticle(ctx.db, ARTICLE_ID, { status: 'DES' });
+    const historyId = seedFailure(ctx.db, { targetId });
+    // 실패 행 **이후**의 송고 이력 — 새 배부 사이클이 열렸다(보류→엠바고 재설정→재송고).
+    ctx.db.prepare(
+      `INSERT INTO ArticleHistory (articleId, eventType, action, fromStatus, toStatus, actorUserId, createdAt)
+       VALUES (?, 'status', 'send', 'RDS', 'DES', 'desk', '2026-08-06T09:10:00.000Z')`,
+    ).run(ARTICLE_ID);
+    const zsid = await loginAs(ctx, 'Z', 'admin');
+
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
+    assert.equal(r.status, 409);
+    assert.deepEqual(r.body, { ok: false, reason: 'stale-cycle' });
+    assert.equal(fsCallCount(ctx), 0, '이전 사이클 실패로는 아무것도 쓰지 않는다');
+    assert.deepEqual(ctx.signals, []);
   } finally { await ctx.close(); }
 });
 
@@ -469,9 +516,9 @@ test('E2E: tick 중 스풀 실패가 영속되고 목록에 나타나며, 재전
     assert.equal(l1.body.items[0].kind, 'press');
     assert.equal(l1.body.items[0].kindDistributed, false);
 
-    // (3) FS 복구 후 재전송 — 200 + distributedAt present-only 갱신.
+    // (3) FS 복구 후 재전송 — 목록의 키(historyId) 그대로 재전송한다. 200 + distributedAt present-only 갱신.
     state.fail = false;
-    const r = await retry(ctx, { sid: zsid, body: { articleId: ARTICLE_ID, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId: l1.body.items[0].historyId } });
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true, articleId: ARTICLE_ID, targetId, kind: 'press', at: NOW });
     const contents = ctx.db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(ARTICLE_ID);
@@ -492,12 +539,12 @@ test('POST /api/distribution/retry: 수신처 kind가 바뀐 상태면 409 kind-
   const ctx = await start();
   try {
     const targetId = seedTarget(ctx.db);
-    const articleId = seedArticle(ctx.db);
-    seedFailure(ctx.db, { targetId, kind: 'press' });
+    seedArticle(ctx.db);
+    const historyId = seedFailure(ctx.db, { targetId, kind: 'press' });
     createDistributionTargetModel(ctx.db).update(targetId, { kind: 'nonpress' });
     const zsid = await loginAs(ctx, 'Z', 'admin');
 
-    const r = await retry(ctx, { sid: zsid, body: { articleId, targetId } });
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
     assert.equal(r.status, 409);
     assert.deepEqual(r.body, { ok: false, reason: 'kind-changed' });
     assert.equal(fsCallCount(ctx), 0, '엠바고 파기 차단 — 아무것도 쓰지 않는다');

@@ -124,7 +124,7 @@ function routesFor({ articleId, historyId }) {
     ['POST', '/api/distribution/tick', {}, '/api/distribution/tick'],
     // 배부 실패 조회/재전송(phase 57) — R 세션이라 403이어도 응답 본문 위생은 검사된다.
     ['GET', '/api/distribution/failures', {}, '/api/distribution/failures'],
-    ['POST', '/api/distribution/retry', { body: { articleId: 'AKRX', targetId: 1 } }, '/api/distribution/retry'],
+    ['POST', '/api/distribution/retry', { body: { historyId: 1 } }, '/api/distribution/retry'],
   ];
 }
 

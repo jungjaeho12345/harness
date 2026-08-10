@@ -88,14 +88,20 @@ export function distributedKinds(historyRows = []) {
 // 중복 배부한다(회수 불가) — 넣지 마라.
 export const CYCLE_SCOPED_STATUSES = Object.freeze(['DES', 'EPS']);
 
-// 사이클 경계 = 가장 최근 송고 이력의 id. 송고 이력은 상태 전이 직후 배부 훅보다 **먼저**
-// insert되므로(articleService.applyAction) 그 사이클의 배부는 전부 경계보다 뒤(id가 크다)에 남는다.
-// 정렬에 의존하지 않고 값으로만 최대를 고른다(호출자가 다른 정렬로 넘길 수 있다).
-// 시각(createdAt)은 쓰지 않는다 — 같은 밀리초 충돌·백필 데이터로 신뢰도가 낮고, 단조 증가하는
-// id가 유일하게 결정적인 순서다. id가 정수가 아닌 송고 행은 후보에서 제외한다(경계 미확정 → 전체 이력).
-function latestSendId(rows) {
+/**
+ * 사이클 경계 = 가장 최근 송고 이력의 id. 송고 이력은 상태 전이 직후 배부 훅보다 **먼저**
+ * insert되므로(articleService.applyAction) 그 사이클의 배부는 전부 경계보다 뒤(id가 크다)에 남는다.
+ * 정렬에 의존하지 않고 값으로만 최대를 고른다(호출자가 다른 정렬로 넘길 수 있다).
+ * 시각(createdAt)은 쓰지 않는다 — 같은 밀리초 충돌·백필 데이터로 신뢰도가 낮고, 단조 증가하는
+ * id가 유일하게 결정적인 순서다. id가 정수가 아닌 송고 행은 후보에서 제외한다(경계 미확정 → 전체 이력).
+ * export하는 이유: 재전송(distributionRetryService)의 stale-cycle 게이트가 같은 경계를 써야 한다 —
+ * 판정을 복제하면 사이클 어휘가 두 곳에서 갈라진다(cycleDistributedKinds와 단일 출처 공유).
+ * @param {Array<object>} rows articleHistoryModel.queryByArticle() 결과(정렬 무관)
+ * @returns {number|null} 경계 id, 확정 불가(송고 이력 없음·id 결손)면 null
+ */
+export function latestSendId(rows) {
   let boundaryId = null;
-  for (const r of rows) {
+  for (const r of Array.isArray(rows) ? rows : []) {
     if (!r || typeof r !== 'object') continue;
     if (r.eventType !== 'status' || r.action !== 'send') continue;
     if (!Number.isInteger(r.id)) continue;

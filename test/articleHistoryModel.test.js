@@ -333,3 +333,54 @@ test('articleHistoryModel: queryDistributionEvents는 대상 이벤트가 없으
   assert.deepEqual(history.queryDistributionEvents(), []);
   assert.deepEqual(history.queryDistributionEvents({ articleId: 'AKR-NONE' }), []);
 });
+
+// --- 코드리뷰 반려(phase 57 fix): 재전송 식별자 historyId 계약의 기반 ---
+// retry가 (articleId,targetId)가 아니라 historyId로 좁혀지려면(같은 쌍에 kind 2종 동시 미해소 복구),
+// (1) insert가 새 행의 id를 돌려주고 (2) id 단건으로 배부 이벤트 행만 조회할 수 있어야 한다.
+
+test('articleHistoryModel: insert가 새 행의 id(정수)를 반환한다', () => {
+  const { history } = setup();
+  const first = history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'press',
+    targetId: 1, reason: 'spool-write-failed', actorUserId: 'sys', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  const second = history.insert({
+    articleId: 'AKR1', eventType: 'distribute-retry', action: 'press',
+    targetId: 1, actorUserId: 'z1', createdAt: '2026-08-06T00:01:00.000Z',
+  });
+  assert.ok(Number.isInteger(first) && first >= 1, 'insert 반환은 새 행의 정수 id다');
+  assert.ok(Number.isInteger(second) && second > first, 'id는 단조 증가한다');
+});
+
+test('articleHistoryModel: getDistributionEventById는 배부 이벤트 행만 — 타 eventType·미존재 id는 undefined', () => {
+  const { history } = setup();
+  const failedId = history.insert({
+    articleId: 'AKR1', eventType: 'distribute-failed', action: 'nonpress',
+    targetId: 7, reason: 'spool-write-failed', actorUserId: 'sys', createdAt: '2026-08-06T00:00:00.000Z',
+  });
+  const retryId = history.insert({
+    articleId: 'AKR1', eventType: 'distribute-retry', action: 'nonpress',
+    targetId: 7, actorUserId: 'z1', createdAt: '2026-08-06T00:01:00.000Z',
+  });
+  const editId = history.insert({
+    articleId: 'AKR1', eventType: 'edit', actorUserId: 'kim',
+    createdAt: '2026-08-06T00:02:00.000Z', markupVersion: '{"blocks":[]}',
+  });
+
+  const row = history.getDistributionEventById(failedId);
+  assert.equal(row.id, failedId);
+  assert.equal(row.articleId, 'AKR1');
+  assert.equal(row.eventType, 'distribute-failed');
+  assert.equal(row.action, 'nonpress');
+  assert.strictEqual(row.targetId, 7, 'targetId는 숫자다');
+  assert.equal(row.reason, 'spool-write-failed');
+  // shape은 queryDistributionEvents와 동형 — markupVersion(본문 blob) 미노출.
+  assert.deepEqual(
+    Object.keys(row).sort(),
+    ['action', 'articleId', 'createdAt', 'eventType', 'id', 'reason', 'targetId', 'actorUserId'].sort(),
+  );
+
+  assert.ok(history.getDistributionEventById(retryId), 'distribute-retry 행도 조회된다');
+  assert.equal(history.getDistributionEventById(editId), undefined, '배부 이벤트가 아닌 행은 이 경로로 새지 않는다');
+  assert.equal(history.getDistributionEventById(999999), undefined, '미존재 id');
+});

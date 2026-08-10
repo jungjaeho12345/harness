@@ -16,14 +16,15 @@ function insertInto(db, table, cols, obj) {
   const present = cols.filter((c) => obj[c] !== undefined);
   if (present.length === 0) throw new Error(`${table}: 입력할 컬럼이 없습니다`);
   const ph = present.map(() => '?').join(', ');
-  db.prepare(`INSERT INTO ${table} (${present.join(', ')}) VALUES (${ph})`)
+  return db.prepare(`INSERT INTO ${table} (${present.join(', ')}) VALUES (${ph})`)
     .run(...present.map((c) => obj[c]));
 }
 
 export function createArticleHistoryModel(db) {
   // 이력 1행 적재. 정의되지 않은 키는 컬럼에서 제외(undefined는 제외 → NULL 유지).
+  // 새 행의 id(정수)를 반환한다 — 배부 실패 목록의 historyId(재전송 식별자)가 이 id다.
   function insert(record = {}) {
-    insertInto(db, 'ArticleHistory', HISTORY_COLS, record);
+    return Number(insertInto(db, 'ArticleHistory', HISTORY_COLS, record).lastInsertRowid);
   }
 
   // 해당 기사의 이력을 최신순(id DESC)으로 반환한다 — 목록은 최근 이벤트가 위에 오도록.
@@ -74,5 +75,18 @@ export function createArticleHistoryModel(db) {
     ).all(...params, max);
   }
 
-  return { insert, queryByArticle, querySnapshotById, querySnapshotsByArticle, queryDistributionEvents };
+  // 배부 이벤트 단건 조회 — 재전송 식별자(historyId)에서 기사·수신처를 도출하는 유일한 경로.
+  // eventType 필터를 여기서도 유지한다: 임의 id로 다른 이벤트 행(본문 스냅샷 등)이 이 경로로 새지 않게.
+  // 없거나 배부 이벤트가 아니면 undefined.
+  function getDistributionEventById(id) {
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, targetId, reason, actorUserId, createdAt
+         FROM ArticleHistory WHERE id = ? AND eventType IN (?, ?)`,
+    ).get(id, 'distribute-failed', 'distribute-retry');
+  }
+
+  return {
+    insert, queryByArticle, querySnapshotById, querySnapshotsByArticle,
+    queryDistributionEvents, getDistributionEventById,
+  };
 }

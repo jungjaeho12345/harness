@@ -14,7 +14,7 @@
 //    쓰기 직전 status 재확인(아래 TOCTOU 가드)은 전이가 아니라 **배부 안전 중단**이다 — status를 읽기만 한다.
 
 import { EMBARGO_DISTRIBUTABLE_STATUSES } from './embargoPolicy.js';
-import { DISTRIBUTE_FAILED_EVENT, isRetryableFailureReason } from './distributionFailureLog.js';
+import { DISTRIBUTE_FAILED_EVENT, isRetryableFailureReason, unresolvedFailures } from './distributionFailureLog.js';
 
 // 배부 대상 종류 — news.md 엠바고 규칙의 두 축(1차→언론사, 2차→비언론사).
 const KINDS = ['press', 'nonpress'];
@@ -23,6 +23,11 @@ const KINDS = ['press', 'nonpress'];
 // distributionTickService의 재검증 스킵과 같은 어휘다(운영 요약 통일 — tick이 failed를 HTTP로 투영한다).
 // 새 상태값(EEK/EEH/DPD 등)은 담지 않는다 — 요약은 식별자·고정 사유만 담는 화이트리스트다.
 const STATUS_CHANGED = 'status-changed';
+
+// 중복 억제 판정의 이력 조회 한도 — 표시용 창이 아니라 articleId 스코프 사실상 무제한이다
+// (distributionRetryService.RETRY_SCAN_LIMIT과 같은 이유: 창 밖으로 밀린 최신 실패를 놓치면
+// 안전 방향이긴 하나 억제가 무의미해진다. 한 기사로 좁혀져 있어 비용은 작다).
+const FAILURE_DEDUP_SCAN_LIMIT = 1000000;
 
 // 최신 행이 배부 가능한 상태인가. allowlist는 embargoPolicy가 단일 출처다(복제 금지).
 function isDistributable(row) {
@@ -73,9 +78,32 @@ export function createDistributionService({
   // status-changed(안전 중단)·targetId:null(kind 단위 항목)은 기록하지 않는다 —
   // 재전송 대상이 아니며, 영속하면 영원히 해소되지 않는 항목이 된다(onFailure 로그로만 표면화).
   // reason은 spoolWriter의 고정 토큰 그대로다 — 예외 메시지·경로를 넣지 않는다.
+  //
+  // 중복 억제: tick은 주기 실행이라 같은 수신처가 같은 사유로 계속 실패하면 실패 행이 주기마다
+  // 무제한 누적된다. 그 그룹((articleId,targetId,action))의 **최신 행이 이미 같은 reason의 미해소
+  // 실패**면 insert를 생략한다 — 판정은 distributionFailureLog의 기존 파생(unresolvedFailures)을
+  // 그대로 재사용한다(새 판정 규칙 금지). reason이 다르거나(원인 변화) 해소 후 재실패면 새 사실이므로
+  // 반드시 남긴다. failed 반환·onFailure 표면화는 기록 생략과 무관하게 매번 일어난다(무음 삼킴 금지).
   function recordTargetFailure({ articleId, targetId, kind, reason }, actorUserId) {
     if (targetId == null || !isRetryableFailureReason(reason)) return;
+    if (isDuplicateUnresolvedFailure({ articleId, targetId, kind, reason })) return;
     record({ articleId, eventType: DISTRIBUTE_FAILED_EVENT, action: kind, targetId, reason, actorUserId });
+  }
+
+  // 그 그룹의 미해소 최신 실패가 같은 reason인가. 조회 실패·모델 미가용이면 false —
+  // 억제는 최적화일 뿐이므로 모르면 기록하는 쪽(안전 방향: 과다 기록 > 무음 유실)으로 둔다.
+  function isDuplicateUnresolvedFailure({ articleId, targetId, kind, reason }) {
+    if (!historyModel || typeof historyModel.queryDistributionEvents !== 'function') return false;
+    let rows;
+    try {
+      rows = historyModel.queryDistributionEvents({ articleId, limit: FAILURE_DEDUP_SCAN_LIMIT });
+    } catch {
+      return false;
+    }
+    return unresolvedFailures(rows).some(
+      (it) => it.articleId === articleId && it.targetId === targetId
+        && it.kind === kind && it.reason === reason,
+    );
   }
 
   // 지금 이 kind들로 배부한다. 언제 부를지는 호출자가 정한다(송고 훅 / phase 48 tick).

@@ -218,14 +218,15 @@ export function createControllers(db, {
       if (!gate.ok) return gate;
       return distributionRetryService.list({ limit: filters?.limit });
     },
-    // 실패 수신처 1건 재전송(Z 전용) — payload에서 articleId·targetId만 뽑는다(통짜 스프레드 금지:
-    // actorUserId/kind 주입 경로가 열린다). actorUserId는 검증된 세션에서만 온다(ADR-004).
+    // 실패 수신처 1건 재전송(Z 전용) — payload에서 historyId(목록의 키)만 뽑는다(통짜 스프레드 금지:
+    // actorUserId/kind/articleId 주입 경로가 열린다). 기사·수신처·kind는 서버가 그 실패 행에서만
+    // 도출하고, historyId가 미해소 집합에 속하는지 서비스가 검증한다(ADR-004).
+    // actorUserId는 검증된 세션에서만 온다.
     async retry(sessionId, payload) {
       const gate = authorization.manageDistributionFailure(sessionId);
       if (!gate.ok) return gate;
       return distributionRetryService.retry({
-        articleId: payload?.articleId,
-        targetId: payload?.targetId,
+        historyId: payload?.historyId,
         actorUserId: gate.userId ?? null,
       });
     },
