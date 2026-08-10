@@ -3,11 +3,18 @@ import { MODEL_KEYS, assertModel } from './contract.js';
 import { createFakeModel } from '../test/fakeModel.js';
 
 describe('MODEL_KEYS', () => {
-  it('is frozen and lists the 32 contract methods', () => {
+  it('is frozen, duplicate-free, and lists the 35 contract methods', () => {
     expect(Object.isFrozen(MODEL_KEYS)).toBe(true);
-    expect(MODEL_KEYS).toHaveLength(32);
+    expect(MODEL_KEYS).toHaveLength(35);
+    expect(new Set(MODEL_KEYS).size).toBe(MODEL_KEYS.length); // 중복 키 없음.
     // step9가 보장해야 하는 핵심 키들 + step14가 추가하는 getArticle(단건 조회).
     for (const key of ['login', 'logout', 'restoreSession', 'createUser', 'updateUser', 'saveArticle', 'getArticle', 'subscribe']) {
+      expect(MODEL_KEYS).toContain(key);
+    }
+  });
+
+  it('includes the distribution failure/tick keys (phase 57 MVP-4)', () => {
+    for (const key of ['queryDistributionFailures', 'retryDistribution', 'runDistributionTick']) {
       expect(MODEL_KEYS).toContain(key);
     }
   });
@@ -365,6 +372,101 @@ describe('createFakeModel', () => {
 
     expect(await fake.updateDistributionTarget(9999, { name: 'x' })).toEqual({ ok: false, reason: 'not-found' });
     expect(await fake.deactivateDistributionTarget(9999)).toEqual({ ok: false, reason: 'not-found' });
+  });
+
+  // --- 배부 실패 복구/실행(phase 57 MVP-4) — 서버 계약(/api/distribution/{failures,retry,tick})과 같은 shape 모사 ---
+  it('queryDistributionFailures returns seeded items as copies (원본 불변) and honors limit', async () => {
+    const seedItems = [
+      {
+        articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed',
+        failedAt: '2026-08-01T00:00:00.000Z', historyId: 11,
+        targetName: 'KBS', targetActive: 'Y', targetKind: 'press', kindDistributed: true,
+      },
+      {
+        articleId: 'AKR2', targetId: 4, kind: 'nonpress', reason: 'invalid-spool-dir',
+        failedAt: '2026-08-02T00:00:00.000Z', historyId: 12,
+        targetName: '사내망', targetActive: 'N', targetKind: 'nonpress', kindDistributed: false,
+      },
+    ];
+    const fake = createFakeModel({ distributionFailures: seedItems });
+
+    const r = await fake.queryDistributionFailures();
+    expect(r.ok).toBe(true);
+    expect(r.items).toHaveLength(2);
+    expect(r.items[0]).toEqual(seedItems[0]);
+
+    // 반환 배열/항목을 변형해도 seed는 안 바뀐다(복사본 계약).
+    r.items[0].reason = 'tampered';
+    r.items.length = 0;
+    expect((await fake.queryDistributionFailures()).items[0].reason).toBe('spool-write-failed');
+
+    // limit이 있으면 앞에서 잘라 준다.
+    expect((await fake.queryDistributionFailures({ limit: 1 })).items).toHaveLength(1);
+  });
+
+  it('queryDistributionFailures passes through the full server shape (targetKind/kindDistributed 그대로 — 기본값 조작 없음)', async () => {
+    const fake = createFakeModel({
+      distributionFailures: [{
+        articleId: 'AKR9', targetId: 8, kind: 'press', reason: 'invalid-article-id',
+        failedAt: '2026-08-03T00:00:00.000Z', historyId: 21,
+        targetName: 'MBC', targetActive: 'Y', targetKind: 'nonpress', kindDistributed: false,
+      }],
+    });
+    const { items } = await fake.queryDistributionFailures();
+    expect(items[0].targetKind).toBe('nonpress');
+    expect(items[0].kindDistributed).toBe(false);
+  });
+
+  it('retryDistribution resolves the failure by historyId so it disappears from the list', async () => {
+    const fake = createFakeModel({
+      distributionFailures: [
+        { articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed', failedAt: '2026-08-01T00:00:00.000Z', historyId: 11, targetName: 'KBS', targetActive: 'Y', targetKind: 'press', kindDistributed: true },
+        { articleId: 'AKR2', targetId: 4, kind: 'nonpress', reason: 'spool-write-failed', failedAt: '2026-08-02T00:00:00.000Z', historyId: 12, targetName: '사내망', targetActive: 'Y', targetKind: 'nonpress', kindDistributed: true },
+      ],
+    });
+
+    const r = await fake.retryDistribution(11);
+    expect(r.ok).toBe(true);
+    expect(r).toMatchObject({ articleId: 'AKR1', targetId: 3, kind: 'press' });
+    expect(r.at).toBeTruthy();
+
+    const { items } = await fake.queryDistributionFailures();
+    expect(items).toHaveLength(1);
+    expect(items[0].articleId).toBe('AKR2');
+  });
+
+  it('retryDistribution returns no-failure for an unknown historyId (서버 어휘 동형)', async () => {
+    const fake = createFakeModel({
+      distributionFailures: [
+        { articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed', failedAt: '2026-08-01T00:00:00.000Z', historyId: 11, targetName: 'KBS', targetActive: 'Y', targetKind: 'press', kindDistributed: true },
+      ],
+    });
+    expect(await fake.retryDistribution(999)).toEqual({ ok: false, reason: 'no-failure' });
+    expect(await fake.retryDistribution(undefined)).toEqual({ ok: false, reason: 'no-failure' });
+    // 미해소 목록은 그대로다(거부는 무부수효과).
+    expect((await fake.queryDistributionFailures()).items).toHaveLength(1);
+  });
+
+  it('runDistributionTick returns the tick summary shape (seed 주입 가능, 기본값 제공)', async () => {
+    const fake = createFakeModel();
+    const r = await fake.runDistributionTick();
+    expect(r.ok).toBe(true);
+    expect(r.at).toBeTruthy();
+    expect(typeof r.scanned).toBe('number');
+    expect(Array.isArray(r.distributed)).toBe(true);
+    expect(Array.isArray(r.failed)).toBe(true);
+    expect(Array.isArray(r.invalid)).toBe(true);
+
+    const seeded = createFakeModel({
+      tickResult: {
+        ok: true, at: '2026-08-06T00:00:00.000Z', scanned: 2,
+        distributed: [{ articleId: 'AKR1', kinds: ['press'], status: 'DPS' }],
+        failed: [], invalid: [],
+      },
+    });
+    const s = await seeded.runDistributionTick();
+    expect(s.scanned).toBe(2);
+    expect(s.distributed).toHaveLength(1);
   });
 
   it('queryDistributionTargets applies equality filters (active/kind) over the allowed keys', async () => {

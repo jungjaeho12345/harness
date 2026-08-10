@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHttpModel, resolveUploadFilename } from './httpModel.js';
+import { assertModel } from './contract.js';
 
 const BASE = 'http://api.test';
 
@@ -24,6 +25,11 @@ describe('createHttpModel', () => {
   });
 
   const callAt = (i) => fetchMock.mock.calls[i];
+
+  // 부팅 계약(main.jsx) 동형 — MODEL_KEYS에 키를 추가하면 httpModel에도 반드시 함수가 있어야 한다(3면 동기화 잠금).
+  it('satisfies the full MODEL_KEYS contract (assertModel — 부팅과 동형)', () => {
+    expect(() => assertModel(createHttpModel({ base: BASE }))).not.toThrow();
+  });
 
   it('sends credentials:include on every request (cookie transport)', async () => {
     const model = createHttpModel({ base: BASE });
@@ -523,6 +529,70 @@ describe('createHttpModel', () => {
     expect(init.body).toBeUndefined();
     expect(init.credentials).toBe('include');
     expect(r).toEqual({ ok: true, changes: 1 });
+  });
+
+  // --- 배부 실패 복구/실행(phase 57 MVP-4) — /api/distribution/{failures,retry,tick} 라우트와 1:1 ---
+  it('queryDistributionFailures GETs /api/distribution/failures with the filters as query (no body)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [{ articleId: 'AKR1', targetId: 3 }] }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.queryDistributionFailures({ limit: 5 });
+    const [url, init] = callAt(0);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/api/distribution/failures');
+    expect(parsed.searchParams.get('limit')).toBe('5');
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    // 응답을 가공 없이 그대로 반환한다(라우트와 1:1).
+    expect(r).toEqual({ ok: true, items: [{ articleId: 'AKR1', targetId: 3 }] });
+
+    // 필터 미전달이면 쿼리 없이 그대로 호출한다.
+    await model.queryDistributionFailures();
+    expect(callAt(1)[0]).toBe(`${BASE}/api/distribution/failures`);
+  });
+
+  it('retryDistribution POSTs /api/distribution/retry with exactly { historyId } — never role/kind/articleId (ADR-004)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, articleId: 'AKR1', targetId: 12, kind: 'press', at: 't' }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.retryDistribution(34);
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/distribution/retry`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    const body = JSON.parse(init.body);
+    // 한 키뿐 — 기사·수신처·kind·시각·role 전부 서버가 실패 이력·세션에서 도출한다(클라 입력 금지).
+    expect(body).toEqual({ historyId: 34 });
+    expect(Object.keys(body)).toEqual(['historyId']);
+    expect(r).toEqual({ ok: true, articleId: 'AKR1', targetId: 12, kind: 'press', at: 't' });
+  });
+
+  it('runDistributionTick POSTs /api/distribution/tick with NO body (서버가 body를 읽지 않는다 — 파라미터 클라 결정 금지)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, at: 't', scanned: 0, distributed: [], failed: [], invalid: [] }));
+    const model = createHttpModel({ base: BASE });
+
+    const r = await model.runDistributionTick();
+    const [url, init] = callAt(0);
+    expect(url).toBe(`${BASE}/api/distribution/tick`);
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    expect(r).toEqual({ ok: true, at: 't', scanned: 0, distributed: [], failed: [], invalid: [] });
+  });
+
+  it('distribution failure/tick requests carry the x-session-id fallback header when a token is stored', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, sessionId: 'sid-d', user: {} }));
+    const model = createHttpModel({ base: BASE });
+    await model.login('a', 'b');
+
+    await model.queryDistributionFailures();
+    await model.retryDistribution(1);
+    await model.runDistributionTick();
+    for (const i of [1, 2, 3]) {
+      expect(callAt(i)[1].headers['x-session-id']).toBe('sid-d');
+      expect(callAt(i)[1].credentials).toBe('include');
+    }
   });
 
   it('getLogsDigest GETs /api/logs/digest with no body and returns { ok, items } (never role)', async () => {

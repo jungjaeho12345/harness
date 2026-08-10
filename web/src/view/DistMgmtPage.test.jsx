@@ -346,4 +346,347 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
 
     await waitFor(() => expect(deactivate).toHaveBeenCalledTimes(2));
   });
+
+  // --- phase 57 MVP-4: 미해소 배부 실패 목록 + 재전송 + 수동 tick ---
+
+  // 서버 list 응답 shape 그대로(spoolDir/파일 경로 없음). 매 테스트 새 객체.
+  const seedFailures = () => ([
+    {
+      articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed',
+      failedAt: '2026-08-01T09:30:00.000Z', historyId: 11,
+      targetName: '가나일보', targetActive: 'Y', targetKind: 'press', kindDistributed: true,
+    },
+    {
+      articleId: 'AKR2', targetId: 4, kind: 'nonpress', reason: 'invalid-spool-dir',
+      failedAt: '2026-08-02T10:00:00.000Z', historyId: 12,
+      targetName: '나다협회', targetActive: 'Y', targetKind: 'nonpress', kindDistributed: true,
+    },
+  ]);
+  const failSeed = () => ({ distributionTargets: seedRows(), distributionFailures: seedFailures() });
+
+  describe('배부 실패 목록 · 재전송 · 수동 tick', () => {
+    it('진입 시 배부 대상 목록과 실패 목록을 함께 조회한다', async () => {
+      let targetsSpy;
+      let failuresSpy;
+      setup(failSeed(), undefined, (m) => {
+        targetsSpy = vi.spyOn(m, 'queryDistributionTargets');
+        failuresSpy = vi.spyOn(m, 'queryDistributionFailures');
+      });
+      await waitFor(() => expect(screen.getByTestId('dist-fail-row-11')).toBeInTheDocument());
+      expect(targetsSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(failuresSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('실패 항목이 표에 렌더된다(기사아이디·수신처명·유형 한글 라벨·사유 한글 문구·실패시각)', async () => {
+      setup(failSeed());
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      expect(row.getByText('AKR1')).toBeInTheDocument();
+      expect(row.getByText('가나일보')).toBeInTheDocument();
+      expect(row.getByText('언론사')).toBeInTheDocument();
+      // 사유는 reasonMessage()를 거친 한글 문구다 — 영문 토큰을 그대로 노출하지 않는다(코드리뷰 반려 [low]).
+      expect(row.getByText(/스풀 기록에 실패/)).toBeInTheDocument();
+      expect(row.queryByText('spool-write-failed')).toBeNull();
+      expect(row.getByText('2026-08-01 09:30')).toBeInTheDocument(); // formatDateTime 기본 형식과 동형.
+      expect(within(screen.getByTestId('dist-fail-row-12')).getByText('비언론사')).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-12')).queryByText('invalid-spool-dir')).toBeNull();
+    });
+
+    it('실패 표 사유: 알려진 토큰 3종 전부 한글 문구, 미지 토큰은 원문 단서를 유지한다', async () => {
+      setup({
+        distributionTargets: seedRows(),
+        distributionFailures: [
+          { ...seedFailures()[0], historyId: 21, reason: 'spool-write-failed' },
+          { ...seedFailures()[0], historyId: 22, reason: 'invalid-spool-dir' },
+          { ...seedFailures()[0], historyId: 23, reason: 'invalid-article-id' },
+          { ...seedFailures()[0], historyId: 24, reason: 'mystery-token' },
+        ],
+      });
+      await screen.findByTestId('dist-fail-row-21');
+      expect(within(screen.getByTestId('dist-fail-row-21')).getByText(/스풀 기록에 실패/)).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-22')).getByText(/스풀 폴더/)).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-23')).getByText(/기사 ID/)).toBeInTheDocument();
+      // 미지 토큰은 mgmtMessages 규약대로 원문을 단서로 남긴다(운영자가 새 서버 사유를 발견하는 경로).
+      expect(within(screen.getByTestId('dist-fail-row-24')).getByText(/mystery-token/)).toBeInTheDocument();
+    });
+
+    it('실패 0건이면 안내 문구가 보이고 실패 행이 렌더되지 않는다', async () => {
+      setup();
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+      expect(screen.getByText('배부 실패가 없습니다.')).toBeInTheDocument();
+      expect(document.querySelector('[data-testid^="dist-fail-row-"]')).toBeNull();
+    });
+
+    it('실패 조회가 forbidden이면 오류 문구가 alert로 보인다', async () => {
+      setup({ distributionTargets: seedRows() }, undefined, (m) => {
+        vi.spyOn(m, 'queryDistributionFailures').mockResolvedValue({ ok: false, reason: 'forbidden' });
+      });
+      const err = await screen.findByTestId('dist-fail-error');
+      expect(err).toHaveTextContent('권한');
+      expect(err).toHaveAttribute('role', 'alert');
+    });
+
+    it('재전송 클릭 → confirm 승인 시 retryDistribution이 (historyId)로 호출된다 — 목록의 키 그대로', async () => {
+      const { model } = setup(failSeed());
+      const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      const retry = vi.spyOn(model, 'retryDistribution');
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(retry).toHaveBeenCalledWith(11));
+    });
+
+    it('confirm 취소 시 재전송 호출 0회', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+      const retry = vi.spyOn(model, 'retryDistribution');
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      expect(retry).not.toHaveBeenCalled();
+      expect(screen.getByTestId('dist-fail-row-11')).toBeInTheDocument();
+    });
+
+    it('재전송 성공 후 그 행이 목록에서 사라진다(컨트롤러 재조회 경유)', async () => {
+      setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      await waitFor(() => expect(screen.queryByTestId('dist-fail-row-11')).toBeNull());
+      expect(screen.getByTestId('dist-fail-row-12')).toBeInTheDocument();
+    });
+
+    it('재전송 실패(status-changed)면 그 사유의 한글 문구가 보이고 행은 남는다', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'status-changed' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      await waitFor(() => expect(screen.getByTestId('dist-fail-error')).toHaveTextContent('기사 상태가 배부할 수 없는 상태'));
+      expect(screen.getByTestId('dist-fail-row-11')).toBeInTheDocument();
+    });
+
+    it('비활성 수신처 항목은 재전송 버튼이 disabled이고 비활성 안내가 보인다(서버 inactive 거부의 이중 방어)', async () => {
+      setup({ distributionTargets: seedRows(), distributionFailures: [{ ...seedFailures()[0], targetActive: 'N' }] });
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      expect(row.getByRole('button', { name: '재전송' })).toBeDisabled();
+      expect(row.getByText(/비활성 수신처/)).toBeInTheDocument();
+    });
+
+    it('수신처 유형이 실패 당시와 다르면 재전송 버튼이 disabled이고 유형 변경 안내가 보인다(kind-changed 이중 방어)', async () => {
+      setup({ distributionTargets: seedRows(), distributionFailures: [{ ...seedFailures()[0], targetKind: 'nonpress' }] });
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      expect(row.getByRole('button', { name: '재전송' })).toBeDisabled();
+      expect(row.getByText(/유형이 실패 당시와 달라/)).toBeInTheDocument();
+    });
+
+    it('대상 행이 사라진 항목(targetKind null)은 유형 변경 오안내가 아니라 찾을 수 없음 안내다(방어 분기)', async () => {
+      setup({
+        distributionTargets: seedRows(),
+        distributionFailures: [{ ...seedFailures()[0], targetName: null, targetActive: 'N', targetKind: null }],
+      });
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      expect(row.getByRole('button', { name: '재전송' })).toBeDisabled();
+      expect(row.getByText(/수신처 정보를 찾을 수 없습니다/)).toBeInTheDocument();
+      expect(row.queryByText(/유형이 실패 당시와 달라/)).toBeNull();
+      expect(row.queryByText(/비활성 수신처/)).toBeNull();
+    });
+
+    it('서버가 kind-changed로 거부하면 그 한글 문구가 보인다(화면 가드 우회 대비 — 서버가 진실)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'kind-changed' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      await waitFor(() => expect(screen.getByTestId('dist-fail-error')).toHaveTextContent('유형이 실패 당시와 달라'));
+    });
+
+    it('서버가 stale-cycle로 거부하면 재송고 사이클 안내 한글 문구가 보인다 (코드리뷰 반려 [high] 어휘)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'stale-cycle' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      const err = await screen.findByTestId('dist-fail-error');
+      expect(err).toHaveTextContent('재송고');
+      expect(err.textContent).not.toContain('stale-cycle');
+    });
+
+    it('서버가 retry-in-flight로 거부하면 진행 중 안내 한글 문구가 보인다 (동시 재전송 어휘)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'retry-in-flight' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      const err = await screen.findByTestId('dist-fail-error');
+      expect(err).toHaveTextContent('진행 중');
+      expect(err.textContent).not.toContain('retry-in-flight');
+    });
+
+    it('kindDistributed=false 항목의 확인창에만 중복 배부 경고가 포함된다', async () => {
+      setup({ distributionTargets: seedRows(), distributionFailures: [{ ...seedFailures()[0], kindDistributed: false }] });
+      const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(false); // 문구만 확인.
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      const msg = confirmSpy.mock.calls[0][0];
+      expect(msg).toContain('미배부로 기록');
+      expect(msg).toContain('전 대상에 배부');
+    });
+
+    it('kindDistributed=true 항목의 확인창에는 중복 배부 경고가 없다(경고 남발 금지)', async () => {
+      setup(failSeed()); // kindDistributed: true
+      const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0][0]).not.toContain('미배부로 기록');
+    });
+
+    it('재전송 연타로 retryDistribution이 2회 호출되지 않는다(in-flight 가드)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      let resolveRetry;
+      const retry = vi.spyOn(model, 'retryDistribution')
+        .mockImplementation(() => new Promise((res) => { resolveRetry = res; }));
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      const btn = row.getByRole('button', { name: '재전송' });
+      await userEvent.click(btn);
+      await userEvent.click(btn); // 연타 — in-flight 가드가 막아야 한다.
+
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(btn).toBeDisabled();
+
+      await act(async () => { resolveRetry({ ok: true }); });
+      await waitFor(() => expect(row.getByRole('button', { name: '재전송' })).toBeEnabled());
+    });
+
+    it('tick 버튼 → confirm 취소 시 0회, 승인 시 인자 없이 1회 호출된다', async () => {
+      const { model } = setup();
+      const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+      const tick = vi.spyOn(model, 'runDistributionTick');
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+      const btn = screen.getByRole('button', { name: '배부 실행(tick)' });
+      await userEvent.click(btn);
+      expect(tick).not.toHaveBeenCalled();
+
+      confirmSpy.mockReturnValue(true);
+      await userEvent.click(btn);
+      await waitFor(() => expect(tick).toHaveBeenCalledTimes(1));
+      expect(tick).toHaveBeenCalledWith(); // 인자 없음 — 파라미터를 클라가 정하면 엠바고 무력화.
+    });
+
+    it('tick 성공 후 스캔·배부·실패 건수 요약이 응답 값과 일치한다', async () => {
+      setup({
+        distributionTargets: seedRows(),
+        tickResult: {
+          ok: true, at: '2026-08-06T01:00:00.000Z', scanned: 5,
+          distributed: [
+            { articleId: 'AKR1', kinds: ['press'], status: 'DPS' },
+            { articleId: 'AKR2', kinds: ['press', 'nonpress'], status: 'DPS' },
+          ],
+          failed: [{ articleId: 'AKR3', targetId: 4, kind: 'press', reason: 'spool-write-failed' }],
+          invalid: [],
+        },
+      });
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole('button', { name: '배부 실행(tick)' }));
+
+      const summary = await screen.findByTestId('dist-tick-summary');
+      expect(summary).toHaveTextContent('스캔 5건');
+      expect(summary).toHaveTextContent('배부 2건');
+      expect(summary).toHaveTextContent('실패 1건');
+    });
+
+    it('tick이 spool-disabled면 스풀 미설정 문구가 보인다', async () => {
+      const { model } = setup();
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'runDistributionTick').mockResolvedValue({ ok: false, reason: 'spool-disabled' });
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole('button', { name: '배부 실행(tick)' }));
+
+      await waitFor(() => expect(screen.getByTestId('dist-tick-error')).toHaveTextContent('배부 스풀이 설정되지 않았습니다'));
+    });
+
+    it('tick 응답에 skipped:in-progress가 있으면 이미 실행 중 안내가 보인다(무음 금지)', async () => {
+      setup({
+        distributionTargets: seedRows(),
+        tickResult: { ok: true, at: 't', scanned: 0, distributed: [], failed: [], invalid: [], skipped: 'in-progress' },
+      });
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole('button', { name: '배부 실행(tick)' }));
+
+      await waitFor(() => expect(screen.getByTestId('dist-tick-summary')).toHaveTextContent('이미 실행 중'));
+    });
+
+    it('tick 실행 중 버튼이 disabled — 연타로 2회 호출되지 않는다', async () => {
+      const { model } = setup();
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      let resolveTick;
+      const tick = vi.spyOn(model, 'runDistributionTick')
+        .mockImplementation(() => new Promise((res) => { resolveTick = res; }));
+      await waitFor(() => expect(screen.getByText('가나일보')).toBeInTheDocument());
+
+      const btn = screen.getByRole('button', { name: '배부 실행(tick)' });
+      await userEvent.click(btn);
+      await userEvent.click(btn);
+
+      expect(tick).toHaveBeenCalledTimes(1);
+      expect(btn).toBeDisabled();
+
+      await act(async () => {
+        resolveTick({ ok: true, at: 't', scanned: 0, distributed: [], failed: [], invalid: [] });
+      });
+      await waitFor(() => expect(btn).toBeEnabled());
+    });
+
+    it('tick 실행 후 실패 목록이 재조회된다(tick이 새 실패를 만들었을 수 있다)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      await screen.findByTestId('dist-fail-row-11'); // 진입 조회 완료 후 스파이 설치.
+      const failSpy = vi.spyOn(model, 'queryDistributionFailures');
+
+      await userEvent.click(screen.getByRole('button', { name: '배부 실행(tick)' }));
+
+      await waitFor(() => expect(failSpy).toHaveBeenCalledTimes(1));
+    });
+
+    it('실패 표 서브트리에는 스풀 경로·폴더 슬러그가 없다(응답 위생이 화면까지 유지 — 대상 표의 spoolDir 표시는 기존 계약)', async () => {
+      setup(failSeed());
+      await screen.findByTestId('dist-fail-row-11');
+
+      const rows = document.querySelectorAll('[data-testid^="dist-fail-row-"]');
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.textContent).not.toContain('gana'); // 배부 대상 표에는 있는 슬러그가 실패 표엔 없다.
+        expect(row.textContent).not.toContain('nada');
+        expect(row.textContent).not.toMatch(/spoolDir|DIST_SPOOL/i);
+      }
+      // 배부 대상 표의 spoolDir 슬러그 표시는 Z 전용 기존 계약 그대로다(이 단언의 스코프 밖).
+      expect(within(screen.getByTestId('dist-row-7')).getByText('gana')).toBeInTheDocument();
+    });
+  });
 });

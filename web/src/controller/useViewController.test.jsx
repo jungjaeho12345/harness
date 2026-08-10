@@ -49,6 +49,62 @@ describe('buildMenuFilter', () => {
   });
 });
 
+describe('buildMenuFilter — 배부시간 범위(선택적 4번째 인자, news.md 12행)', () => {
+  const me = { userId: 'kim', name: '김기자', department: '정치' };
+  const FROM = '2026-08-01T00:00:00.000Z';
+  const TO = '2026-08-06T23:59:59.999Z';
+
+  it('4번째 인자 미전달 시 전 메뉴 6종에서 기존 결과와 완전히 동일하다', () => {
+    for (const menu of VIEW_MENUS) {
+      expect(buildMenuFilter(menu, me, null, undefined)).toEqual(buildMenuFilter(menu, me, null));
+      expect(buildMenuFilter(menu, me, ['정치'], undefined)).toEqual(buildMenuFilter(menu, me, ['정치']));
+    }
+  });
+
+  it('{ from }만 주면 distributedAtFrom만 들어가고 distributedAtTo는 키 자체가 없다', () => {
+    const f = buildMenuFilter('deskUnsent', me, null, { from: FROM });
+    expect(f).toEqual({ status: ['RDS', 'DDH'], distributedAtFrom: FROM });
+    expect('distributedAtTo' in f).toBe(false); // undefined 키도 만들지 않는다(쿼리 직렬화 쓰레기 방지).
+  });
+
+  it('{ to }만 주면 대칭으로 동작한다', () => {
+    const f = buildMenuFilter('deskUnsent', me, null, { to: TO });
+    expect(f).toEqual({ status: ['RDS', 'DDH'], distributedAtTo: TO });
+    expect('distributedAtFrom' in f).toBe(false);
+  });
+
+  it('둘 다 주면 둘 다 들어간다', () => {
+    expect(buildMenuFilter('deptSend', me, null, { from: FROM, to: TO }))
+      .toEqual({ status: ['DPS'], distributedAtFrom: FROM, distributedAtTo: TO });
+  });
+
+  it('{}·null·undefined·비객체는 기존과 동일한 결과다(방어)', () => {
+    const base = buildMenuFilter('deskUnsent', me, null);
+    expect(buildMenuFilter('deskUnsent', me, null, {})).toEqual(base);
+    expect(buildMenuFilter('deskUnsent', me, null, null)).toEqual(base);
+    expect(buildMenuFilter('deskUnsent', me, null, 'x')).toEqual(base);
+    expect(buildMenuFilter('deskUnsent', me, null, 42)).toEqual(base);
+  });
+
+  it('빈 문자열은 조건에서 제외된다', () => {
+    const f = buildMenuFilter('deskUnsent', me, null, { from: '', to: '' });
+    expect(f).toEqual({ status: ['RDS', 'DDH'] });
+  });
+
+  it('메뉴별 기존 조건과 함께 실린다(personal + 범위)', () => {
+    expect(buildMenuFilter('personal', me, null, { from: FROM }))
+      .toEqual({ author: '김기자', status: ['RDS', 'RRK'], distributedAtFrom: FROM });
+    expect(buildMenuFilter('deptWrite', me, ['정치'], { to: TO }))
+      .toEqual({ excludeStatus: ['DPS', 'RRH'], departments: ['정치'], distributedAtTo: TO });
+  });
+
+  it('순수성 — 인자 range 객체를 변형하지 않는다', () => {
+    const range = { from: FROM, to: undefined };
+    buildMenuFilter('deskUnsent', me, null, range);
+    expect(range).toEqual({ from: FROM, to: undefined });
+  });
+});
+
 describe('visibleMenus', () => {
   it('엠바고 관리 메뉴는 권한 D, Z에게만 보이고 R에게는 숨긴다', () => {
     expect(visibleMenus({ role: 'R' })).toEqual(['deskUnsent', 'deptWrite', 'deptSend', 'personal', 'killArticles']);
@@ -518,5 +574,103 @@ describe('useViewController', () => {
     expect(result.current.items).toEqual([]); // 언마운트된 훅의 상태는 갱신되지 않는다
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+});
+
+// --- phase 57 MVP-4: 배부시간 범위 조회조건(distributedRange) ---
+describe('useViewController — 배부시간 범위 조회조건', () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  const FROM = '2026-08-01T00:00:00.000Z';
+  const TO = '2026-08-06T23:59:59.999Z';
+
+  // render 전에 스파이를 설치해 첫 조회 인자·재구독 횟수까지 관찰한다.
+  function setupSpied(seed = { articles: [] }) {
+    const model = createFakeModel(seed);
+    const querySpy = vi.spyOn(model, 'queryArticles');
+    const subscribeSpy = vi.spyOn(model, 'subscribe');
+    const navigate = vi.fn();
+    const wrapper = ({ children }) => (
+      <AppContext.Provider value={{ model, identity: { userId: 'kim', name: '김기자', role: 'R', department: '정치' }, navigate, replace: vi.fn(), setSession: vi.fn() }}>
+        {children}
+      </AppContext.Provider>
+    );
+    const { result } = renderHook(() => useViewController(), { wrapper });
+    return { result, model, querySpy, subscribeSpy };
+  }
+
+  it('첫 조회 필터에 배부시간 키가 없고, 죽은 반환 distributedRange는 노출되지 않는다', async () => {
+    const { result, querySpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+    expect(querySpy.mock.calls[0][0]).toEqual({ status: ['RDS', 'DDH'] });
+    // 코드리뷰 반려 [low]: distributedRange 반환은 소비자가 없는 죽은 API였다 — 반환만 제거,
+    // setter는 유지한다(범위 반영의 관측 지점은 조회 필터다).
+    expect('distributedRange' in result.current).toBe(false);
+    expect(typeof result.current.setDistributedRange).toBe('function');
+  });
+
+  it('setDistributedRange 후 범위가 실린 필터로 재조회된다', async () => {
+    const { result, querySpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+
+    await act(async () => { result.current.setDistributedRange(FROM, TO); });
+
+    await waitFor(() => expect(querySpy).toHaveBeenCalledWith({
+      status: ['RDS', 'DDH'], distributedAtFrom: FROM, distributedAtTo: TO,
+    }));
+  });
+
+  it('같은 값으로 다시 호출해도 추가 재조회·재구독이 없다(원시값 상태)', async () => {
+    const { result, querySpy, subscribeSpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+    await act(async () => { result.current.setDistributedRange(FROM, TO); });
+    await waitFor(() => expect(querySpy).toHaveBeenCalledWith(expect.objectContaining({ distributedAtFrom: FROM })));
+
+    const queries = querySpy.mock.calls.length;
+    const subs = subscribeSpy.mock.calls.length;
+    await act(async () => { result.current.setDistributedRange(FROM, TO); });
+
+    expect(querySpy.mock.calls.length).toBe(queries);
+    expect(subscribeSpy.mock.calls.length).toBe(subs);
+  });
+
+  it('메뉴를 바꿔도 범위 조건은 유지된다(사용자 명시 입력 — 부서 초기화와 다르다)', async () => {
+    const { result, querySpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+    await act(async () => { result.current.setDistributedRange(FROM, TO); });
+
+    await act(async () => { result.current.selectMenu('deptSend'); });
+
+    await waitFor(() => expect(querySpy).toHaveBeenCalledWith({
+      status: ['DPS'], distributedAtFrom: FROM, distributedAtTo: TO,
+    }));
+  });
+
+  it('undefined로 지우면 키가 빠진 필터로 재조회된다(해제 경로)', async () => {
+    const { result, querySpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+    await act(async () => { result.current.setDistributedRange(FROM, TO); });
+    await waitFor(() => expect(querySpy).toHaveBeenCalledWith(expect.objectContaining({ distributedAtFrom: FROM })));
+
+    await act(async () => { result.current.setDistributedRange(undefined, undefined); });
+
+    await waitFor(() => expect(querySpy.mock.calls.at(-1)[0]).toEqual({ status: ['RDS', 'DDH'] }));
+  });
+
+  it('빈 문자열은 undefined로 정규화되어 필터에 실리지 않는다', async () => {
+    const { result, querySpy } = setupSpied();
+    await waitFor(() => expect(querySpy).toHaveBeenCalled());
+    await act(async () => { result.current.setDistributedRange('', ''); });
+
+    expect(querySpy.mock.calls.at(-1)[0]).toEqual({ status: ['RDS', 'DDH'] });
+  });
+
+  it('회귀 — 기존 API가 그대로 있다', async () => {
+    const { result } = setupSpied();
+    for (const key of ['menu', 'selectMenu', 'departments', 'setDepartments', 'page', 'setPage',
+      'totalPages', 'pageItems', 'items', 'refresh', 'editArticle', 'reviseArticle']) {
+      expect(result.current[key]).toBeDefined();
+    }
+    expect(typeof result.current.setDistributedRange).toBe('function');
   });
 });

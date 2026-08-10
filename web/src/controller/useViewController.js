@@ -28,7 +28,18 @@ export function visibleMenus(identity) {
 // 데스크 미송고: RDS·DDH / 부서별 작성: DPS·RRH 제외 / 부서별 송고: DPS만 / 개인별 수정: 로그인 작성자, RDS·RRK
 // / KILL기사: RRK·DDK·EEK / 엠바고 관리: DES·EPS(배부 전 대기 + 배부 진행).
 // 부서 다중 선택(departments)은 개인별 수정을 제외한 모든 메뉴에서 지원하며, 기본값은 '전체'(부서 미지정)다.
-export function buildMenuFilter(menu, identity, departments) {
+// range(선택): { from, to } — 배부시간 범위 조회조건(news.md 12행, phase 57 MVP-4). 값이 있는 쪽만 실린다
+// (undefined 키도 만들지 않는다 — 쿼리 직렬화에 '?distributedAtTo=undefined' 같은 쓰레기가 섞이지 않게).
+// 서버 파라미터 이름(distributedAtFrom/To)은 server/index.js FILTER_KEYS와 1:1이다(이미 존재 — 서버 무변경).
+export function buildMenuFilter(menu, identity, departments, range) {
+  const f = baseMenuFilter(menu, identity, departments);
+  const r = range && typeof range === 'object' ? range : {};
+  if (typeof r.from === 'string' && r.from !== '') f.distributedAtFrom = r.from;
+  if (typeof r.to === 'string' && r.to !== '') f.distributedAtTo = r.to;
+  return f;
+}
+
+function baseMenuFilter(menu, identity, departments) {
   const depts = (departments && departments.length) ? departments : null; // null/[] = '전체'(부서 미지정)
   switch (menu) {
     case 'killArticles': {
@@ -78,10 +89,20 @@ export function useViewController() {
   const [items, setItems] = useState([]);
   const [deptOptions, setDeptOptions] = useState([]);
   const [live, setLive] = useState(false); // SSE 실제 연결 상태(ready→true, error/해제→false).
+  // 배부시간 범위 조회조건(phase 57 MVP-4) — 원시값 2개로 저장한다. 객체 하나로 들면 setter마다 새 정체성이
+  // 생겨 filter useMemo → refresh/SSE 구독 effect가 렌더마다 재조회·재구독한다(무한 재조회 함정).
+  // 값 변환(datetime-local→ISO)은 View의 listFormat.rangeInstant가 단일 출처 — 여기는 이미 ISO인 값만 받는다.
+  const [distributedAtFrom, setDistributedAtFrom] = useState(undefined);
+  const [distributedAtTo, setDistributedAtTo] = useState(undefined);
+  const setDistributedRange = useCallback((from, to) => {
+    // 빈 문자열은 undefined로 정규화한다 — 빈 조건이 필터 키로 실리지 않게.
+    setDistributedAtFrom(typeof from === 'string' && from !== '' ? from : undefined);
+    setDistributedAtTo(typeof to === 'string' && to !== '' ? to : undefined);
+  }, []);
 
   const filter = useMemo(
-    () => buildMenuFilter(menu, identity, departments),
-    [menu, identity, departments],
+    () => buildMenuFilter(menu, identity, departments, { from: distributedAtFrom, to: distributedAtTo }),
+    [menu, identity, departments, distributedAtFrom, distributedAtTo],
   );
 
   // 재조회 가드 2종. seq(요청 순번)는 겹친 두 조회의 순서 역전(메뉴 전환·SSE 무효화가 겹칠 때 이전 필터의
@@ -245,6 +266,9 @@ export function useViewController() {
   return {
     menu, selectMenu,
     departments, setDepartments, deptOptions,
+    // 범위 setter만 노출한다 — distributedRange 파생 반환은 소비자가 없는 죽은 API라 제거했다
+    // (코드리뷰 반려 [low]. ListPage는 datetime-local 로컬 state가 진실이고, 반영 여부는 조회 필터로 관측한다).
+    setDistributedRange,
     page, setPage, totalPages, pageItems, items,
     live,
     refresh,

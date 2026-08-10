@@ -52,6 +52,17 @@ ContentsVO에 대한 명세서
 - 기사아이디는 'AKR' + YYYYMMDD + 난수 9자리 규칙으로 생성한다 (중복이면 난수를 다시 생성한다).
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
 
+## ArticleHistory Table
+기사 편집/생애주기 전이/배부 이벤트 로그에 대한 명세서. append-only — 행 삭제·수정 없음(DB 비파괴).
+# property
+- id(INTEGER PK, ROWID alias, 자동 증가), 기사아이디(articleId), 이벤트유형(eventType), 액션(action), 이전상태(fromStatus), 이후상태(toStatus), 행위자(actorUserId), 생성시간(createdAt), 마크업버전(markupVersion), 수신처(targetId), 실패사유(reason) 컬럼을 가진다.
+- markupVersion은 편집(edit) 시점 본문 스냅샷이다 — 상태 전이 행은 NULL(본문 불변).
+- targetId(INTEGER)는 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id)이고, 그 외 이벤트는 NULL이다.
+- reason(VARCHAR)은 배부 실패 사유 고정 토큰이다 — 경로·본문·예외 원문을 담지 않는다.
+- eventType 어휘: create / edit / status(전이 — action에 send·hold·kill·approveDelete·embargo) / distribute(kind 단위 배부 — action=press|nonpress) / distribute-failed(수신처 단위 실패) / distribute-retry(수신처 단위 재전송 성공). 배부 멱등·사이클 경계 판정은 eventType='distribute' 행만 본다(ADR-008).
+- 타입 예외: 위 기술명세서의 "추가된 컬럼은 VARCHAR" 규칙의 예외는 ArticleHistory.targetId(INTEGER)다 — VARCHAR는 TEXT affinity라 숫자 id가 문자열로 저장되어 DistributionTarget.id와의 매칭이 조용히 어긋난다.
+- 보조 인덱스 없음(PK 자동 인덱스만) — 배부 이벤트 조회는 id DESC 스캔 + LIMIT다(비용 인식).
+
 ## ReceiverConfig Table
 수집(자동기사) 수신 설정에 대한 명세서. Z(관리자) 전용 CRUD.
 # property

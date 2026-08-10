@@ -13,6 +13,8 @@ export const COLUMNS = Object.freeze([
   { key: 'createdAt', label: '작성시간' },
   { key: 'editedAt', label: '수정시간' },
   { key: 'sentAt', label: '송고시간' },
+  // 배부시간은 news.md 100행 기본 컬럼 스펙 밖이라 기본 숨김이다 — 컬럼 설정에서 켠다(phase 57 MVP-4).
+  { key: 'distributedAt', label: '배부시간', defaultVisible: false },
   { key: 'status', label: '기사상태' },
   { key: 'lockYN', label: 'LockYN' },
 ]);
@@ -23,7 +25,7 @@ const STORAGE_KEY = 'yh.columnConfig';
 
 export function defaultColumnConfig() {
   const visible = {};
-  for (const c of COLUMNS) visible[c.key] = true;
+  for (const c of COLUMNS) visible[c.key] = c.defaultVisible !== false; // 미지정은 표시(기존 동작 보존)
   return { visible, gap: DEFAULT_GAP };
 }
 

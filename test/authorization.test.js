@@ -101,3 +101,60 @@ test('editDps: DPS가 아니면 not-dps, 없는 기사는 not-found, 모르는 �
   assert.equal(authz.editDps(d, 'AKR000', 'revise').reason, 'not-found');
   assert.equal(authz.editDps(d, articleId, 'bogus').reason, 'unknown-action');
 });
+
+// --- phase 57 step4: 배부 실패 조회·재전송 게이트 (manageDistributionFailure, ADR-008 MVP-4) ---
+
+// 케이스 1
+test('manageDistributionFailure: Z 세션은 { ok:true, role, userId }를 받는다 (userId = 세션 값)', () => {
+  const { authz, sessionService } = setup();
+  const z = sessionFor(sessionService, 'Z', 'admin7');
+
+  const r = authz.manageDistributionFailure(z);
+  assert.equal(r.ok, true);
+  assert.equal(r.role, 'Z');
+  assert.equal(r.userId, 'admin7', '재전송 이력 actorUserId stamp용 — 세션에서만 도출');
+});
+
+// 케이스 2
+test('manageDistributionFailure: R·D 세션은 forbidden', () => {
+  const { authz, sessionService } = setup();
+  for (const role of ['R', 'D']) {
+    const sid = sessionFor(sessionService, role, `u-${role}`);
+    const r = authz.manageDistributionFailure(sid);
+    assert.equal(r.ok, false, `role=${role}`);
+    assert.equal(r.reason, 'forbidden', `role=${role}`);
+  }
+});
+
+// 케이스 3
+test('manageDistributionFailure: 미인증은 unauthenticated이고 role이 응답에 없다', () => {
+  const { authz } = setup();
+  const r = authz.manageDistributionFailure('no-such-session');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unauthenticated');
+  assert.ok(!('role' in r), 'role 미노출');
+  assert.ok(!('userId' in r), 'userId 미노출');
+});
+
+// 케이스 4
+test('manageDistributionFailure: 게이트는 touchSession을 쓴다 (일반 REST 슬라이딩 갱신 계약)', () => {
+  const calls = [];
+  const fakeSession = {
+    touchSession(sid) {
+      calls.push(sid);
+      return sid === 'z-sid' ? { userId: 'admin', role: 'Z' } : undefined;
+    },
+  };
+  const authz = createAuthorization({ sessionService: fakeSession, articleModel: {} });
+
+  assert.equal(authz.manageDistributionFailure('z-sid').ok, true);
+  assert.deepEqual(calls, ['z-sid'], 'touchSession 경유(스파이 확인) — peek이 아니다');
+});
+
+// 케이스 5
+test('assertAuthorized: manageDistributionFailure는 Z만 허용한다', () => {
+  const { authz } = setup();
+  assert.equal(authz.assertAuthorized('Z', 'manageDistributionFailure').ok, true);
+  assert.equal(authz.assertAuthorized('R', 'manageDistributionFailure').ok, false);
+  assert.equal(authz.assertAuthorized('D', 'manageDistributionFailure').ok, false);
+});

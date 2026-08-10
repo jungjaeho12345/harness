@@ -9,6 +9,8 @@ import { useAppContext } from '../app/context.js';
 export function useDistMgmtController() {
   const { model } = useAppContext();
   const [targets, setTargets] = useState([]);
+  // 미해소 배부 실패 목록(phase 57 MVP-4) — targets와 합치지 않는다: 호출 시점·실패 표시 정책이 다르다.
+  const [failures, setFailures] = useState([]);
 
   // 전체 재조회 — 비활성 행을 걸러내지 않는다(재활성화 대상이라 숨기면 복구 경로가 사라진다).
   const refresh = useCallback(async () => {
@@ -36,5 +38,32 @@ export function useDistMgmtController() {
     return r;
   }, [model, refresh]);
 
-  return { targets, refresh, createTarget, updateTarget, deactivateTarget };
+  // 실패 목록에도 SSE 신호가 없다 — 쓰기(재전송·tick) 후 직접 재조회해야 화면이 갱신된다.
+  // 응답은 가공하지 않고 원본 그대로 반환한다(사유 토큰→문구 변환·요약 생성은 View 책임).
+  const refreshFailures = useCallback(async () => {
+    const r = await model.queryDistributionFailures();
+    setFailures((r && r.items) || []);
+    return r;
+  }, [model]);
+
+  // 성공/실패 무관하게 재조회한다 — 거부(no-failure 등)는 목록이 낡았다는 신호이기도 하다.
+  // 식별자는 실패 목록의 키(historyId)다 — 기사·수신처·kind는 서버가 그 실패 행에서 도출한다(ADR-004).
+  const retryTarget = useCallback(async (historyId) => {
+    const r = await model.retryDistribution(historyId);
+    await refreshFailures();
+    return r;
+  }, [model, refreshFailures]);
+
+  // 실행 트리거는 사용자의 명시 조작뿐이다 — 여기에 setInterval/자동 폴링을 두지 마라(ADR-008 (3)).
+  // tick이 새 실패를 만들었을 수 있으므로 실행 후 실패 목록을 재조회한다.
+  const runTick = useCallback(async () => {
+    const r = await model.runDistributionTick();
+    await refreshFailures();
+    return r;
+  }, [model, refreshFailures]);
+
+  return {
+    targets, refresh, createTarget, updateTarget, deactivateTarget,
+    failures, refreshFailures, retryTarget, runTick,
+  };
 }

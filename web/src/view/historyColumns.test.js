@@ -253,4 +253,65 @@ describe('historyColumns — 이력보기 컬럼 카탈로그/영속/셀 텍스�
     expect(JSON.stringify(row)).toBe(before.row);
     expect(JSON.stringify(article)).toBe(before.article);
   });
+
+  // --- phase 57 MVP-4: 배부 계열 어휘 한글 라벨(distribute·distribute-failed·distribute-retry) ---
+  // 라벨 범위는 배부 계열뿐이다 — status·edit·send 등 기존 어휘와 미지의 값은 원값 그대로
+  // (DistMgmtPage KIND_LABEL 선례 — 화면이 값을 숨기지 않는다. 전체 어휘 한글화는 별도 백로그).
+  describe('배부 계열 이력 라벨', () => {
+    it("eventType: distribute → '배부'", () => {
+      expect(historyCellText('eventType', { eventType: 'distribute' })).toBe('배부');
+    });
+
+    it("eventType: distribute-failed → '배부실패'", () => {
+      expect(historyCellText('eventType', { eventType: 'distribute-failed' })).toBe('배부실패');
+    });
+
+    it("eventType: distribute-retry → '배부재전송'", () => {
+      expect(historyCellText('eventType', { eventType: 'distribute-retry' })).toBe('배부재전송');
+    });
+
+    it("eventType: status는 원값 유지(배부 밖 어휘 한글화 금지)", () => {
+      expect(historyCellText('eventType', { eventType: 'status' })).toBe('status');
+    });
+
+    it('미지의 eventType은 원값 그대로다(운영자가 새 서버 어휘를 발견할 단서)', () => {
+      expect(historyCellText('eventType', { eventType: 'wire' })).toBe('wire');
+    });
+
+    it("action: 배부 행에서 press → '언론사', nonpress → '비언론사'", () => {
+      expect(historyCellText('action', { eventType: 'distribute', action: 'press' })).toBe('언론사');
+      expect(historyCellText('action', { eventType: 'distribute', action: 'nonpress' })).toBe('비언론사');
+    });
+
+    it('action: 실패·재전송 행도 동일하게 kind 라벨을 씌운다', () => {
+      expect(historyCellText('action', { eventType: 'distribute-failed', action: 'press' })).toBe('언론사');
+      expect(historyCellText('action', { eventType: 'distribute-retry', action: 'nonpress' })).toBe('비언론사');
+    });
+
+    // 행 인지(row-aware) 잠금 — 다른 이벤트가 같은 문자열을 쓰면 오역이 되므로 배부 계열 행에서만 라벨.
+    it("action: eventType이 배부 계열이 아니면 press도 원값 그대로다(행 인지)", () => {
+      expect(historyCellText('action', { eventType: 'status', action: 'press' })).toBe('press');
+    });
+
+    it("action: 기존 어휘 회귀 — status 행의 send는 'send' 그대로다", () => {
+      expect(historyCellText('action', { eventType: 'status', action: 'send' })).toBe('send');
+    });
+
+    it('빈 action은 배부 계열 행에서도 HISTORY_EMPTY다', () => {
+      expect(historyCellText('action', { eventType: 'distribute', action: null })).toBe(HISTORY_EMPTY);
+      expect(historyCellText('action', { eventType: 'distribute-failed', action: '' })).toBe(HISTORY_EMPTY);
+    });
+
+    it('row가 undefined여도 throw하지 않는다(기존 방어 유지)', () => {
+      expect(() => historyCellText('eventType', undefined)).not.toThrow();
+      expect(historyCellText('eventType', undefined)).toBe(HISTORY_EMPTY);
+      expect(() => historyCellText('action', undefined)).not.toThrow();
+      expect(historyCellText('action', undefined)).toBe(HISTORY_EMPTY);
+    });
+
+    it("프로토타입 체인 키(toString)는 라벨로 새지 않는다(원값 그대로)", () => {
+      expect(historyCellText('eventType', { eventType: 'toString' })).toBe('toString');
+      expect(historyCellText('action', { eventType: 'toString', action: 'toString' })).toBe('toString');
+    });
+  });
 });

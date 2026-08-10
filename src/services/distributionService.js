@@ -4,7 +4,8 @@
 // 책임은 셋뿐이다:
 //  (1) 주어진 kind의 **활성** DistributionTarget 선정
 //  (2) 수신처별 스풀 파일 쓰기(주입된 spoolWriter — 파일 shape/allowlist는 그쪽이 단일 출처)
-//  (3) 사실 기록 — Contents.distributedAt 갱신 + ArticleHistory 배부 이력(append-only)
+//  (3) 사실 기록 — Contents.distributedAt 갱신 + ArticleHistory 배부 이력(append-only).
+//      수신처 단위 쓰기 실패의 영속(distribute-failed 행 — MVP-4 재전송의 유일한 근거)도 이 사실 기록의 일부다.
 //
 // 책임이 아닌 것(넘겨받거나 다음 phase):
 //  - "지금이 엠바고 시각인가" 시점 판정과 주기 실행 → phase 48의 tick pull(ADR-008 (3)). 여기엔 타이머가 없다.
@@ -12,7 +13,8 @@
 //  - 상태 전이(EPS→DPS) → 생애주기는 lifecycle/articleService가 단일 출처다.
 //    쓰기 직전 status 재확인(아래 TOCTOU 가드)은 전이가 아니라 **배부 안전 중단**이다 — status를 읽기만 한다.
 
-import { EMBARGO_DISTRIBUTABLE_STATUSES } from './embargoPolicy.js';
+import { EMBARGO_DISTRIBUTABLE_STATUSES, latestSendId } from './embargoPolicy.js';
+import { DISTRIBUTE_FAILED_EVENT, isRetryableFailureReason, unresolvedFailures } from './distributionFailureLog.js';
 
 // 배부 대상 종류 — news.md 엠바고 규칙의 두 축(1차→언론사, 2차→비언론사).
 const KINDS = ['press', 'nonpress'];
@@ -21,6 +23,11 @@ const KINDS = ['press', 'nonpress'];
 // distributionTickService의 재검증 스킵과 같은 어휘다(운영 요약 통일 — tick이 failed를 HTTP로 투영한다).
 // 새 상태값(EEK/EEH/DPD 등)은 담지 않는다 — 요약은 식별자·고정 사유만 담는 화이트리스트다.
 const STATUS_CHANGED = 'status-changed';
+
+// 중복 억제 판정의 이력 조회 한도 — 표시용 창이 아니라 articleId 스코프 사실상 무제한이다
+// (distributionRetryService.RETRY_SCAN_LIMIT과 같은 이유: 창 밖으로 밀린 최신 실패를 놓치면
+// 안전 방향이긴 하나 억제가 무의미해진다. 한 기사로 좁혀져 있어 비용은 작다).
+const FAILURE_DEDUP_SCAN_LIMIT = 1000000;
 
 // 최신 행이 배부 가능한 상태인가. allowlist는 embargoPolicy가 단일 출처다(복제 금지).
 function isDistributable(row) {
@@ -66,6 +73,42 @@ export function createDistributionService({
     }
   }
 
+  // 수신처 단위 미발송 사실을 영속한다(append-only) — MVP-4 재전송의 유일한 근거.
+  // 기록 조건은 이 한 곳뿐이다: targetId가 있고(수신처 특정) 재전송 가능한 사유일 때만.
+  // status-changed(안전 중단)·targetId:null(kind 단위 항목)은 기록하지 않는다 —
+  // 재전송 대상이 아니며, 영속하면 영원히 해소되지 않는 항목이 된다(onFailure 로그로만 표면화).
+  // reason은 spoolWriter의 고정 토큰 그대로다 — 예외 메시지·경로를 넣지 않는다.
+  //
+  // 중복 억제: tick은 주기 실행이라 같은 수신처가 같은 사유로 계속 실패하면 실패 행이 주기마다
+  // 무제한 누적된다. 그 그룹((articleId,targetId,action))의 최신 행이 이미 **같은 사이클 안의**
+  // 같은 reason 미해소 실패면 insert를 생략한다 — 판정은 distributionFailureLog의 기존 파생
+  // (unresolvedFailures)과 embargoPolicy.latestSendId(사이클 어휘 단일 출처)만 재사용한다
+  // (새 판정 규칙 금지). reason이 다르거나(원인 변화) 해소 후 재실패면 새 사실이므로 반드시 남긴다.
+  // failed 반환·onFailure 표면화는 기록 생략과 무관하게 매번 일어난다(무음 삼킴 금지).
+  // getFailureContext는 호출자(distribute)가 기사 단위 1회 lazy 조회로 만든 컨텍스트다(전체 스캔 억제).
+  function recordTargetFailure({ articleId, targetId, kind, reason }, actorUserId, getFailureContext) {
+    if (targetId == null || !isRetryableFailureReason(reason)) return;
+    if (isDuplicateSameCycleFailure({ articleId, targetId, kind, reason }, getFailureContext)) return;
+    record({ articleId, eventType: DISTRIBUTE_FAILED_EVENT, action: kind, targetId, reason, actorUserId });
+  }
+
+  // 그 그룹의 미해소 최신 실패가 **이번 사이클(마지막 send 경계 이후)의** 같은 reason 실패인가.
+  // CRITICAL(재리뷰 high): 경계 이전 행과의 일치는 중복이 아니다 — 그 행만 남기면 재전송이
+  // stale-cycle 게이트에 걸려 영구 409가 되고, 그 kind의 distribute 행이 있으면 tick도 재시도하지
+  // 않아(dueKinds 제외) 그 수신처는 앱 안에서 복구 경로가 0이 된다. 경계를 넘긴 재실패는 항상
+  // 새 행을 얻어야 한다(failedAt 신선도·재전송 경로 복원).
+  // 경계 미확정(null)이면 사이클 구분이 없다 — stale-cycle 거부도 없으므로 억제해도 복구 경로가 산다.
+  function isDuplicateSameCycleFailure({ articleId, targetId, kind, reason }, getFailureContext) {
+    const ctx = typeof getFailureContext === 'function' ? getFailureContext() : null;
+    if (!ctx) return false;
+    const match = ctx.unresolved.find(
+      (it) => it.articleId === articleId && it.targetId === targetId
+        && it.kind === kind && it.reason === reason,
+    );
+    if (!match) return false;
+    return ctx.boundaryId === null || match.historyId > ctx.boundaryId;
+  }
+
   // 지금 이 kind들로 배부한다. 언제 부를지는 호출자가 정한다(송고 훅 / phase 48 tick).
   // 반환: { ok:true, distributed:[{targetId, kind, spoolDir, file}], failed:[{targetId, kind, reason}] }
   //       (상태 가드 중단 시 failed에 시작도 못 한 kind가 targetId:null 항목으로 추가된다)
@@ -87,10 +130,41 @@ export function createDistributionService({
     // 배부 불가로 전이된 기사는 어떤 kind로도 나가면 안 된다.
     let aborted = false;
 
-    // 중단된 항목도 failed에 남기고 onFailure로 표면화한다(무음 삼킴 금지 — 기존 실패 정책과 동일).
-    function abortEntry(info) {
+    // 중복 억제 판정 컨텍스트 — **이 호출 안에서 기사 단위 1회만** 조회한다(수신처마다 전체 스캔 금지).
+    // lazy다: 실패가 하나도 없으면 조회 자체가 없다(성공 경로에 스캔 비용을 얹지 않는다).
+    // 호출 사이 캐시는 금지 — 원장은 호출마다 자란다. 호출 안 재사용은 안전하다: 한 호출에서 같은
+    // (targetId, kind) 그룹은 최대 1회만 기록되므로 컨텍스트가 자기 기록으로 낡을 일이 없다.
+    // 조회 실패·모델 미가용이면 빈 컨텍스트 — 억제는 최적화일 뿐이므로 모르면 기록하는 쪽
+    // (안전 방향: 과다 기록 > 무음 유실)으로 둔다.
+    let failureContext = null;
+    function getFailureContext() {
+      if (failureContext) return failureContext;
+      let boundaryId = null;
+      let unresolved = [];
+      try {
+        if (historyModel && typeof historyModel.queryByArticle === 'function') {
+          boundaryId = latestSendId(historyModel.queryByArticle(articleId));
+        }
+        if (historyModel && typeof historyModel.queryDistributionEvents === 'function') {
+          unresolved = unresolvedFailures(
+            historyModel.queryDistributionEvents({ articleId, limit: FAILURE_DEDUP_SCAN_LIMIT }),
+          );
+        }
+      } catch {
+        boundaryId = null;
+        unresolved = [];
+      }
+      failureContext = { boundaryId, unresolved };
+      return failureContext;
+    }
+
+    // 실패 표면화의 단일 경로 — 쓰기 실패·중단 항목 전부 여기를 지난다.
+    // failed 반환 + onFailure 통지(무음 삼킴 금지)에 더해, 기록 여부는 recordTargetFailure의
+    // 한 조건(targetId 있음 + 재전송 가능 사유)으로만 판정된다 — 중단 항목이 실수로 새는 경로를 만들지 않는다.
+    function reportFailure(info) {
       failed.push(info);
       notifyFailure(info);
+      recordTargetFailure(info, actorUserId, getFailureContext);
     }
 
     for (const kind of wanted) {
@@ -98,7 +172,7 @@ export function createDistributionService({
       // tick은 distributed∪failed에 등장한 kind만 "처리됨"으로 보므로, 빠뜨리면 활성 수신처가
       // 있는데도 no-active-target으로 오보한다(distributionTickService.js touched 판정).
       if (aborted) {
-        abortEntry({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
+        reportFailure({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
         continue;
       }
 
@@ -116,11 +190,11 @@ export function createDistributionService({
           aborted = true;
           if (i === 0) {
             // 이 kind는 쓰기를 하나도 시작하지 않았다 — kind 단위 항목(targetId:null)로 남긴다.
-            abortEntry({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
+            reportFailure({ articleId, targetId: null, kind, reason: STATUS_CHANGED });
           } else {
             // 처리하지 못하고 남은 수신처들 — 기존 failed 항목과 같은 shape로 남긴다.
             for (const rest of targets.slice(i)) {
-              abortEntry({ articleId, targetId: rest.id, kind, spoolDir: rest.spoolDir, reason: STATUS_CHANGED });
+              reportFailure({ articleId, targetId: rest.id, kind, spoolDir: rest.spoolDir, reason: STATUS_CHANGED });
             }
           }
           break;
@@ -143,10 +217,9 @@ export function createDistributionService({
           okInKind += 1;
           distributed.push({ targetId: t.id, kind, spoolDir: t.spoolDir, file: res.file });
         } else {
-          const info = { articleId, targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' };
-          failed.push(info);
-          // 미발송은 운영자가 알아야 한다 — 무음 삼킴 금지(재전송은 후속 MVP-4).
-          notifyFailure(info);
+          // 미발송은 운영자가 알아야 한다 — 무음 삼킴 금지. 재전송 가능한 실패는
+          // reportFailure를 거쳐 이력에도 영속된다(MVP-4) — 서버 재시작 후에도 복구 근거가 남는다.
+          reportFailure({ articleId, targetId: t.id, kind, spoolDir: t.spoolDir, reason: res?.reason ?? 'spool-write-failed' });
         }
       }
 

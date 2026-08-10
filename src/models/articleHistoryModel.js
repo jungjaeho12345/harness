@@ -6,20 +6,25 @@
 const HISTORY_COLS = [
   'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
   'markupVersion',
+  'targetId', 'reason', // 배부 실패/재전송 이벤트 전용 — 그 외 이벤트는 NULL
 ];
+
+// 배부 이벤트 조회 기본 창 — 보조 인덱스 없이 id DESC 스캔 + LIMIT(비용 인식, SCHEMA.md).
+const DISTRIBUTION_EVENTS_DEFAULT_LIMIT = 500;
 
 function insertInto(db, table, cols, obj) {
   const present = cols.filter((c) => obj[c] !== undefined);
   if (present.length === 0) throw new Error(`${table}: 입력할 컬럼이 없습니다`);
   const ph = present.map(() => '?').join(', ');
-  db.prepare(`INSERT INTO ${table} (${present.join(', ')}) VALUES (${ph})`)
+  return db.prepare(`INSERT INTO ${table} (${present.join(', ')}) VALUES (${ph})`)
     .run(...present.map((c) => obj[c]));
 }
 
 export function createArticleHistoryModel(db) {
   // 이력 1행 적재. 정의되지 않은 키는 컬럼에서 제외(undefined는 제외 → NULL 유지).
+  // 새 행의 id(정수)를 반환한다 — 배부 실패 목록의 historyId(재전송 식별자)가 이 id다.
   function insert(record = {}) {
-    insertInto(db, 'ArticleHistory', HISTORY_COLS, record);
+    return Number(insertInto(db, 'ArticleHistory', HISTORY_COLS, record).lastInsertRowid);
   }
 
   // 해당 기사의 이력을 최신순(id DESC)으로 반환한다 — 목록은 최근 이벤트가 위에 오도록.
@@ -53,5 +58,35 @@ export function createArticleHistoryModel(db) {
     ).all(articleId);
   }
 
-  return { insert, queryByArticle, querySnapshotById, querySnapshotsByArticle };
+  // 배부 실패/재전송 이벤트만 읽는다 — 실패 목록(Z 전용)과 재전송 대상 확인의 유일한 조회 경로.
+  // queryByArticle에 targetId/reason을 싣지 않는 이유: 그 응답은 전 사용자에게 열린 이력보기 계약이다.
+  // eventType 어휘 단일 출처: src/services/distributionFailureLog.js (모델은 도메인 비의존 — 문자열만 둔다).
+  function queryDistributionEvents({ articleId, limit } = {}) {
+    const max = Number.isInteger(limit) && limit >= 1 ? limit : DISTRIBUTION_EVENTS_DEFAULT_LIMIT;
+    const where = ['eventType IN (?, ?)'];
+    const params = ['distribute-failed', 'distribute-retry'];
+    if (articleId !== undefined) {
+      where.push('articleId = ?');
+      params.push(articleId);
+    }
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, targetId, reason, actorUserId, createdAt
+         FROM ArticleHistory WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`,
+    ).all(...params, max);
+  }
+
+  // 배부 이벤트 단건 조회 — 재전송 식별자(historyId)에서 기사·수신처를 도출하는 유일한 경로.
+  // eventType 필터를 여기서도 유지한다: 임의 id로 다른 이벤트 행(본문 스냅샷 등)이 이 경로로 새지 않게.
+  // 없거나 배부 이벤트가 아니면 undefined.
+  function getDistributionEventById(id) {
+    return db.prepare(
+      `SELECT id, articleId, eventType, action, targetId, reason, actorUserId, createdAt
+         FROM ArticleHistory WHERE id = ? AND eventType IN (?, ?)`,
+    ).get(id, 'distribute-failed', 'distribute-retry');
+  }
+
+  return {
+    insert, queryByArticle, querySnapshotById, querySnapshotsByArticle,
+    queryDistributionEvents, getDistributionEventById,
+  };
 }

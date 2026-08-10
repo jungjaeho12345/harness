@@ -8,6 +8,7 @@ const CAPABILITIES = {
   manageReceiverConfig: ['Z'], // 수집 수신 설정 CRUD — Z 전용
   manageDistributionTarget: ['Z'], // 배부 대상(수신처) CRUD — Z 전용 (ADR-008)
   runDistributionTick: ['Z'],  // 엠바고 시점 배부 tick 실행 — Z/시스템 전용 (ADR-008 (3))
+  manageDistributionFailure: ['Z'], // 배부 실패 조회·재전송 — Z 전용 (ADR-008, MVP-4)
   editDps: ['D'],              // DPS 기사 고침/포털고침 — D 전용 (news.md 권한 규칙)
 };
 
@@ -76,8 +77,18 @@ export function createAuthorization({ sessionService, articleModel }) {
     return { ok: true, role: me.role, userId: me.userId };
   }
 
+  // Z 전용 게이트 — 배부 실패 조회/재전송 (ADR-008 MVP-4). userId를 함께 돌려주는 이유:
+  // 재전송 이력의 actorUserId로 stamp해야 감사 추적이 끊기지 않는다(runDistributionTick과 동형).
+  function manageDistributionFailure(sessionId) {
+    const me = sessionService.touchSession(sessionId);
+    if (!me) return { ok: false, reason: 'unauthenticated' };
+    const gate = assertAuthorized(me.role, 'manageDistributionFailure');
+    if (!gate.ok) return gate;
+    return { ok: true, role: me.role, userId: me.userId };
+  }
+
   return {
     assertAuthorized, editDps, manageUsers, manageReceiverConfig, manageDistributionTarget,
-    runDistributionTick,
+    runDistributionTick, manageDistributionFailure,
   };
 }

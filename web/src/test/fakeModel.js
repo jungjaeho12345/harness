@@ -20,6 +20,13 @@ export function createFakeModel(seed = {}) {
   const receiverConfigs = [...(seed.receiverConfigs ?? [])];
   // 배부 대상(phase 46) — 행은 절대 지우지 않는다(비활성=active 'N', 서버 soft delete와 동형).
   const distributionTargets = [...(seed.distributionTargets ?? [])];
+  // 배부 실패(phase 57 MVP-4) — fake는 서버가 파생해서 주는 '미해소 목록'을 모사한다.
+  // 원장(ArticleHistory) 자체를 모사하지 않는다: 해소를 배열 제거로 구현하지만 그것이 DB 행 삭제를
+  // 뜻하지 않는다(서버는 append-only 이력에서 미해소 여부를 파생한다 — distributionFailureLog).
+  const distributionFailures = [...(seed.distributionFailures ?? [])];
+  // 수동 tick 응답 모사 — seed.tickResult가 있으면 그걸, 없으면 빈 요약 기본값을 준다.
+  const tickResult = seed.tickResult
+    ?? { ok: true, at: new Date().toISOString(), scanned: 0, distributed: [], failed: [], invalid: [] };
   const mediaItems = [...(seed.mediaItems ?? [])];
   // 사진DB(phase 41) — 등록→검색 루프를 네트워크 없이 재현하는 in-memory 스토어.
   const photos = [...(seed.photos ?? [])];
@@ -293,6 +300,31 @@ export function createFakeModel(seed = {}) {
       t.active = 'N';
       t.updatedAt = new Date().toISOString();
       return { ok: true, changes: 1 };
+    },
+
+    // --- 배부 실패 복구/실행(phase 57 MVP-4 — 게이트/판정의 진실은 서버, fake는 shape만 모사) ---
+    // 미해소 항목의 복사본 배열 반환(원본 불변). 서버 shape의 전 필드(targetKind·kindDistributed 포함)를
+    // 그대로 통과시킨다 — fake가 기본값을 지어내지 않는다(화면 테스트의 입력이 시드 그대로 흐르게).
+    queryDistributionFailures(filters = {}) {
+      let items = distributionFailures.map((f) => ({ ...f }));
+      if (filters.limit !== undefined) items = items.slice(0, filters.limit);
+      return { ok: true, items };
+    },
+    // 식별자는 목록의 키(historyId)다 — 일치 항목이 없으면 no-failure(서버 어휘 동형).
+    // 있으면 해소 처리 후 성공 shape 반환(articleId·targetId·kind는 그 항목에서 도출 — 서버 동형).
+    // 배열 제거는 '미해소 목록'에서의 이탈 모사일 뿐 DB 행 삭제가 아니다(위 distributionFailures 주석).
+    retryDistribution(historyId) {
+      const i = distributionFailures.findIndex((f) => f.historyId === historyId);
+      if (i < 0) return { ok: false, reason: 'no-failure' };
+      const [resolved] = distributionFailures.splice(i, 1);
+      return {
+        ok: true, articleId: resolved.articleId, targetId: resolved.targetId,
+        kind: resolved.kind, at: new Date().toISOString(),
+      };
+    },
+    // 수동 tick — seed 응답(또는 기본 요약)을 복사본으로 반환. 앱 내 타이머/자동 실행은 두지 않는다(ADR-008 (3)).
+    runDistributionTick() {
+      return { ...tickResult };
     },
 
     subscribe(filter, onChange, onStatus) {
