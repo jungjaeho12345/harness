@@ -47,8 +47,9 @@ export function useDistMgmtController() {
   }, [model]);
 
   // 성공/실패 무관하게 재조회한다 — 거부(no-failure 등)는 목록이 낡았다는 신호이기도 하다.
-  const retryTarget = useCallback(async (articleId, targetId) => {
-    const r = await model.retryDistribution(articleId, targetId);
+  // 식별자는 실패 목록의 키(historyId)다 — 기사·수신처·kind는 서버가 그 실패 행에서 도출한다(ADR-004).
+  const retryTarget = useCallback(async (historyId) => {
+    const r = await model.retryDistribution(historyId);
     await refreshFailures();
     return r;
   }, [model, refreshFailures]);

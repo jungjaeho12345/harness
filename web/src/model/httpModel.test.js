@@ -552,19 +552,19 @@ describe('createHttpModel', () => {
     expect(callAt(1)[0]).toBe(`${BASE}/api/distribution/failures`);
   });
 
-  it('retryDistribution POSTs /api/distribution/retry with exactly { articleId, targetId } — never role/kind (ADR-004)', async () => {
+  it('retryDistribution POSTs /api/distribution/retry with exactly { historyId } — never role/kind/articleId (ADR-004)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, articleId: 'AKR1', targetId: 12, kind: 'press', at: 't' }));
     const model = createHttpModel({ base: BASE });
 
-    const r = await model.retryDistribution('AKR1', 12);
+    const r = await model.retryDistribution(34);
     const [url, init] = callAt(0);
     expect(url).toBe(`${BASE}/api/distribution/retry`);
     expect(init.method).toBe('POST');
     expect(init.credentials).toBe('include');
     const body = JSON.parse(init.body);
-    // 두 키뿐 — 배부 kind·시각·role은 서버가 실패 이력·세션에서 도출한다(클라 입력 금지).
-    expect(body).toEqual({ articleId: 'AKR1', targetId: 12 });
-    expect(Object.keys(body).sort()).toEqual(['articleId', 'targetId']);
+    // 한 키뿐 — 기사·수신처·kind·시각·role 전부 서버가 실패 이력·세션에서 도출한다(클라 입력 금지).
+    expect(body).toEqual({ historyId: 34 });
+    expect(Object.keys(body)).toEqual(['historyId']);
     expect(r).toEqual({ ok: true, articleId: 'AKR1', targetId: 12, kind: 'press', at: 't' });
   });
 
@@ -587,7 +587,7 @@ describe('createHttpModel', () => {
     await model.login('a', 'b');
 
     await model.queryDistributionFailures();
-    await model.retryDistribution('AKR1', 1);
+    await model.retryDistribution(1);
     await model.runDistributionTick();
     for (const i of [1, 2, 3]) {
       expect(callAt(i)[1].headers['x-session-id']).toBe('sid-d');

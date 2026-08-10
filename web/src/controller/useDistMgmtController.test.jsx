@@ -158,13 +158,13 @@ describe('useDistMgmtController', () => {
       expect(result.current.failures).toEqual([]);
     });
 
-    it('retryTarget이 model.retryDistribution을 인자 그대로 호출한다', async () => {
+    it('retryTarget이 model.retryDistribution을 historyId 그대로 호출한다 (목록의 키)', async () => {
       const { result, model } = setup({ distributionFailures: seedFailures() });
       const spy = vi.spyOn(model, 'retryDistribution');
 
-      await act(async () => { await result.current.retryTarget('AKR1', 3); });
+      await act(async () => { await result.current.retryTarget(11); });
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith('AKR1', 3);
+      expect(spy).toHaveBeenCalledWith(11);
     });
 
     it('retryTarget 성공 후 내부 재조회 1회로 그 항목이 failures에서 사라진다', async () => {
@@ -174,7 +174,7 @@ describe('useDistMgmtController', () => {
 
       const querySpy = vi.spyOn(model, 'queryDistributionFailures');
       let r;
-      await act(async () => { r = await result.current.retryTarget('AKR1', 3); });
+      await act(async () => { r = await result.current.retryTarget(11); });
 
       expect(r.ok).toBe(true);
       expect(querySpy).toHaveBeenCalledTimes(1); // 쓰기 후 직접 재조회(SSE 신호 없음).
@@ -187,7 +187,7 @@ describe('useDistMgmtController', () => {
       const querySpy = vi.spyOn(model, 'queryDistributionFailures');
 
       let r;
-      await act(async () => { r = await result.current.retryTarget('NOPE', 999); });
+      await act(async () => { r = await result.current.retryTarget(999); });
       expect(r).toEqual({ ok: false, reason: 'no-failure' }); // 실패를 삼키지 않는다.
       expect(querySpy).toHaveBeenCalledTimes(1); // 실패여도 재조회 — 목록이 이미 낡았다는 신호다.
     });

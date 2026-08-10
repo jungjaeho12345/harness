@@ -417,7 +417,7 @@ describe('createFakeModel', () => {
     expect(items[0].kindDistributed).toBe(false);
   });
 
-  it('retryDistribution resolves the matching failure so it disappears from the list', async () => {
+  it('retryDistribution resolves the failure by historyId so it disappears from the list', async () => {
     const fake = createFakeModel({
       distributionFailures: [
         { articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed', failedAt: '2026-08-01T00:00:00.000Z', historyId: 11, targetName: 'KBS', targetActive: 'Y', targetKind: 'press', kindDistributed: true },
@@ -425,7 +425,7 @@ describe('createFakeModel', () => {
       ],
     });
 
-    const r = await fake.retryDistribution('AKR1', 3);
+    const r = await fake.retryDistribution(11);
     expect(r.ok).toBe(true);
     expect(r).toMatchObject({ articleId: 'AKR1', targetId: 3, kind: 'press' });
     expect(r.at).toBeTruthy();
@@ -435,14 +435,14 @@ describe('createFakeModel', () => {
     expect(items[0].articleId).toBe('AKR2');
   });
 
-  it('retryDistribution returns no-failure for an unknown pair (서버 어휘 동형)', async () => {
+  it('retryDistribution returns no-failure for an unknown historyId (서버 어휘 동형)', async () => {
     const fake = createFakeModel({
       distributionFailures: [
         { articleId: 'AKR1', targetId: 3, kind: 'press', reason: 'spool-write-failed', failedAt: '2026-08-01T00:00:00.000Z', historyId: 11, targetName: 'KBS', targetActive: 'Y', targetKind: 'press', kindDistributed: true },
       ],
     });
-    expect(await fake.retryDistribution('AKR1', 999)).toEqual({ ok: false, reason: 'no-failure' });
-    expect(await fake.retryDistribution('NOPE', 3)).toEqual({ ok: false, reason: 'no-failure' });
+    expect(await fake.retryDistribution(999)).toEqual({ ok: false, reason: 'no-failure' });
+    expect(await fake.retryDistribution(undefined)).toEqual({ ok: false, reason: 'no-failure' });
     // 미해소 목록은 그대로다(거부는 무부수효과).
     expect((await fake.queryDistributionFailures()).items).toHaveLength(1);
   });

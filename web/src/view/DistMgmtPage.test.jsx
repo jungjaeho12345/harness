@@ -377,15 +377,36 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
       expect(failuresSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('실패 항목이 표에 렌더된다(기사아이디·수신처명·유형 한글 라벨·사유·실패시각)', async () => {
+    it('실패 항목이 표에 렌더된다(기사아이디·수신처명·유형 한글 라벨·사유 한글 문구·실패시각)', async () => {
       setup(failSeed());
       const row = within(await screen.findByTestId('dist-fail-row-11'));
       expect(row.getByText('AKR1')).toBeInTheDocument();
       expect(row.getByText('가나일보')).toBeInTheDocument();
       expect(row.getByText('언론사')).toBeInTheDocument();
-      expect(row.getByText('spool-write-failed')).toBeInTheDocument();
+      // 사유는 reasonMessage()를 거친 한글 문구다 — 영문 토큰을 그대로 노출하지 않는다(코드리뷰 반려 [low]).
+      expect(row.getByText(/스풀 기록에 실패/)).toBeInTheDocument();
+      expect(row.queryByText('spool-write-failed')).toBeNull();
       expect(row.getByText('2026-08-01 09:30')).toBeInTheDocument(); // formatDateTime 기본 형식과 동형.
       expect(within(screen.getByTestId('dist-fail-row-12')).getByText('비언론사')).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-12')).queryByText('invalid-spool-dir')).toBeNull();
+    });
+
+    it('실패 표 사유: 알려진 토큰 3종 전부 한글 문구, 미지 토큰은 원문 단서를 유지한다', async () => {
+      setup({
+        distributionTargets: seedRows(),
+        distributionFailures: [
+          { ...seedFailures()[0], historyId: 21, reason: 'spool-write-failed' },
+          { ...seedFailures()[0], historyId: 22, reason: 'invalid-spool-dir' },
+          { ...seedFailures()[0], historyId: 23, reason: 'invalid-article-id' },
+          { ...seedFailures()[0], historyId: 24, reason: 'mystery-token' },
+        ],
+      });
+      await screen.findByTestId('dist-fail-row-21');
+      expect(within(screen.getByTestId('dist-fail-row-21')).getByText(/스풀 기록에 실패/)).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-22')).getByText(/스풀 폴더/)).toBeInTheDocument();
+      expect(within(screen.getByTestId('dist-fail-row-23')).getByText(/기사 ID/)).toBeInTheDocument();
+      // 미지 토큰은 mgmtMessages 규약대로 원문을 단서로 남긴다(운영자가 새 서버 사유를 발견하는 경로).
+      expect(within(screen.getByTestId('dist-fail-row-24')).getByText(/mystery-token/)).toBeInTheDocument();
     });
 
     it('실패 0건이면 안내 문구가 보이고 실패 행이 렌더되지 않는다', async () => {
@@ -404,7 +425,7 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
       expect(err).toHaveAttribute('role', 'alert');
     });
 
-    it('재전송 클릭 → confirm 승인 시 retryDistribution이 (articleId, targetId)로 호출된다', async () => {
+    it('재전송 클릭 → confirm 승인 시 retryDistribution이 (historyId)로 호출된다 — 목록의 키 그대로', async () => {
       const { model } = setup(failSeed());
       const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
       const retry = vi.spyOn(model, 'retryDistribution');
@@ -413,7 +434,7 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
       await userEvent.click(row.getByRole('button', { name: '재전송' }));
 
       expect(confirmSpy).toHaveBeenCalledTimes(1);
-      await waitFor(() => expect(retry).toHaveBeenCalledWith('AKR1', 3));
+      await waitFor(() => expect(retry).toHaveBeenCalledWith(11));
     });
 
     it('confirm 취소 시 재전송 호출 0회', async () => {
@@ -486,6 +507,32 @@ describe('DistMgmtPage (Z 전용 배부 대상 관리)', () => {
       await userEvent.click(row.getByRole('button', { name: '재전송' }));
 
       await waitFor(() => expect(screen.getByTestId('dist-fail-error')).toHaveTextContent('유형이 실패 당시와 달라'));
+    });
+
+    it('서버가 stale-cycle로 거부하면 재송고 사이클 안내 한글 문구가 보인다 (코드리뷰 반려 [high] 어휘)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'stale-cycle' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      const err = await screen.findByTestId('dist-fail-error');
+      expect(err).toHaveTextContent('재송고');
+      expect(err.textContent).not.toContain('stale-cycle');
+    });
+
+    it('서버가 retry-in-flight로 거부하면 진행 중 안내 한글 문구가 보인다 (동시 재전송 어휘)', async () => {
+      const { model } = setup(failSeed());
+      vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+      vi.spyOn(model, 'retryDistribution').mockResolvedValue({ ok: false, reason: 'retry-in-flight' });
+
+      const row = within(await screen.findByTestId('dist-fail-row-11'));
+      await userEvent.click(row.getByRole('button', { name: '재전송' }));
+
+      const err = await screen.findByTestId('dist-fail-error');
+      expect(err).toHaveTextContent('진행 중');
+      expect(err.textContent).not.toContain('retry-in-flight');
     });
 
     it('kindDistributed=false 항목의 확인창에만 중복 배부 경고가 포함된다', async () => {

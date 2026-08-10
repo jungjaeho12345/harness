@@ -599,11 +599,14 @@ describe('useViewController — 배부시간 범위 조회조건', () => {
     return { result, model, querySpy, subscribeSpy };
   }
 
-  it('초기 distributedRange는 빈 값이고 첫 조회 필터에 배부시간 키가 없다', async () => {
+  it('첫 조회 필터에 배부시간 키가 없고, 죽은 반환 distributedRange는 노출되지 않는다', async () => {
     const { result, querySpy } = setupSpied();
     await waitFor(() => expect(querySpy).toHaveBeenCalled());
-    expect(result.current.distributedRange).toEqual({ from: undefined, to: undefined });
     expect(querySpy.mock.calls[0][0]).toEqual({ status: ['RDS', 'DDH'] });
+    // 코드리뷰 반려 [low]: distributedRange 반환은 소비자가 없는 죽은 API였다 — 반환만 제거,
+    // setter는 유지한다(범위 반영의 관측 지점은 조회 필터다).
+    expect('distributedRange' in result.current).toBe(false);
+    expect(typeof result.current.setDistributedRange).toBe('function');
   });
 
   it('setDistributedRange 후 범위가 실린 필터로 재조회된다', async () => {
@@ -615,7 +618,6 @@ describe('useViewController — 배부시간 범위 조회조건', () => {
     await waitFor(() => expect(querySpy).toHaveBeenCalledWith({
       status: ['RDS', 'DDH'], distributedAtFrom: FROM, distributedAtTo: TO,
     }));
-    expect(result.current.distributedRange).toEqual({ from: FROM, to: TO });
   });
 
   it('같은 값으로 다시 호출해도 추가 재조회·재구독이 없다(원시값 상태)', async () => {
@@ -642,7 +644,6 @@ describe('useViewController — 배부시간 범위 조회조건', () => {
     await waitFor(() => expect(querySpy).toHaveBeenCalledWith({
       status: ['DPS'], distributedAtFrom: FROM, distributedAtTo: TO,
     }));
-    expect(result.current.distributedRange).toEqual({ from: FROM, to: TO });
   });
 
   it('undefined로 지우면 키가 빠진 필터로 재조회된다(해제 경로)', async () => {
@@ -654,7 +655,6 @@ describe('useViewController — 배부시간 범위 조회조건', () => {
     await act(async () => { result.current.setDistributedRange(undefined, undefined); });
 
     await waitFor(() => expect(querySpy.mock.calls.at(-1)[0]).toEqual({ status: ['RDS', 'DDH'] }));
-    expect(result.current.distributedRange).toEqual({ from: undefined, to: undefined });
   });
 
   it('빈 문자열은 undefined로 정규화되어 필터에 실리지 않는다', async () => {
@@ -662,7 +662,6 @@ describe('useViewController — 배부시간 범위 조회조건', () => {
     await waitFor(() => expect(querySpy).toHaveBeenCalled());
     await act(async () => { result.current.setDistributedRange('', ''); });
 
-    expect(result.current.distributedRange).toEqual({ from: undefined, to: undefined });
     expect(querySpy.mock.calls.at(-1)[0]).toEqual({ status: ['RDS', 'DDH'] });
   });
 

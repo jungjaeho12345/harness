@@ -290,9 +290,10 @@ export function createHttpModel({ base = '' } = {}) {
     queryDistributionFailures(filters = {}) {
       return request('/api/distribution/failures', { query: filters });
     },
-    // 배부 kind는 서버가 실패 이력의 action에서 도출한다 — 클라이언트가 정하면 임의 배부 경로가 열린다.
-    retryDistribution(articleId, targetId) {
-      return request('/api/distribution/retry', { method: 'POST', body: { articleId, targetId } });
+    // 재전송 식별자는 실패 목록의 키(historyId)뿐이다 — 기사·수신처·kind는 서버가 그 실패 행에서
+    // 도출한다(클라이언트가 정하면 임의 배부 경로가 열린다, ADR-004).
+    retryDistribution(historyId) {
+      return request('/api/distribution/retry', { method: 'POST', body: { historyId } });
     },
     // body를 보내지 않는다 — 서버가 body를 읽지 않으며(파라미터를 클라가 정하면 엠바고 무력화),
     // 실행 트리거는 외부 cron과 Z의 명시 조작뿐이다(ADR-008 (3) — 타이머/자동 폴링 금지).

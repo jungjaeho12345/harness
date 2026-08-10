@@ -266,8 +266,9 @@ export function useViewController() {
   return {
     menu, selectMenu,
     departments, setDepartments, deptOptions,
-    // 표시용 범위(원시값에서 파생) — 메뉴 전환에도 유지된다(사용자 명시 입력 — selectMenu의 부서 초기화와 다르다).
-    distributedRange: { from: distributedAtFrom, to: distributedAtTo }, setDistributedRange,
+    // 범위 setter만 노출한다 — distributedRange 파생 반환은 소비자가 없는 죽은 API라 제거했다
+    // (코드리뷰 반려 [low]. ListPage는 datetime-local 로컬 state가 진실이고, 반영 여부는 조회 필터로 관측한다).
+    setDistributedRange,
     page, setPage, totalPages, pageItems, items,
     live,
     refresh,

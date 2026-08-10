@@ -310,15 +310,17 @@ export function createFakeModel(seed = {}) {
       if (filters.limit !== undefined) items = items.slice(0, filters.limit);
       return { ok: true, items };
     },
-    // 일치 쌍이 없으면 no-failure(서버 어휘 동형). 있으면 해소 처리 후 성공 shape 반환.
+    // 식별자는 목록의 키(historyId)다 — 일치 항목이 없으면 no-failure(서버 어휘 동형).
+    // 있으면 해소 처리 후 성공 shape 반환(articleId·targetId·kind는 그 항목에서 도출 — 서버 동형).
     // 배열 제거는 '미해소 목록'에서의 이탈 모사일 뿐 DB 행 삭제가 아니다(위 distributionFailures 주석).
-    retryDistribution(articleId, targetId) {
-      const i = distributionFailures.findIndex(
-        (f) => f.articleId === articleId && f.targetId === targetId,
-      );
+    retryDistribution(historyId) {
+      const i = distributionFailures.findIndex((f) => f.historyId === historyId);
       if (i < 0) return { ok: false, reason: 'no-failure' };
       const [resolved] = distributionFailures.splice(i, 1);
-      return { ok: true, articleId, targetId, kind: resolved.kind, at: new Date().toISOString() };
+      return {
+        ok: true, articleId: resolved.articleId, targetId: resolved.targetId,
+        kind: resolved.kind, at: new Date().toISOString(),
+      };
     },
     // 수동 tick — seed 응답(또는 기본 요약)을 복사본으로 반환. 앱 내 타이머/자동 실행은 두지 않는다(ADR-008 (3)).
     runDistributionTick() {

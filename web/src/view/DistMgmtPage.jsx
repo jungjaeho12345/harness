@@ -32,6 +32,12 @@ const reasonMessage = createReasonMessage({
   'spool-disabled': '배부 스풀이 설정되지 않았습니다(DIST_SPOOL_DIR).',
   'tick-failed': '배부 실행 중 서버 오류가 발생했습니다.',
   inactive: '비활성 수신처입니다. 먼저 활성화한 뒤 재전송해 주세요.',
+  // 재송고로 새 배부 사이클이 열린 기사 — 이전 사이클의 실패는 재전송 대상이 아니다(서버 stale-cycle 게이트).
+  'stale-cycle': '재송고 이전 사이클의 실패입니다. 재전송할 수 없으며, 새 사이클의 배부(tick)가 이 수신처를 다시 처리합니다.',
+  // 같은 수신처의 재전송이 이미 진행 중(서버 single-flight 게이트) — 다른 탭·운영자와 겹친 경우.
+  'retry-in-flight': '같은 수신처로 재전송이 이미 진행 중입니다. 잠시 후 목록을 새로 조회해 주세요.',
+  // 실패 표 사유 열에도 이 매핑을 쓴다 — spoolWriter의 세 번째 재전송 가능 사유까지 한글로 안내한다.
+  'invalid-article-id': '기사 ID가 스풀 파일명 규칙에 맞지 않아 기록할 수 없습니다.',
 });
 
 // 재전송 버튼을 누를 수 없는 사유(행 텍스트로도 보여준다 — 왜 못 누르는지 알 수 없는 버튼 금지).
@@ -134,7 +140,8 @@ export function DistMgmtPage() {
     if (!globalThis.confirm(`'${f.articleId}' 기사를 '${target}' 수신처로 재전송할까요? 스풀에 나간 파일은 회수할 수 없습니다.${warn}`)) return;
     setRetryingId(f.historyId);
     try {
-      const r = await retryTarget(f.articleId, f.targetId);
+      // 식별자는 목록의 키(historyId)뿐이다 — 기사·수신처·kind는 서버가 실패 행에서 도출한다(ADR-004).
+      const r = await retryTarget(f.historyId);
       setFailError(r && r.ok ? '' : reasonMessage(r && r.reason));
     } finally {
       setRetryingId(null); // 실패해도 반드시 푼다 — 가드는 in-flight 동안만 유효하다.
@@ -258,7 +265,8 @@ export function DistMgmtPage() {
                     <td>{f.articleId}</td>
                     <td>{f.targetName ?? f.targetId}</td>
                     <td>{KIND_LABEL[f.kind] ?? f.kind}</td>
-                    <td>{f.reason}</td>
+                    {/* 사유도 한글 안내로 — 영문 토큰 노출 해소. 미지 토큰은 reasonMessage가 원문 단서를 유지한다. */}
+                    <td>{reasonMessage(f.reason)}</td>
                     <td>{formatDateTime(f.failedAt)}</td>
                     <td>
                       <button
