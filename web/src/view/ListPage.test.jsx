@@ -722,6 +722,32 @@ describe('ListPage', () => {
       expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전']);
       expect(rowCells(dialog, 0)).toEqual(['2026-06-14 03:09', '헤드라인', '김기자', 'DPS', 'v2']);
     });
+
+    // 테스트 게이트 보강(phase 57) — 배부 실패 행이 모달 결선(historyCellText)까지 한글 라벨로 흐른다:
+    // step12 단위 테스트(historyCellText)와 별개로, 모델 이력 행 → 모달 렌더의 통합 경로를 잠근다.
+    // 같은 모달에서 status 행의 종류/동작은 원값 그대로다(배부 계열 어휘만 라벨 — 행 인지 규칙).
+    it('케이스18: 배부 실패 이력 행이 종류/동작 컬럼에 배부실패/언론사로 렌더되고, status 행은 원값 유지', async () => {
+      const seed = histSeed();
+      seed.histories.AKR9 = [
+        {
+          id: 5, articleId: 'AKR9', eventType: 'distribute-failed', action: 'press', actorUserId: 'sys',
+          createdAt: '2026-06-14T06:00:00Z', hasSnapshot: 0, title: '헤드라인', version: 2, status: 'DPS',
+        },
+        ...seed.histories.AKR9,
+      ];
+      const { container } = setup(seed);
+      const dialog = await openHistory(container);
+      const settings = await openSettings(dialog);
+      await userEvent.click(within(settings).getByLabelText('종류'));
+      await userEvent.click(within(settings).getByLabelText('동작'));
+
+      expect(headerTexts(dialog)).toEqual(['수정시간', '제목', '수정자', '상태', '버전', '종류', '동작']);
+      // 배부 실패 행(최신) — 종류/동작이 한글 라벨이다.
+      expect(rowCells(dialog, 0)).toEqual(['2026-06-14 06:00', '헤드라인', 'sys', 'DPS', 'v2', '배부실패', '언론사']);
+      // status 행 — 종류는 원값 'status', 동작도 원값 'send'(배부 계열 아님 → 라벨 미적용).
+      expect(rowCells(dialog, 1)[5]).toBe('status');
+      expect(rowCells(dialog, 1)[6]).toBe('send');
+    });
   });
 
   // --- phase 57 MVP-4: 배부시간 조회조건(news.md 12행) + 배부시간 컬럼(기본 숨김) ---
@@ -782,6 +808,23 @@ describe('ListPage', () => {
 
       await waitFor(() => expect(spy).toHaveBeenCalledWith({
         status: ['RDS', 'DDH'], distributedAtFrom: FROM_ISO, distributedAtTo: TO_ISO,
+      }));
+    });
+
+    // 테스트 게이트 보강 — 경계값: 시작=종료(같은 분)여도 from(:00.000Z) < to(:59.999Z)의
+    // 유효한 1분 구간으로 합성된다(사전식 비교 서버 필터에서 빈 구간이 되지 않는다).
+    it('경계값 — 시작과 종료가 같은 분이면 그 1분 구간(:00.000~:59.999)으로 조회된다', async () => {
+      const { model } = setup({ articles: [] });
+      await screen.findByLabelText('배부시간 시작');
+      const spy = vi.spyOn(model, 'queryArticles');
+
+      setRange(FROM_INPUT, FROM_INPUT); // 시작=종료
+      await userEvent.click(screen.getByRole('button', { name: '배부시간 조회' }));
+
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({
+        status: ['RDS', 'DDH'],
+        distributedAtFrom: '2026-08-01T09:00:00.000Z',
+        distributedAtTo: '2026-08-01T09:00:59.999Z',
       }));
     });
 

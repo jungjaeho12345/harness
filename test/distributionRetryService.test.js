@@ -679,3 +679,28 @@ test('retryService.retry: DB 비파괴 — 전후 행 수 불변, 기존 이력 
     '기존 송고 이력이 보존된다',
   );
 });
+
+// 케이스 24 (테스트 게이트 보강 — 변이 'RETRY_SCAN_LIMIT→표시 창 한도' 생존 킬)
+// 케이스 11-1은 이벤트 6건만 시드해 limit>=6이면 어떤 창이든 통과한다 — 표시용 창의
+// 기본값(200)·상한(1000)을 실제로 넘겨 "articleId 스코프 사실상 무제한" 계약을 행동으로 잠근다.
+test('retryService.retry: 같은 기사에 이벤트가 1000건 넘게 쌓여도 가장 오래된 실패가 재전송된다 (표시 창 재사용 금지)', async () => {
+  const { service, writer, articleHistoryModel, targetIds } = setup({
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+  // 가장 오래된 미해소 실패(kbs) 뒤에 해소된 실패/재전송 쌍이 1100행 쌓인다 —
+  // 게이트 조회가 표시용 창(기본 200·클램프 상한 1000)을 재사용하면 kbs 행이 창 밖으로 밀린다.
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs, createdAt: '2026-08-01T00:00:00.000Z' });
+  for (let i = 0; i < 550; i += 1) {
+    seedFailure(articleHistoryModel, { targetId: targetIds.mbc });
+    seedRetry(articleHistoryModel, { targetId: targetIds.mbc });
+  }
+
+  const r = await service.retry({ articleId: ARTICLE_ID, targetId: targetIds.kbs });
+
+  assert.equal(r.ok, true, '표시용 창 한도를 재전송 게이트 조회에 쓰면 오래된 실패가 no-failure로 오거부된다');
+  assert.equal(writer.calls.length, 1);
+  assert.equal(writer.calls[0].spoolDir, 'kbs');
+});

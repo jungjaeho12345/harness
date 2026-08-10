@@ -421,6 +421,72 @@ test('POST /api/distribution/retry: targetId를 JSON 문자열로 보내도 정�
   } finally { await ctx.close(); }
 });
 
+// 보강 케이스 (테스트 게이트 — 실 결선 E2E 루프: tick 실패 영속 → 목록 등장 → 재전송 → 해소)
+// 위 케이스들은 실패 행을 SQL로 직접 시드한다 — 이 케이스만 실제 tick(distributionService의
+// recordTargetFailure 결선)으로 실패를 만들어, step0~5의 결선 전체가 한 줄로 이어짐을 잠근다.
+test('E2E: tick 중 스풀 실패가 영속되고 목록에 나타나며, 재전송으로 해소된다 (distributedAt 갱신 + append-only)', async () => {
+  // 도중에 복구할 수 있는 스풀 FS — tick 시점엔 mkdir 실패, 재전송 시점엔 성공.
+  const calls = { mkdir: [], writeFile: [], rename: [] };
+  const state = { fail: true };
+  const op = (name) => async (...args) => { calls[name].push(args); };
+  const spoolFs = {
+    calls,
+    mkdir: async (...args) => { if (state.fail) throw new Error('권한 없음'); calls.mkdir.push(args); },
+    writeFile: op('writeFile'),
+    rename: op('rename'),
+  };
+  const ctx = await start({ spoolFs });
+  try {
+    const targetId = seedTarget(ctx.db);
+    // 1차 엠바고 도래 기사(DES + embargoAt < NOW) — tick 스캔 대상.
+    createArticleModel(ctx.db).insert({
+      article: { articleId: ARTICLE_ID, title: '제목', markupVersion: MARKUP },
+      contents: {
+        articleId: ARTICLE_ID, title: '제목', author: 'kim', sender: 'desk', status: 'DES',
+        createdAt: '2026-08-06T08:00:00.000Z', sentAt: '2026-08-06T08:10:00.000Z',
+        embargoAt: '2026-08-06T09:00:00.000Z',
+      },
+    });
+    const zsid = await loginAs(ctx, 'Z', 'admin');
+
+    // (1) tick — 스풀 쓰기 실패가 distribute-failed 행으로 영속된다(서버 재시작에도 남는 복구 근거).
+    const t = await api(ctx.base, 'POST', '/api/distribution/tick', { sid: zsid, body: {} });
+    assert.equal(t.status, 200);
+    assert.equal(t.body.distributed.length, 0);
+    assert.equal(t.body.failed.length, 1);
+    const persisted = ctx.db.prepare("SELECT * FROM ArticleHistory WHERE eventType = 'distribute-failed'").all();
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].targetId, targetId, 'targetId가 숫자로 영속된다');
+    assert.equal(persisted[0].reason, 'spool-write-failed');
+    assert.equal(persisted[0].actorUserId, 'admin', 'tick 실행자의 세션 userId가 stamp된다');
+
+    // (2) 실패 목록 등장 — kindDistributed=false(그 kind의 distribute 행 없음 → 중복 경고 대상).
+    const l1 = await failures(ctx, { sid: zsid });
+    assert.equal(l1.status, 200);
+    assert.equal(l1.body.items.length, 1);
+    assert.equal(l1.body.items[0].articleId, ARTICLE_ID);
+    assert.equal(l1.body.items[0].targetId, targetId);
+    assert.equal(l1.body.items[0].kind, 'press');
+    assert.equal(l1.body.items[0].kindDistributed, false);
+
+    // (3) FS 복구 후 재전송 — 200 + distributedAt present-only 갱신.
+    state.fail = false;
+    const r = await retry(ctx, { sid: zsid, body: { articleId: ARTICLE_ID, targetId } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, articleId: ARTICLE_ID, targetId, kind: 'press', at: NOW });
+    const contents = ctx.db.prepare('SELECT distributedAt FROM Contents WHERE articleId = ?').get(ARTICLE_ID);
+    assert.equal(contents.distributedAt, NOW);
+
+    // (4) 해소 — 목록에서 사라지되 원장은 append-only(실패 행 보존 + 재전송 행 추가, 삭제 0).
+    const l2 = await failures(ctx, { sid: zsid });
+    assert.deepEqual(l2.body.items, []);
+    const events = ctx.db.prepare(
+      "SELECT eventType FROM ArticleHistory WHERE eventType IN ('distribute-failed','distribute-retry') ORDER BY id",
+    ).all().map((e) => e.eventType);
+    assert.deepEqual(events, ['distribute-failed', 'distribute-retry']);
+  } finally { await ctx.close(); }
+});
+
 // 케이스 20
 test('POST /api/distribution/retry: 수신처 kind가 바뀐 상태면 409 kind-changed, FS 0회', async () => {
   const ctx = await start();
