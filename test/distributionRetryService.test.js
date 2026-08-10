@@ -323,6 +323,134 @@ test('retryService.list: 사이클 경계 정합 — 과거 사이클 distribute
   assert.equal(item.kindDistributed, false, 'cycleDistributedKinds(현 사이클) 판정이어야 한다');
 });
 
+// ── phase 58 step4: list()의 N+1 제거 — target 호출당 캐시 + 경량 status 조회 ──
+
+// 케이스 58-1
+test('retryService.list: 같은 targetId 실패 3건이어도 findById는 distinct targetId 수만큼만 호출된다(호출당 캐시)', () => {
+  const { service, articleHistoryModel, distributionTargetModel, targetIds } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  // 같은 수신처에 실패 3건 — 서로 다른 기사 2건 + 다른 kind 1건.
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs });
+  seedFailure(articleHistoryModel, { articleId: 'AKR-OTHER', targetId: targetIds.kbs });
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs, kind: 'nonpress' });
+
+  let calls = 0;
+  const orig = distributionTargetModel.findById;
+  distributionTargetModel.findById = (id) => { calls += 1; return orig(id); };
+
+  const items = service.list().items;
+  assert.equal(items.length, 3);
+  assert.equal(calls, 1, 'distinct targetId 1개 → 조회 1회(3회가 아니다)');
+});
+
+// 케이스 58-2
+test('retryService.list: status는 getStatusById 경량 조회로 — getById 0회·distinct 기사당 1회', () => {
+  const { service, articleHistoryModel, articleModel, targetIds } = setup({
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+      { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+    ],
+  });
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs });
+  seedFailure(articleHistoryModel, { targetId: targetIds.mbc });
+  seedFailure(articleHistoryModel, { targetId: targetIds.portal, kind: 'nonpress' });
+
+  let getByIdCalls = 0;
+  let statusCalls = 0;
+  const origGet = articleModel.getById;
+  const origStatus = articleModel.getStatusById;
+  articleModel.getById = (id) => { getByIdCalls += 1; return origGet(id); };
+  articleModel.getStatusById = (id) => { statusCalls += 1; return origStatus(id); };
+
+  const items = service.list().items;
+  assert.equal(items.length, 3);
+  assert.equal(getByIdCalls, 0, 'status 하나를 위해 본문 blob 포함 전체 로드를 하지 않는다');
+  assert.equal(statusCalls, 1, 'distinct 기사 1건 → 경량 조회 1회');
+});
+
+// 케이스 58-3
+test('retryService.list: getStatusById가 없는 부분 스텁 모델에서도 getById 폴백으로 동일하게 동작한다', () => {
+  const { service, articleHistoryModel, distributionTargetModel, articleModel, targetIds } = setup({
+    status: 'EPS',
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  seedSend(articleHistoryModel, {});
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs });
+
+  const full = service.list().items;
+
+  // getById만 가진 부분 스텁(기존 retry 스위트의 스텁 스타일) — 신규 메서드 강제 없음.
+  const stubService = createDistributionRetryService({
+    articleHistoryModel,
+    distributionTargetModel,
+    articleModel: { getById: (id) => articleModel.getById(id) },
+    now: () => NOW,
+  });
+  const stub = stubService.list().items;
+
+  assert.deepEqual(stub, full, '항목 shape·kindDistributed가 완전히 동일하다');
+  assert.deepEqual(
+    Object.keys(stub[0]).sort(),
+    ['articleId', 'failedAt', 'historyId', 'kind', 'kindDistributed',
+      'reason', 'targetActive', 'targetKind', 'targetName', 'targetId'].sort(),
+  );
+});
+
+// 케이스 58-4
+test('retryService.list: 캐시는 호출당이다 — 호출 사이 수신처 변경이 다음 목록에 즉시 보인다', () => {
+  const { service, articleHistoryModel, distributionTargetModel, targetIds } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs });
+
+  let calls = 0;
+  const orig = distributionTargetModel.findById;
+  distributionTargetModel.findById = (id) => { calls += 1; return orig(id); };
+
+  const first = service.list().items;
+  assert.equal(first[0].targetActive, 'Y');
+  assert.equal(calls, 1);
+
+  distributionTargetModel.update(targetIds.kbs, { active: 'N' }); // 수신처 비활성화
+
+  const second = service.list().items;
+  assert.equal(calls, 2, '호출마다 다시 조회한다(호출 사이 캐시 금지)');
+  assert.equal(second[0].targetActive, 'N', '변경이 다음 조회에 즉시 보인다');
+});
+
+// 케이스 58-5
+test('retryService.list: 캐시 도입 후에도 투영은 화이트리스트다 — spoolDir·경로가 어디에도 없다', () => {
+  const { service, articleHistoryModel, targetIds } = setup({
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs-spool-slug' }],
+  });
+  seedFailure(articleHistoryModel, { targetId: targetIds['kbs-spool-slug'] });
+  seedFailure(articleHistoryModel, { articleId: 'AKR-OTHER', targetId: targetIds['kbs-spool-slug'] });
+
+  const body = JSON.stringify(service.list());
+  assert.ok(!body.includes('kbs-spool-slug'), 'spoolDir 슬러그가 어떤 필드에도 없다');
+  assert.ok(!body.includes('/spool'), '파일 경로가 없다');
+});
+
+// 케이스 58-6
+test('retryService.list: 기사 행이 없는 실패 항목(status undefined)도 기존과 같은 결과다', () => {
+  const { service, articleHistoryModel, targetIds } = setup({
+    withArticle: false,
+    targets: [{ name: 'KBS', kind: 'press', spoolDir: 'kbs' }],
+  });
+  seedFailure(articleHistoryModel, { targetId: targetIds.kbs });
+
+  const items = service.list().items;
+  assert.equal(items.length, 1, '기사 행 부재가 목록을 깨뜨리지 않는다');
+  assert.equal(items[0].kindDistributed, false, 'status undefined → 사이클 판정은 기존과 동일(false)');
+  assert.deepEqual(
+    Object.keys(items[0]).sort(),
+    ['articleId', 'failedAt', 'historyId', 'kind', 'kindDistributed',
+      'reason', 'targetActive', 'targetKind', 'targetName', 'targetId'].sort(),
+  );
+});
+
 // ── retry ───────────────────────────────────────────────────────────────
 
 // 케이스 8
