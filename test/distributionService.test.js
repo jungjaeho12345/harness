@@ -12,6 +12,7 @@ import { createArticleModel } from '../src/models/articleModel.js';
 import { createArticleHistoryModel } from '../src/models/articleHistoryModel.js';
 import { createDistributionTargetModel } from '../src/models/distributionTargetModel.js';
 import { createDistributionService } from '../src/services/distributionService.js';
+import { createDistributionRetryService } from '../src/services/distributionRetryService.js';
 import { createSpoolWriter } from '../src/services/spoolWriter.js';
 
 const NOW = '2026-07-28T05:00:00.000Z';
@@ -929,4 +930,88 @@ test('실패 중복 억제: 다른 수신처·다른 kind의 실패는 억제되
   const rows = failedHistoryOf(db);
   assert.equal(rows.length, 3, '수신처 3곳 각각의 첫 실패는 전부 남는다');
   assert.equal(new Set(rows.map((r) => `${r.targetId}:${r.action}`)).size, 3);
+});
+
+// 케이스 14 (재리뷰 high — 중복 억제 × stale-cycle 상호 무력화 회귀)
+// 시퀀스: 1사이클 X 실패(+다른 수신처 성공으로 kind distribute 행 존재) → 재송고(send 경계) →
+// 2사이클 X가 같은 reason으로 재실패. 경계 이전 행만 보고 억제하면 원장의 유일한 실패 행이
+// 경계보다 앞이라 stale-cycle이 영구 409가 되고, distribute 행 때문에 tick도 재시도하지 않는다
+// — 그 수신처는 앱 안에서 복구 경로가 0이 된다. 같은 사이클 안의 중복만 억제해야 한다.
+test('실패 중복 억제: 재송고 경계를 넘긴 재실패는 같은 reason이어도 새 행 — retry가 살아난다 (교차 시퀀스)', async () => {
+  const writer = fakeWriter({ failFor: new Set(['kbs']) });
+  const { service, db, historyModel, articleModel, distributionTargetModel } = setup({
+    writer,
+    targets: [
+      { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+      { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    ],
+  });
+
+  // 1사이클: kbs 실패 + mbc 성공 — kind distribute 행이 남아 tick의 dueKinds에서 press가 빠진다.
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(failedHistoryOf(db).length, 1);
+  assert.equal(historyOf(db).filter((h) => h.eventType === 'distribute').length, 1);
+
+  // 재송고 — 새 배부 사이클 경계(send 행).
+  historyModel.insert({
+    articleId: ARTICLE_ID, eventType: 'status', action: 'send', fromStatus: 'RDS', toStatus: 'DES',
+    actorUserId: 'desk', createdAt: NOW,
+  });
+
+  // 2사이클: kbs가 같은 reason으로 재실패 — ① 새 distribute-failed 행이 생긴다.
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  const rows = failedHistoryOf(db);
+  assert.equal(rows.length, 2, '경계를 넘긴 재실패는 새 행을 얻는다 — 없으면 stale-cycle이 영구 409다');
+
+  // ③ 같은(2) 사이클 안의 반복 실패는 여전히 1행(억제 유지).
+  await service.distribute(ARTICLE_ID, { kinds: ['press'] });
+  assert.equal(failedHistoryOf(db).length, 2, '같은 사이클 안의 중복만 억제한다');
+
+  // ② 새 행의 historyId로 재전송이 성공한다(앱 내 복구 경로 복원 — 스풀 1회).
+  const retryWriter = fakeWriter();
+  const retryService = createDistributionRetryService({
+    articleHistoryModel: historyModel, distributionTargetModel, articleModel,
+    spoolWriter: retryWriter, now: () => NOW,
+  });
+  const kbs = distributionTargetModel.query({ kind: 'press', active: 'Y' }).find((t) => t.spoolDir === 'kbs');
+  const fresh = rows.find((r) => r.id > rows[0].id);
+  const r = await retryService.retry({ historyId: fresh.id });
+  assert.equal(r.ok, true, '경계 이후의 새 실패 행은 stale-cycle에 걸리지 않는다');
+  assert.strictEqual(r.targetId, kbs.id);
+  assert.equal(retryWriter.calls.length, 1);
+  assert.equal(retryWriter.calls[0].spoolDir, 'kbs');
+});
+
+// 케이스 15 (재리뷰 low — 억제 판정 조회는 한 distribute() 호출 안에서 기사 단위 1회)
+test('실패 중복 억제: 판정 조회는 호출당 기사 단위 1회다 — 실패 0건이면 조회 0회 (수신처마다 전체 스캔 금지)', async () => {
+  const targets = [
+    { name: 'KBS', kind: 'press', spoolDir: 'kbs' },
+    { name: 'MBC', kind: 'press', spoolDir: 'mbc' },
+    { name: '포털', kind: 'nonpress', spoolDir: 'portal' },
+  ];
+
+  // 수신처 3곳 전부 실패 — 억제 판정용 조회(queryDistributionEvents·queryByArticle)는 각 1회뿐이어야 한다.
+  const failing = setup({ writer: fakeWriter({ failFor: new Set(['kbs', 'mbc', 'portal']) }), targets });
+  const counts = { events: 0, history: 0 };
+  const origEvents = failing.historyModel.queryDistributionEvents;
+  const origHistory = failing.historyModel.queryByArticle;
+  failing.historyModel.queryDistributionEvents = (args) => { counts.events += 1; return origEvents(args); };
+  failing.historyModel.queryByArticle = (id) => { counts.history += 1; return origHistory(id); };
+
+  await failing.service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+  assert.equal(failing.db.prepare("SELECT COUNT(*) c FROM ArticleHistory WHERE eventType='distribute-failed'").get().c, 3);
+  assert.equal(counts.events, 1, '실패 이벤트 스캔은 호출당 1회다');
+  assert.equal(counts.history, 1, '사이클 경계 조회도 호출당 1회다');
+
+  // 전부 성공이면 억제 판정 자체가 없다 — 조회 0회(성공 경로에 스캔 비용을 얹지 않는다).
+  const passing = setup({ writer: fakeWriter(), targets });
+  const idle = { events: 0, history: 0 };
+  const origEvents2 = passing.historyModel.queryDistributionEvents;
+  const origHistory2 = passing.historyModel.queryByArticle;
+  passing.historyModel.queryDistributionEvents = (args) => { idle.events += 1; return origEvents2(args); };
+  passing.historyModel.queryByArticle = (id) => { idle.history += 1; return origHistory2(id); };
+
+  await passing.service.distribute(ARTICLE_ID, { kinds: ['press', 'nonpress'] });
+  assert.equal(idle.events, 0);
+  assert.equal(idle.history, 0);
 });

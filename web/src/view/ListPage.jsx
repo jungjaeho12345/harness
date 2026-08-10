@@ -75,8 +75,8 @@ export function ListPage() {
   const [showHistoryColModal, setShowHistoryColModal] = useState(false);
   // 번역 결과 모달 { text, ok, reason } — null이면 닫힘. (step10, in-app 모달 — React 자동 escape, 새 창 아님)
   const [translateModal, setTranslateModal] = useState(null);
-  // 배부시간 범위 조회조건 입력(news.md 12행, phase 57 MVP-4) — 로컬 state가 진실이다(컨트롤러의
-  // distributedRange에서 파생하지 않는다: 저장값은 ISO, 입력값은 datetime-local로 형이 다르다).
+  // 배부시간 범위 조회조건 입력(news.md 12행, phase 57 MVP-4) — 로컬 state가 진실이다(컨트롤러는
+  // setDistributedRange만 노출한다: 저장값은 ISO, 입력값은 datetime-local로 형이 다르다).
   // 반영은 '배부시간 조회' 클릭 시에만 — 타이핑마다 컨트롤러 상태를 갱신하면 필터 정체성이 바뀔 때마다
   // 재조회+SSE 재구독이 폭주한다. 메뉴 전환은 언마운트가 아니라 입력값이 화면에 유지된다(step10 유지 계약).
   const [fromInput, setFromInput] = useState('');

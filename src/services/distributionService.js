@@ -13,7 +13,7 @@
 //  - 상태 전이(EPS→DPS) → 생애주기는 lifecycle/articleService가 단일 출처다.
 //    쓰기 직전 status 재확인(아래 TOCTOU 가드)은 전이가 아니라 **배부 안전 중단**이다 — status를 읽기만 한다.
 
-import { EMBARGO_DISTRIBUTABLE_STATUSES } from './embargoPolicy.js';
+import { EMBARGO_DISTRIBUTABLE_STATUSES, latestSendId } from './embargoPolicy.js';
 import { DISTRIBUTE_FAILED_EVENT, isRetryableFailureReason, unresolvedFailures } from './distributionFailureLog.js';
 
 // 배부 대상 종류 — news.md 엠바고 규칙의 두 축(1차→언론사, 2차→비언론사).
@@ -80,30 +80,33 @@ export function createDistributionService({
   // reason은 spoolWriter의 고정 토큰 그대로다 — 예외 메시지·경로를 넣지 않는다.
   //
   // 중복 억제: tick은 주기 실행이라 같은 수신처가 같은 사유로 계속 실패하면 실패 행이 주기마다
-  // 무제한 누적된다. 그 그룹((articleId,targetId,action))의 **최신 행이 이미 같은 reason의 미해소
-  // 실패**면 insert를 생략한다 — 판정은 distributionFailureLog의 기존 파생(unresolvedFailures)을
-  // 그대로 재사용한다(새 판정 규칙 금지). reason이 다르거나(원인 변화) 해소 후 재실패면 새 사실이므로
-  // 반드시 남긴다. failed 반환·onFailure 표면화는 기록 생략과 무관하게 매번 일어난다(무음 삼킴 금지).
-  function recordTargetFailure({ articleId, targetId, kind, reason }, actorUserId) {
+  // 무제한 누적된다. 그 그룹((articleId,targetId,action))의 최신 행이 이미 **같은 사이클 안의**
+  // 같은 reason 미해소 실패면 insert를 생략한다 — 판정은 distributionFailureLog의 기존 파생
+  // (unresolvedFailures)과 embargoPolicy.latestSendId(사이클 어휘 단일 출처)만 재사용한다
+  // (새 판정 규칙 금지). reason이 다르거나(원인 변화) 해소 후 재실패면 새 사실이므로 반드시 남긴다.
+  // failed 반환·onFailure 표면화는 기록 생략과 무관하게 매번 일어난다(무음 삼킴 금지).
+  // getFailureContext는 호출자(distribute)가 기사 단위 1회 lazy 조회로 만든 컨텍스트다(전체 스캔 억제).
+  function recordTargetFailure({ articleId, targetId, kind, reason }, actorUserId, getFailureContext) {
     if (targetId == null || !isRetryableFailureReason(reason)) return;
-    if (isDuplicateUnresolvedFailure({ articleId, targetId, kind, reason })) return;
+    if (isDuplicateSameCycleFailure({ articleId, targetId, kind, reason }, getFailureContext)) return;
     record({ articleId, eventType: DISTRIBUTE_FAILED_EVENT, action: kind, targetId, reason, actorUserId });
   }
 
-  // 그 그룹의 미해소 최신 실패가 같은 reason인가. 조회 실패·모델 미가용이면 false —
-  // 억제는 최적화일 뿐이므로 모르면 기록하는 쪽(안전 방향: 과다 기록 > 무음 유실)으로 둔다.
-  function isDuplicateUnresolvedFailure({ articleId, targetId, kind, reason }) {
-    if (!historyModel || typeof historyModel.queryDistributionEvents !== 'function') return false;
-    let rows;
-    try {
-      rows = historyModel.queryDistributionEvents({ articleId, limit: FAILURE_DEDUP_SCAN_LIMIT });
-    } catch {
-      return false;
-    }
-    return unresolvedFailures(rows).some(
+  // 그 그룹의 미해소 최신 실패가 **이번 사이클(마지막 send 경계 이후)의** 같은 reason 실패인가.
+  // CRITICAL(재리뷰 high): 경계 이전 행과의 일치는 중복이 아니다 — 그 행만 남기면 재전송이
+  // stale-cycle 게이트에 걸려 영구 409가 되고, 그 kind의 distribute 행이 있으면 tick도 재시도하지
+  // 않아(dueKinds 제외) 그 수신처는 앱 안에서 복구 경로가 0이 된다. 경계를 넘긴 재실패는 항상
+  // 새 행을 얻어야 한다(failedAt 신선도·재전송 경로 복원).
+  // 경계 미확정(null)이면 사이클 구분이 없다 — stale-cycle 거부도 없으므로 억제해도 복구 경로가 산다.
+  function isDuplicateSameCycleFailure({ articleId, targetId, kind, reason }, getFailureContext) {
+    const ctx = typeof getFailureContext === 'function' ? getFailureContext() : null;
+    if (!ctx) return false;
+    const match = ctx.unresolved.find(
       (it) => it.articleId === articleId && it.targetId === targetId
         && it.kind === kind && it.reason === reason,
     );
+    if (!match) return false;
+    return ctx.boundaryId === null || match.historyId > ctx.boundaryId;
   }
 
   // 지금 이 kind들로 배부한다. 언제 부를지는 호출자가 정한다(송고 훅 / phase 48 tick).
@@ -127,13 +130,41 @@ export function createDistributionService({
     // 배부 불가로 전이된 기사는 어떤 kind로도 나가면 안 된다.
     let aborted = false;
 
+    // 중복 억제 판정 컨텍스트 — **이 호출 안에서 기사 단위 1회만** 조회한다(수신처마다 전체 스캔 금지).
+    // lazy다: 실패가 하나도 없으면 조회 자체가 없다(성공 경로에 스캔 비용을 얹지 않는다).
+    // 호출 사이 캐시는 금지 — 원장은 호출마다 자란다. 호출 안 재사용은 안전하다: 한 호출에서 같은
+    // (targetId, kind) 그룹은 최대 1회만 기록되므로 컨텍스트가 자기 기록으로 낡을 일이 없다.
+    // 조회 실패·모델 미가용이면 빈 컨텍스트 — 억제는 최적화일 뿐이므로 모르면 기록하는 쪽
+    // (안전 방향: 과다 기록 > 무음 유실)으로 둔다.
+    let failureContext = null;
+    function getFailureContext() {
+      if (failureContext) return failureContext;
+      let boundaryId = null;
+      let unresolved = [];
+      try {
+        if (historyModel && typeof historyModel.queryByArticle === 'function') {
+          boundaryId = latestSendId(historyModel.queryByArticle(articleId));
+        }
+        if (historyModel && typeof historyModel.queryDistributionEvents === 'function') {
+          unresolved = unresolvedFailures(
+            historyModel.queryDistributionEvents({ articleId, limit: FAILURE_DEDUP_SCAN_LIMIT }),
+          );
+        }
+      } catch {
+        boundaryId = null;
+        unresolved = [];
+      }
+      failureContext = { boundaryId, unresolved };
+      return failureContext;
+    }
+
     // 실패 표면화의 단일 경로 — 쓰기 실패·중단 항목 전부 여기를 지난다.
     // failed 반환 + onFailure 통지(무음 삼킴 금지)에 더해, 기록 여부는 recordTargetFailure의
     // 한 조건(targetId 있음 + 재전송 가능 사유)으로만 판정된다 — 중단 항목이 실수로 새는 경로를 만들지 않는다.
     function reportFailure(info) {
       failed.push(info);
       notifyFailure(info);
-      recordTargetFailure(info, actorUserId);
+      recordTargetFailure(info, actorUserId, getFailureContext);
     }
 
     for (const kind of wanted) {

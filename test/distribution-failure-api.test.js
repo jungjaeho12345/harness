@@ -431,6 +431,23 @@ test('POST /api/distribution/retry: 저장된 spoolDir가 무효(invalid-spool-d
   } finally { await ctx.close(); }
 });
 
+// 케이스 18-2 (재리뷰 low — invalid-article-id도 서버 데이터 문제다. 클라이언트가 고칠 수 있는
+// 요청 오류가 아니므로 형제 토큰(spool-write-failed·invalid-spool-dir)과 같은 500으로 정합.)
+test('POST /api/distribution/retry: articleId가 파일명 규칙 위반(invalid-article-id)이면 500', async () => {
+  const ctx = await start();
+  try {
+    const targetId = seedTarget(ctx.db);
+    seedArticle(ctx.db, 'bad id'); // 공백 포함 — spoolWriter의 ARTICLE_ID 파일명 규칙 위반
+    const historyId = seedFailure(ctx.db, { articleId: 'bad id', targetId });
+    const zsid = await loginAs(ctx, 'Z', 'admin');
+
+    const r = await retry(ctx, { sid: zsid, body: { historyId } });
+    assert.equal(r.status, 500);
+    assert.deepEqual(r.body, { ok: false, reason: 'invalid-article-id' });
+    assert.deepEqual(ctx.signals, []);
+  } finally { await ctx.close(); }
+});
+
 // 케이스 19
 test('POST /api/distribution/retry: historyId를 JSON 문자열로 보내도 정상 처리된다 (HTTP 경계 정규화)', async () => {
   const ctx = await start();
