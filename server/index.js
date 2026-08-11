@@ -14,9 +14,10 @@ import nodePath from 'node:path';
 import crypto from 'node:crypto';
 import { createLogService } from '../src/services/logService.js';
 
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
 import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
 import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
@@ -108,6 +109,46 @@ export function logOriginDiagnostics({ env = process.env, origins = allowedOrigi
   return true;
 }
 
+// 바인드 주소가 loopback인가 — 진단·수집 fail-closed·문서가 같은 규칙을 공유하도록 단일 함수로 둔다.
+// 127.0.0.0/8 전체를 포함한다: 판정이 좁으면 오탐이 '경고'가 아니라 '수집 기능 차단'이 된다
+// (예: 127.0.0.2로 띄운 로컬 인스턴스의 수집이 죽는다). 모르는 값(비문자열·빈 값)은 false = 개방 간주.
+// 127.* 판정은 점4자리 IP 형태만 인정한다 — '127.'로 시작하는 호스트명(127.example.com)까지 loopback으로
+// 보면 fail-closed 게이트가 개방 쪽으로 오판한다(실제 바인딩은 DNS 결과를 따르므로 보장이 없다).
+// CSRF 가드의 isLoopbackOrigin/LOOPBACK_HOSTNAMES와 공유하지 않는다 — 저쪽 입력은 http://host:port
+// origin URL이고 이쪽은 바인드 주소 문자열(0.0.0.0·:: 등)이라 문법이 다르다(공용화하면 게이트 판정 오염).
+export function isLoopbackHost(host) {
+  if (typeof host !== 'string') return false;
+  const h = host.trim().toLowerCase();
+  if (h === 'localhost' || h === '::1' || h === '[::1]') return true;
+  return /^127(\.\d{1,3}){3}$/.test(h);
+}
+
+// listen 바인드 주소 — 기본은 loopback(127.0.0.1)이다. 명시 설정(HOST)한 경우에만 넓힌다.
+// 빈 문자열/공백은 기본값으로 수렴시킨다 — 오타나 빈 .env 항목으로 전 인터페이스에 열리면 안 된다.
+// 판정은 인자로 받은 env만 본다(주입 seam — 함수 안에서 process.env를 따로 읽지 않는다).
+export function resolveHost(env = process.env) {
+  const raw = env?.HOST;
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  return trimmed || '127.0.0.1';
+}
+
+// 부트 진단 — loopback 밖 바인딩 + COLLECTION_TOKEN 미설정 조합을 경고한다.
+// 이 조합에서는 수집 인제스트 2개 라우트가 503 collection-disabled로 비활성되므로(fail-closed),
+// 경고에 그 사실을 담아 운영자가 503의 원인을 로그에서 추적할 수 있게 한다.
+// 부팅은 막지 않는다(LAN 개방은 의도된 배포 형태다) — logOriginDiagnostics와 같은 정책.
+// 로그에 토큰 '값'은 절대 담지 않는다(LOGS.md 마스킹) — 변수명만 언급한다.
+// 반환값은 "경고를 남겼는가" — 테스트가 분기를 직접 확인하기 위한 것이고 호출부는 쓰지 않는다.
+export function logHostDiagnostics({ host, env = process.env, logService }) {
+  if (isLoopbackHost(host)) return false;
+  if (env?.COLLECTION_TOKEN) return false;
+  logService?.warn(
+    `HOST=${host} binds outside loopback without COLLECTION_TOKEN — collection ingest HTTP routes `
+    + '(POST /api/collection/receive, /api/collection/pull) are disabled with 503 collection-disabled. '
+    + 'Set COLLECTION_TOKEN to re-enable authenticated ingest (FTP spool ingest is unaffected).',
+  );
+  return true;
+}
+
 // 부트 시 멱등 백필 — 표시제목(snapshotTitle)이 비어 있는 스냅샷 행을 그 행 본문에서 파생해 채운다.
 // 파생 규칙은 services의 단일 출처를 주입한다(src/db는 services를 import하지 않는다 — ADR-006).
 // 로그는 실제로 채운 게 있을 때만 남긴다 — 0건 로그를 매 부트 남기면 Z 전용 링 버퍼에 영구 소음이 된다
@@ -120,6 +161,55 @@ export function runHistoryTitleBackfill({ db, deriveTitle = snapshotTitle, logSe
   const filled = backfillHistoryTitles(db, { deriveTitle });
   if (filled > 0) logService?.info(`history title backfill filled ${filled} rows`);
   return filled;
+}
+
+// --- SPA 동일 출처 서빙 (phase 60) — vite 빌드 산출물(web/dist)을 Express가 같은 출처에서 서빙한다 ---
+
+// SPA 폴백에서 제외하는 예약 접두사 — 정확히 일치하거나 그 하위 경로만 제외한다.
+// ('/apidocs' 같은 경로는 제외 대상이 아니다 — 접두사 문자열 비교만 하면 오제외된다.)
+// 비교는 소문자화한 경로로 한다 — Express 라우팅이 기본 case-insensitive라 '/API/...'도 API
+// 네임스페이스다. 대소문자를 구분하면 매칭 라우트가 없는 '/API/unknown'이 HTML을 받는다.
+const SPA_EXCLUDED_PREFIXES = ['/api', '/uploads'];
+
+// 이 요청에 index.html을 돌려줘야 하는가(= 브라우저 내비게이션인가).
+// 순수 함수 — req 객체가 아니라 값 3개만 받는다(테스트가 HTTP 없이 규칙을 잠글 수 있게).
+// Accept 조건의 근거: 브라우저 내비게이션만 text/html을 보낸다 — 해시 어긋난 /assets/*.js가
+// 200 HTML로 응답되는 함정과, undici fetch(기본 Accept: */*)를 쓰는 기존 테스트의 404 계약
+// 변화를 동시에 막는다. 확장자 유무 판정은 기각 — .do 경로에 점이 있어 반대로 동작한다.
+export function isSpaFallbackRequest({ method, path, accept } = {}) {
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  if (typeof path !== 'string') return false;
+  const lower = path.toLowerCase();
+  for (const prefix of SPA_EXCLUDED_PREFIXES) {
+    if (lower === prefix || lower.startsWith(`${prefix}/`)) return false;
+  }
+  if (typeof accept !== 'string' || !accept.includes('text/html')) return false;
+  return true;
+}
+
+// spaDir → 서빙 루트 절대 경로. 비활성(미주입/빈 값/index.html 부재)이면 undefined. throw 하지 않는다.
+// CRITICAL: 판정 기준은 디렉토리가 아니라 <dir>/index.html 파일이다 — 파일이 없는데 폴백을 켜면
+//   미정의 GET마다 sendFile ENOENT가 전역 에러 핸들러로 흘러 404가 500으로 뒤집힌다.
+// 존재 확인은 createApp 호출 시 1회다(요청마다 stat 금지 — 부트 후 빌드한 dist는 재기동해야 반영되지만
+// 개발 흐름은 Vite :5173이라 실사용 영향이 없다).
+export function resolveSpaRoot(spaDir) {
+  if (typeof spaDir !== 'string' || !spaDir.trim()) return undefined;
+  const root = nodePath.resolve(spaDir.trim());
+  if (!fs.existsSync(nodePath.join(root, 'index.html'))) return undefined;
+  return root;
+}
+
+// SPA 정적 루트 — SPA_DIR 미설정 시 이 모듈 기준 ../web/dist(= vite build 산출물).
+// 명시적으로 빈 값(SPA_DIR=)이면 비활성이다(dev에서 Vite :5173만 쓸 때의 off 스위치).
+// cwd가 아니라 모듈 위치 기준으로 푼다 — 어느 디렉토리에서 실행해도 같은 곳을 본다.
+// baseDir 주입은 테스트용 seam이다(부트스트랩은 기본값을 쓴다).
+export function resolveSpaDir(env = process.env, baseDir = nodePath.dirname(fileURLToPath(import.meta.url))) {
+  const raw = env?.SPA_DIR;
+  if (raw !== undefined) {
+    const trimmed = String(raw).trim();
+    return trimmed ? nodePath.resolve(trimmed) : undefined;
+  }
+  return nodePath.join(baseDir, '..', 'web', 'dist');
 }
 
 // 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
@@ -316,6 +406,12 @@ function createSseCloser(res) {
 //   env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
 // sessionService 파라미터는 두지 않는다 — 신원 도출 경로가 둘이면 한쪽만 재검증되는 구멍이 생긴다.
 //   세션 스토어는 createControllers가 가드로 감싸 보유하고, transport는 controllers.auth로만 신원을 얻는다.
+// spaDir: SPA 정적 서빙 루트(opt-in). 기본값을 두지 않는다(= undefined = 비활성) — 기본값을
+//   web/dist로 두면 로컬 빌드 산출물 유무에 따라 기존 테스트의 미정의 경로 404 동작이 달라진다
+//   (비결정적 회귀). web/dist 기본값은 bootstrap()의 resolveSpaDir()에만 둔다.
+// requireCollectionToken: 수집 인제스트 fail-closed 정책 불리언. 부트가 비-loopback 바인딩을 판정해
+//   !isLoopbackHost(host)를 넘긴다 — host 문자열이 아니라 정책만 받는다(앱은 자신이 어디에 바인딩되는지
+//   몰라도 된다 — forceHttps·cookieSecure와 같은 형태). 기본 false라 미주입 기존 테스트·loopback 운영은 무회귀.
 export function createApp({
   controllers,
   env = process.env.NODE_ENV,
@@ -324,6 +420,8 @@ export function createApp({
   uploadDir = 'uploads',
   logService = createLogService(),
   origins = allowedOrigins(),
+  spaDir,
+  requireCollectionToken = false,
 }) {
   const app = express();
 
@@ -920,9 +1018,18 @@ export function createApp({
 
   // --- 수집 인제스트 (사용자 세션 라우트 아님) ---
   // body { sourceId, payload } → collection.receive. 미등록 sourceId는 거부(collectionService 판정).
-  // 외부 노출은 부트스트랩의 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 좁힌다.
+  // 외부 노출은 기본 loopback 바인딩(HOST 미설정 시 127.0.0.1) + 선택적 토큰(COLLECTION_TOKEN)으로 좁힌다.
+  // HOST로 loopback 밖에 바인딩하면 토큰이 유일한 방어다 — 토큰 미설정이면 부트가 requireCollectionToken을
+  // 켜서 이 라우트를 503으로 비활성하고(fail-closed, 아래 가드) logHostDiagnostics 부트 경고가 그 사실을 알린다.
   app.post('/api/collection/receive', (req, res, next) => {
     try {
+      // fail-closed — loopback 밖 바인딩인데 토큰이 없으면 이 라우트는 제공하지 않는다(503).
+      // 세션 게이트가 없는 라우트라 이 조합에서는 방어가 0이 된다. 클라이언트 잘못이 아니라
+      // 서버 구성상 기능 미가용이므로 401/403이 아니라 503이다('spool-disabled' 503과 동형).
+      // 토큰은 기존 검사와 동일하게 요청 시점의 process.env를 읽는다(부트 스냅샷 금지 — 동작 분기 방지).
+      if (requireCollectionToken && !process.env.COLLECTION_TOKEN) {
+        return res.status(503).json({ ok: false, reason: 'collection-disabled' });
+      }
       const required = process.env.COLLECTION_TOKEN;
       if (required && req.get('x-collection-token') !== required) {
         return res.status(401).json(UNAUTH);
@@ -941,9 +1048,14 @@ export function createApp({
   });
 
   // body { sourceId } → collection.pull. 등록된 활성 API 소스를 서버가 능동 호출해 응답을 등록한다(rcv.md).
-  // /receive와 동일하게 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 외부 노출을 좁힌다.
+  // /receive와 동일한 노출 정책이다 — 기본 loopback 바인딩 + 선택적 토큰, 비-loopback + 무토큰이면
+  // fail-closed 503(아래 가드). 가드가 최상단이라 외부 호출(fetchFn)까지 가지 않는다.
   app.post('/api/collection/pull', async (req, res, next) => {
     try {
+      // fail-closed — receive와 동일 가드(요청 시점 process.env 판독, 'spool-disabled' 503과 동형).
+      if (requireCollectionToken && !process.env.COLLECTION_TOKEN) {
+        return res.status(503).json({ ok: false, reason: 'collection-disabled' });
+      }
       const required = process.env.COLLECTION_TOKEN;
       if (required && req.get('x-collection-token') !== required) {
         return res.status(401).json(UNAUTH);
@@ -1056,6 +1168,28 @@ export function createApp({
     req.on('close', () => off()); // 구독 해제 필수 — 누수 시 닫힌 응답에 write가 누적된다.
   });
 
+  // --- SPA 동일 출처 서빙 (opt-in, phase 60) ---
+  // 등록 위치: 모든 /api 라우트 뒤 · 전역 에러 핸들러 앞. 라우트가 항상 먼저 매칭되므로 정적/폴백이
+  // API를 가릴 수 없다(구조적 보장). 요청 로거·csrfOriginGuard보다 뒤라 액세스 로그와 CSRF 계약도
+  // 그대로다(정적/폴백은 GET/HEAD 전용). 캐시·압축 옵션은 두지 않는다(기본 max-age=0 재검증으로 충분).
+  const spaRoot = resolveSpaRoot(spaDir);
+  if (spaRoot) {
+    // dotfiles 명시 ignore: 기본(legacy)값은 마지막 세그먼트만 검사해 dot 디렉토리 '하위' 파일이
+    // 그대로 노출된다(/.hidden/secret.txt → 200). SPA_DIR은 운영자 설정값이라 dist 밖 루트가 올 수 있다.
+    app.use(express.static(spaRoot, { dotfiles: 'ignore' })); // /assets/* 등 실제 파일. 미스·탈출 시도는 next()로 흘린다.
+    const spaIndexFile = nodePath.join(spaRoot, 'index.html');
+    app.use((req, res, next) => {
+      if (!isSpaFallbackRequest({ method: req.method, path: req.path, accept: req.get('accept') })) {
+        return next();
+      }
+      // sendFile은 절대 경로를 요구한다. 콜백 에러는 삼키지 않는다 — 부트 이후 dist가 지워진
+      // 비정상 상황이 조용한 무응답으로 남지 않게 전역 에러 핸들러로 넘긴다.
+      // 단 헤더가 이미 나간 뒤의 에러(클라이언트 조기 중단 ECONNABORTED 등)는 응답을 다시 쓸 수
+      // 없으므로 넘기지 않는다 — 에러 핸들러의 status(500) 재시도가 ERR_HTTP_HEADERS_SENT 소음이 된다.
+      return res.sendFile(spaIndexFile, (err) => { if (err && !res.headersSent) next(err); });
+    });
+  }
+
   // 전역 에러 핸들러 — 내부 스택을 노출하지 않는다 (4-arg, 마지막 등록).
   // err는 in-memory 로그에만 남긴다 — HTTP 응답 바디는 internal-error 고정(ADR 보안 경계 불변).
   // eslint-disable-next-line no-unused-vars
@@ -1086,13 +1220,28 @@ function bootstrap() {
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
   // 허용 출처는 여기서 한 번 계산해 앱과 진단이 같은 값을 보게 한다(경고가 실제 적용분과 어긋나지 않도록).
   const origins = allowedOrigins();
+  // SPA 정적 루트 — SPA_DIR 미설정 시 모듈 기준 ../web/dist. 빈 값(SPA_DIR=)이면 비활성(off 스위치).
+  const spaDir = resolveSpaDir();
+  // listen 바인드 주소 — createApp보다 먼저 계산한다(비-loopback 판정으로 정책 불리언을 만들기 위함).
+  // 기본 127.0.0.1(불변) — HOST 명시 설정 시에만 LAN에 열린다.
+  const host = resolveHost();
   // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
-  const app = createApp({ controllers, logService, forceHttps, origins });
+  const app = createApp({
+    controllers, logService, forceHttps, origins, spaDir,
+    // 환경 판정(비-loopback 바인딩)은 부트가 하고 앱은 정책 불리언만 받는다(forceHttps·cookieSecure 전례).
+    requireCollectionToken: !isLoopbackHost(host),
+  });
   logOriginDiagnostics({ origins, logService });
+  logHostDiagnostics({ host, logService }); // 비-loopback + 무토큰이면 경고 1줄(수집 503의 원인 추적용).
+  // 활성일 때만 INFO 1줄 — 대부분의 dev 부트는 비활성이라 매번 남기면 링 버퍼 소음이 된다
+  // (logOriginDiagnostics·runHistoryTitleBackfill과 같은 규율). 경로는 비밀이 아니다.
+  const spaRoot = resolveSpaRoot(spaDir);
+  if (spaRoot) logService.info(`serving SPA from ${spaRoot}`);
 
   const port = Number(process.env.PORT) || 3001;
-  app.listen(port, '127.0.0.1', () => {
-    logService.info(`API server on http://127.0.0.1:${port}`);
+  app.listen(port, host, () => {
+    // 실제 바인드 host를 찍는다 — 하드코딩 문자열이면 운영자가 로그만 보고 노출 범위를 오판한다.
+    logService.info(`API server on http://${host}:${port}`);
   });
 
   // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).

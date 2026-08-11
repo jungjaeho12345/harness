@@ -3,6 +3,7 @@
 ## 개요
 기사 작성기는 **두 프로세스로 분리**된다.
 Vite로 빌드하는 React SPA(클라이언트, `:5173`)와 독립 Express REST/SSE 서버(`127.0.0.1:3001`). 
+이 두 프로세스 구성은 개발 시의 사실이고, 배포 시에는 Express가 `vite build` 산출물(`web/dist`)을 같은 출처에서 직접 서빙해 **한 출처로 수렴**한다(설계 자체는 그대로 유지된다 — 아래 "SPA 동일 출처 서빙" 참조).
 양쪽 모두 MVC 계층으로 구성하고, 데이터는 Node 내장 SQLite 단일 파일(`news.db`)에 저장한다. 기술 선택의 배경은 `ADR.md` 참조한다.
 
 ## 디렉토리 구조
@@ -64,6 +65,13 @@ test/                   # 백엔드 테스트 (node --test)
          실패하는 경우는 억제 없이 항상 새 행이 생겨 failedAt이 갱신된다
 ```
 
+### SPA 동일 출처 서빙 (배포 배치)
+- 활성 조건: `SPA_DIR`(기본 서버 모듈 기준 `web/dist`)에 `index.html`이 존재할 때만 — 부재 시 비활성(현행 dev 동작 그대로, `npm run dev`는 계속 Vite `:5173`).
+- 정적 마운트는 `/uploads`와 SPA 루트 **둘**이다(정적 자산 서빙에는 Accept 조건이 없다). SPA 폴백은 **매칭 파일이 없는** `GET`/`HEAD` 요청 중 경로가 `/api`·`/uploads`가 아니고(대소문자 무관) `Accept`에 `text/html`이 있는 것만 `index.html`을 받는다 — 그 외는 기존 404 그대로.
+- 등록 위치는 모든 `/api` 라우트 뒤·전역 에러 핸들러 앞이라 정적/폴백이 API를 가리지 않음이 구조적으로 보장된다.
+- "정의되지 않은 경로 → 로그인 페이지"(news.md)는 **SPA의 책임**이며 서버는 문서를 주기만 한다.
+- 트레이드오프: 정적 자산 요청도 액세스 로그에 남는다(Z 전용 링 버퍼 소음 — SPA 1회 로드당 3줄 내외로 수용).
+
 ## 상태 관리
 - **서버 상태**: `news.db`(SQLite)가 단일 진실 공급원. 클라이언트는 캐시하지 않고 필요 시 재조회한다.
 - **세션/인증**: 서버 in-process 세션 스토어(1시간 슬라이딩 만료). 클라이언트는 `sessionId`+`user`를 `sessionStorage`에 저장하고, 새로고침(F5) 시 `/api/session`으로 서버 확인 후 복원한다(복원 전까지 로그인 페이지로 보내지 않음).
@@ -76,5 +84,9 @@ test/                   # 백엔드 테스트 (node --test)
 - CSRF: 상태 변경 메서드(비 GET/HEAD/OPTIONS)의 Origin/Referer 검증 미들웨어 — 자기 출처·allowlist(`ALLOWED_ORIGINS`)·비프로덕션 loopback만 통과, 그 외 403(`forbidden-origin`). Origin·Referer 부재(서버-서버·cron)는 통과 (ADR-009). CORS와 같은 목록을 공유하므로 프로덕션에서 loopback은 허용되지 않는다.
 - 응답 투영: Contents 행의 `lockerSessionId`·`lockerClientId`는 어떤 응답에도 싣지 않는다. 제거 지점은 `src/services/contentsProjection.js`의 `toPublicContents` **단일 지점**이며, 새 읽기 경로는 모델 행을 그대로 내보내지 말고 이 함수를 통과시킨다.
 - SSE 재검증: `/api/stream`·`/api/logs/stream`은 접속 시점 인증뿐 아니라 **push 직전에 비연장 재검증**(`controllers.auth.peek` — touch 금지)을 하고, 실패하면 그 신호를 쓰지 않고 종료 이벤트 1회 후 연결을 닫는다(로그 스트림은 `role==='Z'`까지 재확인). 주기 재검증 타이머는 두지 않는다(ADR-008).
-- 운영 환경변수 주의: `NODE_ENV=production`은 세션 쿠키를 `Secure`+`SameSite=None`으로 만든다 — `FORCE_HTTPS=false`로 평문 HTTP 운영하면 브라우저가 그 쿠키를 저장·전송하지 않아 로그인이 조용히 실패한다(HTTPS 종단은 외부 프록시 책임. 두 스위치는 서로 다른 축이다).
+- 바인딩: listen 주소는 기본 `127.0.0.1`이고 `HOST` env로만 넓힌다(빈 값·공백은 기본값으로 수렴). loopback 판정은 `localhost`·`::1`·`[::1]`·`127.0.0.0/8`(`server/index.js`의 `isLoopbackHost` 단일 함수 — CSRF 가드의 origin 판정과는 별개다).
+- 수집 fail-closed: loopback 밖 바인딩 + `COLLECTION_TOKEN` 미설정이면 `POST /api/collection/receive`·`/pull`이 **503 `collection-disabled`**로 비활성된다(부팅·다른 기능·FTP 스풀 인제스트는 정상, 부트 경고 `logHostDiagnostics` 동반). 이 두 라우트는 세션 게이트가 없어 방어가 "loopback 바인딩 + 선택적 토큰" 둘뿐이라, 바인딩을 여는 순간 방어가 0이 되기 때문이다.
+- 동일 출처 서빙(Express가 SPA를 직접 서빙)에서는 `csrfOriginGuard`의 **자기 출처 판정**만으로 쓰기가 통과하므로 `ALLOWED_ORIGINS`는 빈 목록이 정상 구성이다(별도 출처 SPA·호스트 재작성 프록시에서는 여전히 명시 설정이 필요하다).
+- 운영 환경변수 주의: `NODE_ENV=production`은 세션 쿠키를 `Secure`+`SameSite=None`으로 만든다 — `FORCE_HTTPS=false`로 평문 HTTP 운영하면 브라우저가 그 쿠키를 저장·전송하지 않아 로그인이 조용히 실패한다(HTTPS 종단은 외부 프록시 책임. 두 스위치는 서로 다른 축이다). 평문 HTTP로 LAN에 여는 구성(`HOST` 설정)에서도 같은 이유로 `NODE_ENV=production`을 켜면 로그인이 조용히 실패한다 — TLS 종단 없이 켜지 마라.
+- LAN 개방의 노출 범위: `HOST`로 여는 순간 `/uploads` 정적 파일과 로그인 페이지·로그인 API도 같은 네트워크에서 도달 가능해진다. 업로드 파일명은 서버 발급 랜덤 hex라 열거는 어렵지만 URL을 아는 사람은 **인증 없이** 받을 수 있고(의도된 기존 계약), 로그인은 레이트리밋(15분/10회)에만 의존한다.
 - DB 비파괴 원칙: 스키마는 `CREATE TABLE IF NOT EXISTS` / additive `ALTER`만, 행 삭제 없음.
