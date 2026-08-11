@@ -14,9 +14,10 @@ import nodePath from 'node:path';
 import crypto from 'node:crypto';
 import { createLogService } from '../src/services/logService.js';
 
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
 import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
 import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
@@ -120,6 +121,55 @@ export function runHistoryTitleBackfill({ db, deriveTitle = snapshotTitle, logSe
   const filled = backfillHistoryTitles(db, { deriveTitle });
   if (filled > 0) logService?.info(`history title backfill filled ${filled} rows`);
   return filled;
+}
+
+// --- SPA 동일 출처 서빙 (phase 60) — vite 빌드 산출물(web/dist)을 Express가 같은 출처에서 서빙한다 ---
+
+// SPA 폴백에서 제외하는 예약 접두사 — 정확히 일치하거나 그 하위 경로만 제외한다.
+// ('/apidocs' 같은 경로는 제외 대상이 아니다 — 접두사 문자열 비교만 하면 오제외된다.)
+// 비교는 소문자화한 경로로 한다 — Express 라우팅이 기본 case-insensitive라 '/API/...'도 API
+// 네임스페이스다. 대소문자를 구분하면 매칭 라우트가 없는 '/API/unknown'이 HTML을 받는다.
+const SPA_EXCLUDED_PREFIXES = ['/api', '/uploads'];
+
+// 이 요청에 index.html을 돌려줘야 하는가(= 브라우저 내비게이션인가).
+// 순수 함수 — req 객체가 아니라 값 3개만 받는다(테스트가 HTTP 없이 규칙을 잠글 수 있게).
+// Accept 조건의 근거: 브라우저 내비게이션만 text/html을 보낸다 — 해시 어긋난 /assets/*.js가
+// 200 HTML로 응답되는 함정과, undici fetch(기본 Accept: */*)를 쓰는 기존 테스트의 404 계약
+// 변화를 동시에 막는다. 확장자 유무 판정은 기각 — .do 경로에 점이 있어 반대로 동작한다.
+export function isSpaFallbackRequest({ method, path, accept } = {}) {
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  if (typeof path !== 'string') return false;
+  const lower = path.toLowerCase();
+  for (const prefix of SPA_EXCLUDED_PREFIXES) {
+    if (lower === prefix || lower.startsWith(`${prefix}/`)) return false;
+  }
+  if (typeof accept !== 'string' || !accept.includes('text/html')) return false;
+  return true;
+}
+
+// spaDir → 서빙 루트 절대 경로. 비활성(미주입/빈 값/index.html 부재)이면 undefined. throw 하지 않는다.
+// CRITICAL: 판정 기준은 디렉토리가 아니라 <dir>/index.html 파일이다 — 파일이 없는데 폴백을 켜면
+//   미정의 GET마다 sendFile ENOENT가 전역 에러 핸들러로 흘러 404가 500으로 뒤집힌다.
+// 존재 확인은 createApp 호출 시 1회다(요청마다 stat 금지 — 부트 후 빌드한 dist는 재기동해야 반영되지만
+// 개발 흐름은 Vite :5173이라 실사용 영향이 없다).
+export function resolveSpaRoot(spaDir) {
+  if (typeof spaDir !== 'string' || !spaDir.trim()) return undefined;
+  const root = nodePath.resolve(spaDir.trim());
+  if (!fs.existsSync(nodePath.join(root, 'index.html'))) return undefined;
+  return root;
+}
+
+// SPA 정적 루트 — SPA_DIR 미설정 시 이 모듈 기준 ../web/dist(= vite build 산출물).
+// 명시적으로 빈 값(SPA_DIR=)이면 비활성이다(dev에서 Vite :5173만 쓸 때의 off 스위치).
+// cwd가 아니라 모듈 위치 기준으로 푼다 — 어느 디렉토리에서 실행해도 같은 곳을 본다.
+// baseDir 주입은 테스트용 seam이다(부트스트랩은 기본값을 쓴다).
+export function resolveSpaDir(env = process.env, baseDir = nodePath.dirname(fileURLToPath(import.meta.url))) {
+  const raw = env?.SPA_DIR;
+  if (raw !== undefined) {
+    const trimmed = String(raw).trim();
+    return trimmed ? nodePath.resolve(trimmed) : undefined;
+  }
+  return nodePath.join(baseDir, '..', 'web', 'dist');
 }
 
 // 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
@@ -316,6 +366,9 @@ function createSseCloser(res) {
 //   env(NODE_ENV 문자열)와는 별개 축이라 주입 seam을 따로 둔다.
 // sessionService 파라미터는 두지 않는다 — 신원 도출 경로가 둘이면 한쪽만 재검증되는 구멍이 생긴다.
 //   세션 스토어는 createControllers가 가드로 감싸 보유하고, transport는 controllers.auth로만 신원을 얻는다.
+// spaDir: SPA 정적 서빙 루트(opt-in). 기본값을 두지 않는다(= undefined = 비활성) — 기본값을
+//   web/dist로 두면 로컬 빌드 산출물 유무에 따라 기존 테스트의 미정의 경로 404 동작이 달라진다
+//   (비결정적 회귀). web/dist 기본값은 bootstrap()의 resolveSpaDir()에만 둔다.
 export function createApp({
   controllers,
   env = process.env.NODE_ENV,
@@ -324,6 +377,7 @@ export function createApp({
   uploadDir = 'uploads',
   logService = createLogService(),
   origins = allowedOrigins(),
+  spaDir,
 }) {
   const app = express();
 
@@ -1056,6 +1110,24 @@ export function createApp({
     req.on('close', () => off()); // 구독 해제 필수 — 누수 시 닫힌 응답에 write가 누적된다.
   });
 
+  // --- SPA 동일 출처 서빙 (opt-in, phase 60) ---
+  // 등록 위치: 모든 /api 라우트 뒤 · 전역 에러 핸들러 앞. 라우트가 항상 먼저 매칭되므로 정적/폴백이
+  // API를 가릴 수 없다(구조적 보장). 요청 로거·csrfOriginGuard보다 뒤라 액세스 로그와 CSRF 계약도
+  // 그대로다(정적/폴백은 GET/HEAD 전용). 캐시·압축 옵션은 두지 않는다(기본 max-age=0 재검증으로 충분).
+  const spaRoot = resolveSpaRoot(spaDir);
+  if (spaRoot) {
+    app.use(express.static(spaRoot)); // /assets/* 등 실제 파일. 미스·탈출 시도는 next()로 흘린다.
+    const spaIndexFile = nodePath.join(spaRoot, 'index.html');
+    app.use((req, res, next) => {
+      if (!isSpaFallbackRequest({ method: req.method, path: req.path, accept: req.get('accept') })) {
+        return next();
+      }
+      // sendFile은 절대 경로를 요구한다. 콜백 에러는 삼키지 않는다 — 부트 이후 dist가 지워진
+      // 비정상 상황이 조용한 무응답으로 남지 않게 전역 에러 핸들러로 넘긴다.
+      return res.sendFile(spaIndexFile, (err) => { if (err) next(err); });
+    });
+  }
+
   // 전역 에러 핸들러 — 내부 스택을 노출하지 않는다 (4-arg, 마지막 등록).
   // err는 in-memory 로그에만 남긴다 — HTTP 응답 바디는 internal-error 고정(ADR 보안 경계 불변).
   // eslint-disable-next-line no-unused-vars
@@ -1086,9 +1158,15 @@ function bootstrap() {
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
   // 허용 출처는 여기서 한 번 계산해 앱과 진단이 같은 값을 보게 한다(경고가 실제 적용분과 어긋나지 않도록).
   const origins = allowedOrigins();
+  // SPA 정적 루트 — SPA_DIR 미설정 시 모듈 기준 ../web/dist. 빈 값(SPA_DIR=)이면 비활성(off 스위치).
+  const spaDir = resolveSpaDir();
   // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
-  const app = createApp({ controllers, logService, forceHttps, origins });
+  const app = createApp({ controllers, logService, forceHttps, origins, spaDir });
   logOriginDiagnostics({ origins, logService });
+  // 활성일 때만 INFO 1줄 — 대부분의 dev 부트는 비활성이라 매번 남기면 링 버퍼 소음이 된다
+  // (logOriginDiagnostics·runHistoryTitleBackfill과 같은 규율). 경로는 비밀이 아니다.
+  const spaRoot = resolveSpaRoot(spaDir);
+  if (spaRoot) logService.info(`serving SPA from ${spaRoot}`);
 
   const port = Number(process.env.PORT) || 3001;
   app.listen(port, '127.0.0.1', () => {
