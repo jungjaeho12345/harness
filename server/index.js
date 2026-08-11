@@ -112,13 +112,15 @@ export function logOriginDiagnostics({ env = process.env, origins = allowedOrigi
 // 바인드 주소가 loopback인가 — 진단·수집 fail-closed·문서가 같은 규칙을 공유하도록 단일 함수로 둔다.
 // 127.0.0.0/8 전체를 포함한다: 판정이 좁으면 오탐이 '경고'가 아니라 '수집 기능 차단'이 된다
 // (예: 127.0.0.2로 띄운 로컬 인스턴스의 수집이 죽는다). 모르는 값(비문자열·빈 값)은 false = 개방 간주.
+// 127.* 판정은 점4자리 IP 형태만 인정한다 — '127.'로 시작하는 호스트명(127.example.com)까지 loopback으로
+// 보면 fail-closed 게이트가 개방 쪽으로 오판한다(실제 바인딩은 DNS 결과를 따르므로 보장이 없다).
 // CSRF 가드의 isLoopbackOrigin/LOOPBACK_HOSTNAMES와 공유하지 않는다 — 저쪽 입력은 http://host:port
 // origin URL이고 이쪽은 바인드 주소 문자열(0.0.0.0·:: 등)이라 문법이 다르다(공용화하면 게이트 판정 오염).
 export function isLoopbackHost(host) {
   if (typeof host !== 'string') return false;
   const h = host.trim().toLowerCase();
   if (h === 'localhost' || h === '::1' || h === '[::1]') return true;
-  return /^127\./.test(h);
+  return /^127(\.\d{1,3}){3}$/.test(h);
 }
 
 // listen 바인드 주소 — 기본은 loopback(127.0.0.1)이다. 명시 설정(HOST)한 경우에만 넓힌다.
@@ -1172,7 +1174,9 @@ export function createApp({
   // 그대로다(정적/폴백은 GET/HEAD 전용). 캐시·압축 옵션은 두지 않는다(기본 max-age=0 재검증으로 충분).
   const spaRoot = resolveSpaRoot(spaDir);
   if (spaRoot) {
-    app.use(express.static(spaRoot)); // /assets/* 등 실제 파일. 미스·탈출 시도는 next()로 흘린다.
+    // dotfiles 명시 ignore: 기본(legacy)값은 마지막 세그먼트만 검사해 dot 디렉토리 '하위' 파일이
+    // 그대로 노출된다(/.hidden/secret.txt → 200). SPA_DIR은 운영자 설정값이라 dist 밖 루트가 올 수 있다.
+    app.use(express.static(spaRoot, { dotfiles: 'ignore' })); // /assets/* 등 실제 파일. 미스·탈출 시도는 next()로 흘린다.
     const spaIndexFile = nodePath.join(spaRoot, 'index.html');
     app.use((req, res, next) => {
       if (!isSpaFallbackRequest({ method: req.method, path: req.path, accept: req.get('accept') })) {
@@ -1180,7 +1184,9 @@ export function createApp({
       }
       // sendFile은 절대 경로를 요구한다. 콜백 에러는 삼키지 않는다 — 부트 이후 dist가 지워진
       // 비정상 상황이 조용한 무응답으로 남지 않게 전역 에러 핸들러로 넘긴다.
-      return res.sendFile(spaIndexFile, (err) => { if (err) next(err); });
+      // 단 헤더가 이미 나간 뒤의 에러(클라이언트 조기 중단 ECONNABORTED 등)는 응답을 다시 쓸 수
+      // 없으므로 넘기지 않는다 — 에러 핸들러의 status(500) 재시도가 ERR_HTTP_HEADERS_SENT 소음이 된다.
+      return res.sendFile(spaIndexFile, (err) => { if (err && !res.headersSent) next(err); });
     });
   }
 

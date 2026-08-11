@@ -202,3 +202,56 @@ test('T4: 실기 부트 — SPA_DIR 서빙 + HOST=0.0.0.0 무토큰이면 수집
     if (child.exitCode === null) child.kill('SIGKILL');
   }
 });
+
+// --- T5. 마운트 순서 잠금 — dist에 API와 같은 이름의 실파일이 있어도 API 라우트가 이긴다 ---
+// 제외 술어가 우연히 지켜주는 것과 별개로 "라우트 → 정적 → 폴백" 등록 순서 자체를 행동으로 잠근다.
+// (④ 게이트 변이 M6에서 마운트 전진 배치가 기존 스위트로는 red가 안 됨이 확인됐다 — 이 케이스가 그 갭을 메운다.)
+test('T5: dist에 api/health 실파일이 있어도 GET /api/health는 JSON 라우트가 응답한다', async () => {
+  const dir = makeFakeDist();
+  fs.mkdirSync(path.join(dir, 'api'));
+  fs.writeFileSync(path.join(dir, 'api', 'health'), 'STATIC-SHADOW-FILE');
+  const ctx = await start({ spaDir: dir });
+  try {
+    const r = await fetch(`${ctx.base}/api/health`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type') ?? '', /application\/json/);
+    const body = await r.json();
+    assert.equal(body.ok, true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// --- T6. dot 디렉토리 하위 파일 차단 — dotfiles: 'ignore' 명시의 행동 잠금 ---
+// express.static 기본(legacy) dotfile 처리는 마지막 세그먼트만 검사해 /.hidden/secret.txt가 200으로
+// 노출된다. SPA_DIR은 운영자 설정값이라 dist 밖 루트가 올 수 있어 명시 ignore가 계약이다.
+test('T6: /.hidden/secret.txt·/.env는 404이고 본문에 파일 내용이 없다', async () => {
+  const dir = makeFakeDist();
+  fs.mkdirSync(path.join(dir, '.hidden'));
+  fs.writeFileSync(path.join(dir, '.hidden', 'secret.txt'), 'DOT-DIR-SECRET');
+  fs.writeFileSync(path.join(dir, '.env'), 'DOTFILE-SECRET');
+  const ctx = await start({ spaDir: dir });
+  try {
+    for (const p of ['/.hidden/secret.txt', '/.env']) {
+      const r = await fetch(`${ctx.base}${p}`);
+      assert.equal(r.status, 404, p);
+      const text = await r.text();
+      assert.ok(!text.includes('DOT-DIR-SECRET') && !text.includes('DOTFILE-SECRET'), p);
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+// --- T7. isLoopbackHost 호스트명 오판 차단 — 127.로 시작하는 호스트명은 loopback이 아니다 ---
+// fail-closed 게이트의 술어라 오차는 차단(안전) 방향이어야 한다. 127.example.com을 loopback으로
+// 인정하면 DNS 결과에 따라 외부 바인딩인데 수집 가드가 꺼진다.
+test('T7: isLoopbackHost — 점4자리 127.x.y.z만 참, 127.example.com·::ffff 변형은 거짓', async () => {
+  const { isLoopbackHost } = await import('../server/index.js');
+  assert.equal(isLoopbackHost('127.0.0.1'), true);
+  assert.equal(isLoopbackHost('127.0.0.2'), true);
+  assert.equal(isLoopbackHost('127.255.255.254'), true);
+  assert.equal(isLoopbackHost('127.example.com'), false);
+  assert.equal(isLoopbackHost('127.0.0'), false);
+  assert.equal(isLoopbackHost('::ffff:127.0.0.1'), false); // 과도 차단 방향 — 안전측 수용(문서화된 계약)
+});
