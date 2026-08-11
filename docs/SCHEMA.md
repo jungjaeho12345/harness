@@ -53,11 +53,12 @@ ContentsVO에 대한 명세서
 - 본문내용(평문) 컬럼은 Article과 동일하게 현재 사용하지 않는다.
 
 ## ArticleHistory Table
-기사 편집/생애주기 전이/배부 이벤트 로그에 대한 명세서. append-only — 행 삭제·수정 없음(DB 비파괴).
+기사 편집/생애주기 전이/배부 이벤트 로그에 대한 명세서. append-only — 행 삭제 없음(DB 비파괴)이고, 행 수정은 단 하나의 예외만 있다: 표시제목(파생 컬럼)이 비어 있는 행을 부트 시 1회 멱등 백필로 채우는 것(사용자 승인 2026-08-11).
+이벤트 사실(이벤트유형·액션·상태·행위자·생성시간·마크업버전·수신처·실패사유)은 어떤 경우에도 수정하지 않는다 — 원장이 기록한 "무슨 일이 언제 있었는가"는 불변이고, 그 사실에서 파생된 표시용 값만 비어 있을 때 채운다.
 # property
 - id(INTEGER PK, ROWID alias, 자동 증가), 기사아이디(articleId), 이벤트유형(eventType), 액션(action), 이전상태(fromStatus), 이후상태(toStatus), 행위자(actorUserId), 생성시간(createdAt), 마크업버전(markupVersion), 표시제목(snapshotTitle), 수신처(targetId), 실패사유(reason) 컬럼을 가진다.
 - markupVersion은 편집(edit) 시점 본문 스냅샷이다 — 상태 전이 행은 NULL(본문 불변).
-- snapshotTitle(VARCHAR)은 스냅샷 기록 시점에 본문 첫 줄에서 파생해 저장하는 표시용 제목이다 — 이력 조회가 본문(blob)을 읽지 않게 하는 것이 목적이다. 이전 버전에서 기록된 행은 NULL이고, 조회가 그 행에 한해 본문을 함께 읽어 파생하는 폴백을 유지한다(백필·행 재작성 없음 — 이력은 append-only 원장이다). 파생 규칙이 바뀌어도 이미 저장된 행은 옛 규칙의 값을 유지한다(재파생·백필 없음).
+- snapshotTitle(VARCHAR)은 스냅샷 기록 시점에 본문 첫 줄에서 파생해 저장하는 표시용 제목이다 — 이력 조회가 본문(blob)을 읽지 않게 하는 것이 목적이다. 표시제목이 비어 있는(NULL) 스냅샷 행(컬럼 도입 이전에 기록된 행 + 드물게 기록 시점에 제목을 저장하지 못한 행)은 부트 시 1회 멱등 백필이 빈 컬럼만 채운다(파생 결과가 빈 문자열이어도 빈 문자열로 저장, 재실행 시 채운 행 수 0·값 불변). 행 삭제·기존 값 덮어쓰기·표시제목 외 컬럼 수정은 없다. 조회가 표시제목이 비어 있는 행에 한해 본문을 함께 읽어 파생하는 행 단위 폴백은 백필 이후에도 유지한다(백필을 돌리지 않은 DB·구버전 인스턴스가 기록한 행이 남을 수 있다). 파생 규칙이 바뀌어도 이미 저장된 행은 옛 규칙의 값을 유지한다(백필은 빈 값만 채운다 — 저장된 값의 재파생·덮어쓰기 없음).
 - targetId(INTEGER)는 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id)이고, 그 외 이벤트는 NULL이다.
 - reason(VARCHAR)은 배부 실패 사유 고정 토큰이다 — 경로·본문·예외 원문을 담지 않는다.
 - eventType 어휘: create / edit / status(전이 — action에 send·hold·kill·approveDelete·embargo) / distribute(kind 단위 배부 — action=press|nonpress) / distribute-failed(수신처 단위 실패) / distribute-retry(수신처 단위 재전송 성공). 배부 멱등·사이클 경계 판정은 eventType='distribute' 행만 본다(ADR-008).
