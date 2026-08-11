@@ -17,7 +17,8 @@ import { createLogService } from '../src/services/logService.js';
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { createSchema, backfillEmptyDepartments } from '../src/db/schema.js';
+import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
+import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
 import { createFtpWatcher } from './ftpWatcher.js';
@@ -105,6 +106,20 @@ export function logOriginDiagnostics({ env = process.env, origins = allowedOrigi
     + 'set ALLOWED_ORIGINS only when the SPA is served from a different origin (ADR-009).',
   );
   return true;
+}
+
+// 부트 시 멱등 백필 — 표시제목(snapshotTitle)이 비어 있는 스냅샷 행을 그 행 본문에서 파생해 채운다.
+// 파생 규칙은 services의 단일 출처를 주입한다(src/db는 services를 import하지 않는다 — ADR-006).
+// 로그는 실제로 채운 게 있을 때만 남긴다 — 0건 로그를 매 부트 남기면 Z 전용 링 버퍼에 영구 소음이 된다
+// (레거시 소진 후에도 비문자열 본문 edge로 대상이 드물게 재발할 수 있어 "항상 0건"은 보장이 아니다).
+// 메시지에는 건수만 담는다(제목·본문 문자열 금지 — LOGS.md 마스킹).
+// 실패는 전파한다(부팅 중단) — createSchema·backfillEmptyDepartments와 같은 정책. 배치당 커밋이라
+// 중간 실패에도 진행분은 보존되고, 멱등이라 재기동이 이어서 완결한다.
+// 반환값은 채운 행 수 — 테스트가 결선을 직접 확인하기 위한 것이다(호출부는 로그로만 쓴다).
+export function runHistoryTitleBackfill({ db, deriveTitle = snapshotTitle, logService }) {
+  const filled = backfillHistoryTitles(db, { deriveTitle });
+  if (filled > 0) logService?.info(`history title backfill filled ${filled} rows`);
+  return filled;
 }
 
 // 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
@@ -1058,10 +1073,12 @@ function bootstrap() {
   const db = new DatabaseSync('news.db');
   createSchema(db); // 비파괴 멱등 마이그레이션만 — DROP/DELETE 없음.
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
+  // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
+  // (이동) 백필 결과 로그를 남기기 위해 백필보다 먼저 만든다.
+  const logService = createLogService();
+  runHistoryTitleBackfill({ db, logService }); // 빈 표시제목 백필(비파괴, 멱등) — listen 전 동기 1회.
 
   const sessionService = createSessionService();
-  // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
-  const logService = createLogService();
   const controllers = createControllers(db, { sessionService, logService });
   // HTTPS 강제는 운영 기준(NODE_ENV==='production')에서 켜되, FORCE_HTTPS로 명시 오버라이드 허용.
   // 앱은 TLS 종단을 하지 않는다(HSTS+리다이렉트만) — 인증서/HTTPS 서버는 외부 프록시 책임(범위 밖).
