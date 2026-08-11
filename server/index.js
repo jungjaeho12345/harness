@@ -109,6 +109,44 @@ export function logOriginDiagnostics({ env = process.env, origins = allowedOrigi
   return true;
 }
 
+// 바인드 주소가 loopback인가 — 진단·수집 fail-closed·문서가 같은 규칙을 공유하도록 단일 함수로 둔다.
+// 127.0.0.0/8 전체를 포함한다: 판정이 좁으면 오탐이 '경고'가 아니라 '수집 기능 차단'이 된다
+// (예: 127.0.0.2로 띄운 로컬 인스턴스의 수집이 죽는다). 모르는 값(비문자열·빈 값)은 false = 개방 간주.
+// CSRF 가드의 isLoopbackOrigin/LOOPBACK_HOSTNAMES와 공유하지 않는다 — 저쪽 입력은 http://host:port
+// origin URL이고 이쪽은 바인드 주소 문자열(0.0.0.0·:: 등)이라 문법이 다르다(공용화하면 게이트 판정 오염).
+export function isLoopbackHost(host) {
+  if (typeof host !== 'string') return false;
+  const h = host.trim().toLowerCase();
+  if (h === 'localhost' || h === '::1' || h === '[::1]') return true;
+  return /^127\./.test(h);
+}
+
+// listen 바인드 주소 — 기본은 loopback(127.0.0.1)이다. 명시 설정(HOST)한 경우에만 넓힌다.
+// 빈 문자열/공백은 기본값으로 수렴시킨다 — 오타나 빈 .env 항목으로 전 인터페이스에 열리면 안 된다.
+// 판정은 인자로 받은 env만 본다(주입 seam — 함수 안에서 process.env를 따로 읽지 않는다).
+export function resolveHost(env = process.env) {
+  const raw = env?.HOST;
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  return trimmed || '127.0.0.1';
+}
+
+// 부트 진단 — loopback 밖 바인딩 + COLLECTION_TOKEN 미설정 조합을 경고한다.
+// 이 조합에서는 수집 인제스트 2개 라우트가 503 collection-disabled로 비활성되므로(fail-closed),
+// 경고에 그 사실을 담아 운영자가 503의 원인을 로그에서 추적할 수 있게 한다.
+// 부팅은 막지 않는다(LAN 개방은 의도된 배포 형태다) — logOriginDiagnostics와 같은 정책.
+// 로그에 토큰 '값'은 절대 담지 않는다(LOGS.md 마스킹) — 변수명만 언급한다.
+// 반환값은 "경고를 남겼는가" — 테스트가 분기를 직접 확인하기 위한 것이고 호출부는 쓰지 않는다.
+export function logHostDiagnostics({ host, env = process.env, logService }) {
+  if (isLoopbackHost(host)) return false;
+  if (env?.COLLECTION_TOKEN) return false;
+  logService?.warn(
+    `HOST=${host} binds outside loopback without COLLECTION_TOKEN — collection ingest HTTP routes `
+    + '(POST /api/collection/receive, /api/collection/pull) are disabled with 503 collection-disabled. '
+    + 'Set COLLECTION_TOKEN to re-enable authenticated ingest (FTP spool ingest is unaffected).',
+  );
+  return true;
+}
+
 // 부트 시 멱등 백필 — 표시제목(snapshotTitle)이 비어 있는 스냅샷 행을 그 행 본문에서 파생해 채운다.
 // 파생 규칙은 services의 단일 출처를 주입한다(src/db는 services를 import하지 않는다 — ADR-006).
 // 로그는 실제로 채운 게 있을 때만 남긴다 — 0건 로그를 매 부트 남기면 Z 전용 링 버퍼에 영구 소음이 된다
@@ -369,6 +407,9 @@ function createSseCloser(res) {
 // spaDir: SPA 정적 서빙 루트(opt-in). 기본값을 두지 않는다(= undefined = 비활성) — 기본값을
 //   web/dist로 두면 로컬 빌드 산출물 유무에 따라 기존 테스트의 미정의 경로 404 동작이 달라진다
 //   (비결정적 회귀). web/dist 기본값은 bootstrap()의 resolveSpaDir()에만 둔다.
+// requireCollectionToken: 수집 인제스트 fail-closed 정책 불리언. 부트가 비-loopback 바인딩을 판정해
+//   !isLoopbackHost(host)를 넘긴다 — host 문자열이 아니라 정책만 받는다(앱은 자신이 어디에 바인딩되는지
+//   몰라도 된다 — forceHttps·cookieSecure와 같은 형태). 기본 false라 미주입 기존 테스트·loopback 운영은 무회귀.
 export function createApp({
   controllers,
   env = process.env.NODE_ENV,
@@ -378,6 +419,7 @@ export function createApp({
   logService = createLogService(),
   origins = allowedOrigins(),
   spaDir,
+  requireCollectionToken = false,
 }) {
   const app = express();
 
@@ -974,9 +1016,18 @@ export function createApp({
 
   // --- 수집 인제스트 (사용자 세션 라우트 아님) ---
   // body { sourceId, payload } → collection.receive. 미등록 sourceId는 거부(collectionService 판정).
-  // 외부 노출은 부트스트랩의 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 좁힌다.
+  // 외부 노출은 기본 loopback 바인딩(HOST 미설정 시 127.0.0.1) + 선택적 토큰(COLLECTION_TOKEN)으로 좁힌다.
+  // HOST로 loopback 밖에 바인딩하면 토큰이 유일한 방어다 — 토큰 미설정이면 부트가 requireCollectionToken을
+  // 켜서 이 라우트를 503으로 비활성하고(fail-closed, 아래 가드) logHostDiagnostics 부트 경고가 그 사실을 알린다.
   app.post('/api/collection/receive', (req, res, next) => {
     try {
+      // fail-closed — loopback 밖 바인딩인데 토큰이 없으면 이 라우트는 제공하지 않는다(503).
+      // 세션 게이트가 없는 라우트라 이 조합에서는 방어가 0이 된다. 클라이언트 잘못이 아니라
+      // 서버 구성상 기능 미가용이므로 401/403이 아니라 503이다('spool-disabled' 503과 동형).
+      // 토큰은 기존 검사와 동일하게 요청 시점의 process.env를 읽는다(부트 스냅샷 금지 — 동작 분기 방지).
+      if (requireCollectionToken && !process.env.COLLECTION_TOKEN) {
+        return res.status(503).json({ ok: false, reason: 'collection-disabled' });
+      }
       const required = process.env.COLLECTION_TOKEN;
       if (required && req.get('x-collection-token') !== required) {
         return res.status(401).json(UNAUTH);
@@ -995,9 +1046,14 @@ export function createApp({
   });
 
   // body { sourceId } → collection.pull. 등록된 활성 API 소스를 서버가 능동 호출해 응답을 등록한다(rcv.md).
-  // /receive와 동일하게 127.0.0.1 바인딩 + 선택적 토큰(COLLECTION_TOKEN)으로 외부 노출을 좁힌다.
+  // /receive와 동일한 노출 정책이다 — 기본 loopback 바인딩 + 선택적 토큰, 비-loopback + 무토큰이면
+  // fail-closed 503(아래 가드). 가드가 최상단이라 외부 호출(fetchFn)까지 가지 않는다.
   app.post('/api/collection/pull', async (req, res, next) => {
     try {
+      // fail-closed — receive와 동일 가드(요청 시점 process.env 판독, 'spool-disabled' 503과 동형).
+      if (requireCollectionToken && !process.env.COLLECTION_TOKEN) {
+        return res.status(503).json({ ok: false, reason: 'collection-disabled' });
+      }
       const required = process.env.COLLECTION_TOKEN;
       if (required && req.get('x-collection-token') !== required) {
         return res.status(401).json(UNAUTH);
@@ -1160,17 +1216,26 @@ function bootstrap() {
   const origins = allowedOrigins();
   // SPA 정적 루트 — SPA_DIR 미설정 시 모듈 기준 ../web/dist. 빈 값(SPA_DIR=)이면 비활성(off 스위치).
   const spaDir = resolveSpaDir();
+  // listen 바인드 주소 — createApp보다 먼저 계산한다(비-loopback 판정으로 정책 불리언을 만들기 위함).
+  // 기본 127.0.0.1(불변) — HOST 명시 설정 시에만 LAN에 열린다.
+  const host = resolveHost();
   // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
-  const app = createApp({ controllers, logService, forceHttps, origins, spaDir });
+  const app = createApp({
+    controllers, logService, forceHttps, origins, spaDir,
+    // 환경 판정(비-loopback 바인딩)은 부트가 하고 앱은 정책 불리언만 받는다(forceHttps·cookieSecure 전례).
+    requireCollectionToken: !isLoopbackHost(host),
+  });
   logOriginDiagnostics({ origins, logService });
+  logHostDiagnostics({ host, logService }); // 비-loopback + 무토큰이면 경고 1줄(수집 503의 원인 추적용).
   // 활성일 때만 INFO 1줄 — 대부분의 dev 부트는 비활성이라 매번 남기면 링 버퍼 소음이 된다
   // (logOriginDiagnostics·runHistoryTitleBackfill과 같은 규율). 경로는 비밀이 아니다.
   const spaRoot = resolveSpaRoot(spaDir);
   if (spaRoot) logService.info(`serving SPA from ${spaRoot}`);
 
   const port = Number(process.env.PORT) || 3001;
-  app.listen(port, '127.0.0.1', () => {
-    logService.info(`API server on http://127.0.0.1:${port}`);
+  app.listen(port, host, () => {
+    // 실제 바인드 host를 찍는다 — 하드코딩 문자열이면 운영자가 로그만 보고 노출 범위를 오판한다.
+    logService.info(`API server on http://${host}:${port}`);
   });
 
   // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).
