@@ -67,8 +67,10 @@ const SCHEMA = {
     ['createdAt', 'VARCHAR'],
     ['markupVersion', 'VARCHAR'], // 편집(edit) 시점 본문 스냅샷 — status 전이는 NULL(본문 불변)
     // 이력 목록 표시용 제목 — 스냅샷 기록 시점에 historyMeta.snapshotTitle(markupVersion)로 파생해 저장한다.
-    // 조회가 blob(markupVersion)을 읽지 않게 하는 것이 목적이다. 이전 버전에서 기록된 행은 NULL이고
-    // 조회가 그 행에 한해 본문을 함께 읽어 파생한다(백필 없음 — 파생 규칙이 바뀌어도 저장된 행은 옛 규칙 값 유지).
+    // 조회가 blob(markupVersion)을 읽지 않게 하는 것이 목적이다. 표시제목이 비어 있는(NULL) 스냅샷 행은
+    // 부트 시 멱등 백필(backfillHistoryTitles)이 빈 컬럼만 채운다(컬럼 도입 이전 행 + 비문자열 본문 edge 행).
+    // 이미 저장된 값은 재파생·덮어쓰지 않는다 — 파생 규칙이 바뀌어도 저장된 행은 옛 규칙 값 유지(phase 58 결정).
+    // 조회의 행 단위 폴백은 그대로 남는다.
     ['snapshotTitle', 'VARCHAR'],
     // INTEGER인 이유: VARCHAR(TEXT affinity)면 숫자 id가 문자열로 저장되어 DistributionTarget.id와의 매칭이 조용히 깨진다.
     ['targetId', 'INTEGER'], // 배부 실패/재전송 이벤트의 수신처(DistributionTarget.id) — 그 외 이벤트는 NULL
@@ -143,4 +145,58 @@ export function backfillEmptyDepartments(db) {
              AND u.department IS NOT NULL AND u.department != ''
         )`,
   ).run().changes;
+}
+
+// 한 번에 읽는 백필 배치 크기 — 레거시 blob(markupVersion)을 통째로 JS 힙에 올리지 않기 위한 상한.
+export const HISTORY_TITLE_BACKFILL_BATCH = 500;
+
+// ArticleHistory의 빈 표시제목(snapshotTitle)을 그 행의 본문(markupVersion)에서 파생해 채운다.
+// deriveTitle: (markupVersion) => string — 파생 규칙의 단일 출처(services/historyMeta.snapshotTitle)를
+//   주입받는다. src/db는 services를 import하지 않는다(ADR-006) — 결선은 부트(합성 루트) 책임이다.
+//   파생 규칙을 이 파일에 복제하지 마라(기록 경로와 백필 경로가 다른 제목을 내면 그 자체가 버그다).
+// 대상: snapshotTitle IS NULL AND length(markupVersion) > 0 — 조회 술어(querySnapshotTitlesByArticle)와
+//   동형이고, phase 58의 기록 게이트(typeof === 'string')보다 넓다: 비문자열 본문이 TEXT affinity로
+//   저장된 행도 대상이다(DB에서 읽으면 문자열로 돌아와 파생이 정상 동작한다 — gap 봉합).
+// 파생 결과가 ''여도 ''를 저장한다(NULL 유지 금지 — 매 부트 재스캔되는 영구 미완 백필이 된다).
+//   파생값이 문자열이 아닌 행만 건너뛴다(NULL 유지 — 그 행의 표시는 조회 폴백이 정확히 처리한다).
+// id 오름차순 커서 + 고정 배치 + 배치당 트랜잭션 — 커서는 건너뛴 행을 포함해 전진하므로
+//   무한 루프가 불가능하고, blob 전량이 한 번에 힙에 올라오지 않는다.
+// 실패 정책 = 전파(부팅 중단): 같은 부트 블록의 createSchema·backfillEmptyDepartments가 모두
+//   try/catch 없이 전파한다 — DB가 이 UPDATE를 받지 못하는 상태면 그 DB로 요청을 받는 것 자체가
+//   위험하고, 조용한 삼킴은 "개선이 안 됐는데 안 된 줄 모르는" 상태를 만든다. 배치당 커밋이므로
+//   중간 실패에도 이전 배치의 진행은 보존되고, 멱등이므로 원인 해소 후 재기동이 이어서 완결한다.
+// 채운 행 수를 반환한다(멱등 — 재호출 시 채운 행 수 0·저장된 값 불변).
+export function backfillHistoryTitles(db, { deriveTitle } = {}) {
+  if (typeof deriveTitle !== 'function') {
+    throw new TypeError('backfillHistoryTitles: deriveTitle 함수 주입이 필요합니다 (조용한 no-op 금지)');
+  }
+  const select = db.prepare(
+    `SELECT id, markupVersion FROM ArticleHistory
+      WHERE snapshotTitle IS NULL AND length(markupVersion) > 0 AND id > ?
+      ORDER BY id LIMIT ?`,
+  );
+  // UPDATE에도 IS NULL 술어를 남긴다 — SELECT 술어와 이중 방어(기존 값 무덮기).
+  const update = db.prepare(
+    'UPDATE ArticleHistory SET snapshotTitle = ? WHERE id = ? AND snapshotTitle IS NULL',
+  );
+  let filled = 0;
+  let lastId = 0;
+  for (;;) {
+    const batch = select.all(lastId, HISTORY_TITLE_BACKFILL_BATCH);
+    if (batch.length === 0) break;
+    db.exec('BEGIN');
+    try {
+      for (const row of batch) {
+        lastId = row.id; // 건너뛴 행 포함 전진 — 다음 배치가 같은 행을 다시 집지 않는다.
+        const derived = deriveTitle(row.markupVersion);
+        if (typeof derived !== 'string') continue; // 비문자열은 저장하면 표시 계약이 오염된다.
+        filled += update.run(derived, row.id).changes;
+      }
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+  return filled;
 }
