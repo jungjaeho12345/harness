@@ -6,7 +6,7 @@
 const HISTORY_COLS = [
   'articleId', 'eventType', 'action', 'fromStatus', 'toStatus', 'actorUserId', 'createdAt',
   'markupVersion',
-  'snapshotTitle', // 이력 목록 표시용 제목(기록 시점 파생 저장) — 스냅샷 없는 행은 NULL
+  'snapshotTitle', // 이력 목록 표시용 제목(기록 시점 파생 저장 + 빈 행은 부트 백필이 채움) — 스냅샷 없는 행은 NULL
   'targetId', 'reason', // 배부 실패/재전송 이벤트 전용 — 그 외 이벤트는 NULL
 ];
 
