@@ -10,6 +10,7 @@ Vite로 빌드하는 React SPA(클라이언트, `:5173`)와 독립 Express REST/
 ```
 server/
   index.js              # 얇은 HTTP/SSE transport — 라우팅 + 인가 게이트만, 비즈니스 로직 없음
+  main.js               # SEA/번들 전용 엔트리 — bootstrap({ packaged: true }) 명시 주입 (dev 미사용)
   ftpWatcher.js         # 수집(자동기사) FTP 스풀 디렉토리 watcher — 파일 이벤트 시 controllers.collection.receive 호출 (watch 주입형, 테스트는 실제 FS 미사용)
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
   db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
@@ -28,6 +29,8 @@ web/                    # 프론트엔드 (Vite root)
     styles/             # yonhap.css 디자인 시스템
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
+scripts/                # 실행 러너 (seed) + 배포 빌드 (sea-build · dist-server · verify-server-exe)
+packaging/server/       # 배포 폴더에 그대로 복사되는 템플릿 (기사작성기-server.bat · README-배포.md)
 ```
 
 ## 패턴
@@ -71,6 +74,14 @@ test/                   # 백엔드 테스트 (node --test)
 - 등록 위치는 모든 `/api` 라우트 뒤·전역 에러 핸들러 앞이라 정적/폴백이 API를 가리지 않음이 구조적으로 보장된다.
 - "정의되지 않은 경로 → 로그인 페이지"(news.md)는 **SPA의 책임**이며 서버는 문서를 주기만 한다.
 - 트레이드오프: 정적 자산 요청도 액세스 로그에 남는다(Z 전용 링 버퍼 소음 — SPA 1회 로드당 3줄 내외로 수용).
+
+### 배포 산출물 (Windows 서버 EXE)
+- `npm run dist:server` 한 번으로 `dist/기사작성기-server/`를 만든다 — 파이프라인: vite build → esbuild 단일 CJS 번들 → Node SEA blob → postject 주입 → 폴더 조립(`기사작성기-server.exe` + `web/` + `data/` 빈 골격 + `packaging/server/**` 사본). 2026-08-12 실측: SEA 성공(mode=sea), exe 89.5MB(Node v24.16.0 내장), 부팅 ~1초.
+- **경로 해석 규칙**: 패키지 배치는 `<exe 디렉토리>/data`(news.db·uploads)와 `<exe 디렉토리>/web`(SPA)을 기본으로 쓰고 **cwd에 의존하지 않는다**. 비패키지(dev)는 종전대로 cwd 기준 `news.db`·`uploads`, 서버 모듈 기준 `web/dist`. 단일 출처는 `server/index.js`의 `resolveRuntimePaths()`(오버라이드: `DATA_DIR`·`SPA_DIR`)이며, 패키지 여부는 **엔트리(`server/main.js`)가 `bootstrap({ packaged: true })`로 명시 주입**한다(런타임 탐지 아님).
+- **런타임 의존성 추가 0** — esbuild·postject는 devDependency(빌드 전용, ADR-010)다. 배포물은 exe + 정적 파일뿐이고 서버 머신에 Node 설치가 필요 없다.
+- exe에도 **앱 내 타이머·네트워크 egress는 없다**(ADR-008) — 시점 배부는 외부 cron의 tick pull, 발송은 외부 전송기 책임 그대로다.
+- 백업 단위 = `data/` 폴더(DB 비파괴 원칙 유지 — 재빌드·업그레이드는 `data/`를 지우지 않는다).
+- 평문 HTTP LAN 배치에서 `NODE_ENV=production` 금지 — 아래 "보안 경계"의 "운영 환경변수 주의"와 같은 축이다(배포 폴더의 bat·README-배포.md가 같은 경고를 싣는다).
 
 ## 상태 관리
 - **서버 상태**: `news.db`(SQLite)가 단일 진실 공급원. 클라이언트는 캐시하지 않고 필요 시 재조회한다.

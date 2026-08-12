@@ -150,6 +150,7 @@ test('T4: 실기 부트 — SPA_DIR 서빙 + HOST=0.0.0.0 무토큰이면 수집
   delete env.DIST_SPOOL_DIR;
   delete env.NODE_ENV;
   delete env.FORCE_HTTPS;
+  delete env.DATA_DIR; // phase 61 — 상속되면 news.db가 cwd 밖에 생겨 임시 cwd 격리 단언이 깨진다.
 
   const child = spawn(process.execPath, [serverPath], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';

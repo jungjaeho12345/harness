@@ -310,9 +310,9 @@ test('F23: resolveSpaRoot — index.html 존재 시 절대 경로, 부재/비문
   }
 });
 
-test('F24: resolveSpaDir — SPA_DIR 미설정이면 baseDir/../web/dist, 설정 시 그 값(절대화)', () => {
+test('F24: resolveSpaDir — SPA_DIR 미설정이면 defaultDir 그대로(기본 경로 계산은 호출부 책임), 설정 시 그 값(절대화)', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'spa-base-'));
-  assert.equal(resolveSpaDir({}, base), path.join(base, '..', 'web', 'dist'));
+  assert.equal(resolveSpaDir({}, base), base);
   assert.equal(resolveSpaDir({ SPA_DIR: '/opt/news/web-dist' }, base), path.resolve('/opt/news/web-dist'));
   // 상대 경로는 절대화한다.
   assert.equal(resolveSpaDir({ SPA_DIR: 'rel/dist' }, base), path.resolve('rel/dist'));
