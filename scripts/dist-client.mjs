@@ -1,5 +1,5 @@
 // 클라이언트 포터블 폴더 조립 파이프라인 (phase 62 step3) — 패키저 없이 직접 조립한다(decisions (5)).
-// 사용: node scripts/dist-client.mjs [--out <dir>] [--name <exe>]
+// 사용: node scripts/dist-client.mjs [--out <dir>] [--name <exe>] [--no-meta]
 // 산출: dist/기사작성기/ = Electron 런타임 전체 복사 + electron.exe→기사작성기.exe rename +
 //   resources/default_app.asar 제거 + resources/app/에 client/** 화이트리스트 배치 + packaging/client/** 사본.
 // CRITICAL(배포물 위생): resources/app에는 화이트리스트(client/package.json·*.js·preload.cjs·lib·pages)만
@@ -14,11 +14,13 @@ import fs from 'node:fs';
 import nodePath from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { toVersionQuad, buildClientVersionStrings, applyPeMeta, readPeMeta } from './lib/exeMeta.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
 const CLIENT_DIR = nodePath.join(REPO_ROOT, 'client');
 const PACKAGING_DIR = nodePath.join(REPO_ROOT, 'packaging', 'client');
+const ICON_FILE = nodePath.join(REPO_ROOT, 'packaging', 'icon', 'app.ico'); // 커밋 산출물 — 빌드 시점 생성 의존 0.
 const FALLBACK_EXE = 'article-client.exe';
 
 function fail(msg) {
@@ -45,6 +47,7 @@ function scanForbidden(dir, found = []) {
 export async function distClient({
   outDir = 'dist/기사작성기',
   exeName = '기사작성기.exe',
+  applyMeta = true, // false는 --no-meta 명시 우회(디버깅용)뿐이다 — 기본은 fail-fast 적용.
 } = {}) {
   const startedAt = Date.now();
   const absOut = nodePath.resolve(outDir);
@@ -96,6 +99,50 @@ export async function distClient({
     finalExeName = FALLBACK_EXE;
   }
 
+  // 5b. PE 메타 적용 (phase 63 step1) — 아이콘(커밋된 app.ico) + 버전·문자열(client/package.json 단일
+  //     출처). 실패는 fail-fast다: 조용히 Electron 기본 메타("GitHub, Inc.")로 배포되는 것이 최악이다.
+  //     resedit 재생성은 Authenticode 서명을 제거하지만 이 프로젝트는 미서명 배포라 손실이 없다(ADR-011).
+  let metaApplied = false;
+  let fileVersion = null;
+  let iconEntries = null;
+  let metaMs = null;
+  if (applyMeta) {
+    const metaStart = Date.now();
+    const resedit = await import('resedit');
+    if (!fs.existsSync(ICON_FILE)) {
+      throw fail(`아이콘 파일이 없다(커밋 산출물): ${ICON_FILE} — npm run make:icon 실행 후 커밋하라.`);
+    }
+    const clientVersion = JSON.parse(fs.readFileSync(nodePath.join(CLIENT_DIR, 'package.json'), 'utf8')).version;
+    const exePath = nodePath.join(absOut, finalExeName);
+    const strings = buildClientVersionStrings({ version: clientVersion, exeName: finalExeName }); // ASCII 폴백 시 OriginalFilename도 실제 이름.
+    const applied = applyPeMeta({
+      resedit,
+      exeBuffer: fs.readFileSync(exePath),
+      icoBuffer: fs.readFileSync(ICON_FILE),
+      version: clientVersion,
+      strings,
+    });
+    fs.writeFileSync(exePath, applied.buffer);
+    // 적용 직후 read-back 검증 — 하나라도 어긋나면 빌드 실패(경고 후 계속 금지).
+    const back = readPeMeta({ resedit, exeBuffer: fs.readFileSync(exePath) });
+    const expectedVersion = toVersionQuad(clientVersion).join('.');
+    if (back.iconEntries !== applied.iconCount) {
+      throw fail(`meta read-back 실패: 아이콘 항목 수 expected=${applied.iconCount} actual=${back.iconEntries}`);
+    }
+    if (back.fileVersion !== expectedVersion) {
+      throw fail(`meta read-back 실패: FileVersion expected=${expectedVersion} actual=${back.fileVersion}`);
+    }
+    if (back.productName !== strings.ProductName) {
+      throw fail(`meta read-back 실패: ProductName expected=${strings.ProductName} actual=${back.productName}`);
+    }
+    metaApplied = true;
+    fileVersion = back.fileVersion;
+    iconEntries = back.iconEntries;
+    metaMs = Date.now() - metaStart;
+  } else {
+    process.stderr.write('[dist-client] 경고: --no-meta 지정 — PE 메타(아이콘·버전) 미적용 배포물이다(디버깅 전용).\n');
+  }
+
   // 6. 앱 코드 배치 — default_app.asar 제거 후 화이트리스트만 복사.
   const resourcesDir = nodePath.join(absOut, 'resources');
   fs.rmSync(nodePath.join(resourcesDir, 'default_app.asar'), { force: true });
@@ -141,9 +188,13 @@ export async function distClient({
     appEntries,
     fileCount,
     bytes,
+    metaApplied,
+    fileVersion,
+    iconEntries,
+    metaMs,
     elapsedMs: Date.now() - startedAt,
   };
-  process.stdout.write(`[dist-client] 완료 exe=${finalExeName} electron=${electronVersion} files=${fileCount} bytes=${bytes} (${(bytes / 1024 / 1024).toFixed(1)}MB) app=[${appEntries.join(', ')}] out=${absOut} (${summary.elapsedMs}ms)\n`);
+  process.stdout.write(`[dist-client] 완료 exe=${finalExeName} electron=${electronVersion} files=${fileCount} bytes=${bytes} (${(bytes / 1024 / 1024).toFixed(1)}MB) metaApplied=${metaApplied} fileVersion=${fileVersion} iconEntries=${iconEntries} app=[${appEntries.join(', ')}] out=${absOut} (${summary.elapsedMs}ms)\n`);
   process.stdout.write(`${JSON.stringify(summary)}\n`);
   return summary;
 }
@@ -155,8 +206,9 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--out') opts.outDir = argv[++i];
     else if (a === '--name') opts.exeName = argv[++i];
+    else if (a === '--no-meta') opts.applyMeta = false; // 명시 우회만 허용(디버깅용) — 기본은 적용.
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/dist-client.mjs [--out <dir>] [--name <exe>]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/dist-client.mjs [--out <dir>] [--name <exe>] [--no-meta]\n`);
       process.exit(1);
     }
   }

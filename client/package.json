@@ -1,7 +1,7 @@
 {
   "name": "article-client",
   "productName": "기사작성기",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "main.js"
