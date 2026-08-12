@@ -16,7 +16,8 @@
     "test:web": "vitest run --root web",
     "lint": "eslint .",
     "dist:server": "node scripts/dist-server.mjs",
-    "client:dev": "electron client"
+    "client:dev": "electron client",
+    "dist:client": "node scripts/dist-client.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
