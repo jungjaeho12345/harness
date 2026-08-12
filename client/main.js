@@ -188,6 +188,10 @@ function handleGuarded(channel, handler) {
 }
 
 function createAppWindow(origin, bounds) {
+  // 앱 창도 항상 최대 1개다 — 메뉴 [다시 연결]처럼 앱 창이 살아 있는 채로 재진입하면 이전 창이
+  // 추적(appWindow)에서 빠진 고아로 화면에 남는다(창 수명 계약 위반). 새 창을 먼저 세운 뒤 닫는다
+  // (create-then-close — 먼저 닫으면 window-all-closed 공백으로 앱이 종료된다).
+  const prev = appWindow;
   const win = new BrowserWindow(buildWindowOptions(APP_WINDOW, { bounds }));
   appWindow = win;
   kindByContents.set(win.webContents, APP_WINDOW);
@@ -219,8 +223,11 @@ function createAppWindow(origin, bounds) {
   win.on('close', () => { if (shown) saveBoundsFrom(win); });
   win.on('closed', () => { if (appWindow === win) appWindow = null; });
   closeLocalWindow(); // 로컬 창은 항상 최대 1개 — 앱 창이 서면 닫는다(앱 창 생성 후라 window-all-closed 공백 없음).
+  if (prev && !prev.isDestroyed()) prev.close(); // 이전 앱 창 정리(위 create-then-close). closed 핸들러는 appWindow===win 가드라 새 창 추적을 건드리지 않는다.
   diag.log('app-window', { url: appUrl(origin) });
-  win.loadURL(appUrl(origin));
+  // 로드 실패의 판정 단일 출처는 did-fail-load/did-navigate다 — 여기의 reject는 같은 실패의 중복 표면이라
+  // 삼킨다(미처리 거절로 남기면 Electron/Node 정책 변화에 노출).
+  win.loadURL(appUrl(origin)).catch(() => {});
   return win;
 }
 

@@ -50,8 +50,12 @@ async function init() {
 probeBtn.addEventListener('click', async () => {
   setBusy(true);
   setMessage('연결 확인 중…', true);
-  const result = await bridge.probeServer(addressInput.value);
-  setBusy(false);
+  let result;
+  try {
+    result = await bridge.probeServer(addressInput.value);
+  } finally {
+    setBusy(false); // invoke reject에도 버튼이 영구 비활성으로 남지 않게(조용한 반쪽 상태 금지).
+  }
   if (result && result.ok) setMessage(`연결 확인됨: ${result.origin}`, true);
   else setMessage(reasonText(result && result.reason), false);
 });
@@ -59,7 +63,12 @@ probeBtn.addEventListener('click', async () => {
 saveBtn.addEventListener('click', async () => {
   setBusy(true);
   setMessage('연결 확인 후 저장 중…', true);
-  const result = await bridge.saveServer(addressInput.value);
+  let result;
+  try {
+    result = await bridge.saveServer(addressInput.value);
+  } catch {
+    result = undefined; // 아래 실패 표시로 수렴.
+  }
   // 성공하면 메인이 이 창을 닫고 앱 창을 연다 — 여기서는 실패만 표시한다.
   if (!result || !result.ok) {
     setBusy(false);
