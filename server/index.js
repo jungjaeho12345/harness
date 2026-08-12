@@ -16,6 +16,12 @@ import { createLogService } from '../src/services/logService.js';
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// CRITICAL(SEA/번들 안전, phase 61): 모듈 메타(URL) 참조는 이 모듈 스코프 1곳뿐이다.
+// esbuild CJS 번들에서 모듈 메타 객체는 {}가 되어 selfUrl은 undefined가 된다 — 하단 argv 가드가
+// false로 평가될 뿐 throw 경로가 없다. 다른 곳에서 모듈 메타를 직접 참조하지 마라
+// (참조 지점 수만큼 empty-import-meta 경고가 늘고, 빌드 게이트는 정확히 1건만 허용한다).
+const selfUrl = import.meta.url;
+
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
@@ -199,17 +205,57 @@ export function resolveSpaRoot(spaDir) {
   return root;
 }
 
-// SPA 정적 루트 — SPA_DIR 미설정 시 이 모듈 기준 ../web/dist(= vite build 산출물).
-// 명시적으로 빈 값(SPA_DIR=)이면 비활성이다(dev에서 Vite :5173만 쓸 때의 off 스위치).
-// cwd가 아니라 모듈 위치 기준으로 푼다 — 어느 디렉토리에서 실행해도 같은 곳을 본다.
-// baseDir 주입은 테스트용 seam이다(부트스트랩은 기본값을 쓴다).
-export function resolveSpaDir(env = process.env, baseDir = nodePath.dirname(fileURLToPath(import.meta.url))) {
+// SPA 정적 루트 — env.SPA_DIR 설정 시 그 값(트림 후 빈 값이면 off 스위치 = undefined, 값이 있으면 절대화).
+// 기본 경로 계산은 호출부(resolveRuntimePaths)의 책임이다. 이 함수는 env 오버라이드만 해석한다 —
+// defaultDir는 이미 해석된 절대 경로를 그대로 돌려주고, 미주입이면 undefined(= SPA 서빙 비활성).
+// CRITICAL(SEA 안전): 기본 파라미터에 모듈 메타 URL을 되살리지 마라 — CJS 번들에서 {}가 되어
+// fileURLToPath(undefined) TypeError로 부팅이 즉사한다(phase 61 실측).
+export function resolveSpaDir(env = process.env, defaultDir) {
   const raw = env?.SPA_DIR;
   if (raw !== undefined) {
     const trimmed = String(raw).trim();
     return trimmed ? nodePath.resolve(trimmed) : undefined;
   }
-  return nodePath.join(baseDir, '..', 'web', 'dist');
+  return defaultDir;
+}
+
+// 런타임 경로의 단일 출처 (phase 61) — dataDir/dbFile/uploadDir/spaDir 4키 고정.
+// 순수 함수다: 파일시스템을 읽지 않고, 어떤 미주입 조합에서도 throw 하지 않는다(경로 계산이
+// 부팅을 죽이는 것보다 "cwd 기준으로라도 뜬다"가 낫다 — 콘솔 로그의 실제 경로로 오구성을 알아챈다).
+// 배치 판정은 런타임 탐지가 아니라 주입이다: SEA 엔트리(server/main.js)만 packaged:true를 넘긴다.
+//  - 비패키지(dev) 기본: <cwd>/news.db · <cwd>/uploads · <moduleDir>/../web/dist (오늘과 같은 파일 — 무회귀).
+//  - 패키지(exe) 기본: <execDir>/data · <execDir>/web (cwd 비의존 — 바로가기·스케줄러 실행에도 동일).
+//  - env.DATA_DIR(신설)·env.SPA_DIR 오버라이드가 두 배치 모두에서 이긴다(빈/공백 값은 무시·off).
+// DIST_SPOOL_DIR·RCV_SPOOL_DIR는 여기 넣지 않는다 — '미설정 = 배부/FTP 수집 비활성'이 관측 가능한
+// 계약이다(ADR-008). 기본값을 주면 exe를 켜는 순간 스풀 쓰기가 조용히 활성화된다.
+export function resolveRuntimePaths({
+  env = process.env,
+  packaged = false,
+  execDir,          // 패키지 배치의 기준 = nodePath.dirname(process.execPath)
+  moduleDir,        // 비패키지 배치의 기준 = 서버 모듈 디렉토리 (SEA 번들에는 존재하지 않는다)
+  cwd = process.cwd(),
+} = {}) {
+  const rawDataDir = env?.DATA_DIR;
+  const trimmedDataDir = typeof rawDataDir === 'string' ? rawDataDir.trim() : '';
+  let dataDir;
+  if (trimmedDataDir) {
+    dataDir = nodePath.resolve(trimmedDataDir);
+  } else if (packaged && execDir) {
+    dataDir = nodePath.join(execDir, 'data');
+  } else {
+    // 비패키지 기본 + 패키지인데 execDir 미주입(오구성) 폴백 — join(undefined,..)은 TypeError라 금지.
+    dataDir = cwd;
+  }
+  // join은 호출 시점에 평가된다 — 미주입 축은 분기 안에서만 계산한다(TypeError 봉쇄).
+  const defaultSpaDir = packaged
+    ? (execDir ? nodePath.join(execDir, 'web') : undefined)
+    : (moduleDir ? nodePath.join(moduleDir, '..', 'web', 'dist') : undefined);
+  return {
+    dataDir,
+    dbFile: nodePath.join(dataDir, 'news.db'),
+    uploadDir: nodePath.join(dataDir, 'uploads'),
+    spaDir: resolveSpaDir(env, defaultSpaDir),
+  };
 }
 
 // 비프로덕션 관용용 loopback 호스트(포트 무관). dev는 Vite 프록시로 동일 출처처럼 보이지만
@@ -1201,10 +1247,29 @@ export function createApp({
   return app;
 }
 
-// --- 프로덕션 부트스트랩 (직접 실행 시에만) ---
+// --- 프로덕션 부트스트랩 (직접 실행 또는 SEA 엔트리의 명시 호출 시에만) ---
 // 테스트가 createApp을 import할 때는 아래가 실행되지 않는다 → listen/watcher 미기동.
-function bootstrap() {
-  const db = new DatabaseSync('news.db');
+// 중복 기동 방지 — 번들 배치에서 엔트리의 명시 호출과 하단 argv 가드가 동시에 참이 되면
+// app.listen이 두 번 불려 EADDRINUSE로 죽는다(실측상 번들에서 가드는 false지만 방어 비용이 0이다).
+let bootstrapped = false;
+// packaged/execDir/moduleDir: 경로 해석(resolveRuntimePaths) 주입 seam.
+//  - packaged는 SEA 엔트리(server/main.js)만 true로 넘긴다(런타임 탐지 금지 — 결정적 주입).
+//  - moduleDir는 호출부가 주입한다 — 미주입 + !packaged이면 spaDir 비활성으로 수렴한다(throw 없음).
+// CRITICAL(SEA 안전): 이 본문에는 모듈 메타 참조가 한 글자도 없어야 한다(모듈 스코프 selfUrl 1곳뿐).
+export function bootstrap({
+  env = process.env,
+  packaged = false,
+  execDir = nodePath.dirname(process.execPath),
+  moduleDir,
+} = {}) {
+  if (bootstrapped) return;
+  bootstrapped = true;
+  // 경로 해석은 이 1회 호출이 단일 출처다 — dbFile/uploadDir/spaDir 전부 여기서 나온다.
+  const paths = resolveRuntimePaths({ env, packaged, execDir, moduleDir });
+  // DB를 열기 전에 dataDir를 보장한다 — 배포 폴더의 data/가 없으면 DatabaseSync가 파일을 못 만든다.
+  // recursive:true는 이미 존재하면 no-op(기존 cwd 배치 무영향). 삭제/비우기 코드는 절대 금지(DB 비파괴).
+  fs.mkdirSync(paths.dataDir, { recursive: true });
+  const db = new DatabaseSync(paths.dbFile);
   createSchema(db); // 비파괴 멱등 마이그레이션만 — DROP/DELETE 없음.
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
   // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
@@ -1220,14 +1285,15 @@ function bootstrap() {
     || (process.env.FORCE_HTTPS !== 'false' && process.env.NODE_ENV === 'production');
   // 허용 출처는 여기서 한 번 계산해 앱과 진단이 같은 값을 보게 한다(경고가 실제 적용분과 어긋나지 않도록).
   const origins = allowedOrigins();
-  // SPA 정적 루트 — SPA_DIR 미설정 시 모듈 기준 ../web/dist. 빈 값(SPA_DIR=)이면 비활성(off 스위치).
-  const spaDir = resolveSpaDir();
+  // SPA 정적 루트 — resolveRuntimePaths가 해석했다(SPA_DIR 오버라이드 포함, 빈 값이면 비활성 off 스위치).
+  const spaDir = paths.spaDir;
   // listen 바인드 주소 — createApp보다 먼저 계산한다(비-loopback 판정으로 정책 불리언을 만들기 위함).
   // 기본 127.0.0.1(불변) — HOST 명시 설정 시에만 LAN에 열린다.
   const host = resolveHost();
   // 세션 스토어는 createControllers에만 넘긴다 — transport는 controllers.auth로 신원을 얻는다(재검증 경로 단일화).
   const app = createApp({
     controllers, logService, forceHttps, origins, spaDir,
+    uploadDir: paths.uploadDir,
     // 환경 판정(비-loopback 바인딩)은 부트가 하고 앱은 정책 불리언만 받는다(forceHttps·cookieSecure 전례).
     requireCollectionToken: !isLoopbackHost(host),
   });
@@ -1276,6 +1342,9 @@ function bootstrap() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  bootstrap();
+// 직접 실행 가드(dev `npm run server`·T4 E2E의 진입점 — 삭제 금지).
+// CJS 번들에서는 selfUrl이 undefined라 조건이 false가 되고, fileURLToPath는 평가되지 않는다.
+// packaged를 넘기지 않는다 — dev 실행은 비패키지 배치이며, 패키지 주입은 server/main.js만 한다.
+if (process.argv[1] && selfUrl === pathToFileURL(process.argv[1]).href) {
+  bootstrap({ moduleDir: nodePath.dirname(fileURLToPath(selfUrl)) });
 }
