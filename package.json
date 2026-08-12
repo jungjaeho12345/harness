@@ -14,7 +14,8 @@
     "seed": "node --env-file-if-exists=.env scripts/seed.js",
     "test": "node --test \"test/**/*.test.js\"",
     "test:web": "vitest run --root web",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "dist:server": "node scripts/dist-server.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
