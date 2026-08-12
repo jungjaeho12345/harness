@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>기사작성기 — 연결 오류</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <main class="shell-card">
+    <h1>기사작성기</h1>
+    <section class="shell-failure">
+      <h2 id="failure-title">서버에 연결할 수 없습니다</h2>
+      <p id="failure-message"></p>
+      <p id="failure-hint" class="shell-hint"></p>
+    </section>
+    <p id="current" class="shell-current"></p>
+    <div class="shell-actions">
+      <button id="retry" type="button" class="shell-btn shell-btn--primary">다시 연결</button>
+      <button id="change" type="button" class="shell-btn">서버 주소 변경</button>
+      <button id="quit" type="button" class="shell-btn">종료</button>
+    </div>
+    <section id="change-section" class="shell-section" hidden>
+      <div class="shell-field">
+        <label for="address">새 서버 주소</label>
+        <input id="address" type="text" placeholder="192.168.0.10:3001" autocomplete="off" spellcheck="false">
+      </div>
+      <p id="message" class="shell-message" role="status"></p>
+      <div class="shell-actions">
+        <button id="probe" type="button" class="shell-btn">연결 확인</button>
+        <button id="save" type="button" class="shell-btn shell-btn--primary">저장하고 시작</button>
+      </div>
+    </section>
+  </main>
+  <script src="error.js"></script>
+</body>
+</html>

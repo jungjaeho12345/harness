@@ -13,6 +13,9 @@
 ## 요구사항
 
 - Node.js **≥ 22.5** (내장 `node:sqlite` 사용. 개발은 Node 24 검증)
+- `npm install`은 Electron 런타임(약 350MB, 클라이언트 EXE 빌드/실행용 devDependency)을 함께 내려받는다.
+  서버 빌드 전용 머신 등에서 이를 건너뛰려면 `ELECTRON_SKIP_BINARY_DOWNLOAD=1`을 설정하고 설치한다
+  (검증됨 — 패키지는 설치되고 런타임 바이너리만 생략된다. 그 머신에서는 `client:dev`·`dist:client`가 불가).
 
 ## 실행법
 
@@ -56,6 +59,19 @@ npm run dist:server   # → dist/기사작성기-server/ 생성
 | `admin` | `` | Z (관리자) | 운영부 |
 
 시드는 **멱등**하다 — 이미 있는 계정은 건드리지 않으며(덮어쓰기/삭제 없음), 여러 번 실행해도 안전하다.
+
+## 배포 (Windows 클라이언트 EXE)
+
+```bash
+npm run dist:client   # → dist/기사작성기/ 생성 (Electron 접속형 클라이언트, 무설치 폴더)
+```
+
+- 산출물: `기사작성기.exe` + Electron 런타임 + `resources/app/`(셸 코드) — 실측 약 347MB(압축 시 약 138MB).
+- **접속형**이다: 셸은 서버 주소를 열기만 하고 SPA·API·세션·SSE는 전부 서버가 담당한다(클라이언트에 서버·DB 미내장 — 화면 변경은 서버만 갱신하면 반영된다).
+- 최초 실행 시 서버 주소를 입력받아 `/api/health` 응답까지 확인한 뒤 `%APPDATA%\기사작성기\config.json`(사용자별)에 저장한다.
+- 개발 실행: `npm run client:dev` (검증 시 `CLIENT_USER_DATA`를 임시 경로로 줄 것 — 실사용자 설정 보호).
+- 자동 스모크: `node scripts/verify-client.mjs --dev --scenario all` (패키징 산출물은 `--exe <경로>`).
+- 운영 가이드(기자·데스크용)는 `packaging/client/README-배포-클라이언트.md` — 배포 폴더에 자동 동봉된다. 설계 배경은 ADR-011.
 
 ## 환경변수
 

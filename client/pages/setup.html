@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>기사작성기 — 서버 연결 설정</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <main class="shell-card">
+    <h1>기사작성기</h1>
+    <p class="shell-desc">기사작성기 서버 주소를 입력하세요. http://를 생략하면 자동으로 붙습니다.</p>
+    <p id="current" class="shell-current"></p>
+    <div class="shell-field">
+      <label for="address">서버 주소</label>
+      <input id="address" type="text" placeholder="192.168.0.10:3001" autocomplete="off" spellcheck="false">
+    </div>
+    <p id="message" class="shell-message" role="status"></p>
+    <div class="shell-actions">
+      <button id="probe" type="button" class="shell-btn">연결 확인</button>
+      <button id="save" type="button" class="shell-btn shell-btn--primary">저장하고 시작</button>
+    </div>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>
