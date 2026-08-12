@@ -93,6 +93,19 @@ export async function readConfigFile(filePath, { readFile }) {
   return parseConfig(raw);
 }
 
+// ready 전 동기 1회 읽기 (phase 63 step0) — appendSwitch가 app ready 전이어야 하므로 부팅 판정은
+// 이 함수로 읽고, whenReady는 같은 결과를 재사용한다(같은 부팅에서 두 번 읽어 갈라지는 경로 금지).
+// 파싱은 parseConfig 공유 — 실패는 전부 기본값으로 수렴한다(throw 금지).
+export function readConfigFileSync(filePath, { readFileSync }) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, 'utf8');
+  } catch {
+    return defaultConfig();
+  }
+  return parseConfig(raw);
+}
+
 // 같은 디렉토리의 임시 파일에 쓴 뒤 rename한다 — 중간에 죽어도 반쪽 JSON이 남지 않는다(원자적).
 // rename의 원자성은 같은 볼륨(같은 디렉토리)일 때만 성립하므로 tmp는 반드시 대상 옆에 만든다.
 export async function writeConfigFile(filePath, config, { mkdir, writeFile, rename }) {

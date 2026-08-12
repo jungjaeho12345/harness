@@ -12,7 +12,8 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, net, screen, session, shell } from 'electron';
 import { normalizeServerUrl, healthUrl, appUrl, interpretHealthResponse } from './lib/serverUrl.js';
-import { configPath, readConfigFile, writeConfigFile, sanitizeBounds } from './lib/clientConfig.js';
+import { configPath, readConfigFileSync, writeConfigFile, sanitizeBounds } from './lib/clientConfig.js';
+import { FEATURE_SWITCH, decideSecureOriginSwitches, requiresRestartForOrigin } from './lib/secureOrigin.js';
 import {
   APP_WINDOW, LOCAL_WINDOW, buildWindowOptions, decideWindowOpen, decideNavigation, isExternallyOpenable,
 } from './lib/windowPolicy.js';
@@ -28,8 +29,8 @@ const diag = createDiag({ filePath: process.env.CLIENT_DIAG_FILE, appendFileSync
 
 // 설정 파일 접근 — client/lib/clientConfig.js는 순수 모듈이라 fs를 주입받는다.
 // close 훅에서도 확실히 완결되도록 동기 fs를 async 시그니처로 감싼다(마이크로태스크 내 완결).
+// 읽기는 부팅 시 readConfigFileSync 1회뿐이다(phase 63 step0 decisions (3)) — 비동기 읽기 의존성은 없다.
 const fsDeps = {
-  readFile: (file, enc) => fs.promises.readFile(file, enc),
   mkdir: async (dir, opts) => fs.mkdirSync(dir, opts),
   writeFile: async (file, data) => fs.writeFileSync(file, data),
   rename: async (from, to) => fs.renameSync(from, to),
@@ -48,6 +49,7 @@ let localContentsId = null;
 let localMode = 'setup';
 let lastFailure = null;
 let configFile = null;
+let appliedSecureOrigin = null; // 부팅 시 secure-origin 스위치를 적용한 origin(미적용은 null) — 재시작 안내 판정 입력.
 
 // --- 부팅 순서 계약: userData 지정이 반드시 단일 인스턴스 잠금보다 먼저다 ---
 if (process.env.CLIENT_USER_DATA) {
@@ -61,6 +63,19 @@ if (!app.requestSingleInstanceLock()) {
 
 function wireApp() {
   configFile = configPath(app.getPath('userData'));
+
+  // --- secure-origin 스위치 (phase 63 step0) — 반드시 app ready "전" 1회다. ready 이후의 appendSwitch는
+  // Chromium에 반영되지 않아 조용히 무효가 된다. 판정은 secureOrigin.js 단일 출처 — 여기서는 append만 한다.
+  // 설정도 여기서 동기로 1회만 읽고(whenReady가 재사용) 같은 부팅에서 두 번 읽어 갈라지는 경로를 만들지 않는다.
+  const bootConfig = readConfigFileSync(configFile, { readFileSync: (f, enc) => fs.readFileSync(f, enc) });
+  const secureDecision = decideSecureOriginSwitches(bootConfig.serverUrl, {
+    existingFeatures: app.commandLine.getSwitchValue(FEATURE_SWITCH), // 덮어쓰기 금지 — 병합은 순수 모듈이 했다.
+  });
+  if (secureDecision.apply) {
+    for (const sw of secureDecision.switches) app.commandLine.appendSwitch(sw.name, sw.value);
+    appliedSecureOrigin = secureDecision.origin;
+    diag.log('secure-origin-switch', { origin: secureDecision.origin, count: secureDecision.switches.length });
+  } // 미적용이면 이벤트를 남기지 않는다 — 부재가 loopback 검증의 음성 증거다.
 
   app.on('second-instance', () => {
     diag.log('second-instance', {});
@@ -117,6 +132,9 @@ function wireApp() {
     lastFailure = null;
     await persistConfig();
     diag.log('config-saved', { origin: norm.origin });
+    // 새 출처가 스위치를 요구하는데 부팅 때 적용한 값과 다르면 재시작 안내 — 가장 흔한 경로는 "최초 설정"이다
+    // (설정 없는 첫 실행은 appliedSecureOrigin === null이라 LAN 주소를 처음 저장하는 순간 참이 된다).
+    if (requiresRestartForOrigin(appliedSecureOrigin, norm.origin)) notifyRestartRequired(norm.origin);
     createAppWindow(norm.origin, savedBounds);
     return { ok: true, origin: norm.origin };
   });
@@ -128,7 +146,7 @@ function wireApp() {
     app.quit();
   });
 
-  app.whenReady().then(async () => {
+  app.whenReady().then(() => {
     diag.log('app-ready', {});
     // 권한은 클립보드 2종만 — WriterPage 붙여넣기 경로(navigator.clipboard.read)가 쓴다. 나머지는 전부 거부.
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -144,7 +162,7 @@ function wireApp() {
       },
     })));
 
-    const cfg = await readConfigFile(configFile, fsDeps);
+    const cfg = bootConfig; // 부팅 시 동기 1회 읽은 결과 재사용 — 스위치 판정과 화면 상태가 갈라지지 않는다.
     diag.log('config-loaded', { hasServerUrl: cfg.serverUrl !== null });
     const workAreas = screen.getAllDisplays().map((d) => d.workArea);
     savedBounds = sanitizeBounds(cfg.bounds, workAreas); // 모니터가 떨어진 배치는 기본 배치로.
@@ -307,6 +325,20 @@ function persistConfig() {
   // serializeConfig가 화이트리스트를 강제한다 — 세션·자격증명이 실릴 자리가 없다.
   return writeConfigFile(configFile, { serverUrl: serverOrigin, bounds: savedBounds }, fsDeps)
     .catch(() => {});
+}
+
+// 재시작 안내 (phase 63 step0) — 스위치는 부팅 1회뿐이라 저장만으로는 클립보드 완화가 적용되지 않는다.
+// await 금지: IPC 응답을 다이얼로그로 막으면 설정 화면이 멈춘 것처럼 보인다. SELFTEST에서는 diag만 남긴다.
+// app.relaunch() 자동 재시작 금지 — 포터블 폴더 + 단일 인스턴스 잠금 재획득의 재기동 루프 위험.
+function notifyRestartRequired(origin) {
+  diag.log('restart-required', { origin });
+  if (SELFTEST) return;
+  dialog.showMessageBox({
+    type: 'info',
+    title: '재시작 안내',
+    message: '서버 주소를 저장했습니다.',
+    detail: '복사·붙여넣기 기능을 사용하려면 프로그램을 한 번 껐다 켜 주세요.\n저장된 주소는 프로그램을 켤 때 적용됩니다.',
+  });
 }
 
 function showAbout() {
