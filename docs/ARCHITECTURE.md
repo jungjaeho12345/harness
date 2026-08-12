@@ -27,10 +27,17 @@ web/                    # 프론트엔드 (Vite root)
     view/               # 순수 뷰 로직 + 컴포넌트 (에디터 · 컨텍스트 메뉴 · 임베드 · 컬럼 설정 …)
     app/                # App · 라우팅(.do SPA) · context
     styles/             # yonhap.css 디자인 시스템
+client/                 # Electron 접속형 클라이언트 셸 (phase 62 — 서버 origin을 loadURL하는 얇은 뷰어)
+  main.js               # 메인 프로세스 — 결선만 (부팅 순서 · 창 2종 · 가드 이벤트 · IPC · 메뉴)
+  preload.cjs           # 셸 로컬 창 전용 브리지 5함수 (샌드박스 preload는 CJS 강제)
+  menu.js / ipcGuard.js / diag.js   # 순수 보조 모듈 (메뉴 템플릿 · sender 검증 · 진단 JSONL)
+  lib/                  # Electron 비의존 순수 정책 (serverUrl · clientConfig · windowPolicy · loadFailure)
+  pages/                # 셸 로컬 페이지 (setup/error — CSP meta · 인라인 스크립트 없음)
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
-scripts/                # 실행 러너 (seed) + 배포 빌드 (sea-build · dist-server · verify-server-exe)
-packaging/server/       # 배포 폴더에 그대로 복사되는 템플릿 (기사작성기-server.bat · README-배포.md)
+scripts/                # 실행 러너 (seed) + 배포 빌드/검증 (sea-build · dist-server · verify-server-exe · dist-client · verify-client)
+packaging/server/       # 서버 배포 폴더에 그대로 복사되는 템플릿 (기사작성기-server.bat · README-배포.md)
+packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되는 템플릿 (README-배포-클라이언트.md)
 ```
 
 ## 패턴
@@ -82,6 +89,15 @@ packaging/server/       # 배포 폴더에 그대로 복사되는 템플릿 (기
 - exe에도 **앱 내 타이머·네트워크 egress는 없다**(ADR-008) — 시점 배부는 외부 cron의 tick pull, 발송은 외부 전송기 책임 그대로다.
 - 백업 단위 = `data/` 폴더(DB 비파괴 원칙 유지 — 재빌드·업그레이드는 `data/`를 지우지 않는다).
 - 평문 HTTP LAN 배치에서 `NODE_ENV=production` 금지 — 아래 "보안 경계"의 "운영 환경변수 주의"와 같은 축이다(배포 폴더의 bat·README-배포.md가 같은 경고를 싣는다).
+
+### 배포 산출물 (Windows 클라이언트 EXE)
+- `npm run dist:client` 한 번으로 `dist/기사작성기/`를 만든다 — 파이프라인: Electron 런타임 폴더 복사 → `electron.exe`를 `기사작성기.exe`로 rename → `resources/default_app.asar` 제거 → `resources/app/`에 셸 코드 화이트리스트 배치(+ `packaging/client/**` 사본, 조립 후 금지 패턴 재귀 스캔 게이트). 2026-08-13 실측: 89파일 347.4MB, 조립 ~0.3초, exe 기동→화면 로드 ~0.9초, electron 43.4.0(devDependency 정확 고정 — 런타임 의존성 추가 0, ADR-010과 같은 축).
+- **접속형**: 셸은 `loadURL(<서버 origin>/)`만 한다. SPA·API·세션·SSE는 전부 서버(위 "SPA 동일 출처 서빙") 책임이고, 클라이언트에는 DB·백엔드·수집·배부 코드가 **0**이다(SPA의 API base가 빈 문자열 = 상대 경로라 서버 출처만 열면 전부 따라온다). 화면 변경은 서버만 재배포하면 전파된다.
+- **창 2종 분리(신뢰 경계)**: 원격 앱 창은 preload 없음(`contextIsolation`·`sandbox`·`nodeIntegration:false` — 서버 침해가 클라이언트 PC 침해로 번지지 않게), 셸 로컬 창(설정/오류)만 최소 preload(브리지 5함수)를 갖고 **절대 원격으로 내비게이트하지 않는다**. 미등록 webContents는 가장 제한적인 로컬 취급이다(fail-closed — 등록 누락이 "허용"으로 새지 않는다).
+- **window.open 정책**: `about:blank`(SPA 상세보기·인쇄 창 — 720×800)와 동일 출처만 허용, 외부 http(s)는 기본 브라우저로 위임, 로컬 창의 새 창은 전면 거부(`about:blank` 자식이 부모 webPreferences를 상속하기 때문). 판정은 `client/lib/windowPolicy.js` 순수 함수 단일 출처다.
+- **부팅 순서 계약**: `userData` 지정(`CLIENT_USER_DATA`) → 단일 인스턴스 잠금 요청 순서 고정 — 잠금 키가 userData 경로에서 파생되므로 뒤집으면 실사용자 프로필 오염과 검증 거짓 통과가 난다.
+- 설정(서버 주소·창 크기)은 `%APPDATA%\기사작성기\config.json`(화이트리스트 파싱, 사용자별). **세션·자격증명은 저장하지 않는다.**
+- 셸에도 **앱 내 타이머·주기 통신이 없다**(ADR-008) — 서버 주소 프로브는 사용자 액션당 1회이고 `/api/health`의 `{ ok:true }` 본문까지 확인한 뒤에만 저장한다(200만으로는 임의 웹서버가 "정상"으로 저장된다).
 
 ## 상태 관리
 - **서버 상태**: `news.db`(SQLite)가 단일 진실 공급원. 클라이언트는 캐시하지 않고 필요 시 재조회한다.
