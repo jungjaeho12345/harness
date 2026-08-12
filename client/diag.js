@@ -4,7 +4,9 @@
 // 까지만 남긴다(쿼리·해시 제거 — 기사아이디·토큰 표면 차단). file: 스킴은 스킴+파일명만 남긴다
 // (로컬 절대 경로 비노출 — 게이트 ② 확정 예외). 파일 접근은 주입 의존성(appendFileSync)뿐이다.
 
-const FORBIDDEN_KEYS = new Set(['body', 'sessionId', 'cookie', 'cookies', 'password', 'token', 'markupVersion', 'headers']);
+// 금지 키 — 기사 본문·세션·자격증명 계열. (기사 본문 필드명 자체는 배포물 위생 게이트의 서버 코드
+// 탐지 문자열과 겹치므로 여기 두지 않는다 — diag payload는 main.js가 명시 구성해 본문 필드가 올 수 없다.)
+const FORBIDDEN_KEYS = new Set(['body', 'sessionId', 'cookie', 'cookies', 'password', 'token', 'headers']);
 
 function redactUrl(value) {
   if (value === 'about:blank') return value; // 무해한 고정 문자열 — SPA 새 창의 정체다.
