@@ -181,6 +181,25 @@ describe('diag', () => {
     assert.equal(redactDiagEvent('probe', { reason: 'not-article-server' }).reason, 'not-article-server');
   });
 
+  test('redactDiagEvent: 객체·배열 값 필드는 통째로 버려진다(보강 — 직렬화 보장·구조체 유출 차단)', () => {
+    const out = redactDiagEvent('e', { url: 'http://h:1/p?q=1', nested: { a: 1 }, arr: [1, 2], keep: 'ok' });
+    assert.equal('nested' in out, false);
+    assert.equal('arr' in out, false);
+    assert.equal(out.keep, 'ok');
+    assert.equal(out.url, 'http://h:1/p');
+  });
+
+  test('formatDiagLine: payload가 undefined여도 유효 JSON 한 줄이다(보강)', () => {
+    const parsed = JSON.parse(formatDiagLine('app-ready', undefined, 0));
+    assert.equal(parsed.event, 'app-ready');
+    assert.equal(parsed.ts, new Date(0).toISOString());
+  });
+
+  test('createDiag: filePath만 있고 appendFileSync 미주입이면 no-op이고 throw하지 않는다(보강 — 반쪽 주입 방어)', () => {
+    const diag = createDiag({ filePath: 'C:/tmp/diag.jsonl' });
+    assert.doesNotThrow(() => diag.log('app-ready', {}));
+  });
+
   test('formatDiagLine: 개행 1개로 끝나는 유효 JSON이고 ts·event를 갖는다', () => {
     const line = formatDiagLine('probe', { origin: 'http://h:3001', ok: false, reason: 'unreachable' }, 1723500000000);
     assert.equal(line.endsWith('\n'), true);

@@ -80,6 +80,23 @@ describe('serverUrl', () => {
     assert.deepEqual(normalizeServerUrl('http://h:port'), { ok: false, reason: 'invalid' });
   });
 
+  test('호스트 내부 공백은 invalid — 스킴 유무 무관(보강: 오타 입력이 이상한 origin으로 새지 않는다)', () => {
+    assert.deepEqual(normalizeServerUrl('http://my server:3001'), { ok: false, reason: 'invalid' });
+    assert.deepEqual(normalizeServerUrl('192.168. 0.10:3001'), { ok: false, reason: 'invalid' });
+  });
+
+  test('스킴 없는 IPv6 대괄호도 http://를 보충한다(보강)', () => {
+    assert.deepEqual(normalizeServerUrl('[::1]:3001'), { ok: true, origin: 'http://[::1]:3001' });
+  });
+
+  test('스킴 오인 호스트(localhost:포트) 뒤에 경로·쿼리가 붙어도 origin만 남는다(보강)', () => {
+    assert.deepEqual(normalizeServerUrl('localhost:3001/list.do?x=1'), { ok: true, origin: 'http://localhost:3001' });
+  });
+
+  test('mailto: 등 비숫자 나머지를 가진 스킴은 unsupported-scheme(보강 — host:port 오인 휴리스틱의 경계)', () => {
+    assert.deepEqual(normalizeServerUrl('mailto:user@h'), { ok: false, reason: 'unsupported-scheme' });
+  });
+
   test('healthUrl/appUrl 조립', () => {
     assert.equal(healthUrl('http://h:3001'), 'http://h:3001/api/health');
     assert.equal(appUrl('http://h:3001'), 'http://h:3001/');
@@ -188,6 +205,11 @@ describe('clientConfig', () => {
   test('readConfigFile: 파일 없음(ENOENT)·읽기 실패 → 기본값(throw 금지)', async () => {
     const enoent = async () => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; };
     assert.deepEqual(await readConfigFile('C:/nowhere/config.json', { readFile: enoent }), DEFAULT);
+  });
+
+  test('readConfigFile: 파일 내용이 깨진 JSON이어도 기본값으로 수렴한다(보강 — 손상 config 복구 경로)', async () => {
+    const cfg = await readConfigFile('C:/x/config.json', { readFile: async () => '{broken json' });
+    assert.deepEqual(cfg, DEFAULT); // serverUrl null → 셸은 설정 화면으로 간다(주소 재입력 복구).
   });
 
   test('readConfigFile: 파일 내용이 있으면 parseConfig를 거친다', async () => {
@@ -309,6 +331,19 @@ describe('windowPolicy', () => {
     assert.equal(opts.x, 30);
     assert.equal(opts.y, 40);
     assert.equal(opts.show, true);
+  });
+
+  test('app 창 옵션: bounds에 x/y가 없으면 좌표 키를 넣지 않는다(보강 — OS 기본 배치에 맡긴다)', () => {
+    const opts = buildWindowOptions('app', { bounds: { width: 1200, height: 800, maximized: false } });
+    assert.equal(opts.width, 1200);
+    assert.equal(opts.height, 800);
+    assert.equal('x' in opts, false);
+    assert.equal('y' in opts, false);
+  });
+
+  test('decideWindowOpen: 대문자 스킴·호스트의 동일 출처 URL도 allow(보강 — 문자열 비교가 아니라 URL 정규화 위임 증명)', () => {
+    const d = decideWindowOpen({ url: 'HTTP://192.168.0.10:3001/list.do', serverOrigin: ORIGIN, kind: 'app' });
+    assert.equal(d.action, 'allow');
   });
 
   test('decideWindowOpen: kind=local은 무엇이든 deny(about:blank 자식이 preload를 상속하기 때문)', () => {
