@@ -114,7 +114,7 @@ node scripts/verify-server-exe.mjs --exe <path> [--script <path>] [--spa <dir>] 
 
    **(B) `--portable` 모드(시드 없음 = 사용자 0명)** — 프로브는 **아래 3개로 한정**한다:
    - `GET /api/health` → 200
-   - `--spa` 지정 시 `GET /login.do`(`Accept: text/html`) → 200 + index.html 내용(경로 기본값이 exe 옆 `web`을 가리킨다는 증거)
+   - `GET /login.do`(`Accept: text/html`) → 200 + index.html 내용 — **`--spa` 없이 돈다**(`--portable`+`--spa` 동시 지정은 가드가 거부). 기본값이 exe 옆 `web`을 가리킨다는 계약이 산출물 수준에서 잠긴다
    - 종료 후 `<exe 디렉토리>/data/news.db`가 생성됐고 `node:sqlite`로 열어 **스키마가 만들어졌는지**(예: `User`·`Article` 테이블 조회가 성공) 확인
    - **인증·기사 생성 프로브를 여기서 하지 마라.** 이유: 계정이 없으므로 로그인 실패가 정상 동작이고, 그걸 통과시키려고 시드하면 샘플 계정 DB가 배포 폴더에 남는다. 이 모드가 증명하려는 것은 오직 **"cwd·DATA_DIR 없이도 exe 옆 data/·web/을 기준으로 뜬다"** 하나다(쓰기 경로 검증은 (A)가 이미 한다).
 6. 종료: 자식 kill → 200ms 대기 → 살아 있으면 SIGKILL(Windows 잔류 방지). 그 뒤 모드별 DB 확인((A) `dataDir/news.db`에 Article 행 1건 이상 / (B) `<exe 디렉토리>/data/news.db`에 스키마 존재)을 수행한다.

@@ -97,7 +97,7 @@ node scripts/verify-server-exe.mjs --exe "dist/기사작성기-server/기사작�
 #   프로브 집합은 health 200 + /login.do SPA 폴백 + <exeDir>/data/news.db 스키마 생성, 이 3개뿐이다.
 node -e "const fs=require('fs'); fs.rmSync('dist/portable-probe',{recursive:true,force:true}); \
   fs.cpSync('dist/기사작성기-server','dist/portable-probe',{recursive:true}); console.log('copy-ok');"
-node scripts/verify-server-exe.mjs --exe "dist/portable-probe/기사작성기-server.exe" --spa "dist/portable-probe/web" --portable
+node scripts/verify-server-exe.mjs --exe "dist/portable-probe/기사작성기-server.exe" --portable
 
 # 원본 재확인 — 포터블 프로브가 배포 폴더를 건드리지 않았다(data/에 news.db가 생기지 않았다).
 node -e "const fs=require('fs'); if(fs.existsSync('dist/기사작성기-server/data/news.db')) throw new Error('배포 폴더가 오염됐다'); console.log('pristine-ok');"

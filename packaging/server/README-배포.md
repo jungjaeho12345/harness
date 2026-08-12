@@ -127,7 +127,7 @@ Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x
 - **로그인이 안 됨**: ① `NODE_ENV`가 설정돼 있지 않은지 확인(위 5절 — 평문 HTTP에서 로그인이
   조용히 실패한다) ② 브라우저 쿠키 차단 여부 ③ `data\news.db`에 사용자가 있는지(위 4절).
 - **수집 HTTP가 503 `collection-disabled`**: LAN 개방 상태에서 `COLLECTION_TOKEN`이 없다 — 토큰을
-  설정한다(부팅 콘솔에 경고가 함께 남는다).
+  설정한다(부트 경고는 Z 관리자 로그 화면에만 남는다 — 콘솔에는 나오지 않는다).
 - **배부 파일이 안 생김**: `DIST_SPOOL_DIR` 미설정(= 배부 비활성)이다.
 - **화면(SPA)이 안 뜸**: exe 옆 `web\` 폴더가 있는지, `SPA_DIR`를 빈 값으로 강제 비활성하지
   않았는지 확인한다(API `/api/health`가 200이면 서버 자체는 정상).
@@ -137,5 +137,6 @@ Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x
 
 - 로그는 **파일로 저장되지 않는다.** 메모리 링 버퍼에만 있고 Z(관리자) 화면에서 조회한다
   — 서버 재시작 시 유실된다.
-- 부팅 진단(바인드 주소·SPA 경로·경고)의 1차 정보는 **콘솔 창 출력**이다. 문제가 생기면
-  콘솔 창(또는 bat의 pause로 남은 마지막 출력)을 먼저 본다.
+- 부팅 진단(바인드 주소·SPA 경로·수집 경고)도 같은 메모리 로그로만 남는다 — **콘솔 창에는
+  아무것도 출력되지 않는 것이 정상**이고, 콘솔에 글자가 보이면 그것은 크래시(EPERM·EADDRINUSE
+  등)다. 문제 원인 추적 순서: ① 콘솔 크래시 출력 → ② Z 관리자 로그 화면(로그인 가능할 때).

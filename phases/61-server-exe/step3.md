@@ -94,7 +94,7 @@ node -e "const fs=require('fs'),p=require('path'); const d='dist/기사작성기
 # 반드시 사본에서 돌린다(배포 폴더 원본 무오염 — step2와 같은 규율).
 node -e "const fs=require('fs'); fs.rmSync('dist/portable-probe',{recursive:true,force:true}); \
   fs.cpSync('dist/기사작성기-server','dist/portable-probe',{recursive:true}); console.log('copy-ok');"
-node scripts/verify-server-exe.mjs --exe "dist/portable-probe/기사작성기-server.exe" --spa "dist/portable-probe/web" --portable
+node scripts/verify-server-exe.mjs --exe "dist/portable-probe/기사작성기-server.exe" --portable
 node -e "const fs=require('fs'); if(fs.existsSync('dist/기사작성기-server/data/news.db')) throw new Error('배포 폴더가 오염됐다'); console.log('pristine-ok');"
 ```
 
