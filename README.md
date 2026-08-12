@@ -35,6 +35,16 @@ npm run server     # 같은 서버가 SPA + API 를 서빙 → http://127.0.0.1:
 
 `web/dist`가 없으면 SPA 서빙은 **비활성**이고 API만 뜬다(개발 흐름 무영향).
 
+## 배포 (Windows 서버 EXE)
+
+```bash
+npm run dist:server   # → dist/기사작성기-server/ 생성
+```
+
+- 산출물: `기사작성기-server.exe`(Node SEA 단일 실행 파일 — 서버 코드 + 의존성 + Node 런타임 내장) + `web/`(SPA) + `data/`(빈 골격) + `기사작성기-server.bat`.
+- 배포 대상 머신에 **Node 설치가 필요 없고**, 데이터는 exe 옆 `data/` 기준(포터블 — 백업 = 폴더 복사).
+- 운영 가이드(설치·환경변수·백업·서비스 등록·문제 해결)는 `packaging/server/README-배포.md`를 보라 — 배포 폴더에 자동 동봉된다. 설계 배경은 ADR-010.
+
 ### 샘플 계정 (개발/데모용)
 
 `npm run seed`가 채우는 계정. **운영 비밀번호로 쓰지 말 것.**
@@ -53,7 +63,8 @@ npm run server     # 같은 서버가 SPA + API 를 서빙 → http://127.0.0.1:
 
 - `PORT` — API 서버 포트(기본 3001)
 - (선택) `HOST` — listen 바인드 주소(기본 `127.0.0.1`). 다른 PC에서 접속하려면 `0.0.0.0` 등으로 설정한다. **loopback 밖으로 열면서 `COLLECTION_TOKEN`을 설정하지 않으면 수집 인제스트 HTTP 라우트(`POST /api/collection/receive`·`/pull`)가 503 `collection-disabled`로 비활성되고 부트 경고가 남는다**(FTP 스풀 수집은 영향 없음)
-- (선택) `SPA_DIR` — SPA 정적 루트(기본: 서버 모듈 기준 `web/dist`). `<루트>/index.html`이 없으면 서빙 비활성. 명시적으로 빈 값을 주면 강제 비활성
+- (선택) `SPA_DIR` — SPA 정적 루트(기본: 서버 모듈 기준 `web/dist`, 패키지 배치(exe)는 exe 옆 `web`). `<루트>/index.html`이 없으면 서빙 비활성. 명시적으로 빈 값을 주면 강제 비활성
+- (선택) `DATA_DIR` — 데이터 루트(news.db·uploads가 이 아래 생긴다). 기본: dev는 cwd, 패키지 배치(exe)는 exe 옆 `data`
 - `VITE_API_BASE` — 프론트가 호출할 API 베이스 URL
 - `YOUTUBE_API_KEY` — 영상 검색(YouTube Data API v3)
 - `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` — 이미지 검색(Google Custom Search)
