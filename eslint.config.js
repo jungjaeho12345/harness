@@ -42,4 +42,14 @@ export default [
     files: ['web/*.config.js', 'web/src/test/**', 'web/**/*.test.{js,jsx}'],
     languageOptions: { globals: { ...globals.node } },
   },
+  {
+    // Electron 셸 로컬 페이지 스크립트 — 렌더러(브라우저)에서 실행됨 (phase 62).
+    files: ['client/pages/**/*.js'],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
+    // Electron 샌드박스 preload — CJS 전용(.cjs, 기본 블록 '**/*.js'가 잡지 않음) (phase 62).
+    files: ['client/**/*.cjs'],
+    languageOptions: { ecmaVersion: 2023, sourceType: 'commonjs', globals: { ...globals.node } },
+  },
 ];

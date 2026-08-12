@@ -1,0 +1,98 @@
+/* 셸 로컬 페이지 공용 스타일 (phase 62 step1) — docs/UI_GUIDE.md 토큰만 쓴다.
+   흰 배경 #ffffff · 블루 #0a4da6(#083d84 hover) · 잉크 #1a1a1a · 보조 #444 · 구분선 #ddd · radius 2/4/6px.
+   금지: 그라데이션 텍스트 · backdrop-filter · 글로우 · 보라 계열(도구처럼 보여야 한다). */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #ffffff;
+  color: #1a1a1a;
+  font-family: 'Malgun Gothic', '맑은 고딕', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.shell-card {
+  width: 100%;
+  max-width: 480px;
+  border: 1px solid rgba(10, 77, 166, 0.15);
+  border-radius: 6px;
+  padding: 20px 24px;
+}
+
+.shell-card h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0a4da6;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #0a4da6;
+  margin-bottom: 12px;
+}
+
+.shell-desc { color: #444; margin-bottom: 8px; line-height: 1.5; }
+.shell-current { color: #888; font-size: 0.85rem; margin-bottom: 12px; }
+
+.shell-field { margin-bottom: 10px; }
+
+.shell-field label {
+  display: block;
+  color: #0a4da6;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+
+.shell-field input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 0.9rem;
+  border: 1px solid #ddd;
+  border-radius: 2px;
+  color: #1a1a1a;
+}
+
+.shell-field input::placeholder { font-style: italic; color: #888; }
+.shell-field input:focus { outline: none; border-color: #0a4da6; }
+
+.shell-message { min-height: 1.4em; font-size: 0.85rem; margin-bottom: 10px; }
+.shell-message--error { color: #c8102e; }
+.shell-message--ok { color: #0a4da6; }
+
+.shell-failure { border-top: 1px solid #ddd; border-bottom: 1px solid #ddd; padding: 10px 0; margin-bottom: 12px; }
+.shell-failure h2 { font-size: 0.95rem; color: #c8102e; margin-bottom: 6px; }
+.shell-failure p { color: #444; line-height: 1.5; font-size: 0.88rem; }
+.shell-failure .shell-hint { color: #888; margin-top: 4px; font-size: 0.82rem; }
+
+.shell-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.shell-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: inherit;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #1a1a1a;
+  cursor: pointer;
+}
+
+.shell-btn:hover { background: rgba(10, 77, 166, 0.08); }
+.shell-btn:disabled { color: #888; cursor: default; background: #f5f5f5; }
+
+.shell-btn--primary { background: #0a4da6; border-color: #0a4da6; color: #ffffff; }
+.shell-btn--primary:hover { background: #083d84; }
+.shell-btn--primary:disabled { background: #888; border-color: #888; color: #ffffff; }
+
+.shell-section[hidden] { display: none; }
+.shell-section { border-top: 1px solid #ddd; padding-top: 12px; margin-top: 12px; }

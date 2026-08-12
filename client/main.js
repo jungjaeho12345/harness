@@ -1,0 +1,319 @@
+// Electron 메인 프로세스 (phase 62 step1) — 결선만 한다. 정책 판단은 client/lib(step0),
+// 메뉴 구성·sender 검증·진단 직렬화는 client/{menu,ipcGuard,diag}.js가 단일 출처다(재구현 금지).
+// 창은 두 종류뿐이다: 앱 창(원격 서버 페이지 loadURL, 브리지 없음) · 로컬 창(pages/ loadFile, 브리지 있음).
+// CRITICAL(최상위 불변식): 브리지가 붙은 webContents는 원격 URL을 절대 로드하지 않는다 — 로컬 창의
+//   렌더러 내비게이션은 decideNavigation('local')이 전량 block한다.
+// CRITICAL(부팅 순서, decisions (11)): userData 지정 → 단일 인스턴스 잠금 요청 순서 고정 —
+//   잠금 키가 userData 경로에서 파생되므로 뒤집으면 실사용자 프로필 오염 + 스모크 거짓 통과.
+// 셸에는 타이머·주기 통신이 없다(ADR-008) — 서버 프로브는 사용자 액션당 net.fetch 1회뿐이다.
+
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow, Menu, dialog, ipcMain, net, screen, session, shell } from 'electron';
+import { normalizeServerUrl, healthUrl, appUrl, interpretHealthResponse } from './lib/serverUrl.js';
+import { configPath, readConfigFile, writeConfigFile, sanitizeBounds } from './lib/clientConfig.js';
+import {
+  APP_WINDOW, LOCAL_WINDOW, buildWindowOptions, decideWindowOpen, decideNavigation, isExternallyOpenable,
+} from './lib/windowPolicy.js';
+import { describeLoadFailure, describeHttpFailure } from './lib/loadFailure.js';
+import { buildMenuTemplate } from './menu.js';
+import { isTrustedSender } from './ipcGuard.js';
+import { createDiag } from './diag.js';
+
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const PRELOAD_PATH = path.join(moduleDir, 'preload.cjs'); // 로컬 창 전용 — 앱 창 옵션에는 이 값이 아예 없다.
+const SELFTEST = process.env.CLIENT_SELFTEST === '1';
+const diag = createDiag({ filePath: process.env.CLIENT_DIAG_FILE, appendFileSync: fs.appendFileSync });
+
+// 설정 파일 접근 — client/lib/clientConfig.js는 순수 모듈이라 fs를 주입받는다.
+// close 훅에서도 확실히 완결되도록 동기 fs를 async 시그니처로 감싼다(마이크로태스크 내 완결).
+const fsDeps = {
+  readFile: (file, enc) => fs.promises.readFile(file, enc),
+  mkdir: async (dir, opts) => fs.mkdirSync(dir, opts),
+  writeFile: async (file, data) => fs.writeFileSync(file, data),
+  rename: async (from, to) => fs.renameSync(from, to),
+};
+
+// webContents → 창 kind 매핑 (decisions (16)) — 미등록은 LOCAL(가장 제한적) 취급: 등록 누락이
+// "허용"으로 새지 않는다(local은 새 창·내비게이션 전량 차단).
+const kindByContents = new WeakMap();
+const kindOf = (contents) => kindByContents.get(contents) ?? LOCAL_WINDOW;
+
+let serverOrigin = null;
+let savedBounds = null;
+let appWindow = null;
+let localWindow = null;
+let localContentsId = null;
+let localMode = 'setup';
+let lastFailure = null;
+let configFile = null;
+
+// --- 부팅 순서 계약: userData 지정이 반드시 단일 인스턴스 잠금보다 먼저다 ---
+if (process.env.CLIENT_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.CLIENT_USER_DATA));
+}
+if (!app.requestSingleInstanceLock()) {
+  app.quit(); // 창을 만들지 않고 즉시 종료 — 기존 인스턴스가 second-instance로 전면에 나온다.
+} else {
+  wireApp();
+}
+
+function wireApp() {
+  configFile = configPath(app.getPath('userData'));
+
+  app.on('second-instance', () => {
+    diag.log('second-instance', {});
+    if (SELFTEST) return; // 검증 중 데스크톱 점유 금지 — 이벤트 기록만 한다.
+    const win = [appWindow, localWindow].find((w) => w && !w.isDestroyed());
+    if (!win) return;
+    if (win.isMinimized()) win.restore(); // restore()를 항상 부르면 최대화가 풀린다 — 최소화일 때만.
+    win.show();
+    win.focus();
+  });
+
+  // 전역 가드 — 어떤 경로로 webContents가 생겨도 새 창·내비게이션 정책이 걸린다.
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() !== 'window') return; // devtools 등 비창 contents는 정책 평가 대상이 아니다(게이트 ② 확정).
+    contents.setWindowOpenHandler(({ url }) => {
+      const decision = decideWindowOpen({ url, serverOrigin, kind: kindOf(contents) });
+      diag.log('window-open', { url, action: decision.action });
+      if (decision.action === 'allow') {
+        const allow = { action: 'allow', overrideBrowserWindowOptions: decision.overrideBrowserWindowOptions };
+        if (decision.outlivesOpener === true) allow.outlivesOpener = true;
+        return allow;
+      }
+      if (decision.openExternal && isExternallyOpenable(decision.openExternal)) {
+        shell.openExternal(decision.openExternal); // 외부 링크는 기본 브라우저로 — 앱 창에 남기지 않는다.
+      }
+      return { action: 'deny' };
+    });
+    contents.on('did-create-window', (child) => {
+      kindByContents.set(child.webContents, kindOf(contents)); // 자식(about:blank 상세보기·인쇄)은 부모 kind 상속.
+    });
+    contents.on('will-navigate', (event, url) => {
+      const decision = decideNavigation({ url, serverOrigin, kind: kindOf(contents) });
+      diag.log('navigation', { url, decision });
+      if (decision !== 'allow') event.preventDefault();
+      if (decision === 'external' && isExternallyOpenable(url)) shell.openExternal(url);
+    });
+    contents.on('will-attach-webview', (event) => event.preventDefault());
+  });
+
+  // IPC — 모든 핸들러는 sender(file:// + 현재 로컬 창 contents id)를 검증한다. 신뢰 경계는 셸 메인이다.
+  handleGuarded('probeServer', async (input) => {
+    const norm = normalizeServerUrl(input);
+    if (!norm.ok) return { ok: false, reason: norm.reason };
+    const verdict = await probeOrigin(norm.origin);
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: norm.origin };
+    return { ok: true, origin: norm.origin };
+  });
+  handleGuarded('saveServer', async (input) => {
+    const norm = normalizeServerUrl(input);
+    if (!norm.ok) return { ok: false, reason: norm.reason };
+    const verdict = await probeOrigin(norm.origin);
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: norm.origin }; // 실패한 주소는 저장하지 않는다.
+    serverOrigin = norm.origin;
+    lastFailure = null;
+    await persistConfig();
+    diag.log('config-saved', { origin: norm.origin });
+    createAppWindow(norm.origin, savedBounds);
+    return { ok: true, origin: norm.origin };
+  });
+  handleGuarded('getState', async () => ({ mode: localMode, serverUrl: serverOrigin, failure: lastFailure }));
+  handleGuarded('retry', async () => { retryConnect(); return { ok: true }; });
+  handleGuarded('quit', async () => { app.quit(); return { ok: true }; });
+
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
+
+  app.whenReady().then(async () => {
+    diag.log('app-ready', {});
+    // 권한은 클립보드 2종만 — WriterPage 붙여넣기 경로(navigator.clipboard.read)가 쓴다. 나머지는 전부 거부.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === 'clipboard-read' || permission === 'clipboard-sanitized-write');
+    });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate({
+      dev: process.env.CLIENT_DEV === '1',
+      handlers: {
+        changeServer: () => { showLocalWindow('setup', 'menu'); closeAppWindow(); },
+        reconnect: () => retryConnect(),
+        quit: () => app.quit(),
+        about: () => showAbout(),
+      },
+    })));
+
+    const cfg = await readConfigFile(configFile, fsDeps);
+    diag.log('config-loaded', { hasServerUrl: cfg.serverUrl !== null });
+    const workAreas = screen.getAllDisplays().map((d) => d.workArea);
+    savedBounds = sanitizeBounds(cfg.bounds, workAreas); // 모니터가 떨어진 배치는 기본 배치로.
+    if (cfg.serverUrl) {
+      serverOrigin = cfg.serverUrl;
+      createAppWindow(serverOrigin, savedBounds);
+    } else {
+      showLocalWindow('setup', 'no-config');
+    }
+  });
+}
+
+// 사용자 액션당 1회 프로브 — 재시도·백오프·주기 확인 금지(ADR-008). 판정은 interpretHealthResponse 단일 출처.
+async function probeOrigin(origin) {
+  let verdict;
+  try {
+    const res = await net.fetch(healthUrl(origin), { signal: AbortSignal.timeout(5000) });
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    verdict = interpretHealthResponse({ status: res.status, body });
+  } catch {
+    verdict = interpretHealthResponse({ status: null, body: null }); // 네트워크 실패 = unreachable.
+  }
+  const payload = { origin, ok: verdict.ok };
+  if (!verdict.ok) payload.reason = verdict.reason;
+  diag.log('probe', payload);
+  return verdict;
+}
+
+function handleGuarded(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const trusted = isTrustedSender({
+      senderUrl: event.senderFrame?.url,
+      senderContentsId: event.sender.id,
+      localContentsId,
+    });
+    diag.log('ipc', { channel, trusted });
+    if (!trusted) return { ok: false, reason: 'forbidden' }; // 처리 금지 — 원격·타 창은 여기서 끝.
+    return handler(...args);
+  });
+}
+
+function createAppWindow(origin, bounds) {
+  const win = new BrowserWindow(buildWindowOptions(APP_WINDOW, { bounds }));
+  appWindow = win;
+  kindByContents.set(win.webContents, APP_WINDOW);
+  let shown = false;
+  win.once('ready-to-show', () => {
+    if (SELFTEST) return; // 검증 모드 — 창을 화면에 올리지 않는다.
+    if (bounds && bounds.maximized) win.maximize();
+    win.show();
+    shown = true;
+  });
+  const contents = win.webContents;
+  contents.on('did-finish-load', () => {
+    diag.log('did-finish-load', { url: contents.getURL(), title: contents.getTitle() });
+  });
+  contents.on('did-navigate', (_e, url, httpResponseCode) => {
+    diag.log('did-navigate', { url, httpResponseCode });
+    const failure = describeHttpFailure({ httpResponseCode, url }); // 404 = 서버는 살았는데 SPA 미서빙 배치.
+    if (failure && appWindow === win) transitionToFailure(failure);
+  });
+  contents.on('did-fail-load', (_e, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    diag.log('load-failed', { errorCode, url: validatedUrl });
+    const failure = describeLoadFailure({ errorCode, errorDescription, validatedUrl, isMainFrame });
+    if (failure && appWindow === win) transitionToFailure(failure);
+  });
+  // 렌더러 이상은 진단만 — 창을 죽이지 않는다(계획 5절).
+  contents.on('render-process-gone', (_e, details) => diag.log('render-process-gone', { reason: details && details.reason }));
+  contents.on('unresponsive', () => diag.log('unresponsive', {}));
+  // 창 크기 저장은 close 1회뿐(resize 디바운스 타이머 금지 — ADR-008). 화면에 뜬 적 없는 창은 저장하지 않는다.
+  win.on('close', () => { if (shown) saveBoundsFrom(win); });
+  win.on('closed', () => { if (appWindow === win) appWindow = null; });
+  closeLocalWindow(); // 로컬 창은 항상 최대 1개 — 앱 창이 서면 닫는다(앱 창 생성 후라 window-all-closed 공백 없음).
+  diag.log('app-window', { url: appUrl(origin) });
+  win.loadURL(appUrl(origin));
+  return win;
+}
+
+// 오류 전환(좀비 창 금지 — decisions (12)): 로컬 오류 창을 먼저 세우고 앱 창을 close()로 없앤다.
+// hide() 금지 — 숨은 창이 남으면 window-all-closed가 오지 않아 프로세스가 좀비로 남는다.
+function transitionToFailure(failure) {
+  lastFailure = failure;
+  showLocalWindow('error');
+  closeAppWindow();
+}
+
+function closeAppWindow() {
+  const win = appWindow;
+  appWindow = null;
+  if (!win || win.isDestroyed()) return;
+  if (win.webContents.isCrashed()) {
+    win.destroy(); // 렌더러가 죽어 close에 응답할 수 없는 경우만 강제 파괴.
+    return;
+  }
+  win.close(); // 정상 경로 — close 훅(bounds 저장)·렌더러 언로드 기회를 유지한다.
+}
+
+function closeLocalWindow() {
+  const win = localWindow;
+  localWindow = null;
+  localContentsId = null;
+  if (win && !win.isDestroyed()) win.close();
+}
+
+// 로컬 창은 항상 최대 1개 — 있으면 재사용해 모드만 갱신한다(2개가 되면 isTrustedSender의 단일 id와
+// 어긋나 먼저 뜬 창의 버튼이 조용히 forbidden이 된다 — 금지된 "조용한 반쪽 상태").
+function showLocalWindow(mode, reason) {
+  localMode = mode;
+  const pageFile = path.join(moduleDir, 'pages', mode === 'error' ? 'error.html' : 'setup.html');
+  diag.log('local-window', { page: mode });
+  if (mode === 'setup') diag.log('setup-shown', { reason: reason ?? 'error-recovery' });
+  if (localWindow && !localWindow.isDestroyed()) {
+    localWindow.loadFile(pageFile);
+    if (!SELFTEST) { localWindow.show(); localWindow.focus(); }
+    return;
+  }
+  const win = new BrowserWindow(buildWindowOptions(LOCAL_WINDOW, { preloadPath: PRELOAD_PATH }));
+  localWindow = win;
+  localContentsId = win.webContents.id;
+  kindByContents.set(win.webContents, LOCAL_WINDOW);
+  win.webContents.on('did-finish-load', () => {
+    diag.log('did-finish-load', { url: win.webContents.getURL(), title: win.webContents.getTitle() });
+  });
+  win.once('ready-to-show', () => { if (!SELFTEST) win.show(); });
+  win.on('closed', () => {
+    if (localWindow === win) { localWindow = null; localContentsId = null; }
+  });
+  win.loadFile(pageFile);
+}
+
+function retryConnect() {
+  if (serverOrigin) {
+    createAppWindow(serverOrigin, savedBounds); // 앱 창은 재사용하지 않고 새로 만든다(계획 5절 상태 전이).
+  } else {
+    showLocalWindow('setup', 'no-config');
+  }
+}
+
+function saveBoundsFrom(win) {
+  try {
+    const workAreas = screen.getAllDisplays().map((d) => d.workArea);
+    const normal = win.getNormalBounds(); // 최대화 상태여도 복원 크기를 저장한다.
+    const bounds = sanitizeBounds({ ...normal, maximized: win.isMaximized() }, workAreas);
+    if (bounds) savedBounds = bounds;
+    persistConfig();
+  } catch {
+    // 저장 실패로 종료를 막지 않는다.
+  }
+}
+
+function persistConfig() {
+  // serializeConfig가 화이트리스트를 강제한다 — 세션·자격증명이 실릴 자리가 없다.
+  return writeConfigFile(configFile, { serverUrl: serverOrigin, bounds: savedBounds }, fsDeps)
+    .catch(() => {});
+}
+
+function showAbout() {
+  const win = BrowserWindow.getFocusedWindow() ?? appWindow ?? localWindow;
+  const opts = {
+    type: 'info',
+    title: '정보',
+    message: '기사작성기 클라이언트',
+    detail: [
+      `버전 ${app.getVersion()}`,
+      `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`,
+      `서버: ${serverOrigin ?? '(미설정)'}`,
+    ].join('\n'),
+  };
+  if (win && !win.isDestroyed()) dialog.showMessageBox(win, opts);
+  else dialog.showMessageBox(opts);
+}
