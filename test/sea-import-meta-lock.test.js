@@ -6,6 +6,9 @@
 // 수십 초짜리 SEA 빌드에서야 red가 된다(phase 61 변이 검증 (5) 실측) — 여기서 즉시 잡는다.
 // 스캔 범위 = SEA 번들 그래프 소스(server/** + src/**)뿐이다. scripts/**·web/**·test/**는
 // 번들에 들어가지 않으므로 세지 않는다(빌드 스크립트 자신은 import.meta를 써도 안전하다).
+// 주의(엄격성 — 의도된 설계): 이 스캔은 텍스트 기반이라 주석·문자열 안의 리터럴도 센다.
+// server/**·src/**의 설명 주석에서는 그 단어를 쓰지 말고 '모듈 메타'라고 써라(server/index.js
+// 1258행이 그 관행이다). 주석 제외 파싱은 넣지 않는다 — 파서 자체가 새 오탐·누락원이 된다.
 // 파일시스템 읽기 전용 — DB·네트워크·프로세스 부수효과 없음.
 
 import test from 'node:test';
@@ -48,7 +51,8 @@ test('SEA 잠금: 번들 그래프(server/**+src/**)의 import.meta 참조는 se
 
   assert.equal(
     hits.length, 1,
-    `import.meta 참조가 정확히 1건이어야 한다(빌드 게이트 empty-import-meta=1 계약). 발견:\n`
+    `import.meta 참조가 정확히 1건이어야 한다(빌드 게이트 empty-import-meta=1 계약). `
+    + `이 스캔은 텍스트 기반이라 주석·문자열 안의 리터럴도 센다 — 설명이 필요하면 '모듈 메타'라고 써라. 발견:\n`
     + hits.map((h) => `  ${h.file}:${h.line} ${h.text}`).join('\n'),
   );
   assert.equal(hits[0].file, path.join('server', 'index.js'), '유일 참조는 server/index.js에 있어야 한다');
