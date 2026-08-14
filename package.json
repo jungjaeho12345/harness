@@ -18,7 +18,8 @@
     "dist:server": "node scripts/dist-server.mjs",
     "client:dev": "electron client",
     "dist:client": "node scripts/dist-client.mjs",
-    "make:icon": "node scripts/make-icon.mjs"
+    "make:icon": "node scripts/make-icon.mjs",
+    "verify:integration": "node scripts/verify-integration.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
