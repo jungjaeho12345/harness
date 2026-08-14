@@ -189,6 +189,75 @@ describe('requiresRestartForOrigin', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 테스트 게이트 보강 (phase 63 ④) — 정규화·IPv6·공백 변형·재시작 판정의 추가 경계를 잠근다.
+describe('decideSecureOriginSwitches — 보강: 정규화·IPv6·fail-closed 경계', () => {
+  test('기본 포트(:80) 명시는 정규화로 생략된다 — 스위치 값은 항상 new URL(입력).origin', () => {
+    const d = decideSecureOriginSwitches('http://10.0.0.1:80');
+    assert.equal(d.apply, true);
+    assert.equal(d.origin, 'http://10.0.0.1');
+    assert.equal(d.switches[0].value, 'http://10.0.0.1');
+  });
+
+  test('경로·쿼리가 붙은 입력도 값은 origin만 남는다(경로가 새면 Chromium 정확 비교 매칭 실패)', () => {
+    const d = decideSecureOriginSwitches('http://10.0.0.1:8080/app/list.do?menu=1');
+    assert.equal(d.apply, true);
+    assert.equal(d.origin, 'http://10.0.0.1:8080');
+    assert.equal(d.switches[0].value, 'http://10.0.0.1:8080');
+  });
+
+  test('IPv6 비-loopback([fe80::1] 등)은 적용 대상이다([::1]만 loopback)', () => {
+    const d = decideSecureOriginSwitches('http://[fe80::1]:3001');
+    assert.equal(d.apply, true);
+    assert.equal(d.origin, 'http://[fe80::1]:3001');
+  });
+
+  test('0.0.0.0은 loopback 취급이 아니다(server isLoopbackHost와 동형 — 적용)', () => {
+    const d = decideSecureOriginSwitches('http://0.0.0.0:3001');
+    assert.equal(d.apply, true);
+    assert.equal(d.origin, 'http://0.0.0.0:3001');
+  });
+
+  test('범위 밖 IPv4(127.0.0.256)는 URL 파싱 실패 → invalid(fail-closed)', () => {
+    assert.deepEqual(decideSecureOriginSwitches('http://127.0.0.256:3001'), { apply: false, reason: 'invalid' });
+  });
+
+  test('탭·개행 등 모든 공백 문자 혼입도 unsafe-value로 fail-closed다', () => {
+    for (const input of ['http://10.0.0.1:3001\thttp://evil', 'http://10.0.0.1:3001\nhttp://evil']) {
+      assert.deepEqual(decideSecureOriginSwitches(input), { apply: false, reason: 'unsafe-value' }, JSON.stringify(input));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('requiresRestartForOrigin — 보강: 정규화 동일성·fail-closed', () => {
+  test('적용값과 정규화만 다른 입력(기본 포트 명시·트레일링 슬래시)은 재시작 불요', () => {
+    assert.equal(requiresRestartForOrigin('http://10.0.0.1', 'http://10.0.0.1:80/'), false);
+  });
+
+  test('같은 호스트라도 포트가 다르면 다른 origin — 재시작 요', () => {
+    assert.equal(requiresRestartForOrigin('http://10.0.0.1:3001', 'http://10.0.0.1:3002'), true);
+  });
+
+  test('unsafe-value(콤마 목록) 새 입력은 스위치 비대상 — 재시작 불요', () => {
+    assert.equal(requiresRestartForOrigin(null, 'http://a.com,http://b.com'), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('보강: isTrustedLocalOrigin·mergeFeatureValue 추가 경계', () => {
+  test('대문자 LOCALHOST도 URL 정규화(소문자화)로 loopback이다', () => {
+    assert.equal(isTrustedLocalOrigin('http://LOCALHOST:3001'), true);
+  });
+
+  test('mergeFeatureValue는 정확 토큰 일치만 중복으로 본다(접두 유사 토큰에 흡수 금지)', () => {
+    assert.equal(
+      mergeFeatureValue('OverrideSecurityRestrictionsOnInsecureOriginX', SECURE_ORIGIN_FEATURE),
+      'OverrideSecurityRestrictionsOnInsecureOriginX,OverrideSecurityRestrictionsOnInsecureOrigin',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('readConfigFileSync', () => {
   const DEFAULTS = { schemaVersion: CONFIG_SCHEMA_VERSION, serverUrl: null, bounds: null };
 
