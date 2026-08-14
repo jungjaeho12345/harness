@@ -87,6 +87,37 @@ test('backfillHistoryTitles: 2번째 배치 중간에서 deriveTitle이 throw �
   assert.equal(titleOf(db, total), `D2:제목 ${total}`);
 });
 
+// 보강 3 (phase 64 step4 C-1): ROLLBACK 자체가 던지는 상황(SQLITE_FULL 등 자동 롤백 후
+// 'no transaction is active')에서 원인 예외의 identity가 보존되는지 잠근다. 부팅 경로의 오보
+// ("디스크가 가득 찼다" 대신 "활성 트랜잭션이 없다")를 막는 것이 목적이다.
+test('backfillHistoryTitles: ROLLBACK 자체가 던져도 원인 예외(sentinel) 그 자체가 전파된다 + ROLLBACK 시도는 정확히 1회', () => {
+  const db = freshDb();
+  insertRow(db, { markupVersion: '제목\n본문' });
+  const sentinel = new Error('derive-sentinel');
+  let rollbackAttempts = 0;
+  // 실제 DatabaseSync를 감싼 프록시 — exec('ROLLBACK')만 던지게 한다(두 함수는 prepare/exec만 쓴다).
+  const fake = {
+    prepare: (sql) => db.prepare(sql),
+    exec: (sql) => {
+      if (sql === 'ROLLBACK') {
+        rollbackAttempts += 1;
+        throw new Error('cannot rollback - no transaction is active');
+      }
+      return db.exec(sql);
+    },
+  };
+  let caught = null;
+  try {
+    backfillHistoryTitles(fake, { deriveTitle: () => { throw sentinel; } });
+  } catch (e) {
+    caught = e;
+  }
+  // 케이스 A: 원인 예외 identity 보존 — 롤백 예외로 교체되면 red.
+  assert.strictEqual(caught, sentinel, '던져지는 예외는 원인 예외 그 자체여야 한다(롤백 예외로 교체 금지)');
+  // 케이스 B: ROLLBACK을 조용히 건너뛰는 구현으로 도망가지 못하게 시도 횟수를 잠근다.
+  assert.equal(rollbackAttempts, 1, 'ROLLBACK 시도는 정확히 1회여야 한다');
+});
+
 // 보강 2: 배부 판정 무접점 — 백필 전후로 phase 57 판정 표면 5종이 완전히 동일하다.
 // (a) queryDistributionEvents 행 자체(failedAt의 원천 createdAt·reason·targetId — 사실 컬럼)
 // (b) unresolvedFailures 파생(failedAt 포함) (c) cycleDistributedKinds (d) latestSendId

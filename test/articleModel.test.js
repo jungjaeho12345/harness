@@ -60,6 +60,46 @@ test('articleModel: insert는 트랜잭션이다 — Contents 실패 시 Article
   assert.equal(article, undefined, 'Article insert가 롤백되어야 함');
 });
 
+// phase 64 step4 C-1: ROLLBACK 자체가 던지는 상황(SQLITE_FULL 등 자동 롤백 후 'no transaction is
+// active')에서 원인 예외 identity가 보존되는지 잠근다 — 롤백 예외가 원인을 교체하면 오보가 된다.
+test('articleModel: tx 실패 시 ROLLBACK 자체가 던져도 원인 예외(sentinel) 그 자체가 전파된다', () => {
+  const sentinel = new Error('insert-sentinel');
+  let rollbackAttempts = 0;
+  // tx()는 db.exec/prepare만 쓴다 — INSERT prepare에서 sentinel을 던지고 ROLLBACK도 던지는 가짜 db.
+  const fake = {
+    exec: (sql) => {
+      if (sql === 'ROLLBACK') {
+        rollbackAttempts += 1;
+        throw new Error('cannot rollback - no transaction is active');
+      }
+      // BEGIN — no-op(트랜잭션 실체 없이 예외 경로만 재현한다).
+    },
+    prepare: (sql) => {
+      if (sql.startsWith('INSERT INTO Article')) throw sentinel;
+      throw new Error(`unexpected prepare: ${sql}`);
+    },
+  };
+  let caught = null;
+  try {
+    createArticleModel(fake).insert(makeArticle('AKR1'));
+  } catch (e) {
+    caught = e;
+  }
+  assert.strictEqual(caught, sentinel, '던져지는 예외는 원인 예외 그 자체여야 한다(재포장·교체 금지)');
+  assert.equal(rollbackAttempts, 1, 'ROLLBACK 시도는 정확히 1회여야 한다(조용한 건너뛰기 금지)');
+});
+
+// phase 64 step4 C-1 회귀: 정상 DatabaseSync에서는 실패 시 롤백이 실제로 수행된다 — 실패 직전 행이
+// 남지 않고, 이후 insert가 정상 동작한다(열린 트랜잭션이 남았으면 다음 BEGIN이 throw한다).
+test('articleModel: 정상 DatabaseSync에서 tx 실패 후 롤백 수행 + 다음 insert 정상(열린 트랜잭션 잔존 없음)', () => {
+  const { db, articles } = setup();
+  db.prepare('INSERT INTO Contents (articleId) VALUES (?)').run('AKR1');
+  assert.throws(() => articles.insert(makeArticle('AKR1')));
+  assert.equal(db.prepare('SELECT * FROM Article WHERE articleId = ?').get('AKR1'), undefined, '실패 직전 Article 행 미잔존');
+  articles.insert(makeArticle('AKR2'));
+  assert.equal(articles.getById('AKR2').article.articleId, 'AKR2', '이후 insert 정상 — 롤백이 실제로 일어났다');
+});
+
 test('articleModel: update는 Article+Contents를 트랜잭션으로 부분 갱신한다', () => {
   const { articles } = setup();
   articles.insert(makeArticle('AKR1'));
