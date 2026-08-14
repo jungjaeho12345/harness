@@ -17,6 +17,7 @@ import { FEATURE_SWITCH, decideSecureOriginSwitches, requiresRestartForOrigin } 
 import {
   APP_WINDOW, LOCAL_WINDOW, buildWindowOptions, decideWindowOpen, decideNavigation, isExternallyOpenable,
 } from './lib/windowPolicy.js';
+import { isAllowedPermission } from './lib/permissionPolicy.js';
 import { describeLoadFailure, describeHttpFailure } from './lib/loadFailure.js';
 import { buildMenuTemplate } from './menu.js';
 import { isTrustedSender } from './ipcGuard.js';
@@ -149,9 +150,12 @@ function wireApp() {
   app.whenReady().then(() => {
     diag.log('app-ready', {});
     // 권한은 클립보드 2종만 — WriterPage 붙여넣기 경로(navigator.clipboard.read)가 쓴다. 나머지는 전부 거부.
+    // request(비동기 요청)와 check(동기 확인 — navigator.permissions.query 등)가 같은 정책을 공유한다.
+    // 판정 단일 출처는 client/lib/permissionPolicy.js다(phase 64 step3 — Electron 보안 체크리스트 대칭 권고).
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-      callback(permission === 'clipboard-read' || permission === 'clipboard-sanitized-write');
+      callback(isAllowedPermission(permission));
     });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => isAllowedPermission(permission)); // 동기 boolean 반환(콜백 아님).
     Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate({
       dev: process.env.CLIENT_DEV === '1',
       handlers: {

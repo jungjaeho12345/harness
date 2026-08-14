@@ -26,6 +26,7 @@ function isLoopbackHostname(hostname) {
 }
 
 // origin이 Chromium 기본 신뢰(loopback) 대상인가 — 파싱 실패는 false(fail-closed: 모르는 값은 신뢰 아님).
+// 판정 본체는 decideSecureOriginSwitches(내부 isLoopbackHostname)가 쓴다 — 이 export는 테스트/미래 소비자용으로 의도적으로 유지한다(제거 금지 — phase 64 decisions (13)).
 export function isTrustedLocalOrigin(origin) {
   let url;
   try {
