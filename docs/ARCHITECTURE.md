@@ -31,7 +31,7 @@ client/                 # Electron 접속형 클라이언트 셸 (phase 62 — �
   main.js               # 메인 프로세스 — 결선만 (부팅 순서 · 창 2종 · 가드 이벤트 · IPC · 메뉴)
   preload.cjs           # 셸 로컬 창 전용 브리지 5함수 (샌드박스 preload는 CJS 강제)
   menu.js / ipcGuard.js / diag.js   # 순수 보조 모듈 (메뉴 템플릿 · sender 검증 · 진단 JSONL)
-  lib/                  # Electron 비의존 순수 정책 (serverUrl · clientConfig · windowPolicy · loadFailure)
+  lib/                  # Electron 비의존 순수 정책 (serverUrl · clientConfig · windowPolicy · loadFailure · permissionPolicy)
   pages/                # 셸 로컬 페이지 (setup/error — CSP meta · 인라인 스크립트 없음)
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
