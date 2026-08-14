@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServerExe } from './sea-build.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -103,20 +104,26 @@ export async function distServer({
 
 // --- CLI ---
 function parseArgs(argv) {
+  const usage = '사용법: node scripts/dist-server.mjs [--out <dir>] [--skip-web] [--fallback]';
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) {
+      process.stderr.write(`${v.message}\n${usage}\n`);
+      process.exit(1);
+    }
+    return v.value;
+  };
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') { opts.outDir = argv[++i]; }
+    if (a === '--out') { opts.outDir = takeValue(i, '--out'); i += 1; }
     else if (a === '--skip-web') { opts.skipWeb = true; }
     else if (a === '--fallback') { opts.fallback = true; }
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/dist-server.mjs [--out <dir>] [--skip-web] [--fallback]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n${usage}\n`);
       process.exit(1);
     }
-  }
-  if (opts.outDir !== undefined && !opts.outDir) {
-    process.stderr.write('--out 값이 비어 있다.\n');
-    process.exit(1);
   }
   return opts;
 }

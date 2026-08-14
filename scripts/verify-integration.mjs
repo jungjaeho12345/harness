@@ -28,6 +28,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers } from '../src/db/seed.js';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -48,16 +49,22 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) die(v.message);
+    return v.value;
+  };
   const opts = { scenario: 'all', show: false, keep: false, timeout: 45000 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--scenario') opts.scenario = argv[++i];
-    else if (a === '--server-exe') opts.serverExe = argv[++i];
-    else if (a === '--client-exe') opts.clientExe = argv[++i];
-    else if (a === '--cdp-port') opts.cdpPort = Number(argv[++i]);
+    if (a === '--scenario') { opts.scenario = takeValue(i, '--scenario'); i += 1; }
+    else if (a === '--server-exe') { opts.serverExe = takeValue(i, '--server-exe'); i += 1; }
+    else if (a === '--client-exe') { opts.clientExe = takeValue(i, '--client-exe'); i += 1; }
+    else if (a === '--cdp-port') { opts.cdpPort = Number(takeValue(i, '--cdp-port')); i += 1; }
     else if (a === '--show') opts.show = true;
     else if (a === '--keep') opts.keep = true;
-    else if (a === '--timeout') opts.timeout = Number(argv[++i]);
+    else if (a === '--timeout') { opts.timeout = Number(takeValue(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
   if (!['loopback', 'lan', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(loopback|lan|all): ${opts.scenario}`);
@@ -67,7 +74,6 @@ function parseArgs(argv) {
   }
   for (const key of ['serverExe', 'clientExe']) {
     if (opts[key] !== undefined) {
-      if (!opts[key]) die(`--${key === 'serverExe' ? 'server-exe' : 'client-exe'} 경로가 비어 있다.`);
       opts[key] = nodePath.resolve(opts[key]);
       if (!fs.existsSync(opts[key])) die(`경로가 존재하지 않는다: ${opts[key]}`);
     }

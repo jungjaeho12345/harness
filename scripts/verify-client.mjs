@@ -20,6 +20,7 @@ import nodePath from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -40,21 +41,26 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) die(v.message);
+    return v.value;
+  };
   const opts = { scenario: 'all', keep: false, timeout: 45000 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--dev') opts.dev = true;
-    else if (a === '--exe') opts.exe = argv[++i];
-    else if (a === '--scenario') opts.scenario = argv[++i];
-    else if (a === '--server') opts.server = argv[++i];
+    else if (a === '--exe') { opts.exe = takeValue(i, '--exe'); i += 1; }
+    else if (a === '--scenario') { opts.scenario = takeValue(i, '--scenario'); i += 1; }
+    else if (a === '--server') { opts.server = takeValue(i, '--server'); i += 1; }
     else if (a === '--keep') opts.keep = true;
-    else if (a === '--timeout') opts.timeout = Number(argv[++i]);
+    else if (a === '--timeout') { opts.timeout = Number(takeValue(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
   // 인자 가드 — 오타가 "검증 통과"로 둔갑하지 않게 전부 막는다(scripts/**는 eslint 밖).
   if (!opts.dev === !opts.exe) die('--dev 또는 --exe <path> 중 정확히 하나를 지정하라.');
   if (opts.exe !== undefined) {
-    if (!opts.exe) die('--exe 경로가 비어 있다.');
     opts.exe = nodePath.resolve(opts.exe);
     if (!fs.existsSync(opts.exe)) die(`--exe 경로가 존재하지 않는다: ${opts.exe}`);
   }

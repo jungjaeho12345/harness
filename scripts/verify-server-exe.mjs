@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers, SAMPLE_USERS } from '../src/db/seed.js';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const USAGE = `사용법: node scripts/verify-server-exe.mjs --exe <path> [--script <path>] [--spa <dir>] [--port <n>] [--portable]
   --exe <path>    검증할 실행 파일(SEA exe 또는 폴백 node.exe). 필수.
@@ -36,13 +37,19 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) die(v.message);
+    return v.value;
+  };
   const opts = { portable: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--exe') opts.exe = argv[++i];
-    else if (a === '--script') opts.script = argv[++i];
-    else if (a === '--spa') opts.spa = argv[++i];
-    else if (a === '--port') opts.port = Number(argv[++i]);
+    if (a === '--exe') { opts.exe = takeValue(i, '--exe'); i += 1; }
+    else if (a === '--script') { opts.script = takeValue(i, '--script'); i += 1; }
+    else if (a === '--spa') { opts.spa = takeValue(i, '--spa'); i += 1; }
+    else if (a === '--port') { opts.port = Number(takeValue(i, '--port')); i += 1; }
     else if (a === '--portable') opts.portable = true;
     else die(`알 수 없는 인자: ${a}`);
   }

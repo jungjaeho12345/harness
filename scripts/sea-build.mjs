@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { toVersionQuad, buildServerVersionStrings, applyPeMeta, readPeMeta } from './lib/exeMeta.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 // 빌드 전용 스크립트라 import.meta 사용이 안전하다(SEA 번들 대상이 아니다 — server/**와 규율이 다르다).
 const require = createRequire(import.meta.url);
@@ -206,20 +207,26 @@ export async function buildServerExe({
 
 // --- CLI ---
 function parseArgs(argv) {
+  const usage = '사용법: node scripts/sea-build.mjs [--out <dir>] [--name <exe>] [--fallback]';
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) {
+      process.stderr.write(`${v.message}\n${usage}\n`);
+      process.exit(1);
+    }
+    return v.value;
+  };
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') { opts.outDir = argv[++i]; }
-    else if (a === '--name') { opts.exeName = argv[++i]; }
+    if (a === '--out') { opts.outDir = takeValue(i, '--out'); i += 1; }
+    else if (a === '--name') { opts.exeName = takeValue(i, '--name'); i += 1; }
     else if (a === '--fallback') { opts.fallback = true; }
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/sea-build.mjs [--out <dir>] [--name <exe>] [--fallback]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n${usage}\n`);
       process.exit(1);
     }
-  }
-  if ((opts.outDir !== undefined && !opts.outDir) || (opts.exeName !== undefined && !opts.exeName)) {
-    process.stderr.write('--out/--name 값이 비어 있다.\n');
-    process.exit(1);
   }
   return opts;
 }

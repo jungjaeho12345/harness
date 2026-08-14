@@ -15,6 +15,7 @@ import nodePath from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { toVersionQuad, buildClientVersionStrings, applyPeMeta, readPeMeta } from './lib/exeMeta.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -201,24 +202,26 @@ export async function distClient({
 
 // --- CLI ---
 function parseArgs(argv) {
+  const usage = '사용법: node scripts/dist-client.mjs [--out <dir>] [--name <exe>] [--no-meta]';
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) {
+      process.stderr.write(`${v.message}\n${usage}\n`);
+      process.exit(1);
+    }
+    return v.value;
+  };
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') opts.outDir = argv[++i];
-    else if (a === '--name') opts.exeName = argv[++i];
+    if (a === '--out') { opts.outDir = takeValue(i, '--out'); i += 1; }
+    else if (a === '--name') { opts.exeName = takeValue(i, '--name'); i += 1; }
     else if (a === '--no-meta') opts.applyMeta = false; // 명시 우회만 허용(디버깅용) — 기본은 적용.
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/dist-client.mjs [--out <dir>] [--name <exe>] [--no-meta]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n${usage}\n`);
       process.exit(1);
     }
-  }
-  if (opts.outDir !== undefined && !opts.outDir) {
-    process.stderr.write('--out 값이 비어 있다.\n');
-    process.exit(1);
-  }
-  if (opts.exeName !== undefined && !opts.exeName) {
-    process.stderr.write('--name 값이 비어 있다.\n');
-    process.exit(1);
   }
   return opts;
 }
