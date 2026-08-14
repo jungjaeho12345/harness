@@ -50,7 +50,8 @@ describe('openBootDatabase — 결선 텍스트 잠금', () => {
     assert.equal(
       hits.length, 1,
       `server/index.js의 new DatabaseSync( 출현은 openBootDatabase 본문 1건뿐이어야 한다`
-      + `(부트 DB 열기·연결 설정의 단일 관문 — 직접 생성으로 되돌리면 busy_timeout 결선이 빠진다). 발견:\n`
+      + `(부트 DB 열기·연결 설정의 단일 관문 — 직접 생성으로 되돌리면 busy_timeout 결선이 빠진다).`
+      + ` 이 스캔은 주석·문자열 안의 리터럴도 카운트한다(sea-import-meta-lock과 동일 엄격성) — 주석에도 그 표현을 쓰지 마라. 발견:\n`
       + hits.join('\n'),
     );
     // 그 1건이 openBootDatabase 함수 본문 안에 있는지 — 함수 선언과 출현 순서로 확인한다.

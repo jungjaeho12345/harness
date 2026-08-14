@@ -54,7 +54,8 @@ describe('permissionPolicy — main.js 결선 텍스트 잠금(request/check 대
   });
 
   test("인라인 권한 조건식(permission === ')으로 되돌아가지 않는다(정책 표류 금지)", () => {
-    assert.ok(!mainText.includes("permission === '"), 'main.js에 인라인 권한 비교가 다시 나타나면 정책 단일 출처가 깨진다');
+    assert.ok(!mainText.includes("permission === '"),
+      "main.js에 인라인 권한 비교가 다시 나타나면 정책 단일 출처가 깨진다 — 이 스캔은 주석·문자열 안의 리터럴도 카운트한다(sea-import-meta-lock과 동일 엄격성): 주석에도 그 표현을 쓰지 마라");
   });
 });
 
