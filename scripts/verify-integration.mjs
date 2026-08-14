@@ -459,7 +459,10 @@ async function runScenario(name, opts, ctx) {
       // 2. 로그인 — desk(D): 송고가 RDS→DPS라는 관측 가능한 전이를 만든다.
       const login = await page.eval(`fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' },
         credentials: 'same-origin', body: JSON.stringify({ userId: 'desk', password: 'desk123' }) }).then((r) => r.json())`, { awaitPromise: true });
-      check('POST /api/login ok(desk)', !login.error && login.value?.ok === true, login.error ?? JSON.stringify(login.value));
+      // detail에 응답 body 전체를 넣지 않는다 — sessionId(1시간 유효 토큰)가 스모크 로그에 평문으로
+      // 남는다(diag FORBIDDEN_KEYS와 같은 규율). 실패 진단에는 ok/reason이면 충분하다.
+      check('POST /api/login ok(desk)', !login.error && login.value?.ok === true,
+        login.error ?? `ok=${login.value?.ok} reason=${login.value?.reason ?? '-'}`);
 
       // 3. 목록 진입 + SSE 연결('실시간') — HttpOnly 쿠키로 SSE가 붙었다는 증거.
       await page.eval("location.replace('/list.do')");

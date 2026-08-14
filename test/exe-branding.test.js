@@ -165,4 +165,9 @@ describe('버전 단일 출처', () => {
     assert.match(clientPkg.version, /^\d+\.\d+\.\d+$/);
     assert.doesNotThrow(() => toVersionQuad(clientPkg.version));
   });
+
+  test('exe 메타 ProductName === client/package.json.productName (갈라지면 창 제목·파일 속성 불일치)', () => {
+    const s = buildClientVersionStrings({ version: clientPkg.version, exeName: '기사작성기.exe' });
+    assert.equal(s.ProductName, clientPkg.productName);
+  });
 });

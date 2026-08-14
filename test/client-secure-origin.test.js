@@ -64,6 +64,7 @@ describe('decideSecureOriginSwitches — 미적용', () => {
       'http://10.0.0.1:3001 http://10.0.0.2:3001', // 공백 구분 목록
       'http://*.example.com', // 와일드카드 서브도메인
       'http://10.0.0.1:3001,*', // 혼합
+      'http://a%2Cb.com', // 퍼센트 인코딩 콤마 — URL 파싱이 디코드해 정규화 '후' 값에 콤마가 생기는 경로
     ]) {
       assert.deepEqual(decideSecureOriginSwitches(input), { apply: false, reason: 'unsafe-value' }, input);
     }

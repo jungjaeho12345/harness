@@ -61,6 +61,9 @@ export function decideSecureOriginSwitches(origin, { existingFeatures = '' } = {
   if (url.protocol !== 'http:') return { apply: false, reason: 'unsupported-scheme' };
   if (isLoopbackHostname(url.hostname)) return { apply: false, reason: 'loopback' };
   const normalized = url.origin; // 호스트 소문자화·기본 포트 생략·경로 제거가 적용된 값 하나.
+  // 정규화 '후' 값도 재검사한다 — 퍼센트 인코딩(%2C 등)이 URL 파싱에서 디코드되어
+  // 입력 검사(위 53행)를 통과한 콤마·공백·별표가 스위치 값으로 새는 경로 차단(fail-closed 계약).
+  if (UNSAFE_VALUE_RE.test(normalized)) return { apply: false, reason: 'unsafe-value' };
   return {
     apply: true,
     origin: normalized,
