@@ -5,8 +5,13 @@
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ALLOWED_PERMISSIONS, isAllowedPermission } from '../client/lib/permissionPolicy.js';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('permissionPolicy — 허용 집합', () => {
   test('허용 집합은 정확히 clipboard-read·clipboard-sanitized-write 2종이다', () => {
@@ -20,6 +25,36 @@ describe('permissionPolicy — 허용 집합', () => {
   test('허용 2종은 정확 일치로 true', () => {
     assert.equal(isAllowedPermission('clipboard-read'), true);
     assert.equal(isAllowedPermission('clipboard-sanitized-write'), true);
+  });
+});
+
+// 결선 텍스트 잠금 (phase 64 테스트 게이트 보강) — boot-db-open 전례 동형. 정책 모듈만 잠그면
+// main.js가 인라인 조건식으로 되돌아가거나(request/check 표류) check 핸들러를 지워도 green이다.
+// Electron 없이 잠글 수 있는 결선 증거는 텍스트 스캔뿐이다(main.js는 단위 테스트 불가 결선 파일).
+describe('permissionPolicy — main.js 결선 텍스트 잠금(request/check 대칭)', () => {
+  const mainText = fs.readFileSync(path.join(REPO_ROOT, 'client', 'main.js'), 'utf8');
+  const lines = mainText.split('\n');
+  // handler 등록 줄부터 3줄 창 안에 isAllowedPermission( 호출이 있어야 한다(등록·판정 동거 잠금).
+  const wiredWithin = (needle) => {
+    const idx = lines.findIndex((l) => l.includes(needle));
+    if (idx < 0) return false;
+    return lines.slice(idx, idx + 3).some((l) => l.includes('isAllowedPermission('));
+  };
+
+  test('permissionPolicy를 import한다(단일 출처 결선)', () => {
+    assert.ok(mainText.includes("from './lib/permissionPolicy.js'"), 'main.js는 permissionPolicy 모듈을 import해야 한다');
+  });
+
+  test('setPermissionRequestHandler가 isAllowedPermission을 쓴다', () => {
+    assert.ok(wiredWithin('setPermissionRequestHandler'), 'request 핸들러 등록 3줄 안에 isAllowedPermission 호출이 있어야 한다');
+  });
+
+  test('setPermissionCheckHandler가 등록되어 있고 isAllowedPermission을 쓴다(check 대칭)', () => {
+    assert.ok(wiredWithin('setPermissionCheckHandler'), 'check 핸들러 등록 3줄 안에 isAllowedPermission 호출이 있어야 한다');
+  });
+
+  test("인라인 권한 조건식(permission === ')으로 되돌아가지 않는다(정책 표류 금지)", () => {
+    assert.ok(!mainText.includes("permission === '"), 'main.js에 인라인 권한 비교가 다시 나타나면 정책 단일 출처가 깨진다');
   });
 });
 
