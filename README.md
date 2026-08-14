@@ -71,7 +71,8 @@ npm run dist:client   # → dist/기사작성기/ 생성 (Electron 접속형 클
 - 최초 실행 시 서버 주소를 입력받아 `/api/health` 응답까지 확인한 뒤 `%APPDATA%\기사작성기\config.json`(사용자별)에 저장한다.
 - 개발 실행: `npm run client:dev` (검증 시 `CLIENT_USER_DATA`를 임시 경로로 줄 것 — 실사용자 설정 보호).
 - 자동 스모크: `node scripts/verify-client.mjs --dev --scenario all` (패키징 산출물은 `--exe <경로>`).
-- 운영 가이드(기자·데스크용)는 `packaging/client/README-배포-클라이언트.md` — 배포 폴더에 자동 동봉된다. 설계 배경은 ADR-011.
+- **통합 스모크**: `npm run verify:integration` — 서버 exe + 클라이언트 exe를 함께 띄워 로그인→작성→SSE 반영→상세보기 팝업→송고 전 루프와 loopback/LAN 클립보드 표면을 자동 판정한다(먼저 `dist:server`·`dist:client` 실행 필요).
+- 운영 가이드(기자·데스크용)는 `packaging/client/README-배포-클라이언트.md` — 배포 폴더에 자동 동봉된다. 서버+클라이언트 전체 설치 순서는 `packaging/README-배포-통합.md`. 설계 배경은 ADR-011.
 
 ## 환경변수
 

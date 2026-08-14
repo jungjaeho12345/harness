@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { toVersionQuad, buildServerVersionStrings, applyPeMeta, readPeMeta } from './lib/exeMeta.mjs';
 
 // 빌드 전용 스크립트라 import.meta 사용이 안전하다(SEA 번들 대상이 아니다 — server/**와 규율이 다르다).
 const require = createRequire(import.meta.url);
@@ -104,6 +105,7 @@ export async function buildServerExe({
   let mode = 'sea';
   let exe;
   let signtool = 'skipped';
+  let meta = { metaApplied: false, fileVersion: null, iconEntries: null };
 
   try {
     // 3. SEA blob 생성.
@@ -121,6 +123,34 @@ export async function buildServerExe({
     // 4. exe 골격 — 빌드 머신 node.exe 복사(ASCII 임시 이름 — decisions (12)).
     const buildExe = nodePath.join(work, 'app-build.exe');
     fs.copyFileSync(process.execPath, buildExe);
+
+    // 4b. PE 메타 적용 (phase 63 step1 선택 D) — 반드시 postject 주입 "전"이다(주입 후 리소스 재작성은
+    //     SEA blob 손상 위험 — decisions (9)). 값은 루트 package.json + 커밋된 app.ico 단일 출처.
+    //     resedit 재생성이 기존 Authenticode 서명을 함께 제거하므로 아래 signtool 단계가
+    //     remove-failed로 기록되는 것은 정상이다(미서명 배포 — ADR-011).
+    {
+      const resedit = await import('resedit');
+      const repoRoot = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
+      const icoFile = nodePath.join(repoRoot, 'packaging', 'icon', 'app.ico');
+      if (!fs.existsSync(icoFile)) throw fail('pe-meta', `아이콘 파일이 없다(커밋 산출물): ${icoFile} — npm run make:icon 후 커밋하라.`);
+      const rootVersion = JSON.parse(fs.readFileSync(nodePath.join(repoRoot, 'package.json'), 'utf8')).version;
+      const strings = buildServerVersionStrings({ version: rootVersion, exeName });
+      const applied = applyPeMeta({
+        resedit,
+        exeBuffer: fs.readFileSync(buildExe),
+        icoBuffer: fs.readFileSync(icoFile),
+        version: rootVersion,
+        strings,
+      });
+      fs.writeFileSync(buildExe, applied.buffer);
+      // 적용 직후 read-back 검증 — 어긋나면 빌드 실패(조용한 기본 메타 배포 금지).
+      const back = readPeMeta({ resedit, exeBuffer: fs.readFileSync(buildExe) });
+      const expectedVersion = toVersionQuad(rootVersion).join('.');
+      if (back.iconEntries !== applied.iconCount || back.fileVersion !== expectedVersion || back.productName !== strings.ProductName) {
+        throw fail('pe-meta-readback', `expected icons=${applied.iconCount} version=${expectedVersion} product=${strings.ProductName} / actual=${JSON.stringify(back)}`);
+      }
+      meta = { metaApplied: true, fileVersion: back.fileVersion, iconEntries: back.iconEntries };
+    }
 
     // 5. 기존 서명 제거(있으면) — signtool 부재는 실패가 아니다(건너뛰고 기록만).
     const sign = spawnSync('signtool', ['remove', '/s', buildExe], { encoding: 'utf8' });
@@ -169,6 +199,7 @@ export async function buildServerExe({
     nodeVersion: process.version,
     warnings,
     signtool,
+    ...meta, // metaApplied·fileVersion·iconEntries (phase 63 step1) — 기존 키는 제거·개명하지 않는다.
     elapsedMs: Date.now() - startedAt,
   };
 }

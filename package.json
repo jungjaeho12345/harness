@@ -1,6 +1,6 @@
 {
   "name": "article-production-system",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "기사 작성기 (Article Production System)",
   "private": true,
   "type": "module",
@@ -17,7 +17,9 @@
     "lint": "eslint .",
     "dist:server": "node scripts/dist-server.mjs",
     "client:dev": "electron client",
-    "dist:client": "node scripts/dist-client.mjs"
+    "dist:client": "node scripts/dist-client.mjs",
+    "make:icon": "node scripts/make-icon.mjs",
+    "verify:integration": "node scripts/verify-integration.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -42,6 +44,7 @@
     "postject": "1.0.0-alpha.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "resedit": "3.0.2",
     "vite": "^6.0.0",
     "vitest": "^2.1.8"
   }

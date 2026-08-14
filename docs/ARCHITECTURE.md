@@ -35,7 +35,7 @@ client/                 # Electron 접속형 클라이언트 셸 (phase 62 — �
   pages/                # 셸 로컬 페이지 (setup/error — CSP meta · 인라인 스크립트 없음)
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
-scripts/                # 실행 러너 (seed) + 배포 빌드/검증 (sea-build · dist-server · verify-server-exe · dist-client · verify-client)
+scripts/                # 실행 러너 (seed) + 배포 빌드/검증 (sea-build · dist-server · verify-server-exe · dist-client · verify-client · verify-integration · make-icon)
 packaging/server/       # 서버 배포 폴더에 그대로 복사되는 템플릿 (기사작성기-server.bat · README-배포.md)
 packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되는 템플릿 (README-배포-클라이언트.md)
 ```
@@ -98,6 +98,9 @@ packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되�
 - **부팅 순서 계약**: `userData` 지정(`CLIENT_USER_DATA`) → 단일 인스턴스 잠금 요청 순서 고정 — 잠금 키가 userData 경로에서 파생되므로 뒤집으면 실사용자 프로필 오염과 검증 거짓 통과가 난다.
 - 설정(서버 주소·창 크기)은 `%APPDATA%\기사작성기\config.json`(화이트리스트 파싱, 사용자별). **세션·자격증명은 저장하지 않는다.**
 - 셸에도 **앱 내 타이머·주기 통신이 없다**(ADR-008) — 서버 주소 프로브는 사용자 액션당 1회이고 `/api/health`의 `{ ok:true }` 본문까지 확인한 뒤에만 저장한다(200만으로는 임의 웹서버가 "정상"으로 저장된다).
+- **secure-origin 스위치(phase 63)**: 저장된 서버 출처가 `http:` + 비-loopback일 때 **그 출처 하나만** secure context로 취급하는 Chromium 스위치를 app ready 전 1회 적용해 LAN 평문 HTTP에서도 `navigator.clipboard`가 산다(판정 단일 출처 `client/lib/secureOrigin.js` 순수 모듈 — main.js는 append와 diag만). 주소 변경·최초 설정 후에는 재시작 1회가 필요하고(안내 다이얼로그), HTTPS 도입 시 조건상 자동 비적용된다.
+- **브랜딩(phase 63)**: 빌드가 클라이언트 exe에 아이콘(`packaging/icon/app.ico` — 순수 Node 생성기 `scripts/make-icon.mjs`, `--check`가 sha256으로 커밋본 일치를 잠근다)과 버전(1.0.0 → PE 1.0.0.0)·제품명 리소스를 `resedit`(devDependency — 네이티브 0)으로 적용하고 read-back으로 fail-fast한다. 서버 SEA exe에도 postject 주입 **전** 동일 적용(verify-server-exe full·portable 게이트 통과로 채택).
+- **통합 검증 진입점(phase 63)**: `npm run verify:integration`(`scripts/verify-integration.mjs`) — 서버 exe(임시 DATA_DIR 시드)와 클라이언트 exe(임시 userData)를 함께 기동해 CDP(의존성 0 — Node 내장 `WebSocket`)로 전 루프(로그인→기사 작성→목록 SSE 반영→상세보기 팝업 720×800→송고→목록 이탈)와 loopback/LAN 두 시나리오의 secure context·클립보드 표면을 자동 판정한다. LAN은 3분법(인터페이스 없음=skip 0 / 제품 실패=1 / 방화벽 인바운드 차단=2 + netsh 안내)이고, 종료 후 리포 DB·실사용자 %APPDATA%·dist data의 무변을 before/after 스냅샷으로 단언한다(실 데이터 무접촉).
 
 ## 상태 관리
 - **서버 상태**: `news.db`(SQLite)가 단일 진실 공급원. 클라이언트는 캐시하지 않고 필요 시 재조회한다.
