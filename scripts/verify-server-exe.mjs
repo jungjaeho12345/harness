@@ -81,6 +81,20 @@ async function fetchJson(url, init) {
   return { res, body };
 }
 
+// 임시 디렉토리 정리 (phase 64 step2 A-1) — 성공 경로에서만 부른다. 실패 경로는 보존이 계약이다
+// (시드 DB·서버가 쓴 행이 실패 조사의 유일한 증거다). 정리는 자신이 mkdtemp로 만든 경로에만
+// 적용한다(헤더 계약 — --portable의 <exeDir>/data 등 임시 경로 밖은 절대 건드리지 않는다).
+// 정리 실패는 warn 1줄이며 종료 코드를 뒤집지 않는다(verify-integration 전례와 동형).
+function cleanupTmpDirs(dirs) {
+  for (const dir of dirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (err) {
+      process.stderr.write(`warn 임시 디렉토리 정리 실패(무해 — Windows 파일 잠금): ${dir} (${err && err.code})\n`);
+    }
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const startedAt = Date.now();
@@ -236,6 +250,8 @@ async function main() {
 
   const exeBytes = fs.statSync(opts.exe).size;
   if (failures.length === 0) {
+    // 성공 시에만 정리한다 — 자식 종료·DB close 뒤라 열린 핸들이 없다(Windows EBUSY 대비 재시도 부착).
+    cleanupTmpDirs([tmpData, tmpCwd]);
     process.stdout.write([
       `verify-ok mode=${opts.portable ? 'portable' : 'full'}${opts.script ? ' (node-bundled)' : ''}`,
       `exe=${opts.exe} (${(exeBytes / 1024 / 1024).toFixed(1)}MB)`,
@@ -247,6 +263,9 @@ async function main() {
   process.stderr.write([
     `verify-FAILED (${failures.length}건)`,
     ...failures.map((f) => `  - ${f}`),
+    // 실패 시 임시 경로는 지우지 않는다 — 조사 증거(시드 DB·서버가 쓴 행) 보존.
+    `보존됨 임시 dataDir: ${tmpData}`,
+    `보존됨 임시 cwd: ${tmpCwd}`,
     '--- probes ---',
     ...probes.map((p) => `  ${p}`),
     '--- child stdout ---', childOut,
