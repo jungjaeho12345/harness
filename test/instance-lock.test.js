@@ -163,6 +163,55 @@ describe('acquireInstanceLock — unavailable (그 외 실패 전부)', () => {
       done = true;
     } finally { if (!done) cleanup(dir); }
   });
+
+  // 테스트 게이트 보강 — 합성 errcode 526 분류 케이스만 있던 갭을 실 FS로 잠근다(오탐 축 프로브 P1 실측).
+  test('잠금 파일 자리가 디렉토리 → unavailable(예외 전파 금지 — conflict 오판이면 진짜 단일인데 죽는다)', () => {
+    const dir = mkTmp();
+    try {
+      fs.mkdirSync(lockFilePath(dir));
+      let r;
+      assert.doesNotThrow(() => { r = acquireInstanceLock({ dataDir: dir }); });
+      assert.equal(r.status, 'unavailable');
+      assert.notEqual(r.status, 'conflict', 'conflict 오판이면 부트가 exit 1로 죽는다(최악 실패 모드)');
+      assert.ok(r.error);
+      assert.equal(isLockHeld(), false);
+    } finally { cleanup(dir); }
+  });
+});
+
+// 테스트 게이트 보강 — 지금까지는 "외부 보유 → 모듈 conflict" 방향만 단위로 잠겼고,
+// "모듈 보유 → 외부 차단"(잠금이 실제로 잠근다)은 E2E T1에만 의존했다. 단위로도 잠근다.
+describe('acquireInstanceLock — 보유 중 배타성(잠금이 실제로 잠근다)', () => {
+  test('모듈이 보유 중이면 외부 연결의 BEGIN EXCLUSIVE가 SQLITE_BUSY(하위 8비트 5)로 차단된다', () => {
+    const dir = mkTmp();
+    let ext = null;
+    try {
+      assert.equal(acquireInstanceLock({ dataDir: dir }).status, 'acquired');
+      ext = new DatabaseSync(lockFilePath(dir));
+      ext.exec('PRAGMA busy_timeout = 0');
+      assert.throws(
+        () => ext.exec('BEGIN EXCLUSIVE'),
+        (err) => (err?.errcode & 0xff) === 5,
+        '보유 중 외부 EXCLUSIVE 시도는 SQLITE_BUSY여야 한다 — 아니면 잠금이 아무도 못 막는다',
+      );
+    } finally {
+      try { ext?.close(); } catch { /* 정리 전용 */ }
+      cleanup(dir);
+    }
+  });
+
+  // stale 락 오탐(이 phase가 정의한 최악 실패 모드) 축 — 크래시 잔재가 재기동을 막지 않는다.
+  // 계획 단계 실측(decisions (2))의 주장인데 잠그는 테스트가 없었다. garbage -journal은 유효한
+  // 저널 매직이 아니라 SQLite가 무시·정리하고 획득에 성공한다(결정적).
+  test('크래시 잔재 garbage -journal이 있어도 획득에 성공한다(stale 락 오탐 없음)', () => {
+    const dir = mkTmp();
+    try {
+      fs.writeFileSync(`${lockFilePath(dir)}-journal`, 'garbage-not-a-journal');
+      const r = acquireInstanceLock({ dataDir: dir });
+      assert.equal(r.status, 'acquired');
+      assert.equal(isLockHeld(), true);
+    } finally { cleanup(dir); }
+  });
 });
 
 describe('acquireInstanceLock — open 주입(결정적 분기 잠금)', () => {
