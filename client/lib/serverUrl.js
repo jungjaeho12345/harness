@@ -57,8 +57,9 @@ export function isSameOrigin(url, origin) {
 
 // 프로브 최종 origin 승격 판정 (phase 66 step4) — 리다이렉트를 따라간 응답의 최종 URL을 저장할 origin으로
 // 승격할지 결정한다. fail-safe = 사용자가 친 주소 유지: 최종 URL이 없거나·문자열이 아니거나·파싱 불가·
-// http/https 밖 스킴·자격증명 포함이면 요청 origin 그대로다(자격증명 거부는 위 정규화 계약과 동형 —
-// 설정 파일에 자격증명이 남을 자리를 만들지 않는다). 경로·쿼리·해시는 버린다 — 상단 CRITICAL대로 new URL만.
+// http/https 밖 스킴·자격증명 포함·https 입력의 http 하향이면 요청 origin 그대로다(자격증명 거부는 위
+// 정규화 계약과 동형, 스킴 하향 거부는 사용자가 친 적 없는 평문 출처에 secure-origin 스위치가 걸리는
+// 표면 차단 — 상향 http→https는 승격한다). 경로·쿼리·해시는 버린다 — 상단 CRITICAL대로 new URL만.
 // 성공/실패 판정은 여기 없다 — 실패 시 승격 금지는 호출부(프로브)가 verdict로 가른다.
 export function resolveFinalOrigin({ requestedOrigin, responseUrl } = {}) {
   const keep = { origin: requestedOrigin, changed: false };
@@ -71,7 +72,16 @@ export function resolveFinalOrigin({ requestedOrigin, responseUrl } = {}) {
   }
   if (!ALLOWED_SCHEMES.has(url.protocol.replace(/:$/, ''))) return keep;
   if (url.username || url.password) return keep;
+  if (url.protocol === 'http:' && isHttpsOrigin(requestedOrigin)) return keep; // 스킴 하향 미승격.
   return { origin: url.origin, changed: url.origin !== requestedOrigin };
+}
+
+function isHttpsOrigin(origin) {
+  try {
+    return new URL(origin).protocol === 'https:';
+  } catch {
+    return false; // 요청 origin이 파싱 불가면 하향 판정 불성립 — 기존 승격 규칙에 맡긴다.
+  }
 }
 
 // 프로브 판정의 단일 출처(decisions (14)) — 200이라는 사실만으로는 부족하다.

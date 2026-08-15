@@ -5,7 +5,7 @@
 //   렌더러 내비게이션은 decideNavigation('local')이 전량 block한다.
 // CRITICAL(부팅 순서, decisions (11)): userData 지정 → 단일 인스턴스 잠금 요청 순서 고정 —
 //   잠금 키가 userData 경로에서 파생되므로 뒤집으면 실사용자 프로필 오염 + 스모크 거짓 통과.
-// 셸에는 타이머·주기 통신이 없다(ADR-008) — 서버 프로브는 사용자 액션당 net.fetch 1회뿐이다.
+// 셸에는 타이머·주기 통신이 없다(ADR-008) — 서버 프로브는 사용자 액션당 net.request 1회뿐이다.
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -182,21 +182,12 @@ function wireApp() {
 }
 
 // 사용자 액션당 1회 프로브 — 재시도·백오프·주기 확인 금지(ADR-008). 판정은 interpretHealthResponse 단일 출처.
-// 리다이렉트는 기본 추종을 유지하고(끄지 않는다 — 정상 프록시 배치 보호) 도착지만 읽는다: 반환 계약은
-// 성공/실패 무관 항상 최종 origin을 함께 돌려주되, 승격은 성공 판정일 때만 한다(오류 페이지·캡티브 포털로의
-// 리다이렉트가 저장 주소를 바꾸면 접속 불능이 영구화된다). 승격 규칙은 순수 모듈 단일 출처(서두 계약).
-async function probeOrigin(origin) {
-  let verdict;
-  let finalUrl = null;
-  try {
-    const res = await net.fetch(healthUrl(origin), { signal: AbortSignal.timeout(5000) });
-    finalUrl = res.url; // 리다이렉트 추종 후 도착지 — 승격 판정 입력.
-    let body = null;
-    try { body = await res.json(); } catch { body = null; }
-    verdict = interpretHealthResponse({ status: res.status, body });
-  } catch {
-    verdict = interpretHealthResponse({ status: null, body: null }); // 네트워크 실패 = unreachable.
-  }
+// 관측기는 주입 가능한 seam이다(기본 = 아래 net.request 관측기). 반환 계약은 성공/실패 무관 항상 최종
+// origin을 함께 돌려주되, 승격은 성공 판정일 때만 한다(오류 페이지·캡티브 포털로의 리다이렉트가 저장
+// 주소를 바꾸면 접속 불능이 영구화된다). 승격 규칙은 순수 모듈 단일 출처(서두 계약).
+async function probeOrigin(origin, requestHealth = requestHealthViaNet) {
+  const { status, body, finalUrl } = await requestHealth(origin);
+  const verdict = interpretHealthResponse({ status, body });
   const resolved = verdict.ok
     ? resolveFinalOrigin({ requestedOrigin: origin, responseUrl: finalUrl })
     : { origin, changed: false }; // 실패 시 승격 금지 — 요청 origin 유지.
@@ -206,6 +197,54 @@ async function probeOrigin(origin) {
   if (!verdict.ok) payload.reason = verdict.reason;
   diag.log('probe', payload);
   return { ...verdict, origin: resolved.origin };
+}
+
+// net.request 기반 health 왕복 + 최종 도달 URL 관측 (phase 66 step4 재작업) — Electron 43의 net.fetch는
+// 번들이 Response를 재조립해 응답 객체 url이 항상 빈 문자열이다(코드리뷰 실기 실측) → 도착지는 redirect
+// 이벤트로만 관측할 수 있다. manual 모드에서 이벤트마다 도착지를 기록하고 동기 followRedirect()로 계속
+// 추종한다(추종을 끄면 정상 프록시 배치가 실패로 뒤집힌다 — 비동기로 미루면 요청이 취소된다는 것이
+// electron.d.ts 계약이다). 타임아웃은 기존 5000ms 계약 그대로 1회성이다(주기 타이머 아님 — ADR-008 무관).
+// 항상 resolve한다(reject 없음): 네트워크 실패·타임아웃은 status null → interpretHealthResponse가
+// unreachable로 판정한다. 초기 도착지는 요청 health URL이다(리다이렉트 0회 = 같은 origin → 미승격).
+function requestHealthViaNet(origin) {
+  return new Promise((resolve) => {
+    let finalUrl = healthUrl(origin);
+    let request = null;
+    let settled = false;
+    let timer = null;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    timer = setTimeout(() => {
+      finish({ status: null, body: null, finalUrl });
+      try { if (request) request.abort(); } catch { /* 이미 종료된 요청 — 무시 */ }
+    }, 5000);
+    try {
+      request = net.request({ url: finalUrl, redirect: 'manual' });
+    } catch {
+      finish({ status: null, body: null, finalUrl });
+      return;
+    }
+    request.on('redirect', (_statusCode, _method, redirectUrl) => {
+      if (typeof redirectUrl === 'string' && redirectUrl) finalUrl = redirectUrl; // 마지막 도착지가 최종이다.
+      request.followRedirect();
+    });
+    request.on('response', (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => {
+        let body = null;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { body = null; }
+        finish({ status: response.statusCode, body, finalUrl });
+      });
+      response.on('error', () => finish({ status: null, body: null, finalUrl }));
+    });
+    request.on('error', () => finish({ status: null, body: null, finalUrl }));
+    request.end();
+  });
 }
 
 function handleGuarded(channel, handler) {

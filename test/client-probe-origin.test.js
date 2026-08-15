@@ -1,7 +1,10 @@
-// 프로브 최종 origin 승격 (phase 66 step4) — 302 리다이렉트를 추종한 프로브가 응답 객체의 최종 URL을
+// 프로브 최종 origin 승격 (phase 66 step4) — 302 리다이렉트를 추종한 프로브가 최종 도달 URL을
 // 읽지 않아 실제 접속처와 다른 주소가 저장되던 하자(감사 E)의 잠금.
 // 판정은 client/lib/serverUrl.js의 resolveFinalOrigin 순수 함수(Electron·네트워크 비의존),
 // 결선(client/main.js)은 단위화 불가 결선 파일이라 텍스트 스캔으로 잠근다(권한 정책 결선 잠금 전례 동형).
+// 재작업(코드리뷰 반려): Electron 43의 net.fetch는 번들이 응답을 재조립해 응답 객체 url이 항상 빈
+//   문자열이다(리뷰어 실기 실측) — 관측은 net.request의 redirect 이벤트가 유일한 경로라 (ii)를 그 구조로
+//   잠근다. 실기 재실증은 스크래치패드 Electron 러너(성공 승격·실패 keep·하향 keep)가 담당한다.
 // CRITICAL: 이 스캔은 코드·주석을 구분하지 않는다 — (iii)의 needle 표현식을 main.js 주석에 쓰면
 //   즉시 red가 된다(phase 65 실증). red가 나면 정규식을 풀지 말고 주석 쪽을 고쳐라.
 
@@ -99,6 +102,18 @@ describe('resolveFinalOrigin — fail-safe(요청 origin 유지 + changed 거짓
     assert.deepEqual(resolveFinalOrigin({ requestedOrigin: REQ, responseUrl: 'http://user:pass@evil:9/api/health' }), KEEP);
     assert.deepEqual(resolveFinalOrigin({ requestedOrigin: REQ, responseUrl: 'http://user@evil:9/' }), KEEP);
   });
+
+  test('https 입력이 http 최종으로 하향되면 요청 origin 유지(사용자가 친 적 없는 평문 출처 승격 금지)', () => {
+    // 승격되면 secure-origin 스위치가 평문 출처에 걸린다 — 상향(http→https)은 승격, 하향만 keep.
+    assert.deepEqual(
+      resolveFinalOrigin({ requestedOrigin: 'https://h:3001', responseUrl: 'http://h:3001/api/health' }),
+      { origin: 'https://h:3001', changed: false },
+    );
+    assert.deepEqual(
+      resolveFinalOrigin({ requestedOrigin: 'https://a', responseUrl: 'http://b:8080/api/health' }),
+      { origin: 'https://a', changed: false },
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -139,16 +154,31 @@ describe('main.js 결선 텍스트 잠금 — 프로브 최종 origin 승격', (
       `serverUrl import에 resolveFinalOrigin이 없다 — 실제 줄: "${importLine.trim()}"`);
   });
 
-  test('(ii) 프로브 함수 본문이 응답 객체의 최종 URL(res.url)을 읽어 resolveFinalOrigin에 넘긴다', () => {
-    const start = lines.findIndex((l) => l.includes('async function probeOrigin'));
-    assert.ok(start >= 0, '프로브 함수 선언(async function probeOrigin)을 찾지 못했다');
+  // 관측기 본문 구간 — probeBody와 동일 규칙("선언 줄부터 다음 최상위 함수 선언 직전까지"). 못 찾으면 실패.
+  function observerBody() {
+    const start = lines.findIndex((l) => l.includes('function requestHealthViaNet'));
+    assert.ok(start >= 0, '최종 URL 관측기 선언(function requestHealthViaNet)을 찾지 못했다 — net.fetch는 응답 url이 항상 빈 문자열이라(Electron 43 실측) 관측기 없이는 승격이 전멸한다');
     const endRel = lines.slice(start + 1).findIndex((l) => /^(async )?function /.test(l));
-    assert.ok(endRel >= 0, '프로브 함수 다음의 최상위 함수 선언을 찾지 못했다(본문 구간 확정 불가)');
-    const body = lines.slice(start, start + 1 + endRel);
-    assert.ok(body.some((l) => l.includes('res.url')),
-      `프로브 본문(${start + 1}~${start + endRel + 1}행)에 응답 최종 URL 판독(res.url)이 없다 — 리다이렉트 도착지를 읽지 않으면 원 주소가 저장된다`);
-    assert.ok(body.some((l) => l.includes('resolveFinalOrigin(')),
-      `프로브 본문(${start + 1}~${start + endRel + 1}행)에 resolveFinalOrigin( 호출이 없다 — 승격 판정은 순수 모듈 단일 출처다`);
+    assert.ok(endRel >= 0, '관측기 다음의 최상위 함수 선언을 찾지 못했다(본문 구간 확정 불가)');
+    const bodyLines = lines.slice(start, start + 1 + endRel);
+    return { lines: bodyLines, text: bodyLines.join('\n'), startLine: start + 1 };
+  }
+
+  test('(ii) 관측기가 redirect 이벤트의 redirectUrl을 수집·동기 followRedirect로 추종하고, 프로브가 그 최종 URL을 resolveFinalOrigin에 넘긴다', () => {
+    const obs = observerBody();
+    assert.ok(obs.text.includes("on('redirect'"),
+      `관측기 본문(${obs.startLine}행~)에 redirect 이벤트 구독이 없다 — 최종 도달 URL을 관측할 수 없다(net.fetch의 응답 url은 항상 빈 문자열)`);
+    assert.ok(obs.text.includes('redirectUrl'),
+      `관측기 본문(${obs.startLine}행~)에 redirectUrl 수집이 없다 — 리다이렉트 도착지를 읽지 않으면 원 주소가 저장된다`);
+    assert.ok(obs.text.includes('followRedirect()'),
+      `관측기 본문(${obs.startLine}행~)에 followRedirect() 호출이 없다 — manual 모드에서 추종이 끊겨 정상 프록시 배치가 실패로 뒤집힌다`);
+    const probe = probeBody();
+    assert.ok(probe.text.includes('requestHealth = requestHealthViaNet'),
+      `프로브 시그니처(${probe.startLine}행~)에 주입 가능한 관측기 기본값(requestHealth = requestHealthViaNet)이 없다 — seam 없이는 관측 경로를 갈아끼울 수 없다`);
+    assert.ok(probe.text.includes('responseUrl: finalUrl'),
+      `프로브 본문(${probe.startLine}행~)이 관측된 최종 URL(finalUrl)을 resolveFinalOrigin의 responseUrl로 넘기지 않는다`);
+    assert.ok(probe.text.includes('resolveFinalOrigin('),
+      `프로브 본문(${probe.startLine}행~)에 resolveFinalOrigin( 호출이 없다 — 승격 판정은 순수 모듈 단일 출처다`);
   });
 
   test('(iii) 두 IPC 핸들러는 프로브 호출 줄 이후로 요청 origin 표현식을 다시 쓰지 않는다(승격값만 소비)', () => {
