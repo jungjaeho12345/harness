@@ -13,7 +13,7 @@ server/
   main.js               # SEA/번들 전용 엔트리 — bootstrap({ packaged: true }) 명시 주입 (dev 미사용)
   ftpWatcher.js         # 수집(자동기사) FTP 스풀 디렉토리 watcher — 파일 이벤트 시 controllers.collection.receive 호출 (watch 주입형, 테스트는 실제 FS 미사용)
 src/                    # 백엔드 도메인 (transport 비의존, 모두 주입 가능)
-  db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete
+  db/                   # schema(멱등 마이그레이션), articleId 생성, softDelete, connection(부트 PRAGMA), instanceLock(단일 인스턴스 잠금 — ADR-012)
   models/               # 데이터 접근 (articleModel · userModel · receiverConfigModel · distributionTargetModel) — 직접 SQL
   services/             # 비즈니스 로직 (article · lifecycle · embargoPolicy · authorization · session · user · mediaSearch · collection · receiverConfig · distributionTarget · distribution · distributionTick · spoolWriter)
   parsers/              # 수집(자동기사) FTP 파일 / API 응답 파서
@@ -89,6 +89,8 @@ packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되�
 - exe에도 **앱 내 타이머·네트워크 egress는 없다**(ADR-008) — 시점 배부는 외부 cron의 tick pull, 발송은 외부 전송기 책임 그대로다.
 - 백업 단위 = `data/` 폴더(DB 비파괴 원칙 유지 — 재빌드·업그레이드는 `data/`를 지우지 않는다).
 - 평문 HTTP LAN 배치에서 `NODE_ENV=production` 금지 — 아래 "보안 경계"의 "운영 환경변수 주의"와 같은 축이다(배포 폴더의 bat·README-배포.md가 같은 경고를 싣는다).
+- **데이터 폴더당 인스턴스 1개**(ADR-012): 같은 `DATA_DIR`로 두 번째 서버를 부팅하면 콘솔 메시지(stderr — 원인·데이터 폴더·해결) 후 `exit 1`이다(dev·exe 공통). 잔류 락은 없다(OS가 프로세스 종료 시 해제 — 강제 종료·정전 뒤에도 그냥 다시 켜면 된다). 잠금 파일(`<DATA_DIR>/instance-lock.db`, 0바이트)을 열 수 없는 드문 경우에는 경고 후 잠금 없이 계속 부팅한다(부팅을 막지 않는다 — fail-open). 타이머·하트비트 없음(ADR-008).
+- 빌드 부작용 1가지: 배포 폴더에서 exe를 직접 띄운 적이 있으면 `<outDir>/data/`에 `instance-lock.db`가 남아, 이후 `npm run dist:server`가 "data/가 비어 있지 않다"는 **경고**를 출력한다(빌드는 계속되고 `data/`는 보존된다 — DB 비파괴 계약 그대로). 이는 정상이며 실패가 아니다.
 
 ### 배포 산출물 (Windows 클라이언트 EXE)
 - `npm run dist:client` 한 번으로 `dist/기사작성기/`를 만든다 — 파이프라인: Electron 런타임 폴더 복사 → `electron.exe`를 `기사작성기.exe`로 rename → `resources/default_app.asar` 제거 → `resources/app/`에 셸 코드 화이트리스트 배치(+ `packaging/client/**` 사본, 조립 후 금지 패턴 재귀 스캔 게이트). 2026-08-13 실측: 89파일 347.4MB, 조립 ~0.3초, exe 기동→화면 로드 ~0.9초, electron 43.4.0(devDependency 정확 고정 — 런타임 의존성 추가 0, ADR-010과 같은 축).

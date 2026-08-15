@@ -14,6 +14,10 @@ news.db
 news.db-journal
 news.db-wal
 
+# 단일 인스턴스 잠금 파일 (phase 65) — dev 부팅은 dataDir가 cwd(리포 루트)라 여기 생긴다
+instance-lock.db
+instance-lock.db-journal
+
 # phase execution outputs
 phases/**/phase*-output.json
 phases/**/step*-output.json
