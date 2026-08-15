@@ -122,6 +122,16 @@ describe('main.js 결선 텍스트 잠금 — 프로브 최종 origin 승격', (
     return { start, end };
   }
 
+  // 프로브 함수 본문 구간 추출 — (ii)와 동일 규칙("선언 줄부터 다음 최상위 함수 선언 직전까지"). 못 찾으면 실패.
+  function probeBody() {
+    const start = lines.findIndex((l) => l.includes('async function probeOrigin'));
+    assert.ok(start >= 0, '프로브 함수 선언(async function probeOrigin)을 찾지 못했다');
+    const endRel = lines.slice(start + 1).findIndex((l) => /^(async )?function /.test(l));
+    assert.ok(endRel >= 0, '프로브 함수 다음의 최상위 함수 선언을 찾지 못했다(본문 구간 확정 불가)');
+    const bodyLines = lines.slice(start, start + 1 + endRel);
+    return { lines: bodyLines, text: bodyLines.join('\n'), startLine: start + 1 };
+  }
+
   test('(i) main.js가 serverUrl 모듈에서 resolveFinalOrigin을 import한다(판정 단일 출처)', () => {
     const importLine = lines.find((l) => l.includes("from './lib/serverUrl.js'"));
     assert.ok(importLine !== undefined, "main.js에 './lib/serverUrl.js' import 줄이 있어야 한다");
@@ -158,6 +168,38 @@ describe('main.js 결선 텍스트 잠금 — 프로브 최종 origin 승격', (
         `${startNeedle} 구간에서 프로브 호출 이후 요청 origin 표현식(${REQUESTED_ORIGIN_EXPR})이 발견됐다 — `
         + '응답·저장·창 생성·재시작 판정은 전부 프로브가 돌려준 최종 origin만 소비해야 한다. 발견 위치: '
         + offenders.map((o) => `${o.line}행 "${o.text}"`).join(' | '));
+    }
+  });
+
+  // (iv)·(v)는 ④ 테스트 게이트 보강(phase 66) — 변이 검증에서 "실패 시에도 승격" 변이가 (i)~(iii)을 전부
+  // 통과함이 실증돼 추가했다. fail-safe 게이트는 순수 함수가 아니라 결선(프로브 본문)에만 있으므로
+  // (serverUrl.js 계약 주석: "성공/실패 판정은 여기 없다") 결선 텍스트 잠금이 없으면 무방비다.
+  test('(iv) 승격은 성공 판정(verdict.ok)일 때만 — 실패 경로는 요청 origin 유지(fail-safe 결선 잠금)', () => {
+    const { text, startLine } = probeBody();
+    assert.match(text, /verdict\.ok\s*\?\s*resolveFinalOrigin\(/,
+      `프로브 본문(${startLine}행~)에서 resolveFinalOrigin 호출이 verdict.ok 조건 뒤에 있지 않다 — `
+      + '오류 페이지·캡티브 포털로의 리다이렉트가 저장 주소를 바꾸면 접속 불능이 영구화된다(승격은 성공 판정일 때만)');
+    assert.match(text, /:\s*\{ origin, changed: false \}/,
+      `프로브 본문(${startLine}행~)에 실패 분기의 요청 origin 유지({ origin, changed: false })가 없다 — `
+      + '실패 시 미승격 fail-safe(ADR-011)가 결선에서 사라졌다');
+  });
+
+  test('(v) probe 진단 페이로드는 승격 결과 origin 문자열·boolean만 싣는다 — 응답 URL 원문 미기록', () => {
+    const body = probeBody();
+    // 검사 구간: 페이로드 구성 줄부터 diag.log('probe') 기록 줄까지 — 못 찾으면 실패(조용한 통과 금지).
+    const payloadRel = body.lines.findIndex((l) => l.includes('const payload ='));
+    assert.ok(payloadRel >= 0, '프로브 본문에서 진단 페이로드 구성 줄(const payload =)을 찾지 못했다');
+    const logRel = body.lines.findIndex((l) => l.includes("diag.log('probe'"));
+    assert.ok(logRel > payloadRel, "프로브 본문에서 페이로드 구성 이후의 diag.log('probe') 기록 줄을 찾지 못했다");
+    const sectionText = body.lines.slice(payloadRel, logRel + 1).join('\n');
+    assert.ok(sectionText.includes('finalOrigin: resolved.origin'),
+      '진단 페이로드에 승격 결과 origin(finalOrigin: resolved.origin)이 없다 — 승격 관측이 진단에서 사라진다');
+    assert.ok(sectionText.includes('promoted: resolved.changed'),
+      '진단 페이로드에 승격 여부 boolean(promoted: resolved.changed)이 없다');
+    for (const rawNeedle of ['finalUrl', 'res.url', 'responseUrl']) {
+      assert.ok(!sectionText.includes(rawNeedle),
+        `진단 페이로드 구간에 응답 URL 원문 표현식(${rawNeedle})이 발견됐다 — origin류 키는 diag.js 축약기를 `
+        + '타지 않으므로(키에 url 미포함) 원문 URL(경로·쿼리 포함 가능)을 진단 파일에 남기면 안 된다');
     }
   });
 });
