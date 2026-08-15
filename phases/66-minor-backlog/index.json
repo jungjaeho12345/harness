@@ -35,7 +35,8 @@
     {
       "step": 4,
       "name": "probe-final-origin",
-      "status": "pending"
+      "status": "done",
+      "summary": "resolveFinalOrigin 순수 판정을 serverUrl.js에 추가(fail-safe: 최종 URL 없음·비문자열·파싱 불가·http/https 밖·자격증명 포함이면 요청 origin 유지 + changed 거짓, origin 조립은 new URL만). main.js 결선: probeOrigin이 res.url을 읽어 성공 판정일 때만 승격하고 반환 계약을 { ok, reason?, origin(항상 최종) }으로 확장, probeServer/saveServer 핸들러는 프로브 호출 이후 요청 origin을 다시 쓰지 않고 verdict.origin만 소비(응답·저장·config-saved diag·재시작 판정·창 생성 전부). 진단은 probe 이벤트에 finalOrigin(승격 결과 origin 문자열)·promoted(boolean)만 추가 — 응답 URL 원문 미기록(diag.js 축약기는 키에 url 포함일 때만 동작하므로 origin류 키에 원문 금지). setup.js·secureOrigin.js·preload.cjs 무수정. 테스트 신설 test/client-probe-origin.test.js +14(순수 11: 승격 3·동일 origin 3·fail-safe 5 / 결선 텍스트 잠금 3: import·프로브 본문 res.url+resolveFinalOrigin·두 핸들러 구간 내 프로브 호출 후 요청 origin 표현식 부재 — 구간은 '핸들러 등록 줄부터 다음 핸들러 등록 줄 직전까지'로 못 박고 미발견은 실패, needle은 테스트 파일에만 존재). red 실증 2단계: 구현 전 import 실패로 파일 전체 red → A(순수) 구현 후 11 pass/텍스트 잠금 3 fail → B(결선) 후 14/14. 변이 검증 3종(각 원복 후 14/14): (a) res.url 읽기 제거 → 정확히 (ii) 1건 red, (b) 저장을 요청 origin으로 회귀 → 정확히 (iii) 1건 red(134행 발견 위치 출력), (c) 자격증명 거부 제거 → 정확히 순수 자격증명 1건 red. 가정 실측: 스크래치패드 러너(임시 포트 2개, A 302→B)로 표준 fetch의 응답 URL이 최종 주소(B)를 담음을 확인(redirected=true·bodyOk) — 단 실제 경로는 Electron net.fetch라 실왕복은 미검증이고 잠금은 순수 단위 + 결선 텍스트 잠금까지다. AC 실측: client-probe-origin 14/14 · 인접 4파일 146/146 · npm test 1324/1324(기준선 1310+14, 기존 0 깨짐) · lint clean · porcelain 증분 = 소유 3파일 + index.json뿐 · DB 접속 0·타이머 0·런타임 의존성 불변. ADR-011 결정문 보강 필요(저장값 출처 = 프로브가 돌려준 최종 origin, 실패 시 미승격 fail-safe) — step5 인계."
     },
     {
       "step": 5,

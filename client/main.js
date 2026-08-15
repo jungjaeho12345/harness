@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, net, screen, session, shell } from 'electron';
-import { normalizeServerUrl, healthUrl, appUrl, interpretHealthResponse } from './lib/serverUrl.js';
+import { normalizeServerUrl, healthUrl, appUrl, interpretHealthResponse, resolveFinalOrigin } from './lib/serverUrl.js';
 import { configPath, readConfigFileSync, writeConfigFile, sanitizeBounds } from './lib/clientConfig.js';
 import { FEATURE_SWITCH, decideSecureOriginSwitches, requiresRestartForOrigin } from './lib/secureOrigin.js';
 import {
@@ -117,27 +117,29 @@ function wireApp() {
   });
 
   // IPC — 모든 핸들러는 sender(file:// + 현재 로컬 창 contents id)를 검증한다. 신뢰 경계는 셸 메인이다.
+  // 프로브 이후의 소비(응답·저장·창 생성·재시작 판정)는 전부 프로브가 돌려준 최종 origin 하나만 본다
+  // (phase 66 step4 — 302 승격값과 저장값이 갈라지면 secure-origin 스위치가 엉뚱한 출처에 걸린다).
   handleGuarded('probeServer', async (input) => {
     const norm = normalizeServerUrl(input);
     if (!norm.ok) return { ok: false, reason: norm.reason };
     const verdict = await probeOrigin(norm.origin);
-    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: norm.origin };
-    return { ok: true, origin: norm.origin };
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: verdict.origin };
+    return { ok: true, origin: verdict.origin };
   });
   handleGuarded('saveServer', async (input) => {
     const norm = normalizeServerUrl(input);
     if (!norm.ok) return { ok: false, reason: norm.reason };
     const verdict = await probeOrigin(norm.origin);
-    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: norm.origin }; // 실패한 주소는 저장하지 않는다.
-    serverOrigin = norm.origin;
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, origin: verdict.origin }; // 실패한 주소는 저장하지 않는다.
+    serverOrigin = verdict.origin;
     lastFailure = null;
     await persistConfig();
-    diag.log('config-saved', { origin: norm.origin });
+    diag.log('config-saved', { origin: verdict.origin });
     // 새 출처가 스위치를 요구하는데 부팅 때 적용한 값과 다르면 재시작 안내 — 가장 흔한 경로는 "최초 설정"이다
     // (설정 없는 첫 실행은 appliedSecureOrigin === null이라 LAN 주소를 처음 저장하는 순간 참이 된다).
-    if (requiresRestartForOrigin(appliedSecureOrigin, norm.origin)) notifyRestartRequired(norm.origin);
-    createAppWindow(norm.origin, savedBounds);
-    return { ok: true, origin: norm.origin };
+    if (requiresRestartForOrigin(appliedSecureOrigin, verdict.origin)) notifyRestartRequired(verdict.origin);
+    createAppWindow(verdict.origin, savedBounds);
+    return { ok: true, origin: verdict.origin };
   });
   handleGuarded('getState', async () => ({ mode: localMode, serverUrl: serverOrigin, failure: lastFailure }));
   handleGuarded('retry', async () => { retryConnect(); return { ok: true }; });
@@ -180,20 +182,30 @@ function wireApp() {
 }
 
 // 사용자 액션당 1회 프로브 — 재시도·백오프·주기 확인 금지(ADR-008). 판정은 interpretHealthResponse 단일 출처.
+// 리다이렉트는 기본 추종을 유지하고(끄지 않는다 — 정상 프록시 배치 보호) 도착지만 읽는다: 반환 계약은
+// 성공/실패 무관 항상 최종 origin을 함께 돌려주되, 승격은 성공 판정일 때만 한다(오류 페이지·캡티브 포털로의
+// 리다이렉트가 저장 주소를 바꾸면 접속 불능이 영구화된다). 승격 규칙은 순수 모듈 단일 출처(서두 계약).
 async function probeOrigin(origin) {
   let verdict;
+  let finalUrl = null;
   try {
     const res = await net.fetch(healthUrl(origin), { signal: AbortSignal.timeout(5000) });
+    finalUrl = res.url; // 리다이렉트 추종 후 도착지 — 승격 판정 입력.
     let body = null;
     try { body = await res.json(); } catch { body = null; }
     verdict = interpretHealthResponse({ status: res.status, body });
   } catch {
     verdict = interpretHealthResponse({ status: null, body: null }); // 네트워크 실패 = unreachable.
   }
-  const payload = { origin, ok: verdict.ok };
+  const resolved = verdict.ok
+    ? resolveFinalOrigin({ requestedOrigin: origin, responseUrl: finalUrl })
+    : { origin, changed: false }; // 실패 시 승격 금지 — 요청 origin 유지.
+  // 진단은 기존 필드 유지 + 추가만(diag.js 계약). 응답 URL 원문은 절대 싣지 않는다 — origin류 키는
+  // 축약기를 타지 않으므로(키에 url 미포함) 승격 결과 origin 문자열과 boolean만 남긴다.
+  const payload = { origin, ok: verdict.ok, finalOrigin: resolved.origin, promoted: resolved.changed };
   if (!verdict.ok) payload.reason = verdict.reason;
   diag.log('probe', payload);
-  return verdict;
+  return { ...verdict, origin: resolved.origin };
 }
 
 function handleGuarded(channel, handler) {
