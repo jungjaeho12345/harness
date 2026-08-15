@@ -11,7 +11,8 @@
     {
       "step": 0,
       "name": "lock-core",
-      "status": "pending"
+      "status": "completed",
+      "summary": "src/db/instanceLock.js 신설(LOCK_FILENAME·lockFilePath·classifyLockError·acquireInstanceLock·isLockHeld·releaseInstanceLock — 잠금 유지 연결은 모듈 스코프 보관, busy_timeout 0은 applyConnectionPragmas 재사용, 실패 시 핸들 close·닫기 실패 삼킴) + test/instance-lock.test.js 11케이스(red→green, 실 OS conflict·손상 파일·핸들 누수 0을 재시도 없는 rmSync로 실측) + src/db/connection.js 헤더 주석 1줄 정정(적용 대상 2곳). 변이 4종 전부 red 확인 후 원복: (a) 모듈 스코프 보관 제거→3 fail (b) 전부 conflict 분류→4 fail(오탐 방향 회귀를 unavailable 케이스가 잡는다) (c) BEGIN EXCLUSIVE 제거→5 fail (d) 실패 close 제거→4 fail(rmSync EPERM). 실측: conflict 판정 19ms·획득 2ms·잠금 파일 0바이트·실패 후 재시도 없는 rmSync 성공. npm test 1289→1300, lint clean, sea-import-meta-lock green, DATA-UNCHANGED-OK."
     },
     {
       "step": 1,
