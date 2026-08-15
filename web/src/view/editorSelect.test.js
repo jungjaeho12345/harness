@@ -119,7 +119,7 @@ describe('editorSelect — selectWordInEditor(root, lineIndex, colStart, colEnd)
     expect(window.getSelection().rangeCount).toBe(0);
   });
 
-  it('colStart/colEnd는 텍스트 노드 길이로 clamp된다', () => {
+  it('colStart/colEnd는 줄 전체 텍스트 길이로 clamp된다', () => {
     selectWordInEditor(root, 0, 6, 99);
     expect(window.getSelection().toString()).toBe('world');
   });
@@ -133,6 +133,65 @@ describe('editorSelect — selectWordInEditor(root, lineIndex, colStart, colEnd)
     expect(() => selectWordInEditor(root, 9, 0, 3)).not.toThrow(); // 범위 밖 줄
     expect(window.getSelection().rangeCount).toBe(0);
     expect(root.innerHTML).toBe(before);
+  });
+
+  // 맞춤법 하이라이트가 켜진 줄은 [텍스트, span.yh-editor__spell, 텍스트]로 쪼개진다(phase 39 렌더).
+  // 줄-로컬 col은 줄 전체 텍스트 기준(캐럿 읽기 39-1 계약과 동형) — 다중 노드 줄에서도 정확히 그 단어가 선택돼야 한다.
+  const HL_LINE =
+    '<div class="yh-editor__line">hello <span class="yh-editor__spell yh-editor__spell--bold" data-testid="spell-hl">wor</span>ld again</div>';
+
+  it('하이라이트 뒤쪽 단어를 선택한다(스팬 뒤 텍스트 노드 — 줄 텍스트 "hello world again"의 again)', () => {
+    root.innerHTML = HL_LINE;
+    selectWordInEditor(root, 0, 12, 17);
+    const sel = window.getSelection();
+    expect(sel.rangeCount).toBe(1);
+    expect(sel.toString()).toBe('again');
+  });
+
+  it('첫 단어가 하이라이트인 줄에서도 첫 단어를 선택한다(첫 자식이 span)', () => {
+    root.innerHTML =
+      '<div class="yh-editor__line"><span class="yh-editor__spell yh-editor__spell--bold" data-testid="spell-hl">hello</span> world</div>';
+    selectWordInEditor(root, 0, 0, 5);
+    const sel = window.getSelection();
+    expect(sel.rangeCount).toBe(1);
+    expect(sel.toString()).toBe('hello');
+  });
+
+  it('하이라이트 경계를 걸친 단어는 전체가 선택된다(시작·끝이 서로 다른 노드, 끝이 줄 끝 경계)', () => {
+    // 줄 텍스트 "foo barbaz" — 하이라이트가 마지막 단어 barbaz의 가운데 "arb"만 덮는다.
+    // 시작(4)은 스팬 앞 텍스트 노드 안, 끝(10)은 줄 전체 길이(=누적 구간 경계) — 앞 노드의 끝에 붙어야 한다.
+    root.innerHTML =
+      '<div class="yh-editor__line">foo b<span class="yh-editor__spell yh-editor__spell--bold" data-testid="spell-hl">arb</span>az</div>';
+    selectWordInEditor(root, 0, 4, 10);
+    const sel = window.getSelection();
+    expect(sel.rangeCount).toBe(1);
+    expect(sel.toString()).toBe('barbaz');
+  });
+
+  it('다중 노드 줄에서도 clamp 기준은 줄 전체 텍스트 길이다(끝이 넘치면 줄 끝까지)', () => {
+    root.innerHTML = HL_LINE;
+    selectWordInEditor(root, 0, 12, 99);
+    expect(window.getSelection().toString()).toBe('again');
+  });
+
+  it('다중 노드 줄의 no-op 계약 — 빈 범위/텍스트 없음/범위 밖 줄/null root(예외 없음, 선택 무변경)', () => {
+    root.innerHTML = HL_LINE;
+    window.getSelection().removeAllRanges();
+    expect(() => selectWordInEditor(root, 0, 3, 3)).not.toThrow(); // 빈 범위(시작=끝)
+    expect(() => selectWordInEditor(root, 9, 0, 3)).not.toThrow(); // 범위 밖 줄
+    expect(() => selectWordInEditor(null, 0, 0, 3)).not.toThrow(); // null root
+    root.innerHTML = '<div class="yh-editor__line"><br></div>'; // 텍스트 노드가 하나도 없는 줄
+    expect(() => selectWordInEditor(root, 0, 0, 3)).not.toThrow();
+    expect(window.getSelection().rangeCount).toBe(0);
+  });
+
+  it('다중 노드 케이스 실행 후에도 줄 마크업이 그대로다(선택 연산만 — DOM 무변경)', () => {
+    root.innerHTML = HL_LINE;
+    const before = root.innerHTML;
+    selectWordInEditor(root, 0, 12, 17); // 스팬 뒤 단어
+    selectWordInEditor(root, 0, 0, 6); // 스팬 앞 경계 걸침
+    expect(root.innerHTML).toBe(before);
+    expect(root.querySelectorAll('[data-testid="spell-hl"]').length).toBe(1);
   });
 });
 

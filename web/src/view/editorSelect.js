@@ -43,20 +43,45 @@ export function selectLineInEditor(root, lineIndex) {
 }
 
 // 지정 텍스트-줄의 [colStart, colEnd) 문자 범위(줄-로컬 char 오프셋)를 선택한다.
+// 좌표 계약(캐럿 읽기 39-1과 동형): col은 줄 요소 자손 텍스트 전체 기준이고 clamp도 줄 textContent 전체 길이다 —
+// 맞춤법 하이라이트가 줄을 [텍스트, span, 텍스트]로 쪼개므로 시작·끝이 서로 다른 텍스트 노드에 걸릴 수 있다.
 // 좌표 계산은 호출부(editorRange) 몫 — 여기서는 clamp 후 Range만 건다. 빈 범위/빈 줄이면 no-op(단어 없음 신호).
 export function selectWordInEditor(root, lineIndex, colStart, colEnd) {
   const ctx = prepareLineSelection(root);
   if (!ctx) return;
   if (!Number.isInteger(lineIndex) || lineIndex < 0 || lineIndex >= ctx.lineEls.length) return;
-  const tnode = ctx.lineEls[lineIndex].firstChild;
-  if (!tnode || tnode.nodeType !== 3) return; // 빈 줄 — 선택할 텍스트 노드 없음
-  const len = tnode.nodeValue.length;
+  const lineEl = ctx.lineEls[lineIndex];
+  const textNodes = [];
+  const collect = (node) => { // 자손 텍스트 노드를 document 순서로 수집(클래스 무관 — 구조적 사실만 본다)
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === 3) textNodes.push(child);
+      else collect(child);
+    }
+  };
+  collect(lineEl);
+  if (!textNodes.length) return; // 텍스트 노드 없음(빈 줄) — 선택 무변경
+  const len = (lineEl.textContent ?? '').length;
   const start = Math.max(0, Math.min(colStart, len));
   const end = Math.max(0, Math.min(colEnd, len));
   if (!(start < end)) return; // 빈 범위(colStart===colEnd 포함) — NaN도 여기서 걸러진다
+  // 줄-로컬 col → (텍스트 노드, 노드-로컬 오프셋). endSide=true면 누적 구간 경계를 앞 노드의 끝에 붙인다
+  // (시작점은 뒤 구간의 시작 쪽) — 그래야 경계에서 범위가 접히지 않는다.
+  const locate = (col, endSide) => {
+    let acc = 0;
+    for (const tn of textNodes) {
+      const tlen = tn.nodeValue.length;
+      if (tlen === 0) continue; // 빈 텍스트 노드는 경계 판정에서 건너뛴다
+      if (col < acc + tlen || (endSide && col === acc + tlen)) return { node: tn, offset: col - acc };
+      acc += tlen;
+    }
+    return null; // 도달 불가(시작점은 col<len, 끝점은 endSide가 줄 끝 경계를 앞 노드 끝으로 흡수) — 방어
+  };
+  const startPos = locate(start, false);
+  const endPos = locate(end, true);
+  if (!startPos || !endPos) return; // 방어적 no-op — 선택 무변경
   const range = document.createRange();
-  range.setStart(tnode, start);
-  range.setEnd(tnode, end);
+  range.setStart(startPos.node, startPos.offset);
+  range.setEnd(endPos.node, endPos.offset);
   applyRange(ctx.sel, range);
 }
 
