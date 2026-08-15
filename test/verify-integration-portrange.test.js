@@ -45,3 +45,44 @@ describe('verify-integration — 서버/CDP 포트 범위 분리(텍스트 잠�
     }
   });
 });
+
+// phase 65 step3 (B-2): --cdp-port 명시 값의 서버 범위 겹침 가드 + 드리프트 잠금.
+// 가드의 숫자 리터럴이 서버 포트 선택 호출부의 [base, base+span)와 어긋나면 여기서 red가 된다
+// (범위를 상수로 승격하지 않는 대신 이 테스트가 두 숫자의 일치를 잠근다 — decisions (13)).
+describe('verify-integration — --cdp-port 서버 범위 겹침 가드(드리프트 잠금)', () => {
+  const text = fs.readFileSync(SCRIPT, 'utf8');
+  const GUARD_RE = /opts\.cdpPort\s*>=\s*(\d+)\s*&&\s*opts\.cdpPort\s*<\s*(\d+)/g;
+  const guards = [...text.matchAll(GUARD_RE)].map((m) => ({ lo: Number(m[1]), hi: Number(m[2]), text: m[0] }));
+
+  // 첫 인자까지 파싱해 서버 호출(첫 인자 host)과 CDP 호출을 가른다.
+  const sites = [...text.matchAll(/pickFreePort\(\s*([^,)]+),\s*(\d+)\s*,\s*(\d+)\s*\)/g)]
+    .map((m) => ({ first: m[1].trim(), base: Number(m[2]), span: Number(m[3]), text: m[0] }));
+  const server = sites.filter((s) => s.first === 'host');
+  const cdp = sites.filter((s) => s.first !== 'host');
+
+  test('겹침 가드가 정확히 1건 존재한다(기대 형태: opts.cdpPort >= <lo> && opts.cdpPort < <hi>)', () => {
+    assert.equal(
+      guards.length, 1,
+      `가드 매치가 정확히 1건이어야 한다 — 기대 형태 "opts.cdpPort >= 20000 && opts.cdpPort < 35000"`
+      + `(표현식 모양을 바꾸면 이 정규식이 못 찾는다). 발견: ${JSON.stringify(guards.map((g) => g.text))}`,
+    );
+  });
+
+  test('가드 [lo, hi)가 서버 범위 [base, base+span)와 정확히 일치한다', () => {
+    assert.equal(server.length, 1, `첫 인자가 host인 서버 호출은 1건이어야 한다. 발견: ${JSON.stringify(server)}`);
+    const [g] = guards;
+    const [s] = server;
+    assert.ok(g, '가드가 없다 — 앞 케이스 참조');
+    assert.equal(g.lo, s.base, `가드 하한(${g.lo})이 서버 base(${s.base})와 다르다 — 드리프트`);
+    assert.equal(g.hi, s.base + s.span, `가드 상한(${g.hi})이 서버 base+span(${s.base + s.span})과 다르다 — 드리프트`);
+  });
+
+  test('가드 범위와 CDP 범위는 서로소다(겹치면 가드가 정당한 CDP 값을 거부한다)', () => {
+    assert.equal(cdp.length, 1, `CDP 호출은 1건이어야 한다. 발견: ${JSON.stringify(cdp)}`);
+    const [g] = guards;
+    const [c] = cdp;
+    assert.ok(g, '가드가 없다 — 앞 케이스 참조');
+    const disjoint = g.hi <= c.base || c.base + c.span <= g.lo;
+    assert.ok(disjoint, `가드 [${g.lo}, ${g.hi})와 CDP [${c.base}, ${c.base + c.span})가 겹친다`);
+  });
+});

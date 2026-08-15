@@ -38,7 +38,8 @@ const USAGE = `사용법: node scripts/verify-integration.mjs [--scenario loopba
   --scenario      loopback | lan | all(기본). lan은 3분법(skip=0 / 제품 실패=1 / 환경 차단=2)으로 끝난다.
   --server-exe    서버 exe 경로(기본: dist/기사작성기-server/의 한글→ASCII 폴백 자동 해석).
   --client-exe    클라이언트 exe 경로(기본: dist/기사작성기/의 한글→ASCII 폴백 자동 해석).
-  --cdp-port <n>  원격 디버깅 포트 고정(기본: 35000~44999 랜덤 — 서버 포트 20000~34999와 범위 분리).
+  --cdp-port <n>  원격 디버깅 포트 고정(기본: 35000~44999 랜덤 — 서버 포트 20000~34999와 범위 분리.
+                  20000~34999는 서버 범위라 거부한다).
   --show          CLIENT_SELFTEST를 주지 않아 창을 실제로 띄운다(클립보드 왕복·포커스 확인용).
   --keep          임시 디렉토리를 지우지 않는다(디버깅용).
   --timeout <ms>  단계별 대기 한도(기본 45000, 1000 이상 정수).`;
@@ -71,6 +72,11 @@ function parseArgs(argv) {
   if (!Number.isInteger(opts.timeout) || opts.timeout < 1000) die(`--timeout 값이 유효하지 않다(ms, 1000 이상 정수): ${opts.timeout}`);
   if (opts.cdpPort !== undefined && (!Number.isInteger(opts.cdpPort) || opts.cdpPort < 1024 || opts.cdpPort > 65535)) {
     die(`--cdp-port 값이 유효하지 않다(1024~65535 정수): ${opts.cdpPort}`);
+  }
+  // 서버 포트 범위와 겹치는 값은 거부한다 — 아래 서버 포트 선택 호출부(base 20000 · span 15000)와 같은 구간이다.
+  // 드리프트는 test/verify-integration-portrange.test.js가 잠근다(가드 숫자 == 서버 호출부 [base, base+span)).
+  if (opts.cdpPort !== undefined && opts.cdpPort >= 20000 && opts.cdpPort < 35000) {
+    die(`--cdp-port 값이 서버 포트 범위(20000~34999)와 겹친다: ${opts.cdpPort} — 35000~44999에서 고르라.`);
   }
   for (const key of ['serverExe', 'clientExe']) {
     if (opts[key] !== undefined) {

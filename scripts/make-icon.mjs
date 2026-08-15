@@ -11,6 +11,7 @@ import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildIcoBuffer } from './lib/icoBuilder.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -26,13 +27,17 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0, 65 step3 결선).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) die(v.message);
+    return v.value;
+  };
   const opts = { out: DEFAULT_OUT, check: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') {
-      opts.out = argv[++i];
-      if (!opts.out) die('--out 값이 비어 있다.');
-    } else if (a === '--check') opts.check = true;
+    if (a === '--out') { opts.out = takeValue(i, '--out'); i += 1; }
+    else if (a === '--check') opts.check = true;
     else die(`알 수 없는 인자: ${a}`);
   }
   opts.out = nodePath.resolve(opts.out);

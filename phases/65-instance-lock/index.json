@@ -29,7 +29,8 @@
     {
       "step": 3,
       "name": "script-guards",
-      "status": "pending"
+      "status": "completed",
+      "summary": "B-1: scripts/make-icon.mjs에 flagValue 결선(7번째 CLI — takeValue 로컬 헬퍼, 기존 빈 값 가드 대체, 종료 규약·아이콘 로직 무변경). B-2: scripts/verify-integration.mjs에 --cdp-port 서버 범위 겹침 가드(opts.cdpPort >= 20000 && opts.cdpPort < 35000 리터럴 형태 고정) + USAGE 1줄, 주석은 산문 지칭으로 pickFreePort 텍스트 잠금 함정 회피(기존 3케이스 green 유지). test/verify-integration-portrange.test.js 3케이스 추가(가드 정확히 1건·가드==서버 [base,base+span) 일치·가드-CDP 서로소, red→green). 프로브 실측(임시 cwd, 전/후): --out --check가 전 exit 0+'--check' 파일 370070B 생성(결함)→후 exit 1 flag-like·파일 0 / --cdp-port 25000·34999 전 통과(경로 가드까지 진행)→후 exit 1 겹침 / 35000은 다음 가드까지 생존(양성 증거) / --check 무회귀(sha256 84f42e 동일). 변이 3종: (a) 가드 제거→3 fail (b) 상한 30000→일치 케이스 fail (c) argv[++i] 원복→프로브가 파일 재생성 검출(테스트 아닌 프로브 검출 항목). npm test 1304→1307, lint clean."
     },
     {
       "step": 4,
