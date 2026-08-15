@@ -11,7 +11,8 @@
     {
       "step": 0,
       "name": "sort-paragraph-guard",
-      "status": "pending"
+      "status": "done",
+      "summary": "sortParagraph 진입부(normalizeBlocks 직후·문단 경계 계산 전)에 textLineToBlockIndex<0 → { blocks: list, changed: false } no-op 가드 추가(deleteWordAt·deleteLineAt 동형, 새 숫자 검사 0). editorRange.js clamp·WriterPage.jsx 무수정. 테스트 +5(범위 밖 9·음수 -1·NaN no-op 값 단언, 경계 0·마지막 줄 정상 정렬 회귀 잠금, 임베드만 입력 무예외 no-op). red 실증: 구현 전 3 failed(전부 'expected true to be false' — clamp가 접어 정렬 수행)/35 passed. 변이 검증: (a) 가드 제거 → 정확히 신규 3건 red, (b) 가드 항상 no-op 반전 → 정상 경로 회귀 잠금 포함 9건 red — 각각 원복 후 38/38 green. AC 실측: editorEditOps 38/38 · 인접 3파일 527/527 · test:web 2373/2373(기준선 2368+5, flake 0) · lint clean · porcelain 증분 = 소유 2파일 + index.json뿐."
     },
     {
       "step": 1,
