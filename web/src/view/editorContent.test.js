@@ -72,6 +72,55 @@ describe('editorContent — block model', () => {
   });
 });
 
+// 전량 드롭 폴백 계약 — JSON 파싱엔 성공했지만 정규화가 원소를 전부 버리는 문자열은
+// 평문 폴백으로 원문 텍스트를 보존한다(저장 왕복 시 원본 영구 소실 방지).
+// 예외(폴백 금지): 의도된 빈 문서 · 부분 드롭(정상 블록이 하나라도 남는 경우).
+describe('editorContent — deserialize 전량 드롭 폴백 (원문 보존)', () => {
+  it('falls back to plain text for a JSON string array (블록 스키마 아님)', () => {
+    const raw = JSON.stringify(['첫 줄 원문', '둘째 줄 원문', '셋째 줄 원문']);
+    const blocks = deserialize(raw);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every(isTextBlock)).toBe(true);
+    expect(blocks.map((b) => b.text).join('\n')).toBe(raw);
+  });
+
+  it('falls back preserving each line for pretty-printed non-block JSON (여러 줄)', () => {
+    const raw = JSON.stringify(['원문 가', '원문 나'], null, 2);
+    const blocks = deserialize(raw);
+    expect(blocks.length).toBeGreaterThan(1);
+    expect(blocks.map((b) => b.text).join('\n')).toBe(raw);
+  });
+
+  it('falls back for an array of foreign-schema objects', () => {
+    const raw = JSON.stringify([{ paragraph: '원본 문단 하나' }, { paragraph: '원본 문단 둘' }]);
+    const blocks = deserialize(raw);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every(isTextBlock)).toBe(true);
+    expect(blocks.map((b) => b.text).join('\n')).toBe(raw);
+  });
+
+  it('falls back for a doc object whose blocks are all unknown types (배열 분기와 대칭)', () => {
+    const raw = JSON.stringify({ format: 'other-editor', blocks: [{ kind: 'p', body: '살릴 원문' }] });
+    const blocks = deserialize(raw);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every(isTextBlock)).toBe(true);
+    expect(blocks.map((b) => b.text).join('\n')).toBe(raw);
+  });
+
+  it('keeps intentionally empty documents empty (폴백 금지 — 회귀 잠금)', () => {
+    expect(deserialize('[]')).toEqual([]);
+    expect(deserialize(serialize([]))).toEqual([]);
+    expect(deserialize(JSON.stringify({ format: EDITOR_FORMAT, version: EDITOR_VERSION, blocks: [] }))).toEqual([]);
+  });
+
+  it('keeps partial-drop behavior: 정상 블록이 남으면 폴백하지 않는다 (경계 잠금)', () => {
+    expect(deserialize(JSON.stringify([{ type: 'text', text: '정상 블록' }, { kind: 'bogus' }])))
+      .toEqual([{ type: 'text', text: '정상 블록' }]);
+    expect(deserialize(JSON.stringify({ blocks: [{ type: 'text', text: '정상 블록' }, { kind: 'bogus' }] })))
+      .toEqual([{ type: 'text', text: '정상 블록' }]);
+  });
+});
+
 describe('editorContent — align 필드 (보기 정렬)', () => {
   it('ALIGN_VALUES / isValidAlign whitelist the 4 alignments', () => {
     expect(ALIGN_VALUES).toEqual(['left', 'center', 'right', 'justify']);

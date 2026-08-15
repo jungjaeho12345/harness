@@ -17,7 +17,8 @@
     {
       "step": 1,
       "name": "deserialize-fallback",
-      "status": "pending"
+      "status": "done",
+      "summary": "deserialize 문자열 JSON 분기에 전량 드롭 폴백 추가: 파싱된 원본 배열(최상위 배열·doc.blocks 대칭)이 비어 있지 않은데 normalizeBlocks 결과가 빈 경우에만 평문 폴백으로 낙하해 원문을 줄 단위 텍스트 블록으로 보존. 빈 문서(원본 0개)·부분 드롭·비문자열 입력은 불변, normalizeBlocks 화이트리스트·쓰기 경로 무수정. 테스트 +6(폴백 4: 문자열 배열·pretty-printed 여러 줄·타 스키마 객체 배열·blocks 전량 미지 타입 객체 / 잠금 2: 빈 문서 3형·부분 드롭 배열+객체형). red 실증: 구현 전 4 failed(전부 'expected 0 to be greater than 0/1' — 빈 배열 반환)/18 passed. 변이 검증: (a) 빈 원본 단서 제거(항상 폴백) → 빈 문서 잠금만 1건 red, (b) 부분 드롭까지 확대 → 경계 잠금만 1건 red, (c) 폴백 제거=원복 상태 → 폴백 4건 red — 각각 원복 후 22/22 green. 왕복 실증(메모리 순수 함수, DB 무접촉): 손상 3형 deserialize→serialize 결과에 원문 전부 보존(preserved=true, 수정 전엔 blocks=[] 소실). AC 실측: editorContent 22/22 · 인접 4파일 104/104 · WriterPage+ListPage 550/550 · test:web 2379/2379(기준선 2373+6, flake 0) · lint clean · porcelain 증분 = 소유 2파일 + index.json뿐."
     },
     {
       "step": 2,
