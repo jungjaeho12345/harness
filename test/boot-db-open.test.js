@@ -6,6 +6,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +35,28 @@ describe('openBootDatabase — 부트 연결의 단일 관문', () => {
 
   test('잘못된 pragmaOptions는 TypeError로 전파된다(조용한 no-op 금지)', () => {
     assert.throws(() => openBootDatabase(':memory:', { busyTimeoutMs: -1 }), TypeError);
+  });
+
+  // phase 65 step2 (B-3): pragma 적용 실패 시 열린 DB 핸들을 닫고 원인 예외를 그대로 던진다.
+  // "핸들이 닫혔는가"는 파일 삭제 성공으로 관측한다 — Windows 실측상 열린 핸들이 남으면
+  // unlink가 EBUSY/EPERM으로 실패한다(instance-lock 케이스 4-b와 같은 관측 기법).
+  test('pragma 적용 실패 시 핸들을 닫는다 — TypeError(원인 예외 identity) 후 unlinkSync 성공', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yh-bootdb-'));
+    try {
+      const file = path.join(dir, 'boot-close.db');
+      assert.throws(
+        () => openBootDatabase(file, { busyTimeoutMs: -1 }),
+        (err) => err instanceof TypeError && /busyTimeoutMs/.test(err.message),
+        '원인 예외(TypeError, busyTimeoutMs 메시지)가 재포장 없이 전파돼야 한다',
+      );
+      // 핸들이 닫혔다는 증거 — 열린 핸들이 남으면 여기서 EBUSY/EPERM으로 던진다.
+      fs.unlinkSync(file);
+      assert.ok(!fs.existsSync(file));
+    } finally {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* 정리 전용 — 실패 무시 */ }
+    }
   });
 });
 

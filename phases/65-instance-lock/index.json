@@ -23,7 +23,8 @@
     {
       "step": 2,
       "name": "boot-db-close",
-      "status": "pending"
+      "status": "completed",
+      "summary": "server/index.js openBootDatabase 본문에 try/catch 추가(pragma 적용 실패 시 db.close 후 원인 예외 identity 그대로 재던짐 — 닫기 실패는 삼킴, phase 64 C-1 규율). test/boot-db-open.test.js 케이스 1개 추가(mkdtemp 파일 DB에 busyTimeoutMs:-1 → TypeError(메시지 busyTimeoutMs) + 직후 unlinkSync 성공 = 핸들 닫힘 관측). red 재현 확인: 수정 전 unlink가 EBUSY로 실패(핸들 누수 실재). 변이 3종 red 확인 후 원복: (a) close 없이 throw→1 fail(EBUSY) (b) 재포장 throw new Error→2 fail (c) 예외 삼킴→2 fail. bootstrap 본문 무접촉, new DatabaseSync 출현 1건 유지(텍스트 잠금 green). npm test 1303→1304, lint clean."
     },
     {
       "step": 3,

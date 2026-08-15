@@ -1258,7 +1258,12 @@ let bootstrapped = false;
 // 둔다. bootstrap은 이 함수로만 DB를 연다(직접 생성 금지 — test/boot-db-open.test.js 텍스트 잠금).
 export function openBootDatabase(dbFile, pragmaOptions = {}) {
   const db = new DatabaseSync(dbFile);
-  applyConnectionPragmas(db, pragmaOptions);
+  try {
+    applyConnectionPragmas(db, pragmaOptions);
+  } catch (err) {
+    try { db.close(); } catch { /* 닫기 실패는 삼킨다 — 원인 예외를 대체하지 않는다 */ }
+    throw err; // 원인 예외 identity 보존 (phase 64 C-1과 같은 규율)
+  }
   return db;
 }
 // packaged/execDir/moduleDir: 경로 해석(resolveRuntimePaths) 주입 seam.
