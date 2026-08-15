@@ -37,7 +37,8 @@ function tx(db, fn) {
     db.exec('COMMIT');
     return r;
   } catch (e) {
-    db.exec('ROLLBACK');
+    // 원인 예외 보존 — 자동 롤백된 상태의 명시 ROLLBACK이 던져도 원인을 교체하지 않는다(phase 64 step4 C-1).
+    try { db.exec('ROLLBACK'); } catch { /* 원인 예외 보존 — 롤백 실패는 원인에 종속된 2차 증상이다 */ }
     throw e;
   }
 }

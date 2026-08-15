@@ -83,6 +83,7 @@ export function sanitizeBounds(bounds, workAreas) {
 }
 
 // 읽기 실패(ENOENT·권한·깨진 파일)는 전부 기본값으로 수렴한다 — throw 금지.
+// 프로덕션 소비자는 readConfigFileSync(부팅 1회)다 — 이 async 버전은 테스트/미래 소비자용으로 의도적으로 유지한다(제거 금지 — phase 64 decisions (13)).
 export async function readConfigFile(filePath, { readFile }) {
   let raw;
   try {

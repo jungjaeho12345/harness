@@ -28,6 +28,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers } from '../src/db/seed.js';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -37,7 +38,7 @@ const USAGE = `사용법: node scripts/verify-integration.mjs [--scenario loopba
   --scenario      loopback | lan | all(기본). lan은 3분법(skip=0 / 제품 실패=1 / 환경 차단=2)으로 끝난다.
   --server-exe    서버 exe 경로(기본: dist/기사작성기-server/의 한글→ASCII 폴백 자동 해석).
   --client-exe    클라이언트 exe 경로(기본: dist/기사작성기/의 한글→ASCII 폴백 자동 해석).
-  --cdp-port <n>  원격 디버깅 포트 고정(기본: 25000~45000 랜덤).
+  --cdp-port <n>  원격 디버깅 포트 고정(기본: 35000~44999 랜덤 — 서버 포트 20000~34999와 범위 분리).
   --show          CLIENT_SELFTEST를 주지 않아 창을 실제로 띄운다(클립보드 왕복·포커스 확인용).
   --keep          임시 디렉토리를 지우지 않는다(디버깅용).
   --timeout <ms>  단계별 대기 한도(기본 45000, 1000 이상 정수).`;
@@ -48,16 +49,22 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) die(v.message);
+    return v.value;
+  };
   const opts = { scenario: 'all', show: false, keep: false, timeout: 45000 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--scenario') opts.scenario = argv[++i];
-    else if (a === '--server-exe') opts.serverExe = argv[++i];
-    else if (a === '--client-exe') opts.clientExe = argv[++i];
-    else if (a === '--cdp-port') opts.cdpPort = Number(argv[++i]);
+    if (a === '--scenario') { opts.scenario = takeValue(i, '--scenario'); i += 1; }
+    else if (a === '--server-exe') { opts.serverExe = takeValue(i, '--server-exe'); i += 1; }
+    else if (a === '--client-exe') { opts.clientExe = takeValue(i, '--client-exe'); i += 1; }
+    else if (a === '--cdp-port') { opts.cdpPort = Number(takeValue(i, '--cdp-port')); i += 1; }
     else if (a === '--show') opts.show = true;
     else if (a === '--keep') opts.keep = true;
-    else if (a === '--timeout') opts.timeout = Number(argv[++i]);
+    else if (a === '--timeout') { opts.timeout = Number(takeValue(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
   if (!['loopback', 'lan', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(loopback|lan|all): ${opts.scenario}`);
@@ -67,7 +74,6 @@ function parseArgs(argv) {
   }
   for (const key of ['serverExe', 'clientExe']) {
     if (opts[key] !== undefined) {
-      if (!opts[key]) die(`--${key === 'serverExe' ? 'server-exe' : 'client-exe'} 경로가 비어 있다.`);
       opts[key] = nodePath.resolve(opts[key]);
       if (!fs.existsSync(opts[key])) die(`경로가 존재하지 않는다: ${opts[key]}`);
     }
@@ -191,14 +197,16 @@ function appDataSnapshot() {
   const dir = nodePath.join(base, '기사작성기');
   const exists = fs.existsSync(dir);
   let config = null;
+  let entries = null; // 최상위 엔트리 이름 목록(정렬·비재귀 — phase 64 step2 A-8). 차이는 경고만이다.
   if (exists) {
+    entries = fs.readdirSync(dir).sort();
     const cfgFile = nodePath.join(dir, 'config.json');
     if (fs.existsSync(cfgFile)) {
       const st = fs.statSync(cfgFile);
       config = { size: st.size, mtimeMs: st.mtimeMs };
     }
   }
-  return { available: true, exists, config };
+  return { available: true, exists, config, entries };
 }
 
 // dist/*/data 디렉토리 목록 — before에 없던 news.db가 after에 생겼을 때만 실패다
@@ -329,6 +337,28 @@ async function pollEval(session, expression, pred, timeoutMs, { awaitPromise = f
 
 const NETSH_HINT = (serverExe) => `netsh advfirewall firewall add rule name="yh-article-server-verify" dir=in action=allow program="${serverExe}" enable=yes profile=private,domain`;
 
+// 임시 디렉토리 정리 (phase 64 step2 A-8) — 정상 종료와 SIGINT가 같은 함수를 쓴다(중복 구현 금지).
+// 중복 실행 가드(1회만) 포함. 이 스크립트는 자신이 만든 임시 경로 밖의 어떤 파일도 지우지 않는다.
+// 정리 실패는 warn 1줄이며 종료 코드를 뒤집지 않는다.
+function makeTmpCleanup(tmpDirs, keep) {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    if (keep) {
+      process.stdout.write(`keep 임시 디렉토리 보존: ${tmpDirs.join(', ')}\n`);
+      return;
+    }
+    for (const dir of tmpDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (err) {
+        process.stderr.write(`warn 임시 디렉토리 정리 실패(무해 — Windows 파일 잠금): ${dir} (${err && err.code})\n`);
+      }
+    }
+  };
+}
+
 // --- 시나리오 실행 ---
 async function runScenario(name, opts, ctx) {
   const failures = [];
@@ -363,7 +393,10 @@ async function runScenario(name, opts, ctx) {
   }
 
   const host = name === 'lan' ? '0.0.0.0' : '127.0.0.1'; // LAN도 0.0.0.0 — 3분법 판별식의 전제다.
-  const port = await pickFreePort(host, 20000, 30000);
+  // 포트 범위 분리 (phase 64 step2 A-7): 서버 20000~34999 / CDP 35000~44999. cdpPort는 서버 자식
+  // spawn 직후(아직 bind 전일 수 있다) 뽑히므로 test-listen이 통과해도 같은 번호 경합이 성립했다.
+  // 둘 다 Windows 동적 포트 기본 범위(49152~65535) 아래에 둔다(decisions (9)).
+  const port = await pickFreePort(host, 20000, 15000);
   const origin = name === 'lan' ? `http://${lanIp.address}:${port}` : `http://127.0.0.1:${port}`;
   const loopbackOrigin = `http://127.0.0.1:${port}`;
 
@@ -379,7 +412,10 @@ async function runScenario(name, opts, ctx) {
 
   let clientChild = null;
   let popupId = null;
-  const cdpPort = opts.cdpPort ?? await pickFreePort('127.0.0.1', 25000, 20000);
+  const cdpPort = opts.cdpPort ?? await pickFreePort('127.0.0.1', 35000, 10000);
+  // 선택된 두 포트를 notes로 남긴다 — 범위 분리를 실행 로그로 증명하는 유일한 수단이자 실패 진단
+  // 입력이다. 포트 번호는 비밀이 아니다(세션·토큰류는 절대 넣지 않는다 — 로그인 프로브 규율).
+  note(`ports server=${port} cdp=${cdpPort}`);
   const diagFile = nodePath.join(userData, 'diag.jsonl');
 
   try {
@@ -611,6 +647,17 @@ async function main() {
     },
   };
 
+  // SIGINT(콘솔 Ctrl+C) — 임시 디렉토리 정리만 소유한다. 자식 킬은 넣지 않는다(decisions (11):
+  // 콘솔 Ctrl+C는 프로세스 그룹에 함께 전달되고, 전역 자식 레지스트리는 시나리오 루프와 이중 소유가
+  // 된다). Windows에서 프로그램적 SIGINT는 TerminateProcess라 이 경로의 자동 판정은 불가능하다.
+  const cleanupTmp = makeTmpCleanup(tmpDirs, opts.keep);
+  process.on('SIGINT', () => {
+    cleanupTmp();
+    const remaining = tmpDirs.filter((d) => fs.existsSync(d));
+    if (remaining.length > 0) process.stderr.write(`잔존 임시 디렉토리: ${remaining.join(', ')}\n`);
+    process.exit(130);
+  });
+
   // 사전 스냅샷 — 종료 후 무변 단언 4종의 기준점(before/after 비교, 절대 조건 아님).
   const repoBefore = repoDataSnapshot();
   const appBefore = appDataSnapshot();
@@ -642,17 +689,7 @@ async function main() {
     }
   }
 
-  if (!opts.keep) {
-    for (const dir of tmpDirs) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      } catch (err) {
-        process.stderr.write(`warn 임시 디렉토리 정리 실패(무해 — Windows 파일 잠금): ${dir} (${err && err.code})\n`);
-      }
-    }
-  } else {
-    process.stdout.write(`keep 임시 디렉토리 보존: ${tmpDirs.join(', ')}\n`);
-  }
+  cleanupTmp();
 
   const failed = results.filter((r) => r.status === 'fail');
   const blocked = results.filter((r) => r.status === 'blocked');
@@ -661,6 +698,13 @@ async function main() {
     lines.push(`[${r.name}] ${r.status}`);
     for (const n of r.notes) lines.push(`  ${n}`);
     for (const u of r.unverified) lines.push(`  unverified ${u}`);
+  }
+  // A-8 엔트리 목록 확장 — 차이는 경고로만 남긴다(게이트 ② 확정: exit 계약은 기존 4종 유지 —
+  // 사용자가 실클라이언트를 병행 실행하면 프로필 엔트리가 정상적으로 바뀔 수 있어, 실패로 올리면
+  // 제품 결함으로 둔갑하는 오탐이 된다). 검증 전에는 실클라이언트 종료를 확인하라.
+  if (appBefore.available && appAfter.available
+    && JSON.stringify(appBefore.entries) !== JSON.stringify(appAfter.entries)) {
+    lines.push(`warn 실사용자 %APPDATA%\\기사작성기 최상위 엔트리 변화(경고만 — 실클라이언트 병행 실행 가능성): before=${JSON.stringify(appBefore.entries)} after=${JSON.stringify(appAfter.entries)}`);
   }
   lines.push(`data-safety ${dataFailures.length === 0 ? 'ok(무변 4종)' : `FAIL ${dataFailures.join(' | ')}`}`);
   lines.push(`elapsed total ${Date.now() - startedAt}ms mode=${opts.show ? 'show' : 'selftest(비표시 — 상세보기 팝업만 잠깐 표시되는 것이 정상)'}`);

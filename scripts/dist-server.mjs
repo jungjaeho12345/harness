@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServerExe } from './sea-build.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -19,6 +20,22 @@ const WEB_DIST = nodePath.join(REPO_ROOT, 'web', 'dist');
 
 function fail(msg) {
   return new Error(`[dist-server] ${msg}`);
+}
+
+// 시작 bat 부적합 경고 (phase 64 step1 A-4 + 게이트 확장) — 순수 함수(test/dist-server-fallback.test.js가 잠근다).
+// 동봉 기사작성기-server.bat은 "%~dp0기사작성기-server.exe"를 실행한다 — 그 이름의 exe가 배포 폴더에
+// 없는 두 경로에서 운영자가 bat을 눌러도 기동하지 않는다: (1) --fallback(node-bundled)은 exe 대신
+// node.exe+server-bundle.cjs를 배포하고, (2) SEA라도 한글 rename 실패 시 ASCII 폴백 이름이 된다.
+// 경고는 stdout 1줄이며 실패로 승격하지 않는다(둘 다 명시 플래그/알려진 폴백으로만 도달하는 의도된 경로다).
+const BAT_TARGET_EXE = '기사작성기-server.exe';
+export function startupWarning({ mode, exeBasename } = {}) {
+  if (mode === 'node-bundled') {
+    return `[dist-server] 경고: 폴백(node-bundled) 배포물이다 — 동봉 .bat은 ${BAT_TARGET_EXE}를 실행하므로 이 폴더에서는 기동하지 않는다. 대신 node.exe server-bundle.cjs 로 실행하라.`;
+  }
+  if (typeof exeBasename === 'string' && exeBasename !== BAT_TARGET_EXE) {
+    return `[dist-server] 경고: 동봉 .bat은 ${BAT_TARGET_EXE}를 실행하는데 실제 실행 파일 이름은 ${exeBasename}이다 — exe를 ${BAT_TARGET_EXE}로 rename하거나 .bat의 실행 줄을 그 이름으로 고쳐라.`;
+  }
+  return null;
 }
 
 export async function distServer({
@@ -86,6 +103,10 @@ export async function distServer({
     copied.push(nodePath.join(absOut, name));
   }
 
+  // 4b. 시작 bat 부적합 경고 — mode·최종 exe 이름이 확정된 지점(요약 직전). 실패 승격 금지.
+  const batWarning = startupWarning({ mode: exeResult.mode, exeBasename: nodePath.basename(exeResult.exe) });
+  if (batWarning) process.stdout.write(`${batWarning}\n`);
+
   // 5. 요약.
   const files = fs.readdirSync(absOut);
   const bytes = copied.reduce((sum, f) => sum + (fs.statSync(f).isFile() ? fs.statSync(f).size : 0), 0);
@@ -103,20 +124,26 @@ export async function distServer({
 
 // --- CLI ---
 function parseArgs(argv) {
+  const usage = '사용법: node scripts/dist-server.mjs [--out <dir>] [--skip-web] [--fallback]';
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) {
+      process.stderr.write(`${v.message}\n${usage}\n`);
+      process.exit(1);
+    }
+    return v.value;
+  };
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') { opts.outDir = argv[++i]; }
+    if (a === '--out') { opts.outDir = takeValue(i, '--out'); i += 1; }
     else if (a === '--skip-web') { opts.skipWeb = true; }
     else if (a === '--fallback') { opts.fallback = true; }
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/dist-server.mjs [--out <dir>] [--skip-web] [--fallback]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n${usage}\n`);
       process.exit(1);
     }
-  }
-  if (opts.outDir !== undefined && !opts.outDir) {
-    process.stderr.write('--out 값이 비어 있다.\n');
-    process.exit(1);
   }
   return opts;
 }

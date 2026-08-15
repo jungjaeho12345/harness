@@ -14,10 +14,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { toVersionQuad, buildServerVersionStrings, applyPeMeta, readPeMeta } from './lib/exeMeta.mjs';
+import { flagValue } from './lib/cliArgs.mjs';
 
 // 빌드 전용 스크립트라 import.meta 사용이 안전하다(SEA 번들 대상이 아니다 — server/**와 규율이 다르다).
 const require = createRequire(import.meta.url);
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
 // Node 공식 SEA 문서의 sentinel fuse 상수 — 추측으로 바꾸지 마라(주입 실패 시 설치 Node 버전 문서 확인).
 const SEA_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 
@@ -73,7 +75,10 @@ export async function buildServerExe({
   fallback = false, // true여야만 폴백(node.exe 동봉)으로 내려간다 — 기본 fail-fast.
 } = {}) {
   const absOut = nodePath.resolve(outDir);
-  const distRoot = nodePath.resolve('dist');
+  // 가드 기준축은 REPO_ROOT다(phase 64 step1 A-3 — dist-server와 통일). cwd 기준이면 리포 밖에서
+  // 실행할 때 <cwd>/dist 아래가 허용돼 예상 밖 경로에 산출물이 쓰인다. absOut의 cwd 기준 해석은
+  // 그대로 둔다 — cwd 해석 + REPO_ROOT 가드 조합이 리포 밖·하위 디렉토리 실행을 fail-closed로 만든다.
+  const distRoot = nodePath.resolve(REPO_ROOT, 'dist');
   // outDir 가드 — dist/ 하위가 아니면 거부한다(정리 로직이 임의 경로를 지우는 사고 방지).
   if (absOut !== distRoot && !absOut.startsWith(distRoot + nodePath.sep)) {
     throw fail('outdir-guard', `outDir는 dist/ 하위여야 한다: ${absOut}`);
@@ -206,20 +211,26 @@ export async function buildServerExe({
 
 // --- CLI ---
 function parseArgs(argv) {
+  const usage = '사용법: node scripts/sea-build.mjs [--out <dir>] [--name <exe>] [--fallback]';
+  // 값 플래그는 flagValue(순수 판정 — missing/empty/flag-like)로 fail-fast(phase 64 step0).
+  const takeValue = (i, flag) => {
+    const v = flagValue(argv, i, flag);
+    if (!v.ok) {
+      process.stderr.write(`${v.message}\n${usage}\n`);
+      process.exit(1);
+    }
+    return v.value;
+  };
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--out') { opts.outDir = argv[++i]; }
-    else if (a === '--name') { opts.exeName = argv[++i]; }
+    if (a === '--out') { opts.outDir = takeValue(i, '--out'); i += 1; }
+    else if (a === '--name') { opts.exeName = takeValue(i, '--name'); i += 1; }
     else if (a === '--fallback') { opts.fallback = true; }
     else {
-      process.stderr.write(`알 수 없는 인자: ${a}\n사용법: node scripts/sea-build.mjs [--out <dir>] [--name <exe>] [--fallback]\n`);
+      process.stderr.write(`알 수 없는 인자: ${a}\n${usage}\n`);
       process.exit(1);
     }
-  }
-  if ((opts.outDir !== undefined && !opts.outDir) || (opts.exeName !== undefined && !opts.exeName)) {
-    process.stderr.write('--out/--name 값이 비어 있다.\n');
-    process.exit(1);
   }
   return opts;
 }

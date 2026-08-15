@@ -25,6 +25,7 @@ const selfUrl = import.meta.url;
 // 프로덕션 부트스트랩 전용 import — 테스트 import 시에는 사용되지 않는다(부트스트랩 가드).
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
+import { applyConnectionPragmas } from '../src/db/connection.js';
 import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
@@ -1252,6 +1253,13 @@ export function createApp({
 // 중복 기동 방지 — 번들 배치에서 엔트리의 명시 호출과 하단 argv 가드가 동시에 참이 되면
 // app.listen이 두 번 불려 EADDRINUSE로 죽는다(실측상 번들에서 가드는 false지만 방어 비용이 0이다).
 let bootstrapped = false;
+// 부트 DB 연결의 단일 관문 (phase 64 step5) — 열기와 연결 설정(busy_timeout)이 갈라지지 않게 한 곳에
+// 둔다. bootstrap은 이 함수로만 DB를 연다(직접 생성 금지 — test/boot-db-open.test.js 텍스트 잠금).
+export function openBootDatabase(dbFile, pragmaOptions = {}) {
+  const db = new DatabaseSync(dbFile);
+  applyConnectionPragmas(db, pragmaOptions);
+  return db;
+}
 // packaged/execDir/moduleDir: 경로 해석(resolveRuntimePaths) 주입 seam.
 //  - packaged는 SEA 엔트리(server/main.js)만 true로 넘긴다(런타임 탐지 금지 — 결정적 주입).
 //  - moduleDir는 호출부가 주입한다 — 미주입 + !packaged이면 spaDir 비활성으로 수렴한다(throw 없음).
@@ -1269,7 +1277,7 @@ export function bootstrap({
   // DB를 열기 전에 dataDir를 보장한다 — 배포 폴더의 data/가 없으면 DatabaseSync가 파일을 못 만든다.
   // recursive:true는 이미 존재하면 no-op(기존 cwd 배치 무영향). 삭제/비우기 코드는 절대 금지(DB 비파괴).
   fs.mkdirSync(paths.dataDir, { recursive: true });
-  const db = new DatabaseSync(paths.dbFile);
+  const db = openBootDatabase(paths.dbFile);
   createSchema(db); // 비파괴 멱등 마이그레이션만 — DROP/DELETE 없음.
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
   // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
