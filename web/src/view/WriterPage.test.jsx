@@ -8590,3 +8590,124 @@ describe('WriterPage — 송고/보류 실패 안내(submit 실패 피드백)', 
     await waitFor(() => expect(alert).toHaveBeenCalledWith('저장에 실패했습니다.'));
   });
 });
+
+// Phase 66 step 3(dialog-exclusivity): 중앙 다이얼로그 상호 배타 —
+// 중앙 한 자리(.yh-editor-dialog 15종 + 환경설정 모달)를 공유하는 다이얼로그는 backdrop이 없어 메뉴바가
+// 계속 클릭 가능하므로, 열린 채 다른 항목을 고르면 같은 자리에 새 다이얼로그가 겹쳐 쌓인다(감사 항목 D).
+// 모든 열기 경로는 '여는 state 변경 바로 앞'에서 closeCentralDialogs를 불러 그룹을 먼저 닫는다.
+// 찾기/바꾸기는 우상단 고정 도구 패널이라 그룹이 아니다(스타일시트 명시 계약 — 양방향 제외를 여기서 잠근다).
+describe('WriterPage — 중앙 다이얼로그 상호 배타(dialog-exclusivity)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const EXCL_BODY = serialize([textBlock('제목'), textBlock('본문')]);
+
+  // 본문을 가진 기사로 편집 진입(기존 openWith 관례) — 메뉴·저장 경로가 모두 필요해 편집 탭 기준.
+  async function openEdit() {
+    const utils = setup({
+      identity: { role: 'R' },
+      pendingEdit: { article: { articleId: 'AKR1', title: '제목', status: 'RDS' }, mode: 'edit' },
+      seed: { articles: [{ articleId: 'AKR1', status: 'RDS', lockYN: 'Y', markupVersion: EXCL_BODY }] },
+    });
+    await waitFor(() => expect(utils.container.querySelector('.yh-editor__line')).toBeTruthy());
+    return utils;
+  }
+
+  // 상단 메뉴의 항목 클릭 — 메뉴는 선택 즉시 닫히므로 닫혀 있으면 다시 연다(clickFileItem 관례).
+  async function clickMenuItem(menu, label) {
+    if (!screen.queryByTestId(`menu-${menu}`)) await openTopMenu(menu);
+    await userEvent.click(within(screen.getByTestId(`menu-${menu}`)).getByText(label).closest('button'));
+  }
+
+  it('파일 정보가 열린 채 도움말 열기를 열면 파일 정보는 닫힌다(불리언→불리언, 양방향)', async () => {
+    await openEdit();
+    await clickMenuItem('도구', '파일 정보');
+    expect(await screen.findByTestId('file-info')).toBeInTheDocument();
+
+    await clickMenuItem('도움말', '도움말 열기');
+    expect(await screen.findByTestId('help-dialog')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('file-info')).toBeNull());
+
+    // 역방향 — 도움말이 열린 채 파일 정보를 열면 도움말이 닫힌다(파일 정보 열기 경로의 닫기 호출도 잠금).
+    await clickMenuItem('도구', '파일 정보');
+    expect(await screen.findByTestId('file-info')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('help-dialog')).toBeNull());
+  });
+
+  it('표 삽입 다이얼로그가 열린 채 메모장을 열면 표 다이얼로그는 닫히고 본문은 불변이다(페이로드형)', async () => {
+    const { model } = await openEdit();
+    const save = vi.spyOn(model, 'saveArticle');
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    await clickMenuItem('표', '표 삽입');
+    expect(await screen.findByTestId('table-dialog')).toBeInTheDocument();
+
+    await clickMenuItem('도구', '메모장');
+    expect(await screen.findByTestId('editor-memo')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('table-dialog')).toBeNull());
+
+    // 닫기가 편집으로 새지 않는다 — 저장 호출의 본문 인자(markupVersion)가 원본 그대로다.
+    await clickMenuItem('파일', '저장');
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const dto = save.mock.calls[save.mock.calls.length - 1][0];
+    expect(dto.markupVersion).toBe(EXCL_BODY);
+  });
+
+  it('메모장이 열린 채 환경설정(전체 화면 모달)을 열면 메모장은 닫힌다(모달 방향)', async () => {
+    await openEdit();
+    await clickMenuItem('도구', '메모장');
+    expect(await screen.findByTestId('editor-memo')).toBeInTheDocument();
+
+    await clickMenuItem('도움말', '환경설정');
+    expect(await screen.findByRole('dialog', { name: '환경설정' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('editor-memo')).toBeNull());
+  });
+
+  it('찾기/바꾸기 패널은 그룹이 아니다 — 파일 정보를 열어도 남고, 찾기를 열어도 파일 정보가 닫히지 않는다(양방향 제외)', async () => {
+    await openEdit();
+    await clickMenuItem('편집', '찾기/바꾸기');
+    expect(await screen.findByTestId('find-query')).toBeInTheDocument();
+
+    // 방향 1: 중앙 다이얼로그(파일 정보)를 열어도 찾기 패널은 남는다(과잉 닫힘 금지 — 찾아 놓고 다른 도구를 쓰는 흐름 보존).
+    await clickMenuItem('도구', '파일 정보');
+    expect(await screen.findByTestId('file-info')).toBeInTheDocument();
+    expect(screen.getByTestId('find-query')).toBeInTheDocument();
+
+    // 방향 2: 파일 정보가 열린 상태에서 찾기를 열어도 파일 정보는 닫히지 않는다(openFind는 그룹 닫기를 부르지 않는다).
+    await clickMenuItem('편집', '찾기/바꾸기');
+    expect(screen.getByTestId('find-query')).toBeInTheDocument();
+    expect(screen.getByTestId('file-info')).toBeInTheDocument();
+  });
+
+  it('탭 전환 시 메모장도 닫힌다(기존 7종 → 그룹 16종 전부로 의도된 확대)', async () => {
+    await openEdit();
+    await clickMenuItem('도구', '메모장');
+    expect(await screen.findByTestId('editor-memo')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '새 작성 탭' }));
+    await waitFor(() => expect(screen.queryByTestId('editor-memo')).toBeNull());
+  });
+
+  it('메타 팝업 필드 전환 — 닫기 후 여는 래퍼에서도 새 필드 기준 remount 계약(phase 32)이 유지된다', async () => {
+    setup({ identity: { role: 'R' } });
+
+    // 지역 팝업을 열고 '서울'을 체크만 한다(적용 없이 필드 전환).
+    await userEvent.click(screen.getByLabelText('지역'));
+    const regionDialog = await screen.findByTestId('meta-dialog');
+    await userEvent.click(within(regionDialog).getByLabelText('서울'));
+
+    // 닫지 않고 속성 트리거 클릭 — 닫기→열기가 같은 배치라 새 필드(속성) 기준으로 열리고 이전 선택은 미이월.
+    await userEvent.click(screen.getByLabelText('속성'));
+    const attrDialog = await screen.findByRole('dialog', { name: '속성' });
+    expect(within(attrDialog).queryByLabelText('서울')).toBeNull();
+
+    // 그대로 적용해도 속성 필드에 지역 값이 기록되지 않는다(지역도 적용된 적 없으니 빈 값 유지).
+    await userEvent.click(within(attrDialog).getByTestId('meta-dialog-submit'));
+    await waitFor(() => expect(screen.queryByTestId('meta-dialog')).toBeNull());
+    expect(screen.getByLabelText('속성')).toHaveValue('');
+    expect(screen.getByLabelText('지역')).toHaveValue('');
+  });
+});
