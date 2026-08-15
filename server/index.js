@@ -26,6 +26,7 @@ const selfUrl = import.meta.url;
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema, backfillEmptyDepartments, backfillHistoryTitles } from '../src/db/schema.js';
 import { applyConnectionPragmas } from '../src/db/connection.js';
+import { acquireInstanceLock } from '../src/db/instanceLock.js';
 import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
@@ -1277,12 +1278,45 @@ export function bootstrap({
   // DB를 열기 전에 dataDir를 보장한다 — 배포 폴더의 data/가 없으면 DatabaseSync가 파일을 못 만든다.
   // recursive:true는 이미 존재하면 no-op(기존 cwd 배치 무영향). 삭제/비우기 코드는 절대 금지(DB 비파괴).
   fs.mkdirSync(paths.dataDir, { recursive: true });
+  // 단일 인스턴스 잠금 (phase 65) — news.db를 열기 전에 판정한다: 두 번째 인스턴스는 DB 파일을
+  // 건드리지 않고(마이그레이션·백필 미실행) 죽는다. 잠금 판정 실패가 부팅을 막지 않게 한 겹 더
+  // 감싼다 — 모듈이 예상 밖 예외를 던져도(버그·환경) '잠금 없이 뜬다'로 수렴한다
+  // (오탐 = 서버를 못 올림 = 최악 실패 모드). conflict라는 명시적 판정 외에는 부팅이 중단되지 않는다.
+  let lock;
+  try {
+    lock = acquireInstanceLock({ dataDir: paths.dataDir });
+  } catch (err) {
+    lock = { status: 'unavailable', file: undefined, error: err };
+  }
+  if (lock.status === 'conflict') {
+    // stderr 동기 쓰기 — Windows에서 파이프 연결 stderr는 비동기라 exit가 버퍼를 잘라먹을 수 있다.
+    // README-배포 12절 계약(콘솔에 글자 = 크래시)에 부합하는 유일한 정상 부팅 외 콘솔 출력이다.
+    const msg = [
+      '서버를 시작할 수 없습니다 — 같은 데이터 폴더를 쓰는 서버가 이미 실행 중입니다.',
+      `데이터 폴더: ${paths.dataDir}`,
+      '같은 데이터 폴더로 서버 두 개를 띄우면 로그인 세션·실시간 갱신이 서버마다 갈라지고 배부가 중복될 수 있어 막습니다.',
+      '해결:',
+      '  1) 이미 떠 있는 서버(콘솔 창)를 종료한 뒤 다시 시작하세요.',
+      '  2) 두 대를 함께 운영해야 하면 DATA_DIR 환경변수를 서로 다른 폴더로 지정하세요.',
+      '',
+    ].join('\n');
+    try { fs.writeSync(2, msg); } catch { /* 출력 실패가 종료를 막지 않는다 — 조용한 split-brain 방지 */ }
+    process.exit(1);
+  }
   const db = openBootDatabase(paths.dbFile);
   createSchema(db); // 비파괴 멱등 마이그레이션만 — DROP/DELETE 없음.
   backfillEmptyDepartments(db); // 예전 DB의 빈 부서 값을 작성자 User 부서로 자동 보정(비파괴, 멱등).
   // 로그 서비스는 HTTP 계층과 컨트롤러(배부 실패 표면화)가 같은 인스턴스를 공유한다.
   // (이동) 백필 결과 로그를 남기기 위해 백필보다 먼저 만든다.
   const logService = createLogService();
+  // 잠금 진단은 logService로만 남긴다(콘솔은 크래시 전용 — logOriginDiagnostics 규율).
+  // unavailable은 부팅을 계속하되 경고 1줄이 유일한 관측 수단이다 — 경로는 lock.file이 없으면
+  // dataDir로 폴백한다(안전망 catch 경로에서 "undefined"로 찍히는 것 방지).
+  if (lock.status === 'unavailable') {
+    logService.warn(`instance lock unavailable (${lock.file ?? paths.dataDir}): ${lock.error?.message ?? lock.error} — 잠금 없이 부팅을 계속한다`);
+  } else {
+    logService.info(`instance lock acquired ${lock.file}`);
+  }
   runHistoryTitleBackfill({ db, logService }); // 빈 표시제목 백필(비파괴, 멱등) — listen 전 동기 1회.
 
   const sessionService = createSessionService();

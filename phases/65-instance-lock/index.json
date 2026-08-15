@@ -17,7 +17,8 @@
     {
       "step": 1,
       "name": "boot-wiring",
-      "status": "pending"
+      "status": "completed",
+      "summary": "server/index.js bootstrap 결선(import 1줄 + mkdirSync 직후·openBootDatabase 직전 잠금 판정 — 안전망 try/catch, conflict만 fs.writeSync(2)+exit 1, unavailable은 logService.warn(경로는 lock.file ?? paths.dataDir 폴백) 후 계속, acquired는 info 1줄) + test/instance-lock-boot.test.js 3케이스(T1 거부+T1-b DB 무접촉·T2 SIGKILL 후 재기동·T3 fail-open, 빈 포트 실측 선택+실패 단언에 stderr 원문 포함) + .gitignore 2줄. T1 결선 전 red(B 미종료)→후 green. 테스트 교정 1건: Windows kill('SIGKILL') 자식은 exitCode가 null로 남고 signalCode만 설정됨(실측) — waitExit/waitHealth가 signalCode도 본다. 변이 4종 red 확인 후 원복: (a) 잠금 호출 제거→T1 red (b) conflict 무exit→T1 red (c) fail-closed 뒤집기→T3 red(오탐 회귀 검출 증거) (d) 모듈 첫줄 throw→안전망 덕에 T2·T3 green 유지, 안전망 제거 시 T3 red(안전망 실증). 육안 실기: 리포 dev 부팅 2개 — B exit 1(536ms)·메시지 원문 확보·A 무영향·instance-lock.db gitignore 확인. 실측: A 부팅 820ms·B 종료 536ms·T2 재기동 성공. npm test 1300→1303, lint clean, DATA-UNCHANGED-OK."
     },
     {
       "step": 2,
