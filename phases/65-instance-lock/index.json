@@ -35,7 +35,14 @@
     {
       "step": 4,
       "name": "docs-closeout",
-      "status": "pending"
+      "status": "completed",
+      "summary": "문서 4종(추가 위주·기존 문장 재작성 0): ADR-012 신설(결정/이유/트레이드오프 3요소 — SMB 두 방향 미검증·복구 절차 포함, ADR-001~011 무수정) · ARCHITECTURE(디렉토리 1줄 + 배포 산출물 절에 데이터 폴더당 1개 계약·fail-open·빌드 부작용 경고 1줄) · README-배포 8/10/11절(0바이트 표식·서비스 플래핑+NSSM 리다이렉트·'이미 실행 중' 항목: 이름 기준 종료·재부팅 복구·잠금 잔류 없음 안심 문장, 12절 무수정) · README-배포-통합 8절 표 1행. 재실증(합쳐진 HEAD): 전체 게이트 2회 연속 green — backend 1307/1307(기준선 1289 +18) · web 2368/2368(90 files, flake 0) · lint·build clean. dist:server mode=sea 94,312,785B 32.9s('data/ 비어 있지 않다' 경고 실관측 = 문서 문장 근거). verify-server-exe full=0·portable(사본)=0, 사본 data/=instance-lock.db·-journal·news.db 육안 확인. 배포 exe 이중 기동 실기: 첫 health 558ms → 두 번째 exit 1(330ms)+stderr 원문(데이터 폴더·이미 실행 중·DATA_DIR) → 첫 번째 무영향 200 → SIGKILL 후 세 번째 health 337ms(잔류 락 없음) = SEA 번들 잠금 모듈 실증. verify:integration --scenario all exit 0(시나리오별 DATA_DIR 분리로 잠금 충돌 없음, unverified는 phase 63 동일 집합). 데이터 무접촉 DATA-UNCHANGED-OK·step4 실행분 임시 폴더 누수 0(dual-boot·portable-probe 0, verify-exe 18·verify-integ 3 기준선 유지)·이전 step 변이 잔재 yh-* 11개 사후 정리. 러너 2종은 스크래치패드 전용(exeName 부재 시 명시 throw 가드 포함)."
     }
+  ],
+  "forward_notes": [
+    "phase 64 forward_notes 소진: (b) 단일 인스턴스 잠금 — 이 phase (A)로 근본 해결(ADR-012). (d) low 3건 — make-icon flagValue 결선(step3 B-1)·--cdp-port 서버 범위 겹침 가드(step3 B-2)·openBootDatabase pragma 실패 시 close(step2 B-3) 전부 소진.",
+    "phase 64 (c) 그대로 이월 2건: SIGINT 콘솔 Ctrl+C 실기 미검증(정리 함수는 정상 경로 누수 0 실증) · --fallback(node-bundled) 실빌드 미검증(startupWarning은 단위 잠금).",
+    "이 phase 신규 이월: data\\를 SMB/네트워크 드라이브에 두는 배치의 잠금 신뢰도 미검증 — 두 방향 모두(① 잠금 미동작으로 두 인스턴스 공존 가능 ② 락 잔류로 정상 재기동 차단 가능). 권장은 로컬 디스크, 복구 절차는 ADR-012·README-배포 11절에 문서화됨.",
+    "관측 기록: dev 부팅(DATA_DIR 미설정)은 리포 루트에 instance-lock.db(+잠금 중 -journal)를 만든다 — .gitignore 2줄로 커버(step1). SIGKILL 종료 후 -journal이 남을 수 있으나 다음 획득 시 SQLite가 자동 복구한다(실측)."
   ]
 }
