@@ -44,7 +44,10 @@ export function classifyLockError(err) {
   return (err?.errcode & 0xff) === 5 ? 'conflict' : 'unavailable';
 }
 
-// 잠금 획득 시도. 예외를 밖으로 던지지 않는다 — 판정 결과만 돌려준다.
+// 잠금 획득 시도. 정상 입력에서는 예외를 밖으로 던지지 않는다 — 판정 결과만 돌려준다
+// (dataDir 비문자열 같은 호출 계약 위반은 lockFilePath에서 TypeError가 날 수 있고, 부트의
+// 안전망이 unavailable로 흡수한다). 전제: 프로세스당 dataDir는 1개다 — 이미 보유 중이면
+// 다른 dataDir로 불러도 기존 보유(heldFile)를 그대로 돌려준다(bootstrap 단일 호출이 정본).
 //   open: 테스트 주입 seam(기본은 실제 DatabaseSync 생성).
 export function acquireInstanceLock({ dataDir, open = (file) => new DatabaseSync(file) } = {}) {
   if (heldConnection) return { status: 'acquired', file: heldFile };
