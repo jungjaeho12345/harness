@@ -41,7 +41,14 @@
     {
       "step": 5,
       "name": "closeout",
-      "status": "pending"
+      "status": "done",
+      "summary": "ADR-011 결정문 1문장 보강(docs/ADR.md — 저장 문장에 덧붙임: 리다이렉트 도달 시 저장·표시값은 최종 origin이고 재시작 안내·secure-origin 스위치도 그 값 대상, 확인 실패·비정상 최종 URL(파싱 불가·http/https 밖·자격증명)이면 미승격 fail-safe. 이유·트레이드오프 문단·타 ADR 무수정, 기존 문장 재작성 0. 코드-문서 대조 일치: resolveFinalOrigin keep 조건(비문자열/없음·파싱 불가·스킴·자격증명) + probeOrigin의 verdict.ok에서만 승격 = 문서 열거와 동형, 불일치 0). 전체 게이트 재실증(합쳐진 HEAD 918339e+이 step): npm test 1324/1324(51 suites, 24.1s — 기준선 1310+14=step4) · test:web 1회차 2390/2391 1건 실패(WriterPage.test.jsx '캐럿이 없으면(caret null) 오늘처럼 문서 끝에 삽입하고 안내하지 않는다' — phase 20 기존 붙여넣기 케이스 waitFor timeout, 156.3s) → 재실행 2회 연속 green 2391/2391(90 files, 141.4s — 3회 중 동일 케이스 재발 0 = 알려진 flake 판정, 기준선 2368+23=step0 5+step1 6+step2 6+step3 6) · lint clean · build clean 2.64s(산출물 gitignore — porcelain 무오염). 감소·skip 0. 범위 정합: git diff --stat feat-0-mvp...HEAD 19파일 + 이 step의 docs/ADR.md·phases/** = 계획 소유 목록과 정확 일치(web 4쌍·client 2+테스트 1·phases/66/**·phases/index.json), 범위 밖 커밋 파일 0 — 사용자 미커밋 파일은 실행 중 2건 증가(docs/news.md·packaging/체크리스트 수정 — 무접촉 유지). DB·데이터 무접촉: 변경 파일 전체에 news.db·node:sqlite·DatabaseSync 실접촉 0, uploads/ 매치는 테스트 mock 경로 문자열뿐(서버 미기동). 미검증: Electron net.fetch 실왕복(step4 — 가정은 표준 fetch로 실측)."
     }
+  ],
+  "forward_notes": [
+    "소진한 백로그: 2026-07-06 에디터 전수감사 minor 잔여(phase 29 백로그 메모의 sortParagraph clamp 비대칭·selectWord 단일 노드 가정 포함) + phase 62/63 이월 1건 중 2026-08-15 병렬 검증이 still_exists로 확정한 5건 전부 — (A) 문단 정렬 범위 밖 캐럿 오변이 (B) 역직렬화 전량 드롭 본문 유실 (C) 하이라이트 줄 단어 선택 (D) 중앙 다이얼로그 겹침 (E) 302 최종 origin 미승격.",
+    "사용자 가시 동작 변화 1줄: 탭(문서)을 바꾸면 열려 있던 도구 창(다이얼로그)이 모두 닫힌다 — 지금까지 일부(문서-로컬 좌표 7종)만 닫히던 것이 중앙 그룹 16종 전부로 넓어졌다(찾기/바꾸기 패널은 예외로 유지). '왜 창이 사라졌지?'로 느껴질 수 있는 유일한 변화라 보고에 반드시 포함한다.",
+    "남은 불확실성: step4의 Electron net.fetch 실왕복 미검증 — '응답 URL이 리다이렉트 최종 주소를 담는다'는 가정은 표준 fetch 스크래치패드 러너(임시 포트 2개, A 302→B)로 실측했지만 실제 경로는 Electron net.fetch다. 잠금은 순수 판정 11 + 결선 텍스트 잠금 3까지. 리다이렉트하는 실서버를 세워 Electron으로 왕복시키는 수단이 이 환경에 없다(open_questions (c) — 더 강한 증거는 통합 검증 스크립트에 리다이렉트 시나리오를 더하는 별도 step).",
+    "기각 3건은 코드 무변경으로 종결: 동일-탭 캐럿 stale=not_a_defect(React 19 합성 select가 selectionchange 구동 — jsdom 한정 관찰) · 빈 줄 삭제 시 임베드 동반 삭제=not_a_defect(스펙 명시 + 테스트 잠금) · 매핑 dead-click=already_fixed. phase 64·65 제외 항목도 그대로 이월: PE CompanyName 문자열·서버 HTTPS 종단·querySnapshotsByArticle 정리·육안 체크리스트 문서화·scripts/** eslint 편입·검증 스크립트 신규 플래그·SMB/네트워크 드라이브 잠금 미검증·SIGINT 콘솔 실기 미검증·--fallback 실빌드 미검증."
   ]
 }
