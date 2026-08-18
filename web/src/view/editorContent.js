@@ -53,6 +53,10 @@ export function serialize(blocks) {
 }
 
 // markupVersion(문자열/객체/블록배열) → 블록 배열. 평문(레거시)은 한 줄씩 텍스트 블록으로 역호환 로드.
+// 문자열 입력에서 정규화가 전량 드롭한 JSON(원소는 있는데 결과가 빈 경우)은 원문 보존을 위해
+// 평문으로 취급한다(유실 방지 — 배열 최상위·blocks 객체 두 분기 대칭). 예외(폴백 금지):
+// 원본 배열이 빈 문서(정상 저장된 빈 본문)는 빈 배열 그대로, 부분 드롭(정상 블록이 하나라도
+// 남는 경우)은 정규화 결과 그대로 반환한다. 문자열이 아닌 입력은 돌아갈 원문이 없어 불변.
 export function deserialize(raw) {
   if (raw === null || raw === undefined || raw === '') return [];
   if (Array.isArray(raw)) return normalizeBlocks(raw);
@@ -63,8 +67,13 @@ export function deserialize(raw) {
   // 문자열 — 먼저 JSON 도큐먼트로 시도.
   try {
     const doc = JSON.parse(raw);
-    if (Array.isArray(doc)) return normalizeBlocks(doc);
-    if (doc && Array.isArray(doc.blocks)) return normalizeBlocks(doc.blocks);
+    const source = Array.isArray(doc) ? doc
+      : (doc && Array.isArray(doc.blocks)) ? doc.blocks : null;
+    if (source) {
+      const blocks = normalizeBlocks(source);
+      if (blocks.length > 0 || source.length === 0) return blocks;
+      // 전량 드롭 — 아래 평문 폴백으로 낙하해 원문 텍스트를 보존한다.
+    }
   } catch {
     // JSON 아님 — 평문 본문으로 취급.
   }

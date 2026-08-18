@@ -62,8 +62,11 @@ export function sortDocument(blocks) {
 // 문단 정의는 paragraphBoundsAt(빈 줄 경계 — editorStats.paragraphIndex 동일). 범위 안 마커 줄은
 // 정렬 대상에서 제외하고 위치 보존(정상 문서에선 문단과 마커가 겹치지 않지만 방어). 임베드는
 // blocksToText에서 이미 빠져 문단 계산·정렬에 무관(불변). 반환 { blocks, changed }.
+// caretLineIndex가 텍스트 줄에 매핑되지 않으면(음수·NaN·범위 밖 → textLineToBlockIndex -1) no-op —
+// 파괴 연산 입구에서 clamp로 마지막 문단에 접히는 것을 막는다(deleteWordAt·deleteLineAt와 동형 판정).
 export function sortParagraph(blocks, caretLineIndex) {
   const list = normalizeBlocks(blocks);
+  if (textLineToBlockIndex(list, caretLineIndex) < 0) return { blocks: list, changed: false };
   const linesArr = blocksToText(list).split('\n');
   const { startLine, endLine } = paragraphBoundsAt(linesArr, caretLineIndex);
   const slotLines = [];

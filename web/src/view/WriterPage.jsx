@@ -290,6 +290,41 @@ export function WriterPage() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [editorBg, setEditorBg] = useState(() => loadEditorPrefs().colors.background);
 
+  // 중앙 다이얼로그 상호 배타 닫기 헬퍼(phase 66 step3). 그룹 정의: 화면 중앙 한 자리(.yh-editor-dialog)를
+  // 공유하는 다이얼로그 15종(약물입력·URL임베드·표편집·메타선택·문서열기·파일정보·사진발행·메모장·UI언어·
+  // 도움말·에디터정보·약어관리·간체번체·이력비교·맞춤법결과) + 화면 전체를 덮는 환경설정 모달 = 16종.
+  // backdrop이 없어 메뉴바가 계속 클릭 가능 → 열기 경로가 자기 것만 켜면 같은 자리에 무제한 겹쳐 쌓이므로,
+  // 모든 열기 경로는 '여는 state 변경 바로 앞·같은 동기 구간'에서 이 헬퍼를 부른다(전부 닫기→하나 열기가
+  // 한 렌더 배치로 합쳐져 중간 상태는 렌더되지 않는다). 새 중앙 다이얼로그를 추가하면 여기에 등록하라.
+  // 제외 계약: 찾기/바꾸기(yh-find-replace)는 본문을 보며 쓰는 우상단 고정 도구 패널(스타일시트 명시)이라
+  // 그룹이 아니고, 우클릭 컨텍스트 메뉴는 다이얼로그가 아니며 자체 닫힘 규칙(바깥/Esc/이탈)을 가진다.
+  // 표시 상태만 닫는다 — 부속 데이터(spellIssues/spellHighlights·historyEntries/좌우 key·text/histReqRef)는
+  // 건드리지 않는다(다른 다이얼로그를 여는 것과 '탭이 바뀌어 문서-로컬 좌표가 무효가 되는 것'은 다른 사건 —
+  // 부속 정리는 탭 전환 조정 블록 소유). 환경설정을 이 헬퍼로 닫는 것은 onPrefsClose(applied) 경로를
+  // 우회하므로 '취소'와 동일하다 — 적용 전 강제 닫힘이면 그때까지의 편집분은 저장되지 않는다(저장은
+  // '적용'에서만 일어난다). 다만 모달이 화면 전체를 덮어 메뉴·탭 클릭이 막히고 에디터 단축키도 포커스가
+  // 없어, 실제 도달 경로는 사실상 없다. 선언 위치 계약: 그룹 state 선언 뒤·탭 전환 조정 블록(아래
+  // caretTabId 블록) 앞 — 렌더-중 조정 블록이 아래 선언을 참조하면 const TDZ ReferenceError로 즉사한다
+  // (histReqRef 선언을 이력비교 state 옆으로 올린 전례와 동일 함정).
+  const closeCentralDialogs = () => {
+    setShowGlyphInput(false);
+    setUrlEmbedKind(null);
+    setTableDialog(null);
+    setMetaDialog(null);
+    setShowOpenDialog(false);
+    setShowFileInfo(false);
+    setShowPhotoPublish(false);
+    setShowMemo(false);
+    setShowUiLanguage(false);
+    setShowHelp(false);
+    setShowAbout(false);
+    setShowAbbrevManage(false);
+    setShowSimpTrad(false);
+    setShowHistoryCompare(false);
+    setShowSpell(false);
+    setShowPrefs(false);
+  };
+
   // 편집>컬럼제한(edit.columnLimit) — 캔버스 래퍼(editor-canvas) 좌우 여백 10%로 적용(news.md L185).
   // editorBg와 동일 게이트: 마운트 적용 + onPrefsClose(applied) 갱신. Editor.jsx 내부는 미접촉(여백은 바깥 래퍼에서만).
   const [columnLimit, setColumnLimit] = useState(() => loadEditorPrefs().edit.columnLimit);
@@ -375,31 +410,19 @@ export function WriterPage() {
     setCaretTabId(activeTabId);
     lastCaretRef.current = null;
     setStatusCaret(null);
-    // 맞춤법 결과 스냅샷(spellIssues의 start/snippet)도 문서-로컬 좌표 — 이월되면 다른 기사의
+    // 중앙 다이얼로그 그룹 16종을 전부 닫는다(closeCentralDialogs — 열기 경로와 닫기 목록의 단일 출처).
+    // 문서-로컬 좌표를 든 것들(맞춤법 결과·표 blockIndex/rows·메타 value·사진발행 imageEmbeds·이력비교 —
+    // 리뷰 게이트 phase 29~32)은 이월되면 다른 기사를 오손하므로 반드시 닫고, 나머지(도움말·메모장·파일정보 등)도
+    // 열린 채 이월되는 혼란을 막기 위해 함께 닫는다(phase 66 step3 의도된 확대 — 목록이 두 벌로 갈라지는 드리프트 방지).
+    closeCentralDialogs();
+    // 맞춤법 결과 스냅샷(spellIssues의 start/snippet)은 문서-로컬 좌표 — 이월되면 다른 기사의
     // 오류 목록 표시 + 항목 클릭이 엉뚱한 줄로 캐럿 이동(리뷰 게이트 phase 30). 탭 전환 시 함께 비운다.
-    setShowSpell(false);
     setSpellIssues([]);
     // 본문 하이라이트 span도 같은 문서-로컬 좌표(step 2, 39) — 이월되면 다른 기사의 엉뚱한 텍스트를 칠한다.
     setSpellHighlights([]);
-    // 표 다이얼로그의 blockIndex/rows도 문서-로컬 좌표 — 이월되면 '적용'이 다른 기사의
-    // blocks[N]을 덮어쓴다(리뷰 게이트 phase 31). 비모달이라 열린 채 전환 가능 — 함께 닫는다.
-    setTableDialog(null);
-    // 메타 선택 팝업의 value/onSubmit도 활성 탭-로컬 — 열린 채 전환하면 '적용'이 다른 탭의
-    // 지역/내용/속성을 덮어쓴다(phase 29 lastCaretRef·30 spellIssues·31 tableDialog 동일 계열). 함께 닫는다.
-    setMetaDialog(null);
-    // URL 임베드 다이얼로그(urlEmbedKind)도 비모달 로컬 state — 삽입 전용(URL 1개→insertEmbed)이라
-    // 좌표 오손은 없지만 열린 채 전환하면 다른 탭에서 열려 보인다. 계열 일관성(비모달+로컬 상태는
-    // 전환 시 닫는다 — phase 29~32)상 setTableDialog/setMetaDialog와 함께 닫는다.
-    setUrlEmbedKind(null);
-    // 등록 다이얼로그의 imageEmbeds/sourceArticleId는 활성 탭-로컬 — 열린 채 전환하면 이전 탭 이미지가
-    // 보이고 '등록'이 엉뚱한 기사 사진을 올린다(phase 29~32 문서-로컬 좌표 이월 계열). 함께 닫는다.
-    setShowPhotoPublish(false);
-    // UI 언어 다이얼로그는 비모달 — uiLanguage는 전역이라 좌표 stale은 없지만, 열린 채 이월되는 혼란을 막으려 함께 닫는다.
-    setShowUiLanguage(false);
     // 이력비교의 목록/좌·우 key/비교 텍스트도 전부 문서-로컬 — 열린 채 전환하면 이전 기사의 이력 목록이 새 탭 위에
     // 떠 있고, 항목을 고르면 새 탭의 articleId로 남의 이력 id를 조회한다('현재 본문'은 남의 이력과 나란히 비교돼
-    // 오독). 같은 계열(캐럿·맞춤법·표·메타·사진발행·URL임베드)과 동일하게 닫고 in-flight 응답도 폐기한다.
-    setShowHistoryCompare(false);
+    // 오독). 같은 계열(캐럿·맞춤법·표·메타·사진발행·URL임베드)과 동일하게 비우고 in-flight 응답도 폐기한다.
     setHistoryEntries([]);
     setHistLeftKey(null);
     setHistRightKey(null);
@@ -691,6 +714,9 @@ export function WriterPage() {
       } catch { /* 조회 실패 — 빈 이력으로 연다(읽기전용 경로, 본문 불변) */ }
     }
     setHistoryEntries(entries);
+    // 여는 state 변경 바로 앞 — 이 함수는 조회 결과를 받은 뒤 여는 구조라 닫기가 await 뒤다(문서열기 피커와 반대.
+    // 순서 계약의 기준은 'await 앞/뒤'가 아니라 '여는 줄 바로 앞'이다). 대기 중 기존 다이얼로그가 유지돼 공백도 없다.
+    closeCentralDialogs();
     setShowHistoryCompare(true);
   };
 
@@ -757,6 +783,9 @@ export function WriterPage() {
     // 본문 하이라이트 span(step 2, 39) — 동일 이슈의 start/end만 표시 전용으로. scoped 검사는 raw에
     // 그 범위 이슈만 담기므로 하이라이트도 자동으로 그 범위만. 스타일은 spellStyle(위) 재사용.
     setSpellHighlights(raw.map((i) => ({ start: i.start, end: i.end })));
+    // 여는 state 변경 바로 앞 — 위 조기 return(scoped 검사 캐럿 없음 no-op)에서는 부르지 않는다(열리지 않는
+    // 경로가 남의 다이얼로그를 닫으면 그 자체가 새 결함). 부속 결과(spellIssues/Highlights)는 헬퍼가 안 건드린다.
+    closeCentralDialogs();
     setShowSpell(true);
   };
 
@@ -881,9 +910,12 @@ export function WriterPage() {
       : '다른 이름으로 저장에 실패했습니다.');
   };
 
-  // 파일>문서열기 — DB 기사 피커. queryArticles로 초기 목록을 채운 뒤 다이얼로그를 연다(조회 실패해도 빈 목록으로
-  // 열어 죽지 않게 한다). 목록/검색은 controller passthrough만, 편집 진입은 openArticle에 위임한다(ADR-003).
+  // 파일>문서열기 — DB 기사 피커. 다이얼로그를 먼저 열고 queryArticles로 초기 목록을 뒤에 채운다(조회 실패해도
+  // 빈 목록으로 열어 죽지 않게 한다). 목록/검색은 controller passthrough만, 편집 진입은 openArticle에 위임한다(ADR-003).
   const openDocumentPicker = async () => {
+    // 여는 state 변경(아래 setShowOpenDialog(true))이 함수 첫 줄·await 앞이므로 닫기도 그 바로 앞이다 —
+    // await 뒤로 옮기면 방금 켠 플래그를 도로 꺼서 피커가 아예 열리지 않는다(상호 배타 순서 계약: '여는 줄 바로 앞').
+    closeCentralDialogs();
     setShowOpenDialog(true);
     try {
       const r = await queryArticles({});
@@ -909,34 +941,35 @@ export function WriterPage() {
   // 에디터 메뉴(EditorMenuBar) 선택 — 결선된 항목만 동작한다.
   // 매핑 모드(텍스트 잠금)에서는 본문을 바꾸지 않는다(본문-only 불변식).
   const onMenuSelect = (id) => {
+    // 열기 분기 공통: 여는 state 변경 바로 앞에서 closeCentralDialogs — 중앙 한 자리 상호 배타(헬퍼 계약 주석 참조).
     // 색 설정은 본문 잠금과 무관 — 매핑 가드 이전에 처리(매핑 모드에서도 열려야 함, 죽은 버튼 방지).
-    if (id === 'help.preferences') { setShowPrefs(true); return; }
+    if (id === 'help.preferences') { closeCentralDialogs(); setShowPrefs(true); return; }
     // 도움말 열기(단축키/기능 안내)·에디터 정보(이름/버전) — 읽기전용 표시만(본문/캐럿/임베드 무변경).
     // 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — help.preferences/tools.fileInfo와 동일 정책).
-    if (id === 'help.open') { setShowHelp(true); return; }
-    if (id === 'help.about') { setShowAbout(true); return; }
+    if (id === 'help.open') { closeCentralDialogs(); setShowHelp(true); return; }
+    if (id === 'help.about') { closeCentralDialogs(); setShowAbout(true); return; }
     // 그림/유튜브 URL 직접 삽입 — 매핑 가드 앞(임베드 변경은 매핑에서도 허용, 검색패널 onPick과 동일 정책).
     // 본문 텍스트가 아닌 임베드 변경이라 본문-only 불변식과 무관 — 다이얼로그를 열어 URL을 받는다(삽입은 onUrlEmbedSubmit).
-    if (id === 'tools.insertImage') { setUrlEmbedKind('image'); return; }
-    if (id === 'tools.insertYoutube') { setUrlEmbedKind('video'); return; }
+    if (id === 'tools.insertImage') { closeCentralDialogs(); setUrlEmbedKind('image'); return; }
+    if (id === 'tools.insertYoutube') { closeCentralDialogs(); setUrlEmbedKind('video'); return; }
     // 오디오/링크/로컬영상 — 그림/유튜브와 동일 정책(임베드는 매핑에서도 허용 → 매핑 가드 앞).
-    if (id === 'tools.insertAudio') { setUrlEmbedKind('audio'); return; }
-    if (id === 'tools.insertLink') { setUrlEmbedKind('link'); return; }
-    if (id === 'tools.insertLocalVideo') { setUrlEmbedKind('localVideo'); return; }
+    if (id === 'tools.insertAudio') { closeCentralDialogs(); setUrlEmbedKind('audio'); return; }
+    if (id === 'tools.insertLink') { closeCentralDialogs(); setUrlEmbedKind('link'); return; }
+    if (id === 'tools.insertLocalVideo') { closeCentralDialogs(); setUrlEmbedKind('localVideo'); return; }
     // 파일 정보 — 읽기전용(본문 통계 표시만). 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — 임베드 삽입 항목과 동일 정책).
-    if (id === 'tools.fileInfo') { setShowFileInfo(true); return; }
+    if (id === 'tools.fileInfo') { closeCentralDialogs(); setShowFileInfo(true); return; }
     // 메모장 — 기사와 무관한 전역 스크래치패드(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보와 동일 정책).
-    if (id === 'tools.memo') { setShowMemo(true); return; }
+    if (id === 'tools.memo') { closeCentralDialogs(); setShowMemo(true); return; }
     // 약어관리 — 약어사전 CRUD 다이얼로그(본문/캐럿/임베드 무변경). 매핑 가드 앞(본문 무관 → 매핑에서도 열림, 파일 정보/메모와 동일 정책).
-    if (id === 'tools.abbrManage') { setShowAbbrevManage(true); return; }
+    if (id === 'tools.abbrManage') { closeCentralDialogs(); setShowAbbrevManage(true); return; }
     // 기사이력비교 — 읽기전용(이력/스냅샷 조회 결과는 표시 state로만). 매핑 가드 앞(매핑에서도 열림, 파일 정보와 동일 정책).
     if (id === 'tools.historyCompare') { openHistoryCompare(); return; }
     // 사진발행/DB등록 — 현재 본문 이미지 임베드를 읽어 캡션과 함께 사진DB에 등록(본문/캐럿/임베드 무변경).
     // 매핑 가드 앞(본문 무관 읽기+외부 쓰기 → 매핑에서도 열림, tools.fileInfo와 동일 정책).
-    if (id === 'tools.publishPhoto') { setShowPhotoPublish(true); return; }
+    if (id === 'tools.publishPhoto') { closeCentralDialogs(); setShowPhotoPublish(true); return; }
     // UI 언어 설정 — 에디터 크롬(메뉴바/다이얼로그) 표시 언어. 크롬 설정이라 본문/캐럿/임베드 무관 →
     // 매핑 가드 앞(매핑에서도 열림, 죽은 버튼 방지 — help.preferences/tools.fileInfo/tools.memo와 동일 정책).
-    if (id === 'tools.uiLanguage') { setShowUiLanguage(true); return; }
+    if (id === 'tools.uiLanguage') { closeCentralDialogs(); setShowUiLanguage(true); return; }
     // 맞춤법 검사(spell.*) — 읽기전용(본문/캐럿/임베드 불변 — 결과 다이얼로그 표시만). 매핑 가드 앞
     // (매핑에서도 동작 — 죽은 버튼 방지, 파일 정보/기사이력비교와 동일 정책). 해제(checkOff)는 결과 비움 + 닫기.
     if (id === 'spell.checkAll') { runSpellCheck('all'); return; }
@@ -947,7 +980,7 @@ export function WriterPage() {
     // 표 메뉴(table.*) — 표는 임베드라 매핑 가드 앞(임베드 삽입/삭제/변경은 매핑에서도 허용 — phase 18/19 정책,
     // tools.insertImage와 동형). 모든 표 연산은 임베드 블록만 바꾸고 텍스트 블록은 건드리지 않으므로
     // 본문-only 불변식이 자동 보존된다. 본문 반영은 전부 commitBody(serialize(...)) 단일 경로(제목 재동기화 — phase 28).
-    if (id === 'table.insert') { setTableDialog({ mode: 'insert' }); return; }
+    if (id === 'table.insert') { closeCentralDialogs(); setTableDialog({ mode: 'insert' }); return; }
     if (id.startsWith('table.')) {
       const idx = targetTableIndex();
       if (idx < 0) { window.alert('대상 표가 없습니다. 표 근처에 커서를 두세요.'); return; }
@@ -1020,14 +1053,14 @@ export function WriterPage() {
     // 찾기/바꾸기 — 매핑 가드 뒤(매핑에서는 본문 변경 가능 → 다이얼로그를 열지 않는다, step2.md 22행).
     if (id === 'edit.findReplace') { openFind(); return; }
     // 약물 입력 — 매핑 가드 뒤(약물 삽입은 본문 변경 → 매핑에서는 열지 않는다, 찾기와 동일 정책).
-    if (id === 'tools.symbolInput') { setShowGlyphInput(true); return; }
+    if (id === 'tools.symbolInput') { closeCentralDialogs(); setShowGlyphInput(true); return; }
     // 날짜 삽입 — 매핑 가드 뒤(본문 텍스트 변경 → 매핑 비활성, 약물입력과 동일 정책).
     if (id === 'tools.insertDate') { insertDate(); return; }
     // 약어변환 — 등록 약어를 본문에서 확장(본문 변경). 매핑 가드 뒤(매핑=텍스트 잠금이라 no-op, 날짜삽입과 동일 정책).
     if (id === 'tools.abbrConvert') { convertAbbrev(); return; }
     // 간체↔번체 변환 — 방향 선택 다이얼로그를 연다(버튼이 applySimpTrad로 본문 변환). 결과적으로 본문 변경이라
     // 매핑 가드 뒤(매핑에선 아예 열지 않음 — 죽은 다이얼로그 방지, 약어변환과 동일 정책).
-    if (id === 'tools.simpTradConvert') { setShowSimpTrad(true); return; }
+    if (id === 'tools.simpTradConvert') { closeCentralDialogs(); setShowSimpTrad(true); return; }
     // 전체 선택 — 선택 연산(본문 무변경). 메뉴 클릭은 에디터 포커스가 빠져 있어 명시 selectAll 한다.
     // (Ctrl+A 키는 contentEditable 위에서 브라우저 기본이 전체를 선택하므로 onKeyDown에서 가로채지 않는다.)
     if (id === 'edit.selectAll') { selectAllInEditor(document.querySelector('.yh-editor')); return; }
@@ -1174,7 +1207,8 @@ export function WriterPage() {
       // 약물바 — showMenuBar/showToolBar와 동일한 레이아웃 토글(EditorGlyphBar 렌더/숨김).
       case 'ctx.showGlyphBar': setShowGlyphBar((v) => !v); break;
       // 약물입력 — 비매핑에서만 다이얼로그를 연다(매핑은 enabledIds에서 비활성이라 호출되지 않지만 이중 방어).
-      case 'ctx.symbolInput': if (!isMapping) setShowGlyphInput(true); break;
+      // 닫기는 가드 안(여는 경로에서만) — 매핑의 막힌 클릭이 남의 다이얼로그를 닫으면 안 된다.
+      case 'ctx.symbolInput': if (!isMapping) { closeCentralDialogs(); setShowGlyphInput(true); } break;
       // 원본 붙여넣기 — Alt+V와 동일 경로(클립보드 이미지 → 업로드 → 경로 임베드). 비매핑에서만(이중 방어).
       case 'ctx.pasteOriginal': if (!isMapping) pasteOriginalAtCaret(); break;
       // 텍스트 붙여넣기 — 클립보드 평문을 캐럿에 삽입(마커-안전). pasteTextAtCaret 내부에 매핑 가드가 있어 이중 방어.
@@ -1224,7 +1258,8 @@ export function WriterPage() {
     // isGlyphInput은 !ctrlKey라 다른 조합을 오인하지 않고, key가 'o'라 Alt+Y/Ctrl+D 등과 충돌하지 않는다(라인삭제 조기 return보다 위).
     if (isGlyphInput(e)) {
       e.preventDefault();
-      if (!isMapping) setShowGlyphInput(true);
+      // 닫기는 가드 안(여는 경로에서만) — 매핑의 preventDefault-only 경로가 남의 다이얼로그를 닫으면 안 된다.
+      if (!isMapping) { closeCentralDialogs(); setShowGlyphInput(true); }
       return;
     }
     // Alt+V → 원본 붙여넣기(클립보드 이미지). 매핑이어도 preventDefault는 하되 실행은 안 한다(Alt+O와 동일 가드 —
@@ -1619,6 +1654,7 @@ export function WriterPage() {
               const key = fig.dataset ? fig.dataset.embedKey : undefined;
               const i = key == null || key === '' ? -1 : Number(key);
               if (!Number.isInteger(i) || i < 0 || i >= blocks.length || !isTableEmbed(blocks[i])) return;
+              closeCentralDialogs(); // 여는 줄 바로 앞 — 위 방어 return(대상 아님)에서는 부르지 않는다.
               setTableDialog({ mode: 'edit', blockIndex: i, rows: normalizeTableRows(blocks[i].rows) });
             }}
           >
@@ -1690,7 +1726,9 @@ export function WriterPage() {
 
           <div className="yh-meta-panel">
             {metaTab === 'common' && (
-              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} onOpenMeta={setMetaDialog} />
+              // onOpenMeta: 상태 설정 함수를 그대로 넘기지 않고 '닫기 후 여는' 얇은 래퍼로 감싼다(중앙 다이얼로그 상호
+              // 배타). 닫기→열기가 같은 동기 배치라 key={metaDialog}의 필드 전환 remount 계약(phase 32)은 그대로다.
+              <CommonInfo tab={activeTab} updateField={updateField} model={model} readOnly={isMapping} activeTabRef={activeTabRef} onOpenMeta={(field) => { closeCentralDialogs(); setMetaDialog(field); }} />
             )}
             {metaTab === 'image' && (
               <>

@@ -94,6 +94,49 @@ describe('editorEditOps — sortParagraph (문단 정렬)', () => {
     expect(r.blocks[1]).toEqual({ ...embed });
     expect(r.blocks[2]).toEqual(textBlock('나'));
   });
+
+  it('is a no-op for an out-of-range caret line index (마지막 문단으로 clamp 금지)', () => {
+    // 마지막 문단(다/나)이 미정렬 상태 — clamp가 살아 있으면 9가 3으로 접혀 이 문단이 재배열된다.
+    const blocks = [textBlock('가'), textBlock(''), textBlock('다'), textBlock('나')];
+    const r = sortParagraph(blocks, 9);
+    expect(r.changed).toBe(false);
+    // changed만으로는 부족 — 마지막 문단이 재배열되지 않았음을 값으로 단언한다.
+    expect(r.blocks).toEqual([textBlock('가'), textBlock(''), textBlock('다'), textBlock('나')]);
+  });
+
+  it('is a no-op for a negative caret line index', () => {
+    const blocks = [textBlock('나'), textBlock('가')];
+    const r = sortParagraph(blocks, -1);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual([textBlock('나'), textBlock('가')]);
+  });
+
+  it('is a no-op for a NaN caret line index', () => {
+    const blocks = [textBlock('나'), textBlock('가')];
+    const r = sortParagraph(blocks, NaN);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual([textBlock('나'), textBlock('가')]);
+  });
+
+  it('still sorts at valid boundary indexes — first line 0 and last text line (정상 경로 회귀 잠금)', () => {
+    // 첫 줄 0 — 가드가 정상 경로를 과잉 차단하지 않는다.
+    const first = sortParagraph([textBlock('나'), textBlock('가')], 0);
+    expect(first.changed).toBe(true);
+    expect(first.blocks).toEqual([textBlock('가'), textBlock('나')]);
+    // 마지막 텍스트 줄(4줄 문서의 3) — 경계값도 유효 인덱스다.
+    const last = sortParagraph(
+      [textBlock('가'), textBlock(''), textBlock('다'), textBlock('나')], 3,
+    );
+    expect(last.changed).toBe(true);
+    expect(last.blocks).toEqual([textBlock('가'), textBlock(''), textBlock('나'), textBlock('다')]);
+  });
+
+  it('is a no-op without throwing when there is no text block at all (임베드만)', () => {
+    const embed = embedBlock({ embedType: 'image', src: 'x' });
+    const r = sortParagraph([embed], 0);
+    expect(r.changed).toBe(false);
+    expect(r.blocks).toEqual([{ ...embed }]);
+  });
 });
 
 describe('editorEditOps — sortDocument align 승계 (pair-following: 줄=텍스트+정렬 한 쌍)', () => {
