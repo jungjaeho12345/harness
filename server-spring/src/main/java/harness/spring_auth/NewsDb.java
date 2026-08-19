@@ -21,7 +21,7 @@ import org.sqlite.SQLiteDataSource;
  * 원본 news.db 무접촉: 연결 URL은 오직 생성자로 받은 APS_DB_FILE 경로다(하드코딩 폴백 없음).
  * 환경변수 미설정(빈 경로)이면 생성 시점에 즉시 실패한다.
  */
-public class NewsDb {
+public class NewsDb implements UserLookup {
 
 	/** 기사 목록 응답 투영에서 제거하는 2개 컬럼(ADR-005 — locker 내부 상태는 노출하지 않는다). */
 	private static final Set<String> REMOVED_COLUMNS = Set.of("lockerSessionId", "lockerClientId");

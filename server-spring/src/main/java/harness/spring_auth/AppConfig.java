@@ -19,4 +19,22 @@ public class AppConfig {
 	NewsDb newsDb(@Value("${APS_DB_FILE:}") String dbFile) {
 		return new NewsDb(dbFile);
 	}
+
+	/** 인메모리 세션 스토어 — 프로덕션 시계(System.currentTimeMillis). */
+	@Bean
+	SessionStore sessionStore() {
+		return new SessionStore();
+	}
+
+	/** 세션 가드 — 매 요청 User 재도출(ADR-004). NewsDb를 UserLookup으로 주입한다. */
+	@Bean
+	SessionGuard sessionGuard(SessionStore sessionStore, NewsDb newsDb) {
+		return new SessionGuard(sessionStore, newsDb);
+	}
+
+	/** 세션 쿠키 writer — APS_PROD_COOKIE로 프로덕션/비프로덕션 속성 분기. */
+	@Bean
+	SessionCookieWriter sessionCookieWriter(@Value("${APS_PROD_COOKIE:false}") boolean prodCookie) {
+		return new SessionCookieWriter(prodCookie);
+	}
 }
