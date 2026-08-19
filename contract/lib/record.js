@@ -41,10 +41,17 @@ function knownPasswords() {
 // 휘발/비밀 값 마스킹 — 패턴에 하나라도 걸리면 값 전체를 '<redacted>'로 바꾼다(부분 치환보다 안전).
 // 금지 목록(decisions (11)): 세션 토큰(64-hex)·업로드 hex 파일명(32-hex)·비밀번호·articleId(AKR…)·
 // 타임스탬프·절대 경로·포트가 박힌 URL. 결정적인 값(불리언·상태 문자열·사유 토큰·개수)만 통과한다.
+// 숫자 마스킹 임계 — 이 값 이상은 휘발값(시각)으로 본다.
+// 1e9로 잡는 이유(2026-08-19 리뷰 반영): 예전 임계 2^31(2147483648)은 epoch **밀리초**만 잡고
+// epoch **초**(2001년 이후 ≈ 1.7e9)는 그대로 통과시켰다 — 주석은 "초/밀리초"라고 적혀 있어 실제보다
+// 넓은 보호를 주장했다. 계약 관측에 등장하는 정당한 숫자는 개수·상태코드·한도(현행 실측 최대 403)라
+// 임계를 1e9로 낮춰도 마스킹되는 정상 값이 없다(리포트 바이트 무변으로 확인).
+const VOLATILE_NUMBER_MIN = 1_000_000_000;
+
 function maskValue(value) {
   if (typeof value === 'number') {
-    // epoch 초/밀리초(ts·seq 계열) — 2^31 이상 정수는 휘발값으로 본다(개수·상태코드·포트 미만 값은 통과).
-    return value >= 2147483648 ? REDACTED : value;
+    // epoch 초·밀리초(ts·seq 계열) — 개수·상태코드 같은 결정값은 임계 아래라 그대로 통과한다.
+    return value >= VOLATILE_NUMBER_MIN ? REDACTED : value;
   }
   if (typeof value !== 'string') return value; // boolean·null 등은 그대로.
   for (const pw of knownPasswords()) {

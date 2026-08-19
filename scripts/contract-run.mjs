@@ -289,6 +289,9 @@ async function runProfile(profile, opts, ctx) {
   let serverBuf = { out: '', err: '' };
   let baseUrl = ctx.externalBaseUrls ? ctx.externalBaseUrls[profile.name] : null;
   let port = null;
+  // 비밀 파일 2종 — finally에서 **항상** 지운다(성패·--keep 무관). 경로를 여기서 들고 있어야 한다.
+  let credentialsFile = null;
+  let sessionsFile = null;
 
   try {
     if (!ctx.externalBaseUrls) {
@@ -332,9 +335,11 @@ async function runProfile(profile, opts, ctx) {
     notes.push(`boot ok ${Date.now() - bootStart}ms port=${port ?? '(external)'}`);
 
     // 4. 세션·자격증명 준비 — credentials.json은 프로파일과 무관하게 항상 쓴다(케이스 직접 로그인용).
-    const credentialsFile = nodePath.join(root, 'credentials.json');
-    fs.writeFileSync(credentialsFile, `${JSON.stringify(ctx.credentials, null, 2)}\n`);
-    let sessionsFile = null;
+    // 파일 권한 0600: 외부 대상(--credentials)에서는 실계정 비밀번호가, sessions.json에는 살아 있는
+    // 세션 토큰이 담긴다 — 공용 임시 디렉토리에 세계 가독으로 두지 않는다(Windows에서는 mode가 사실상
+    // 무시되지만 68+ Linux 실행에서 실효가 있다). 수명은 finally의 무조건 삭제가 책임진다.
+    credentialsFile = nodePath.join(root, 'credentials.json');
+    fs.writeFileSync(credentialsFile, `${JSON.stringify(ctx.credentials, null, 2)}\n`, { mode: 0o600 });
     if (profile.sessions) {
       const prep = await prepareSessions(baseUrl, ctx.credentials);
       if (!prep.ok) {
@@ -342,7 +347,7 @@ async function runProfile(profile, opts, ctx) {
         return { name: profile.name, boot: 'failed', casesFailed: false, notes, diagnostics, reportDir };
       }
       sessionsFile = nodePath.join(root, 'sessions.json');
-      fs.writeFileSync(sessionsFile, `${JSON.stringify(prep.sessions, null, 2)}\n`);
+      fs.writeFileSync(sessionsFile, `${JSON.stringify(prep.sessions, null, 2)}\n`, { mode: 0o600 });
       notes.push(`sessions ok roles=${ROLES.join(',')}`);
     } else {
       notes.push('sessions skipped(케이스가 직접 로그인)');
@@ -391,6 +396,19 @@ async function runProfile(profile, opts, ctx) {
     if (diagnostics.length > 0 && serverChild) {
       diagnostics.push(`--- server stdout ---\n${serverBuf.out}`);
       diagnostics.push(`--- server stderr ---\n${serverBuf.err}`);
+    }
+    // 7. 비밀 파일 삭제 — 성패·--keep과 무관하게 **항상** 지운다(2026-08-19 리뷰 반영).
+    // 실패 시 임시 디렉토리는 진단용으로 보존되는데, credentials.json(외부 대상이면 실계정 비밀번호)과
+    // sessions.json(아직 살아 있는 세션 토큰)은 진단 가치가 0이면서 위험만 남긴다. 정리 훅이 SIGINT에만
+    // 걸려 있어 예외 종료 경로에서는 영구 잔존했다 — finally가 유일하게 확실한 지점이다.
+    for (const secretFile of [credentialsFile, sessionsFile]) {
+      if (!secretFile) continue;
+      try {
+        fs.rmSync(secretFile, { force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (err) {
+        // 경로만 알린다(내용은 절대 싣지 않는다) — 남았다면 사용자가 직접 지워야 한다.
+        process.stderr.write(`warn 비밀 파일 삭제 실패(직접 삭제하라): ${secretFile} (${err && err.code})\n`);
+      }
     }
   }
 }
@@ -622,9 +640,14 @@ async function main() {
     observations,
     skipped,
   };
+  // --out 미지정 리포트는 임시 디렉토리에 쓰되 **ctx.mkTmp로 등록**한다(2026-08-19 리뷰 반영) —
+  // 등록하지 않으면 성공한 실행마다 리포트 디렉토리가 영구 잔존해 매 실행 누적됐다.
+  // 성공 + !--keep이면 아래 정리에서 지워지고, 실패·--keep이면 진단 자산으로 남는다.
+  // 경로는 어느 경우에도 요약에 그대로 출력한다(어디에 썼는지 감추지 않는다).
+  const ephemeralReport = !opts.out;
   const outFile = opts.out
     ? nodePath.resolve(opts.out)
-    : nodePath.join(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'contract-report-')), 'report.json');
+    : nodePath.join(ctx.mkTmp('contract-report-'), 'report.json');
   fs.mkdirSync(nodePath.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, `${JSON.stringify(report, null, 2)}\n`);
 
@@ -652,12 +675,14 @@ async function main() {
     failures.push(`리포 news.db/uploads 변동: before=${JSON.stringify(repoBefore)} after=${JSON.stringify(repoAfter)}`);
   }
 
-  // 정리 — 성공 + !keep일 때만 지운다. 실패 시 보존(진단·재현용 — 세션/자격증명 파일이 있으니 확인 후 삭제하라).
+  // 정리 — 성공 + !keep일 때만 지운다. 실패 시 보존(진단·재현용).
+  // 보존 디렉토리에 비밀은 없다: credentials.json·sessions.json은 프로파일 finally가 이미 지웠다.
   const ok = failures.length === 0;
   if (ok && !opts.keep) {
     cleanupTmp();
+    if (ephemeralReport) process.stdout.write('  (--out 미지정 — 임시 리포트를 정리했다. 보존하려면 --out <path> 또는 --keep)\n');
   } else if (tmpDirs.length > 0) {
-    process.stdout.write(`keep 임시 디렉토리 보존(${ok ? '--keep' : '실패 진단용'} — 세션/자격증명 파일 포함, 확인 후 삭제하라):\n${tmpDirs.map((d) => `  ${d}`).join('\n')}\n`);
+    process.stdout.write(`keep 임시 디렉토리 보존(${ok ? '--keep' : '실패 진단용'} — 확인 후 삭제하라):\n${tmpDirs.map((d) => `  ${d}`).join('\n')}\n`);
   }
 
   const caseCount = new Set(observations.map((o) => `${o.profile} ${o.caseId}`)).size;

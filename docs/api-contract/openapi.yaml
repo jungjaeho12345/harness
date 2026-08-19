@@ -741,8 +741,8 @@ paths:
         부기(실측): Express의 확장 쿼리 파서 때문에 `status[]=DPS`·`status[0]=RDS` 같은 대괄호 표기도
         같은 배열 필터로 동작한다. 이는 파서의 부수 효과이며 정본 표기는 반복 키다(대상 서버가
         대괄호 표기를 지원하지 않아도 계약 위반이 아니다 — 계약 스위트는 반복 키만 단언한다).
-        부기(결함 후보): 스칼라 전용 키(articleId·author·sender·department·날짜 6키)를 반복하면
-        배열이 그대로 SQL 바인딩으로 내려가 500 internal-error가 난다(고치지 않고 기록만 한다).
+        부기(결함 후보 #4 — README '결함 후보' 절): 스칼라 전용 키(articleId·author·sender·department·날짜 6키)를
+        반복하면 배열이 그대로 SQL 바인딩으로 내려가 500 internal-error가 난다(고치지 않고 기록만 한다).
         departments와 department를 함께 주면 **departments가 이긴다**(department는 무시).
         날짜 범위는 ISO-8601 문자열의 사전식 비교라 해당 컬럼이 NULL인 행은 범위 필터에서 탈락한다
         (미송고 기사는 sentAtFrom에, 미배부 기사는 distributedAtFrom/To에 절대 걸리지 않는다).
@@ -862,8 +862,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: >-
-            결함 후보(실측): 스칼라 전용 필터 키를 반복해 배열이 되면 전역 에러 핸들러가
-            {ok:false, reason:'internal-error'}로 응답한다. 정상 입력에서는 발생하지 않는다.
+            결함 후보 #4(실측 — README '결함 후보' 절): 스칼라 전용 필터 키를 반복해 배열이 되면
+            전역 에러 핸들러가 {ok:false, reason:'internal-error'}로 응답한다(400이어야 할 입력 오류가
+            5xx다). 정상 입력에서는 발생하지 않는다.
           content:
             application/json:
               schema:
@@ -1647,6 +1648,10 @@ paths:
         비밀번호는 bcrypt로 저장되고 응답에는 평문도 해시도 없다(응답 user = SAFE_FIELDS 투영이며
         **요청에서 누락된 필드는 키 자체가 없다**. active 미지정 시 'Y'가 적용된다).
         userId는 PK라 중복 생성은 4xx가 아니라 **500 internal-error**다(제약 위반 예외가 전역 에러 핸들러로 흐른다).
+        결함 후보 2건(동결하되 고칠 대상 — README '결함 후보' 절 #1·#2): ① 빈 비밀번호도 유효 자격증명이 되고
+        role을 검증하지 않아 정의 밖 role 계정은 모든 role 게이트에서 403이 되는 복구 불가 사용자로 남는다,
+        ② 중복 userId가 4xx가 아니라 500이다. 이식 시 "그대로 재현"과 "고치고 계약 변경으로 기록" 중 하나를
+        의식적으로 고르라 — 라벨 없이 베끼면 결함이 요구사항이 된다.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -1659,18 +1664,20 @@ paths:
               properties:
                 userId:
                   type: string
-                  description: PK. 중복이면 500 internal-error
+                  description: PK. 중복이면 500 internal-error(결함 후보 #1 — 4xx가 아니다)
                 name: { type: string }
                 role:
                   type: string
-                  description: 검증하지 않는다 — R/D/Z 밖 값도 그대로 저장된다
+                  description: 검증하지 않는다 — R/D/Z 밖 값도 그대로 저장된다(결함 후보 #2)
                 department: { type: string }
                 departmentCode: { type: string }
                 active: { type: string, enum: [Y, N], description: 미지정 시 'Y' }
                 password:
                   type: string
                   writeOnly: true
-                  description: bcrypt 해시로 저장. 미지정이면 빈 문자열이 해시된다(계정 생성은 성공한다)
+                  description: >-
+                    bcrypt 해시로 저장. 미지정이면 빈 문자열이 해시된다(계정 생성은 성공한다) —
+                    결함 후보 #2: 빈 비밀번호가 유효 자격증명이 된다
             example:
               userId: ct-user
               name: 계약 사용자
@@ -1704,7 +1711,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: userId 중복(PK 제약 위반) — reason=internal-error
+          description: >-
+            결함 후보 #1(실측): userId 중복(PK 제약 위반)이 400·409가 아니라 500 internal-error다
+            — 제약 위반 예외가 전역 에러 핸들러로 그대로 흐른다. 계약 스위트는 이 관측을 tag
+            'server-error'로 기록한다(tag 'conflict'로 적으면 존재하지 않는 409 계약이 커버리지에서
+            충족된 것처럼 보인다).
           content:
             application/json:
               schema:
@@ -1814,8 +1825,9 @@ paths:
           description: >-
             설정 목록. 쿼리 키는 화이트리스트 컬럼(id·sourceId·type·name·host·port·username·
             password·apiEndpoint·apiKey·active·createdAt)만 AND 동등 필터로 적용되고 그 밖의 키는
-            **무시된다**(400이 아니다). 주의: password·apiKey는 응답에 실리지 않지만 **필터 키로는
-            받아들여진다** — 값 존재 여부를 되묻는 오라클이 될 수 있다(실측 기록, 이 phase는 코드 무수정).
+            **무시된다**(400이 아니다). 결함 후보 #3(README '결함 후보' 절): password·apiKey는 응답에
+            실리지 않지만 **필터 키로는 받아들여진다** — 값 존재 여부를 되묻는 오라클이 된다
+            (실측 기록, 이 phase는 코드 무수정).
           content:
             application/json:
               schema:
@@ -2343,6 +2355,8 @@ paths:
         캡션 **부분일치(LIKE `%q%`)** · **최신 등록 우선(id DESC)**. 원소는 Photo 행 6컬럼을 그대로 싣는다
         (`id`·`src`·`caption`·`sourceArticleId`·`registeredBy`·`createdAt` — 투영·마스킹 없음).
         `q`를 생략하거나 빈 문자열로 주면 `LIKE '%%'`가 되어 **전체 목록**이 나온다(400이 아니다).
+        결함 후보 #5(README '결함 후보' 절): `SELECT *` 무투영이라 등록자(`registeredBy`)가 전 사용자에게
+        노출된다 — 현행 계약이라 동결했지만 옳다고 승인한 것은 아니다.
       security:
         - sessionCookie: []
         - sessionHeader: []

@@ -184,7 +184,12 @@ test('POST /api/users — 같은 userId 재생성은 500 internal-error(중복 �
   assert.deepEqual(res.json, { ok: false, reason: 'internal-error' });
   assertNoSecret(res, fixtureUser.password);
 
-  record('users-create', 'conflict', { ...fromResponse(res), caseId: 'duplicate-userid' });
+  // 태그는 'conflict'가 아니라 'server-error'다(articles-read의 스칼라 반복 500과 같은 어휘).
+  // 이유: 이 500은 결함 후보이지 충돌(409) 계약이 아니다 — 'conflict'로 적어 두면 누군가
+  // users-create의 expect에 'conflict'를 추가하는 순간 **500 관측이 그 커버리지를 채워** 실재하지
+  // 않는 409 계약이 검증된 것처럼 보인다. 'server-error'는 인벤토리 EXPECT_TAGS 고정 어휘 밖이라
+  // 어떤 expect도 이 관측으로 충족될 수 없다(contract-inventory-check가 unknown expect tag로 red).
+  record('users-create', 'server-error', { ...fromResponse(res), caseId: 'duplicate-userid' });
 });
 
 test('POST /api/users — 입력 검증이 없다(정의 밖 role·필드 누락도 200)', async () => {
