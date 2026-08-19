@@ -49,4 +49,10 @@ public class AppConfig {
 	LoginRateLimitFilter loginRateLimitFilter() {
 		return new LoginRateLimitFilter();
 	}
+
+	/** 사용자 생성/수정 — 지원 라우트(Z 전용)에서 쓴다. 비밀번호 bcrypt 해시·수정 화이트리스트. */
+	@Bean
+	UserService userService(NewsDb newsDb) {
+		return new UserService(newsDb);
+	}
 }
