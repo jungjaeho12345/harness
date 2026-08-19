@@ -105,6 +105,39 @@ public class UserService {
         users.updateUser(row.userId(), patch);
     }
 
+    /**
+     * 사용자 생성 — password 는 bcrypt 해시로 저장(미지정 시 빈 문자열 해시, userService.js 동형).
+     * 반환은 안전 투영(SAFE_FIELDS, null 제외 — 비밀번호 없음). 중복 userId·미지 컬럼은 예외를 전파한다
+     * (상위 전역 핸들러가 500 internal-error 로 매핑 — 400/409 아님, 계약).
+     */
+    public Map<String, Object> create(Map<String, Object> dto) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : dto.entrySet()) {
+            if ("password".equals(e.getKey())) {
+                continue; // 해시로 대체(아래).
+            }
+            row.put(e.getKey(), e.getValue());
+        }
+        Object pw = dto.get("password");
+        row.put("password", bcrypt.encode(pw == null ? "" : String.valueOf(pw)));
+        users.insertUser(row); // 중복/미지 컬럼 → 예외 전파(전역 500). active 미지정 시 DB DEFAULT 'Y'.
+        UserRow saved = users.findUser(String.valueOf(dto.get("userId")));
+        return Projections.safe(saved);
+    }
+
+    /**
+     * 사용자 수정 — password 가 오면 해시로 저장(없으면 그대로). 변경 행 수 반환(없는 userId 는 0 — 존재 판정 안 함).
+     * 행을 삭제하지 않는다(비활성화는 active='N' UPDATE).
+     */
+    public int update(String userId, Map<String, Object> fields) {
+        Map<String, Object> patch = new LinkedHashMap<>(fields);
+        if (patch.containsKey("password")) {
+            Object pw = patch.get("password");
+            patch.put("password", bcrypt.encode(pw == null ? "" : String.valueOf(pw)));
+        }
+        return users.updateUser(userId, patch);
+    }
+
     private static Long parseLong(String s) {
         if (s == null || s.isEmpty()) {
             return null;
