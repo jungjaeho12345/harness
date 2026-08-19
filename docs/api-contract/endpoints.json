@@ -35,7 +35,7 @@
       "auth": "session",
       "profile": "default",
       "expect": ["success", "unauthenticated"],
-      "notes": "F5 세션 복원 — 200 {ok:true,user:{userId,name,role,department,departmentCode,active}}."
+      "notes": "F5 세션 복원 — 200 {ok:true,user:{userId,name,role,department,departmentCode}} (정확히 5키). 로그인 응답의 user는 active를 포함한 6키라 shape이 다르다."
     },
     {
       "id": "users-list",

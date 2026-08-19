@@ -4,7 +4,7 @@
 // 사용: node scripts/contract-run.mjs [--profile <name>]... [--files <path>[,<path>]...]
 //                                     [--out <report.json>] [--base-url-map <file.json>] [--credentials <file.json>]
 //                                     [--boot-check] [--require-full-coverage] [--require-spec-paths]
-//                                     [--keep] [--timeout <ms>]
+//                                     [--dual-run] [--keep] [--timeout <ms>]
 // CRITICAL(데이터 안전, decisions (14)): 리포 news.db·uploads/에 절대 바인딩하지 않는다 — 프로파일마다
 //   임시 DATA_DIR를 새로 만들고(ADR-012 데이터 폴더당 인스턴스 1), 종료 후 before/after 스냅샷으로 무변을 단언한다.
 // CRITICAL(결정성, decisions (9)): 자식 env는 명시 조립한다 — 외부 API 키 4종 삭제(egress 0),
@@ -28,6 +28,9 @@ import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers, SAMPLE_USERS } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
+// --dual-run은 비교 규칙을 자체 구현하지 않고 contract-diff.mjs의 함수를 그대로 쓴다(step12) —
+// 규칙이 두 벌로 갈라지면 CLI diff와 러너 내부 판정이 서로 다른 답을 내는 순간 패리티 판정이 무의미해진다.
+import { compareReports, formatDiffLines } from './contract-diff.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -60,7 +63,7 @@ const PROFILE_NAMES = PROFILES.map((p) => p.name);
 const USAGE = `사용법: node scripts/contract-run.mjs [--profile <name>]... [--files <path>[,<path>]...]
                                     [--out <report.json>] [--base-url-map <file.json>] [--credentials <file.json>]
                                     [--boot-check] [--require-full-coverage] [--require-spec-paths]
-                                    [--keep] [--timeout <ms>]
+                                    [--dual-run] [--keep] [--timeout <ms>]
   --profile <name>     실행할 프로파일(반복 가능). 미지정=전 프로파일(${PROFILE_NAMES.join('|')}).
   --files <p>[,<p>]... 케이스 파일 명시(반복·콤마 가능). 미지정=contract/cases/<profile>/*.contract.js 전부(정렬).
   --out <path>         리포트 JSON 경로. 미지정=OS 임시 디렉토리(경로를 stdout에 출력 — 리포 오염 금지).
@@ -69,6 +72,8 @@ const USAGE = `사용법: node scripts/contract-run.mjs [--profile <name>]... [-
   --boot-check         케이스를 돌리지 않고 프로파일 기동→health→세션/자격증명 준비→종료·정리까지만 수행.
   --require-full-coverage  커버리지 미달 시 exit 1(기본은 경고 + exit 0).
   --require-spec-paths     contract-inventory-check.mjs의 YAML 경로 검사까지 실패로 취급(step12 전용).
+  --dual-run           같은 대상에 스위트를 연속 2회 실행해 리포트 2개를 OS 임시 디렉토리에 쓰고
+                       contract-diff.mjs로 비교한다(차이가 있으면 exit 1). --out과 함께 쓸 수 없다.
   --keep               임시 디렉토리를 지우지 않는다(실패 시에는 항상 보존).
   --timeout <ms>       단계별 대기 한도(기본 45000, 1000 이상 정수).`;
 
@@ -85,7 +90,7 @@ function parseArgs(argv) {
   };
   const opts = {
     profiles: [], files: [], bootCheck: false, requireFullCoverage: false,
-    requireSpecPaths: false, keep: false, timeout: 45000,
+    requireSpecPaths: false, dualRun: false, keep: false, timeout: 45000,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -97,6 +102,7 @@ function parseArgs(argv) {
     else if (a === '--boot-check') opts.bootCheck = true;
     else if (a === '--require-full-coverage') opts.requireFullCoverage = true;
     else if (a === '--require-spec-paths') opts.requireSpecPaths = true;
+    else if (a === '--dual-run') opts.dualRun = true;
     else if (a === '--keep') opts.keep = true;
     else if (a === '--timeout') { opts.timeout = Number(takeValue(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
@@ -107,6 +113,10 @@ function parseArgs(argv) {
   if (!Number.isInteger(opts.timeout) || opts.timeout < 1000) {
     die(`--timeout 값이 유효하지 않다(ms, 1000 이상 정수): ${opts.timeout}`);
   }
+  // --dual-run 가드: 리포트 경로는 이 모드가 스스로 정한다(플랫폼 의존 리터럴 제거),
+  // 그리고 관측 0건(--boot-check)끼리의 비교는 판정이 아니라 거짓 green이다.
+  if (opts.dualRun && opts.out) die('--dual-run은 리포트 2개를 OS 임시 디렉토리에 직접 쓴다 — --out과 함께 쓸 수 없다.');
+  if (opts.dualRun && opts.bootCheck) die('--dual-run은 --boot-check와 함께 쓸 수 없다 — 관측 0건끼리의 비교는 차이 0을 보장할 뿐 계약 판정이 아니다.');
   return opts;
 }
 
@@ -455,8 +465,65 @@ function runSpecPathsCheck() {
   });
 }
 
+// --- 이중 실행(--dual-run, step12) ---
+// 같은 대상에 스위트를 연속 2회 돌려 정규화 리포트가 결정적인지, 그리고 diff 도구가 도는지를 실증한다.
+// 각 실행은 별도 프로세스다(자기 자신을 --dual-run 없이 재실행) — 프로세스 상태가 새어 "같아 보이는"
+// 결과를 만들 여지를 없애고, --profile·--base-url-map·--require-* 같은 다른 플래그는 그대로 전달된다
+// (68+에서 Spring을 두 번 돌려 자기 결정성을 먼저 확인하는 용도).
+function spawnPass(args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [SCRIPT_PATH, ...args], {
+      cwd: REPO_ROOT, env: process.env, stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    child.once('close', (code) => resolve(code === null ? 1 : code));
+  });
+}
+
+async function runDualRun(argv) {
+  const passArgs = argv.filter((a) => a !== '--dual-run');
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'contract-dualrun-'));
+  const outFiles = { A: nodePath.join(dir, 'run-a.json'), B: nodePath.join(dir, 'run-b.json') };
+  const codes = {};
+  for (const label of ['A', 'B']) {
+    process.stdout.write(`[dual-run ${label}] 실행 시작 → ${outFiles[label]}\n`);
+    codes[label] = await spawnPass([...passArgs, '--out', outFiles[label]]);
+    process.stdout.write(`[dual-run ${label}] 실행 종료 exit=${codes[label]}\n`);
+  }
+
+  const failures = [];
+  for (const label of ['A', 'B']) {
+    if (codes[label] !== 0) failures.push(`실행 ${label}이 실패했다(exit=${codes[label]}) — 위 출력의 FAIL 사유를 먼저 해결하라.`);
+    if (!fs.existsSync(outFiles[label])) failures.push(`실행 ${label}의 리포트가 만들어지지 않았다: ${outFiles[label]}`);
+  }
+
+  let result = null;
+  if (fs.existsSync(outFiles.A) && fs.existsSync(outFiles.B)) {
+    const [a, b] = ['A', 'B'].map((label) => JSON.parse(fs.readFileSync(outFiles[label], 'utf8')));
+    result = compareReports(a, b);
+    const lines = formatDiffLines(result);
+    if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`);
+    if (result.diffCount > 0) failures.push(`이중 실행 리포트 차이 ${result.diffCount}건 — 리포트 정규화가 비결정적이거나 대상 동작이 갈렸다.`);
+  }
+
+  const ok = failures.length === 0;
+  // 리포트 2개는 진단 자산이라 성패와 무관하게 남긴다(리포 안에는 아무것도 쓰지 않는다).
+  // 대신 삭제 책임을 호출자에게 명시한다 — 임시 디렉토리 누적이 이 하네스의 알려진 위생 부채다.
+  process.stdout.write(`reportA=${outFiles.A}\nreportB=${outFiles.B}\n`);
+  process.stdout.write(`  (리포트는 OS 임시 디렉토리에만 쓴다 — 확인 후 ${dir}를 삭제하라)\n`);
+  if (!ok) process.stderr.write(`${failures.map((f) => `FAIL ${f}`).join('\n')}\n`);
+  process.stdout.write(
+    `contract-dual-run ${ok ? 'ok' : 'FAILED'} passes=A:${codes.A},B:${codes.B} `
+    + `observations=${result ? result.observationCount : 0} diffs=${result ? result.diffCount : '-'}\n`,
+  );
+  process.exit(ok ? 0 : 1);
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.dualRun) {
+    await runDualRun(process.argv.slice(2)); // 내부에서 exit한다.
+    return;
+  }
 
   const inventoryRaw = JSON.parse(fs.readFileSync(INVENTORY_FILE, 'utf8'));
   const inventory = { routes: Array.isArray(inventoryRaw?.routes) ? inventoryRaw.routes : [] };

@@ -6,7 +6,9 @@
 //  2. endpoints.json 자체 검증: 최상위 shape({version,routes}) · 39행 · id 유일 ·
 //     필드 필수값 · expect 태그 고정 어휘 · method 분포(GET 16/POST 19/PUT 3/DELETE 1) ·
 //     id가 'x-'로 시작하지 않을 것(x-는 리포트의 "인벤토리 밖 관측" 전용 채널 — decisions (23)).
-//  3. docs/api-contract/openapi.yaml에 인벤토리의 모든 path 문자열이 등장하는지 확인한다.
+//  3. docs/api-contract/openapi.yaml의 paths 절에서 (method, path) 오퍼레이션을 추출해
+//     인벤토리 39행과 양방향 비교한다. 인벤토리는 Express 실측 표기(':id'), OpenAPI는 표준
+//     중괄호 표기('{id}')이므로 **두 표기를 정규화해** 맞춘다(step12).
 //     기본은 경고만(step3~step11이 채우는 중) — --require-spec-paths 플래그가 있을 때만 실패.
 //
 // 서버 코드는 읽기만 한다(무수정). YAML 파서 등 새 의존성 금지(decisions (3)) —
@@ -124,22 +126,62 @@ const missingInServer = [...seenMethodPath].filter((k) => !serverRoutes.has(k));
 for (const k of missingInInventory) errors.push(`route in server but missing in inventory: ${k}`);
 for (const k of missingInServer) errors.push(`route in inventory but missing in server: ${k}`);
 
-// --- 3. openapi.yaml 경로 존재 검사 (기본 경고 — --require-spec-paths에서만 실패) ---
+// --- 3. openapi.yaml 오퍼레이션 대조 (기본 경고 — --require-spec-paths에서만 실패) ---
+// 표기 정규화: 인벤토리는 Express 실측 표기('/api/articles/:id'), OpenAPI는 표준 템플릿 표기
+// ('/api/articles/{id}')다. 예전 구현은 YAML **텍스트 전체**에 콜론 표기 문자열이 있는지만 봤는데,
+// 그러면 주석 한 줄('# ... /api/users/:id ...')이 게이트를 통과시키고 그 주석이 병합 중 사라지면
+// 아무도 건드리지 않은 게이트가 red가 된다(실제로 발생했다). 표기를 정규화해 비교하면 주석 의존이 사라진다.
+function toSpecPath(expressPath) {
+  return expressPath.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '{$1}');
+}
+
+// paths 절의 (path, method) 추출 — YAML 파서를 들이지 않는다는 제약(decisions (3)) 아래에서
+// 가능한 가장 강한 검사다. 들여쓰기 규약에 기댄다: 경로 키 2칸, 메서드 키 4칸(이 문서의 실측 형식).
+// 주석·x- 확장 키(x-express-path 등)는 오퍼레이션이 아니므로 자연히 걸러진다.
+const HTTP_METHODS = 'get|post|put|delete|patch|head|options|trace';
+function extractSpecOperations(text) {
+  const ops = new Set();
+  let inPaths = false;
+  let currentPath = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^[^\s#]/.test(line)) { // 최상위 키 — paths 절 진입/이탈 판정
+      inPaths = /^paths:\s*$/.test(line);
+      currentPath = null;
+      continue;
+    }
+    if (!inPaths) continue;
+    const pathKey = line.match(/^ {2}(\/\S*):\s*(#.*)?$/);
+    if (pathKey) { currentPath = pathKey[1]; continue; }
+    const opKey = line.match(new RegExp(`^ {4}(${HTTP_METHODS}):\\s*(#.*)?$`));
+    if (opKey && currentPath) ops.add(`${opKey[1].toUpperCase()} ${currentPath}`);
+  }
+  return ops;
+}
+
 let specText = '';
 try {
   specText = fs.readFileSync(OPENAPI_FILE, 'utf8');
 } catch (e) {
   (requireSpecPaths ? errors : warnings).push(`openapi.yaml unreadable: ${e.message}`);
 }
-const specMissing = routes
-  .filter((r) => typeof r.path === 'string' && !specText.includes(r.path))
-  .map((r) => `${r.method} ${r.path}`);
-const specPresent = routes.length - specMissing.length;
-if (specMissing.length > 0) {
+const specOps = extractSpecOperations(specText);
+const inventoryOps = new Map(); // "METHOD 스펙표기경로" -> "METHOD 실측(콜론)경로"
+for (const r of routes) {
+  if (typeof r.path !== 'string' || !METHODS.has(r.method)) continue;
+  inventoryOps.set(`${r.method} ${toSpecPath(r.path)}`, `${r.method} ${r.path}`);
+}
+const specMissing = [...inventoryOps.entries()].filter(([specKey]) => !specOps.has(specKey)).map(([, expressKey]) => expressKey);
+const specExtra = [...specOps].filter((k) => !inventoryOps.has(k));
+const specPresent = inventoryOps.size - specMissing.length;
+if (specMissing.length > 0 || specExtra.length > 0) {
   if (requireSpecPaths) {
-    for (const k of specMissing) errors.push(`path missing in openapi.yaml: ${k}`);
+    for (const k of specMissing) errors.push(`operation missing in openapi.yaml: ${k}`);
+    for (const k of specExtra) errors.push(`operation in openapi.yaml but missing in inventory: ${k}`);
   } else {
-    warnings.push(`openapi.yaml is missing ${specMissing.length} path(s) — informational until --require-spec-paths (step12)`);
+    if (specMissing.length > 0) {
+      warnings.push(`openapi.yaml is missing ${specMissing.length} operation(s) — informational until --require-spec-paths (step12)`);
+    }
+    for (const k of specExtra) warnings.push(`operation in openapi.yaml but missing in inventory: ${k}`);
   }
 }
 

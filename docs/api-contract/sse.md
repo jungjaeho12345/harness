@@ -20,10 +20,12 @@
 ## 응답 헤더 3종 + 즉시 flush
 
 ```
-Content-Type: text/event-stream
+Content-Type: text/event-stream; charset=utf-8
 Cache-Control: no-cache
 Connection: keep-alive
 ```
+
+(`charset=utf-8`은 express `res.setHeader('Content-Type', 'text/event-stream')`이 붙이는 실측값이다 — 계약 리포트의 `stream`·`logs-stream` 관측 헤더와 같다. 클라이언트 판정에 쓰이므로 이식 시 생략하지 마라.)
 
 헤더 설정 직후 `flushHeaders()` 하고 곧바로 ready 프레임을 쓴다.
 
