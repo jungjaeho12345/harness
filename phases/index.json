@@ -377,7 +377,8 @@
     },
     {
       "dir": "68-spring-auth",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-08-19T10:08:00+0900"
     }
   ]
 }
