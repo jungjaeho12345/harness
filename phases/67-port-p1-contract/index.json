@@ -17,7 +17,8 @@
     {
       "step": 1,
       "name": "contract-runner",
-      "status": "pending"
+      "status": "done",
+      "summary": "scripts/contract-run.mjs 단독 신설(러너 축 — contract/lib·케이스 없음, 서버·src·test·package.json 무수정, 새 의존성 0). 프로파일 5종 기동 실측(--boot-check 전체 exit 0): default 612ms:47471 / minimal 676ms:47999 / auth-negative 577ms:46775 / failclosed 678ms:47538 / prod-cookie 554ms:45331 — 전 포트 [45000,49152) 내(관측 18회 45224~49016, verify 두 구간과 서로소), failclosed 0.0.0.0 바인딩 방화벽 프롬프트 미관측·차단 없음(verify-integration 동일 바인딩 전례로 기허용 추정). 세션 준비는 default·minimal·failclosed만 R/D/Z 정확 3회 로그인(sid 64-hex + user 5필드 shape 확인), credentials.json은 전 프로파일 공통({R|D|Z:{userId,password}}) — --keep 확인 후 파일 삭제 완료. 변이 실증 3종: (4) minimal spawn 고의 파손 → skipped=[{profile:'minimal',reason:'profile-boot-failed'}] + server stderr 첨부 + 나머지 4 프로파일 계속 + 종합 exit 1, (7) 스냅샷 uploads 경로를 os.tmpdir()로 변경 → 러너 자신의 임시 디렉토리 증가(6283→6285)를 FAIL로 포착 exit 1(리포 news.db 무접촉), (6) --base-url-map 단독(--credentials 생략) → 서버 미기동 즉시 실패 exit 1. 각 원복 후 green 재확인. 리포트 스키마 B(version/meta{target,profiles,routeCount:39}/observations/skipped) + (profile,routeId,tag,caseId) 정렬 + non-x 미등재 routeId 오류 보고 + 커버리지 (routeId,expect태그) 쌍 판정 구현. 데이터 안전 단언 green(리포 news.db·uploads 무변), 임시 디렉토리 잔존 0. AC: npm test 1327/1327(51 suites, portrange 잠금 green)·lint clean·contract-inventory-check exit 0. 실측 메모: 시그널 종료 자식은 exitCode null + signalCode만 채워진다 — killChild는 exit 이벤트 대기로 판정."
     },
     {
       "step": 2,
