@@ -32,3 +32,6 @@ __pycache__/
 
 # 업로드 파일 저장 디렉터리 (런타임 산출물)
 uploads/
+
+# Spring 빌드 산출물 (phase 68)
+server-spring/target/
