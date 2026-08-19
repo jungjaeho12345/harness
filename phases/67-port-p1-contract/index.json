@@ -29,47 +29,56 @@
     {
       "step": 3,
       "name": "auth-session",
-      "status": "pending"
+      "status": "done",
+      "summary": "인증·세션 3라우트와 그 위의 교차 계약을 케이스 4파일로 동결했다(default: auth 9케이스·crosscutting 6케이스, auth-negative: login-negative 3케이스, prod-cookie: cookie-prod 3케이스 — 전부 green, 리포트 관측 23건). 예측 우선 규율대로 server/index.js·userService·sessionService·기존 test/**를 먼저 읽어 기대값을 적고 실행했으며 예측은 전부 적중했다: 미인증 401에도 JSON 바디, 쿠키 우선·헤더 폴백·?session= 쿼리 폴백 부재(유효 토큰으로도 401), 비프로덕션 쿠키 `HttpOnly; Path=/; Max-Age=3600; SameSite=Lax`(Secure 없음) 대 프로덕션 `Secure; SameSite=None`, 로그아웃 멱등(세션 없이도 200)과 만료 쿠키 Max-Age=0, CSRF 교차 출처·파싱 불가 Referer 403 forbidden-origin과 허용 Referer 통과, CORS preflight 204 + 허용 헤더 4종, 잠금 423(올바른 비밀번호로도 거부)·레이트리밋 429. 코드 정독으로 계획이 놓친 **단일 세션 정책**(로그인이 같은 사용자의 기존 세션을 전부 무효화)을 발견해 계약 케이스로 동결하고, 그로 인해 default 공용 R 세션이 소실된다는 사실과 이미 작성된 users·receiver-config 케이스 4곳(sid('R') → 403 기대)이 전체 실행에서 401로 깨질 것이라는 예측·처방을 findings에 남겼다. 실측 드리프트도 기록했다 — GET /api/session의 user는 endpoints.json 표기와 달리 active 없는 정확 5키이고, 429와 미정의 경로 404는 JSON이 아니다. 변이 3종(상태코드·사유 토큰·쿠키 속성 뒤집기)으로 정확히 해당 케이스만 red임을 확인하고 원복했으며, 리포트는 3 프로파일 모두 2회 실행 바이트 동일이고 토큰·쿠키 값·비밀번호 누출 0건이다. [오케스트레이터 통합 수정] 서버의 단일 세션 정책(로그인이 같은 userId의 기존 세션을 전부 무효화) 때문에 전체 실행에서 공용 R 세션이 죽어 22건이 red였다 — lib에 공용 세션 갱신 수단(republish)을 추가하고 로그인하는 케이스가 파일 끝에서 공용 세션을 복구하는 규약으로 해결했다(역할 축은 불변). 수정 후 전 프로파일 39/39 커버리지·199 pass·연속 2회 동일."
     },
     {
       "step": 4,
       "name": "articles-read",
-      "status": "pending"
+      "status": "done",
+      "summary": "기사 읽기 5 라우트(#18~#22)의 계약 케이스 contract/cases/default/articles-read.contract.js(599줄, 21 테스트·49 관측)를 신설하고 openapi paths 조각을 스크래치패드에 산출했다. 픽스처는 전부 API 경유(기사 3건 + C에 잠금·PUT 편집·송고)이며, **잠금을 해제하지 않은 상태**에서 목록·단건을 관측해 lockerSessionId·lockerClientId 부재 단언이 공허하지 않게 만들었다(응답 JSON 전체 문자열 스캔 + R/D/Z 세션 토큰 원문 스캔 포함). FILTER_KEYS는 실측 **13키**(부록 A '15키'는 드리프트)이며 13키 전수 200 + 배부 2키를 뺀 11키 동시 양성 + 키별 양성/음성(status 반복 키 IN, excludeStatus NOT IN, departments가 department보다 우선, 화이트리스트 밖 키 무시, NULL 컬럼은 날짜 범위에서 탈락)을 동결했다. 자기 파일 한정 AC는 21/21 pass·exit 0·covered 5/39, 리포트는 2회 실행 바이트 동일(sha256 f54071f9…)·누출 0, eslint·inventory-check 모두 exit 0이며 서버/스크립트/문서는 무수정(증분 = 케이스 파일 1건, 커밋 없음). vacuity 변이 4종(음성 뒤집기·404→400·스캐너 프로브·토큰 반사)에서 각각 red를 실증하고 원복했고, 같은 서버에 케이스를 두 번 돌려(40/40) 사전 존재 데이터 강건성까지 확인했다."
     },
     {
       "step": 5,
       "name": "articles-write",
-      "status": "pending"
+      "status": "done",
+      "summary": "기사 쓰기·잠금 5 라우트(#23 create·#27 update·#28 lock·#29 unlock·#30 force-unlock)를 contract/cases/default/articles-write.contract.js 1파일(테스트 15건·관측 31행)로 동결했고, `--profile default --files` 한정 실행이 3회 연속 green(cases=22 covered=5/39 skipped=0)이며 리포트는 3회 모두 13,413바이트 동일이다. 동결한 축은 서버 stamp(초기 status RDS / D+hold=DDH / R+hold=RRH·부서·작성자·modifier), 신뢰 경계(클라 role·status·articleId·sender·distributedAt 무시하되 **author는 보존**), `x-edit-client` 탭 단위 인가(잠금 없음·같은 세션 다른 탭·타인 전부 403 not-holder), 멱등 unlock(200), DPS 편집 게이트(R 403 forbidden / D는 revise·portalRevise 둘 다 200)다. 놀라운 매핑 2건을 실측 확인해 명세에 굵게 적었다: 잠금 충돌은 **401 locked**(409·423 아님)이고, 없는 기사에 대한 PUT은 403이 아니라 **404 not-found**(존재 검사가 잠금 검사보다 먼저)다. 예측표 30항목이 첫 실행에서 전부 적중해 \"응답 베끼기\"가 아님을 담보했고, vacuity 변이 3종(탭 인가 403→200·create status RDS→DPS·reason locked→lockd)이 각각 red를 냈으며 원복 후 리포트가 원본과 바이트 동일했다. 잠금은 케이스마다 finally에서 자기가 푼다(force-unlock은 그 라우트 검증에서만 사용). 서버 코드·openapi.yaml·index.json·package.json 무수정이고 커밋하지 않았다 — YAML 조각은 스크래치패드에 두었으며 step4와 `/api/articles`·`/api/articles/{id}` 경로 키가 겹치므로 **append가 아니라 병합**이 필요하다(블라인드 append 시 duplicated mapping key 실증)."
     },
     {
       "step": 6,
       "name": "transitions",
-      "status": "pending"
+      "status": "done",
+      "summary": "contract/cases/minimal/transitions.contract.js 신설(554줄·테스트 41건·관측 45건)로 #24 action·#25 derive를 minimal 프로파일에서 동결했다(근거 실측: minimal은 DIST_SPOOL_DIR 미설정 → controllers가 distributionService를 아예 결선하지 않아 송고 훅·비동기 승격이 없다). 전이표는 도달 가능한 허용 칸 전수(D 8칸·Z 대표 3칸·R 3칸 = 16)를 (a) 이미 동결한 create/action 경로로만 상태에 도달해 (b) 200 {ok,status} 단언 후 (c) GET 되읽기까지 이중 단언했고, 거부 5칸(R의 DPS send·R의 approveDelete·DDH hold·RRK send·DPD send)은 전부 409 forbidden-transition + 상태 무변경(음성 증거)으로 확인했다. 마커 게이트는 400 no-end-marker + RDS 유지 → 잠금+PUT으로 마커 추가 후 200 DPS까지 왕복 증명했고, **전이 판정이 마커 검사보다 먼저**(마커 없는 DDK send = 409)라는 순서를 계약으로 못 박았다. 엠바고 3변형(1차·2차만·1+2차)과 DDH 경로가 모두 DES로 진입하고 R의 송고만 RDS 유지임을 확인했으며, send stamp(sender=세션 userId·sentAt 존재)·status 이력 행 존재(개수 미단언)도 동결했다. derive는 새 articleId·RDS·세션 author·followUp 빈 본문/continue 본문복사와 함께 **원본 {article,contents} 전체 deep-equal 불변**을 단언했고, 복사 필드 실측 결과 department/departmentCode가 복사되지 않는다는 코드-주석 드리프트(server/index.js 899행)를 발견해 명세에 기록했다. 미검증은 EPS발 2칸·unknown-role 403(도달 불가)이며 news.md 대조 차이 2건(DES발 2칸 미명시·가드 순서 미규정)은 코드를 정본으로 채택했다. AC 실측: 자기 파일 41/41 pass·covered 2/39·lint clean·inventory-check exit 0·리포트 2회 바이트 동일, vacuity 변이 2종(no-end-marker 토큰·원본 불변 뒤집기) 각각 red 실증 후 원복(원복 리포트 바이트 동일)."
     },
     {
       "step": 7,
       "name": "admin-crud",
-      "status": "pending"
+      "status": "done",
+      "summary": "step7 admin-crud: Z 전용 관리 CRUD 6 라우트(#5~#10)를 계약 케이스 2파일(22 테스트·28 관측)과 openapi paths 조각으로 동결했다. 인가 축은 3×(미인증 401 unauthenticated · R 403 forbidden)을 전수로 잠갔고, 거부가 실제로 부작용을 막는지까지 검증한다(거부된 POST의 userId·sourceId가 목록에 없음, 거부된 PUT 후 값 불변, 거부된 DELETE 후 행 잔존). 투영 축은 GET /api/users의 역할 2변형 — 비-Z는 정확 4키(추가 키 1개도 실패), Z는 SAFE_FIELDS 6키에 role·active 포함·password 부재 — 과 receiver-config SAFE_FIELDS 10키(password·apiKey 미노출)를 자기 픽스처 기준으로 단언하고, 응답 본문 전체 문자열에서 bcrypt 접두사·평문 시크릿을 훑어 누출 0건을 확인했다. 예측이 빗나가기 쉬운 3건은 전부 코드 정독 예측대로였다: 중복 userId=500 internal-error, 없는 userId PUT=200 changes:0, 재삭제·비숫자 id DELETE=200 changes:0(멱등, 404 없음). DELETE는 자기가 만든 행만 대상으로 하고 API형 설정은 active:'N'으로 만들어 pull 간섭을 차단한 뒤 마지막 케이스가 회수하며, 수집 기사 불변 검증은 step8 소유임을 명세에 서술했다. AC 실측: 파일 한정 test:contract exit 0(pass 22/fail 0, covered 6/39), 연속 실행 리포트 바이트 동일(sha256 a544935b…), eslint clean, contract-inventory-check exit 0, porcelain 증분은 자기 케이스 2파일뿐(서버·명세·인벤토리 무수정). vacuity 변이 2종(4키→3키, R 403→200)은 각각 fail 1 + exit 1로 red를 실증하고 원복했다."
     },
     {
       "step": 8,
       "name": "collection",
-      "status": "pending"
+      "status": "done",
+      "summary": "수집 인제스트 2 라우트(#35 receive·#36 pull)를 프로파일 3종으로 동결했다: `contract/cases/default/collection.contract.js`(13건 — 토큰 부재/오토큰 401, 미등록 403 unregistered, 비활성 403 inactive, 문자열·객체·payload누락 수신 200, pull의 401/403/`no-active-api-source` 400/`fetch-failed` 400/self-health 200, 설정 행 DELETE 후 기사 존속), `contract/cases/minimal/collection-open.contract.js`(3건 — 무토큰 개방: 미등록이 401이 아니라 403, 등록 소스 200, 임의 토큰 헤더 무시 200), `contract/cases/failclosed/collection-disabled.contract.js`(4건 — receive는 토큰 헤더 유무 무관 503 `collection-disabled`, pull 503, 같은 서버의 health·세션 라우트는 정상). 가드 순서(503 → 401 → 403/400)를 실측으로 잠갔고, pull의 외부 호출은 대상 서버 자신의 `/api/health`와 `http://127.0.0.1:1/`만 써 egress 0을 유지했다(케이스 내 `assertNoEgress` 가드). 실행 결과 13/3/4 전건 green(exit 0), 각 프로파일 리포트가 연속 실행에서 바이트 동일이며 토큰·비밀번호·articleId·타임스탬프 누출 0건이다. vacuity 변이 2종(503→401, `unregistered`→`unregister`)은 각각 exit 1 red를 실증한 뒤 원복해 리포트 바이트 동일까지 재확인했다. 실측으로 드러난 계약 2건(payload 누락도 200으로 빈 자동기사 등록 · pull 성공에 내용 검증 없음)과 구성별 동작 표를 openapi paths 조각(스크래치패드 step8.yaml — 리포 밖에서 YAML 파서로 병합 파싱 검증 완료)에 명시했다."
     },
     {
       "step": 9,
       "name": "media-upload",
-      "status": "pending"
+      "status": "done",
+      "summary": "contract/cases/default/media-upload.contract.js 신설(15 테스트·관측 31건) — 외부 키 없는 서버의 5 라우트 계약을 동결했다: translate는 **200인데 ok:false+reason:'no-key'**(상태코드로 성공 판정 불가, 없는 id만 404), media/search는 항상 200 {ok,items,error} 3키 고정에 error는 불리언 false이고 키 미설정 시 결정적 데모 폴백(이미지 6건 title·link / 영상 4건 title·videoId·url, type 누락·이상값은 전부 video로 정규화, 같은 질의 2회 완전 동일), upload는 base64 JSON으로 /uploads/<32hex>.<ext> 발급(확장자 14종 전수 200·내용 미검사·.PNG→.png 소문자화·filename 에코) + invalid-file 4케이스·too-large(6MB, 82ms) 거부, photos는 업로드 상대경로·https만 통과하고 javascript:/data:/http:/uploads/../ 4종은 400 invalid-src이며 body registeredBy 위조는 무시되고 세션 userId로 stamp됨을 검색 되읽기로 실증했다. 예측표를 먼저 작성한 뒤 실행해 17행 전부 적중(놀란 지점 0)했고, vacuity 변이 2종(translate 200→500, invalid-file→invalid_file)으로 각각 fail 1·exit 1 red를 확인한 뒤 원복해 리포트 바이트 동일까지 재확인했다. 부수 발견 2건을 명세·주석에 기록: /uploads 정적 서빙은 세션 게이트 없이 미인증 200(capability URL 모델 — 이식 시 인증을 붙이면 재임베드가 깨진다), photos/search는 SELECT * 무투영이라 registeredBy가 전 사용자에게 노출된다. AC 실측: 케이스 15/15 pass·covered 5/39·리포트 2회 바이트 동일·eslint clean·inventory-check exit 0·리포 news.db/uploads 무변(업로드 17건 전부 임시 DATA_DIR)."
     },
     {
       "step": 10,
       "name": "distribution",
-      "status": "pending"
+      "status": "done",
+      "summary": "배부 7 라우트를 케이스 3파일로 동결했다(총 26 테스트 전부 green: targets 11 · tick 9 · minimal disabled 6). 동결한 축은 Z 전용 인가 전수(4+3 라우트 × 미인증 401 · R 403 · D 403), 검증 거부 5종 400(invalid-name·invalid-kind·invalid-spool-dir·duplicate-spool-dir·invalid-active), 목록 투영 SAFE_FIELDS 7키(spoolDir 노출이 계약), soft delete 2경로(POST /:id/deactivate와 PUT {active:'N'})와 **비활성 행이 목록에 남는다**는 점, tick의 body 미판독(role·now:2999·targets·articleId 주입 무효 — at이 서버 시계임을 음성 증거로 확인)·GET 미노출 404·요약 6키·경로 무유출·이력 기준 멱등(재실행 시 재배부 0·distributedAt 불변), failures의 {ok,items} shape과 limit 정규화(1·abc·-1 전부 200), retry의 historyId 단일 식별자(누락·문자열·없는 id·여분 필드 전부 404 no-failure), minimal의 tick/retry 503 spool-disabled와 \"인가가 설정 판정보다 먼저\"(비-Z는 503이 아니라 403). 행 삭제 부재는 DELETE /api/distribution-targets/:id 404 + 행 생존 확인으로 실증하고 커버리지 집계 제외 채널(x-distribution-targets-delete·x-distribution-tick-get)에만 기록했다. 실배부 1건으로 임시 스풀에 파일 1개가 실제로 생겼고 리포 안에는 아무것도 생기지 않았으며, 리포트는 2회 실행 바이트 동일 + 민감값 0건이다. 미동결로 남긴 것은 실패 원장이 존재하는 상태의 목록·재전송 성공/409 4종/500 3종과 tick의 in-progress·tick-failed다(excluded (f) — backend 테스트 소유)."
     },
     {
       "step": 11,
       "name": "sse-logs",
-      "status": "pending"
+      "status": "done",
+      "summary": "SSE 2 스트림 + 로그 다이제스트 3라우트(#37 stream·#38 logs-digest·#39 logs-stream)를 케이스 2파일 14 테스트로 동결했다(관측 17건, covered 3/39, 연속 3회 green·리포트 sha256 동일 5ed17ed4…9027, 케이스 duration 662~680ms). 동결 축: 미인증/비-Z는 **스트림을 열기 전** JSON(401 unauthenticated·403 forbidden, content-type이 event-stream이 아님) · 헤더 실측(text/event-stream; charset=utf-8 · no-cache) · ready 프레임 **원문 바이트** `event: ready\\ndata: {\"ok\":true}\\n\\n`(빈 줄 종결자 포함) · 쿠키(sid) 인증 경로 · change 4종(create/lock/update/status) payload 키가 정확히 ['kind'] · 동시 연결 2개 팬아웃 · 로그아웃 후 `event: unauthorized` 1회 + 봉인 · logs replay(log 프레임 record 5키 seq,ts,level,message,line) + live push(seq 증가). 코드↔계획 불일치 2건을 기록했다: (1) 로그인은 같은 userId의 기존 세션을 전부 무효화하므로 A-6의 '전용 세션'은 존재할 수 없다 — sid('R')을 일절 쓰지 않고 소실 역할을 R 하나로 모으는 step3 규약을 따랐고, 그 대가로 **logs 403의 R 축은 미동결**(D로 대체), (2) digest는 갓 기동 서버에서 items가 항상 비므로 record 키 집합 동결은 stream replay가 담당한다. 로그인 예산 실측 = 러너 3 + auth.contract.js 1 + 여기 1 = 5 ≤ 10회/15분(합성 실행 23/23 green으로 검증). 변이 2종(change 키집합 ['kind','articleId'] / 비-Z 기대 200)에서 각각 fail 1·exit 1 red를 확인하고 원복했으며, 리포트 누출 검사 0건·서버 코드 무수정·porcelain 증분은 내 케이스 2파일뿐이다. [오케스트레이터 통합 수정] 서버의 단일 세션 정책(로그인이 같은 userId의 기존 세션을 전부 무효화) 때문에 전체 실행에서 공용 R 세션이 죽어 22건이 red였다 — lib에 공용 세션 갱신 수단(republish)을 추가하고 로그인하는 케이스가 파일 끝에서 공용 세션을 복구하는 규약으로 해결했다(역할 축은 불변). 수정 후 전 프로파일 39/39 커버리지·199 pass·연속 2회 동일."
     },
     {
       "step": 12,

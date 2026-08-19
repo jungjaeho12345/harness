@@ -38,7 +38,8 @@ npm run test:contract -- --base-url-map targets.json --credentials creds.json
 
 - **서버 코드 import 금지** — `server/**`·`src/**`·`web/**`를 import하는 순간 스위트가 Node 구현에 묶인다. 서버 접근은 `contract/lib/http.js`(`api`)·`contract/lib/sse.js`(`openStream`)로만.
 - **비밀번호는 `credentials(role)`로만** 받는다(`contract/lib/session.js`). 요청 body에만 쓰고 로그·리포트·에러 메시지에 넣지 않는다.
-- **로그인 예산**: `POST /api/login`은 15분/10회 IP 레이트리밋 아래 있다. 러너가 프로파일당 R/D/Z 3회 로그인해 세션을 공급하므로 케이스는 `actor(role)`/`sid(role)`를 재사용한다. `default`에서 케이스 직접 로그인은 계획된 소수(step3 성공 1회 + step11 SSE 전용 1회)뿐이다. 로그인 다소비 음성 케이스(잠금·429)는 전부 `auth-negative` 소유다.
+- **로그인 예산**: `POST /api/login`은 15분/10회 IP 레이트리밋 아래 있다. 러너가 프로파일당 R/D/Z 3회 로그인해 세션을 공급하므로 케이스는 `actor(role)`/`sid(role)`를 재사용한다. `default`의 직접 로그인은 계획된 4회(`auth` 2 + `sse-stream` 2)뿐이라 합계 7 ≤ 10이다. 로그인 다소비 음성 케이스(잠금·429)는 전부 `auth-negative` 소유다.
+- **로그인은 공용 세션을 파괴한다 → 복구 의무**: 서버는 단일 세션 정책이라 로그인이 같은 사용자의 기존 세션을 전부 무효화한다. **직접 로그인하는 케이스는 계약 검증을 마친 뒤 마지막에 그 역할로 재로그인해 `republish(role, { sid, user })`(`contract/lib/session.js`)로 공용 세션을 복구한다.** 복구하지 않으면 뒤에 정렬되는 케이스 파일(별도 프로세스)이 죽은 토큰을 읽어 401로 무더기 실패한다. 복구를 피하려고 다른 역할로 갈아타 계약(예: `R`의 403)을 바꾸지 마라 — 역할 축이 곧 계약이다.
 - **리포트는 `record`/`fromResponse`(`contract/lib/record.js`)로만** 남긴다 — 마스킹·정규화는 그 한 곳이 한다. 세션 토큰·쿠키 값·비밀번호·기사 본문·articleId·타임스탬프·절대 경로를 리포트에 담지 마라.
 - **`routeId`는 인벤토리(`docs/api-contract/endpoints.json`) id 또는 `x-` 접두사**여야 한다. `x-`는 인벤토리에 없는 라우트의 관측 전용이며 커버리지 집계에서 제외된다. 그 밖의 미등재 id는 즉시 실패한다(오타가 커버리지를 비켜 가지 못하게).
 - **절대 개수 단언 금지 · 자기 픽스처만 단언** — 사전 존재 데이터에 강건해야 두 서버에서 같은 판정이 나온다.
@@ -49,7 +50,7 @@ npm run test:contract -- --base-url-map targets.json --credentials creds.json
 
 ```
 contract/
-  lib/       http.js(api·q) · session.js(actor·sid·credentials·hasSessions) · record.js(record·fromResponse)
+  lib/       http.js(api·q) · session.js(actor·sid·credentials·hasSessions·republish) · record.js(record·fromResponse)
              fixtures.js(unique·createArticle·createSentArticle·createTarget·createReceiverConfig·acquireLock)
              sse.js(openStream) · profiles.js(PROFILE·requireProfile)
   cases/     <profile>/<domain>.contract.js — 러너가 프로파일 디렉토리의 *.contract.js를 정렬 실행
