@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
@@ -35,6 +35,10 @@ import { compareReports, formatDiffLines } from './contract-diff.mjs';
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
 const SERVER_ENTRY = nodePath.join(REPO_ROOT, 'server', 'index.js');
+// --target spring 대상 서버(68+ Spring auth 슬라이스) — 하네스가 이 jar의 수명을 소유한다.
+const SPRING_POM = nodePath.join(REPO_ROOT, 'server-spring', 'pom.xml');
+const SPRING_JAR_DEFAULT = nodePath.join(REPO_ROOT, 'server-spring', 'target', 'spring-auth.jar');
+const TARGETS = ['node', 'spring'];
 const INVENTORY_FILE = nodePath.join(REPO_ROOT, 'docs', 'api-contract', 'endpoints.json');
 const CASES_ROOT = nodePath.join(REPO_ROOT, 'contract', 'cases');
 const ROLES = ['R', 'D', 'Z'];
@@ -60,10 +64,12 @@ const PROFILES = [
 ];
 const PROFILE_NAMES = PROFILES.map((p) => p.name);
 
-const USAGE = `사용법: node scripts/contract-run.mjs [--profile <name>]... [--files <path>[,<path>]...]
+const USAGE = `사용법: node scripts/contract-run.mjs [--target <node|spring>] [--profile <name>]... [--files <path>[,<path>]...]
                                     [--out <report.json>] [--base-url-map <file.json>] [--credentials <file.json>]
                                     [--boot-check] [--require-full-coverage] [--require-spec-paths]
                                     [--dual-run] [--keep] [--timeout <ms>]
+  --target <name>      대상 서버(기본 node). spring이면 프로파일마다 새 Spring 프로세스(server-spring/target/spring-auth.jar)를
+                       임시 시드 DB(APS_DB_FILE)로 띄운다 — Node 경로와 동형(카운터 누적 방지). --base-url-map과 함께 쓸 수 없다.
   --profile <name>     실행할 프로파일(반복 가능). 미지정=전 프로파일(${PROFILE_NAMES.join('|')}).
   --files <p>[,<p>]... 케이스 파일 명시(반복·콤마 가능). 미지정=contract/cases/<profile>/*.contract.js 전부(정렬).
   --out <path>         리포트 JSON 경로. 미지정=OS 임시 디렉토리(경로를 stdout에 출력 — 리포 오염 금지).
@@ -90,11 +96,12 @@ function parseArgs(argv) {
   };
   const opts = {
     profiles: [], files: [], bootCheck: false, requireFullCoverage: false,
-    requireSpecPaths: false, dualRun: false, keep: false, timeout: 45000,
+    requireSpecPaths: false, dualRun: false, keep: false, timeout: 45000, target: 'node',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--profile') { opts.profiles.push(takeValue(i, '--profile')); i += 1; }
+    if (a === '--target') { opts.target = takeValue(i, '--target'); i += 1; }
+    else if (a === '--profile') { opts.profiles.push(takeValue(i, '--profile')); i += 1; }
     else if (a === '--files') { opts.files.push(...takeValue(i, '--files').split(',').map((s) => s.trim()).filter(Boolean)); i += 1; }
     else if (a === '--out') { opts.out = takeValue(i, '--out'); i += 1; }
     else if (a === '--base-url-map') { opts.baseUrlMap = takeValue(i, '--base-url-map'); i += 1; }
@@ -107,6 +114,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') { opts.timeout = Number(takeValue(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
+  if (!TARGETS.includes(opts.target)) die(`--target 값이 유효하지 않다(${TARGETS.join('|')}): ${opts.target}`);
   for (const p of opts.profiles) {
     if (!PROFILE_NAMES.includes(p)) die(`--profile 값이 유효하지 않다(${PROFILE_NAMES.join('|')}): ${p}`);
   }
@@ -129,6 +137,41 @@ function cleanEnv() {
     'DATA_DIR', 'SPA_DIR', 'PORT', 'HOST', 'NODE_OPTIONS',
     'GOOGLE_API_KEY', 'GOOGLE_CSE_ID', 'YOUTUBE_API_KEY', 'GOOGLE_TRANSLATE_API_KEY',
   ]) delete env[k];
+  return env;
+}
+
+// --- Spring 대상(--target spring) ---
+// jar 경로 해석: APS_SPRING_JAR가 있으면 그것, 없으면 server-spring/target/spring-auth.jar.
+// jar이 없으면 한 번 mvn package(skipTests)로 빌드한다. 빌드 실패는 조용한 skip이 아니라
+// 진단 첨부 + throw(main이 exit 1) — 오프라인/프록시로 못 받으면 blocked로 드러난다.
+function resolveSpringJar() {
+  const envJar = process.env.APS_SPRING_JAR;
+  const jar = envJar ? nodePath.resolve(envJar) : SPRING_JAR_DEFAULT;
+  if (fs.existsSync(jar)) return jar;
+  process.stdout.write(`[spring] jar 없음 → mvn package(skipTests)로 1회 빌드: ${jar}\n`);
+  const mvn = spawnSync('mvn', ['-f', SPRING_POM, '-q', '-DskipTests', 'package'], {
+    cwd: REPO_ROOT, stdio: ['ignore', 'inherit', 'inherit'],
+  });
+  if (mvn.status !== 0) {
+    throw new Error(`Spring jar 빌드 실패(mvn exit=${mvn.status ?? mvn.signal}) — 오프라인/프록시로 의존성을 못 받았을 수 있다(blocked). jar=${jar}`);
+  }
+  if (!fs.existsSync(jar)) {
+    throw new Error(`mvn package는 성공했으나 jar이 없다(finalName/경로 확인): ${jar}`);
+  }
+  return jar;
+}
+
+// Spring 자식 env — 명시 조립(egress 0). PATH·JAVA_HOME만 상속하고 외부 API 키·NODE_*·JAVA_TOOL_OPTIONS는
+// 넘기지 않는다(앱은 outbound가 없다 — ADR-008). APS_DB_FILE만으로 임시 시드 DB에 바인딩한다.
+function springEnv(profile, dbFile, port) {
+  const env = {};
+  if (process.env.PATH) env.PATH = process.env.PATH;
+  if (process.env.JAVA_HOME) env.JAVA_HOME = process.env.JAVA_HOME;
+  env.APS_DB_FILE = dbFile;
+  env.PORT = String(port);
+  env.HOST = profile.host;
+  // prod-cookie 프로파일만 프로덕션 쿠키 속성(Secure·SameSite=None)을 켠다(Node의 NODE_ENV=production과 대칭).
+  if (profile.name === 'prod-cookie') env.APS_PROD_COOKIE = 'true';
   return env;
 }
 
@@ -305,22 +348,31 @@ async function runProfile(profile, opts, ctx) {
 
       // 2. 빈 포트 확보(실제 listen) → 3. 명시 env로 spawn.
       port = await pickFreePort(profile.host);
-      const env = cleanEnv();
-      env.DATA_DIR = dataDir;
-      env.PORT = String(port);
-      env.HOST = profile.host;
-      env.SPA_DIR = ''; // 정적 서빙 off — 39 라우트 밖 표면 제거(측정 조건).
-      if (profile.spool) {
-        const spoolDir = nodePath.join(root, 'spool');
-        fs.mkdirSync(spoolDir);
-        env.DIST_SPOOL_DIR = spoolDir;
-      }
-      if (profile.token) env.COLLECTION_TOKEN = COLLECTION_TEST_TOKEN;
-      Object.assign(env, profile.extraEnv);
+      if (ctx.target === 'spring') {
+        // Spring 대상: 같은 임시 시드 DB(APS_DB_FILE)로 새 java 프로세스를 띄운다(프로파일마다 새 프로세스라
+        // 로그인 레이트리밋/계정잠금 카운터가 프로파일 간 격리된다 — auth-negative가 구조적 red가 되지 않는다).
+        const dbFile = nodePath.join(dataDir, 'news.db');
+        serverChild = spawn('java', ['-jar', ctx.springJar], {
+          cwd: root, env: springEnv(profile, dbFile, port), stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } else {
+        const env = cleanEnv();
+        env.DATA_DIR = dataDir;
+        env.PORT = String(port);
+        env.HOST = profile.host;
+        env.SPA_DIR = ''; // 정적 서빙 off — 39 라우트 밖 표면 제거(측정 조건).
+        if (profile.spool) {
+          const spoolDir = nodePath.join(root, 'spool');
+          fs.mkdirSync(spoolDir);
+          env.DIST_SPOOL_DIR = spoolDir;
+        }
+        if (profile.token) env.COLLECTION_TOKEN = COLLECTION_TEST_TOKEN;
+        Object.assign(env, profile.extraEnv);
 
-      serverChild = spawn(process.execPath, [SERVER_ENTRY], {
-        cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'],
-      });
+        serverChild = spawn(process.execPath, [SERVER_ENTRY], {
+          cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      }
       serverBuf = collectOutput(serverChild);
       baseUrl = `http://127.0.0.1:${port}`; // 접속은 항상 127.0.0.1(failclosed 0.0.0.0 바인딩 포함).
     }
@@ -550,6 +602,9 @@ async function main() {
   // 외부 대상 가드 — 비밀번호 추측 금지(decisions (22)): --credentials 없이는 즉시 실패한다.
   let externalBaseUrls = null;
   if (opts.baseUrlMap) {
+    if (opts.target === 'spring') {
+      die('--target spring은 하네스가 서버 수명을 소유한다 — --base-url-map(외부 대상)과 함께 쓸 수 없다.');
+    }
     if (!opts.credentials) {
       die('외부 대상(--base-url-map)에는 --credentials <file>이 필수다 — 대상 서버의 계정·비밀번호를 추측하지 않는다.');
     }
@@ -566,10 +621,15 @@ async function main() {
   // 선택 프로파일 — 표의 정의 순서를 유지한다(중복 제거).
   const selected = PROFILES.filter((p) => opts.profiles.length === 0 || opts.profiles.includes(p.name));
 
+  // Spring 대상이면 jar을 미리 해석/빌드한다(프로파일 루프 전 1회 — 빌드 실패는 여기서 exit 1로 드러난다).
+  const springJar = opts.target === 'spring' ? resolveSpringJar() : null;
+
   const tmpDirs = [];
   const ctx = {
     credentials,
     externalBaseUrls,
+    target: opts.target,
+    springJar,
     mkTmp(prefix) {
       const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), prefix));
       tmpDirs.push(dir);
@@ -633,7 +693,7 @@ async function main() {
   const report = {
     version: 1,
     meta: {
-      target: externalBaseUrls ? 'external' : 'node',
+      target: externalBaseUrls ? 'external' : opts.target,
       profiles: selected.map((p) => p.name),
       routeCount,
     },
