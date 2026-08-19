@@ -37,4 +37,16 @@ public class AppConfig {
 	SessionCookieWriter sessionCookieWriter(@Value("${APS_PROD_COOKIE:false}") boolean prodCookie) {
 		return new SessionCookieWriter(prodCookie);
 	}
+
+	/** 로그인 정책 — bcrypt 검증·계정잠금(5회/15분). 잠금 카운트는 NewsDb.updateUser 화이트리스트 경유. */
+	@Bean
+	AuthService authService(NewsDb newsDb) {
+		return new AuthService(newsDb);
+	}
+
+	/** POST /api/login IP 레이트리밋(15분/10회) — 11번째 요청이 429(비-JSON). */
+	@Bean
+	LoginRateLimitFilter loginRateLimitFilter() {
+		return new LoginRateLimitFilter();
+	}
 }
