@@ -1,0 +1,14 @@
+{
+  "project": "기사 작성기",
+  "phase": "68-spring-auth",
+  "scope": "포팅 로드맵(docs/porting-plan-cpp-spring.md §7) P1의 **첫 Spring 구현 슬라이스 = auth/session 도메인**만 구현한다. 39 엔드포인트 전부가 아니라 로그인·세션·인증과 그에 필요한 최소 지원 라우트만 다룬다. 대상 계약 케이스 5파일(이미 리포에 있는 것): default/health · default/auth · default/session-guard · auth-negative/login-negative · prod-cookie/cookie-prod. 완료 판정 = 이 5파일을 **하네스가 프로파일마다 새 Spring 프로세스로 띄워** 실행했을 때 전건 green + 같은 파일을 Node에 돌린 리포트와 **contract-diff 0**. 산출물: server-spring/(Spring Boot Maven — health·session·login·logout·session-guard 재도출·계정잠금·레이트리밋·지원 라우트 users/logs-digest/articles-list) + scripts/contract-run.mjs의 --target spring(하네스가 Spring 수명을 소유, 프로파일마다 새 프로세스) + scripts/contract-parity-spring.mjs(Node↔Spring 교차 diff 오케스트레이터). 불변: 리포 news.db 무접촉(하네스가 임시 DATA_DIR 시드) · Spring DDL 0 · DELETE/DROP 0 · 앱 내 타이머/egress 0(ADR-008) · acting role은 세션에서만·매 요청 User 재도출(ADR-004). 이 phase 밖(후속): sse-stream·articles read/write·collection·distribution·media/upload·photos·receiver-config·users 전체 계약·logs/stream·CSRF Origin 가드·minimal/failclosed 프로파일.",
+  "steps": [
+    { "step": 0, "name": "spring-skeleton", "status": "pending" },
+    { "step": 1, "name": "parity-harness", "status": "pending" },
+    { "step": 2, "name": "db-access", "status": "pending" },
+    { "step": 3, "name": "session-core", "status": "pending" },
+    { "step": 4, "name": "auth-endpoints", "status": "pending" },
+    { "step": 5, "name": "guard-support-endpoints", "status": "pending" },
+    { "step": 6, "name": "parity-green", "status": "pending" }
+  ]
+}
