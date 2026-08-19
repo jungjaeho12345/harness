@@ -95,7 +95,7 @@ public class AdminController {
         if (denied != null) {
             return denied;
         }
-        return ok("entries", List.of());
+        return ok("items", List.of()); // Node: { ok:true, items:[...] } — 본문(24h 다이제스트)은 후속 phase 스텁.
     }
 
     /** Z 게이트 — 미인증 401, 비-Z 403. 통과면 null. 판정은 재도출 role 로만 한다. */

@@ -1,12 +1,11 @@
 package harness.server;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,7 +43,8 @@ public class AuthController {
         if (!rateLimiter.allow(req.getRemoteAddr())) {
             return ResponseEntity.status(429)
                     .header("RateLimit-Limit", String.valueOf(rateLimiter.limit()))
-                    .contentType(MediaType.TEXT_HTML)
+                    // charset 을 명시해 Express 의 text/html; charset=utf-8 과 미디어타입 일치(공백/대소문자는 하네스가 흡수).
+                    .contentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8))
                     .body("<!doctype html><html><body>Too many requests, please try again later.</body></html>");
         }
 
@@ -57,20 +57,18 @@ public class AuthController {
         }
 
         String sid = sessions.issue(r.row().userId());
-        ResponseCookie cookie = sessionCookie(sid, COOKIE_MAX_AGE_SECONDS);
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("ok", true);
         resp.put("sessionId", sid);
         resp.put("user", Projections.safe(r.row())); // SAFE_FIELDS 6키(active 포함). password 없음.
-        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie.toString()).body(resp);
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, sessionCookie(sid, COOKIE_MAX_AGE_SECONDS)).body(resp);
     }
 
     @PostMapping("/api/logout")
     public ResponseEntity<Map<String, Object>> logout(HttpServletRequest req) {
         sessions.remove(Sessions.sessionId(req)); // 세션 없어도 성공(멱등).
-        ResponseCookie expired = sessionCookie("", 0);
         Map<String, Object> ok = Map.of("ok", true);
-        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, expired.toString()).body(ok);
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, sessionCookie("", 0)).body(ok);
     }
 
     @GetMapping("/api/session")
@@ -85,16 +83,25 @@ public class AuthController {
         return ResponseEntity.ok(resp);
     }
 
-    /** 세션 쿠키 — app.prod-cookie=true 면 Secure+SameSite=None, false 면 SameSite=Lax(Secure 없음). */
-    private ResponseCookie sessionCookie(String value, long maxAgeSeconds) {
+    /**
+     * 세션 쿠키 헤더 — <b>속성 순서를 Express(cookie lib)와 정확히 맞춘다</b>: name=value; Max-Age; Path;
+     * HttpOnly; [Secure]; SameSite. 계약 리포트(record.js normalizeSetCookie)가 Set-Cookie 문자열을
+     * 속성 순서 보존으로 정규화하므로(Expires 만 제거), Node/Spring diff 0 을 위해 이 순서가 바이트로 일치해야 한다.
+     * Expires 는 정규화가 떨구므로 싣지 않는다(Max-Age 가 만료 계약을 결정적으로 표현).
+     * app.prod-cookie=true → Secure+SameSite=None, false → SameSite=Lax(Secure 없음).
+     */
+    private String sessionCookie(String value, long maxAgeSeconds) {
         boolean prod = config.isProdCookie();
-        return ResponseCookie.from(Sessions.COOKIE_NAME, value)
-                .path("/")
-                .maxAge(Duration.ofSeconds(maxAgeSeconds))
-                .httpOnly(true)
-                .sameSite(prod ? "None" : "Lax")
-                .secure(prod)
-                .build();
+        StringBuilder sb = new StringBuilder();
+        sb.append(Sessions.COOKIE_NAME).append('=').append(value);
+        sb.append("; Max-Age=").append(maxAgeSeconds);
+        sb.append("; Path=/");
+        sb.append("; HttpOnly");
+        if (prod) {
+            sb.append("; Secure");
+        }
+        sb.append("; SameSite=").append(prod ? "None" : "Lax");
+        return sb.toString();
     }
 
     private static String str(Map<String, Object> body, String key) {

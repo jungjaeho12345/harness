@@ -2,7 +2,6 @@ package harness.server;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 /**
@@ -38,11 +37,13 @@ public final class Responses {
         return STATUS_BY_REASON.getOrDefault(reason, FALLBACK);
     }
 
+    // Content-Type 은 명시 지정하지 않는다 — Jackson 협상 + force-response(charset) 로 application/json;
+    // charset=utf-8 을 실어 Express 와 미디어타입을 맞춘다(명시 지정하면 charset 이 빠져 불일치).
     public static ResponseEntity<Map<String, Object>> reject(String reason) {
-        return ResponseEntity.status(statusFor(reason)).contentType(MediaType.APPLICATION_JSON).body(body(reason));
+        return ResponseEntity.status(statusFor(reason)).body(body(reason));
     }
 
     public static ResponseEntity<Map<String, Object>> reject(int status, String reason) {
-        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(body(reason));
+        return ResponseEntity.status(status).body(body(reason));
     }
 }
