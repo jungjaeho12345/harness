@@ -1,0 +1,250 @@
+# 기사 작성기 REST/SSE 계약 — OpenAPI 3.1 실측 스냅샷 (phase 67).
+# 코드가 정본이다(server/index.js + src/services/**) — 불일치 시 이 문서를 코드에 맞춘다.
+# 기계 게이트의 입력은 endpoints.json이다(decisions (3)) — 이 YAML은 사람·Spring 도구용이며
+# 자동 판정은 "인벤토리의 모든 method+path 문자열이 존재하는가"(scripts/contract-inventory-check.mjs)까지다.
+openapi: 3.1.0
+info:
+  title: 기사 작성기 API (계약 동결 스냅샷)
+  version: 1.0.0
+  description: >-
+    코드가 정본이며 이 문서는 실측 스냅샷이다(2026-08-19, phase 67).
+    39 라우트(REST 37 + SSE 2)의 계약을 동결한다. 측정 조건: SPA_DIR 미설정 ·
+    외부 API 키 미설정 · .env 미로드 · NODE_ENV 미설정(prod-cookie 프로파일 제외).
+    상태코드로 성공을 판정할 수 없다 — 200인데 ok:false인 graceful 응답이 존재한다(번역).
+servers:
+  - url: http://127.0.0.1:3001
+    description: 예시 — 계약 스위트는 CONTRACT_BASE_URL로만 서버를 가리킨다
+tags:
+  - name: auth
+    description: 로그인/로그아웃/세션 복원
+  - name: users
+    description: 사용자 관리(Z) + 명단 조회
+  - name: receiver-config
+    description: 수집 수신 설정(Z 전용)
+  - name: articles
+    description: 기사 조회/검색/작성/수정/전이/파생/번역/이력
+  - name: locks
+    description: 편집 잠금(lock/unlock/force-unlock)
+  - name: media
+    description: 미디어 검색 프록시 · 업로드 · 사진DB
+  - name: collection
+    description: 수집 인제스트(receive/pull — 토큰·loopback)
+  - name: distribution
+    description: 배부 수신처 CRUD · tick · 실패/재전송(Z 전용, ADR-008)
+  - name: stream
+    description: SSE(무효화 신호 스트림 · Z 전용 로그 스트림) + 로그 다이제스트
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: sid
+      description: >-
+        로그인 시 발급되는 64-hex 세션 토큰 쿠키. HttpOnly · Path=/ · Max-Age=3600 ·
+        비프로덕션 SameSite=Lax / 프로덕션 Secure; SameSite=None. 판독은 쿠키 우선.
+    sessionHeader:
+      type: apiKey
+      in: header
+      name: x-session-id
+      description: 세션 토큰의 헤더 폴백(쿠키가 없을 때). 쿼리스트링 폴백은 없다.
+    collectionToken:
+      type: apiKey
+      in: header
+      name: x-collection-token
+      description: >-
+        수집 인제스트 전용(COLLECTION_TOKEN 설정 시 필수). 세션과 무관하다.
+        비-loopback 바인딩 + 토큰 미설정이면 수집 라우트는 503 collection-disabled(fail-closed).
+  parameters:
+    # x-edit-client는 인증 수단이 아니라 편집 탭(잠금 보유자) 식별자다 — securityScheme이 아니라
+    # 파라미터로 둔다. 인가는 항상 "검증된 세션의 userId + 이 값" 대조다(헤더 단독 인가 금지, ADR-004).
+    EditClientHeader:
+      name: x-edit-client
+      in: header
+      required: false
+      schema:
+        type: string
+      description: 편집 탭 식별자(잠금 보유자 판정) — lock/unlock/PUT 기사 수정에서 사용.
+  schemas:
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          const: true
+    ErrorResponse:
+      type: object
+      required: [ok, reason]
+      properties:
+        ok:
+          const: false
+        reason:
+          type: string
+          description: 고정 사유 토큰 — 매핑 전수는 reason-tokens.md(표 1·2·3 합집합 39종).
+          enum:
+            - unauthenticated
+            - invalid-credentials
+            - inactive
+            - forbidden
+            - not-holder
+            - not-dps
+            - not-found
+            - locked
+            - forbidden-transition
+            - unknown-role
+            - no-end-marker
+            - unknown-action
+            - unknown-mode
+            - unknown-capability
+            - unregistered
+            - spool-disabled
+            - tick-failed
+            - no-failure
+            - status-changed
+            - kind-changed
+            - stale-cycle
+            - retry-in-flight
+            - invalid-file
+            - too-large
+            - invalid-src
+            - spool-write-failed
+            - invalid-spool-dir
+            - invalid-article-id
+            - collection-disabled
+            - forbidden-origin
+            - internal-error
+            - invalid-name
+            - invalid-kind
+            - invalid-active
+            - duplicate-spool-dir
+            - no-active-api-source
+            - fetch-failed
+            - no-key
+            - error
+    ContentsRow:
+      type: object
+      description: >-
+        Contents 행의 응답 투영(contentsProjection.toPublicContents 통과 후).
+        lockerSessionId·lockerClientId 컬럼은 어떤 응답에도 **없다**(세션 토큰 원문·편집 탭
+        식별자 = 권한 상승 재료 — PRIVATE_CONTENTS_COLS 단일 출처). 시간은 ISO-8601 UTC 문자열.
+      properties:
+        articleId: { type: string }
+        title: { type: [string, "null"] }
+        content: { type: [string, "null"], description: 평문 컬럼 — 현재 미사용 }
+        author: { type: [string, "null"] }
+        modifier: { type: [string, "null"] }
+        sender: { type: [string, "null"] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        editedAt: { type: [string, "null"] }
+        sentAt: { type: [string, "null"] }
+        distributedAt: { type: [string, "null"], description: 스풀 기록 시각 = 배부 지시 완료(발송 완료 아님, ADR-008) }
+        embargoAt: { type: [string, "null"] }
+        secondEmbargoAt: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [RDS, DPS, RRH, RRK, DDH, DDK, DPD, DES, EPS, EEK, EEH]
+        lockYN: { type: [string, "null"], enum: [Y, N, null] }
+        lockerUserId: { type: [string, "null"], description: 잠금 표시 UI 계약 — 노출 유지 }
+        lockedAt: { type: [string, "null"] }
+        coAuthor: { type: [string, "null"] }
+        region: { type: [string, "null"] }
+        attribute: { type: [string, "null"] }
+        keyword: { type: [string, "null"] }
+        internalComment: { type: [string, "null"] }
+        externalComment: { type: [string, "null"] }
+        attachmentFile: { type: [string, "null"] }
+        referenceFile: { type: [string, "null"] }
+    Article:
+      type: object
+      description: Article 행(본문 마크업 담당) — GET /api/articles/:id의 article 키.
+      properties:
+        articleId: { type: string }
+        title: { type: [string, "null"] }
+        content: { type: [string, "null"], description: 평문 컬럼 — 현재 미사용 }
+        markupVersion:
+          type: [string, "null"]
+          description: '블록 JSON 직렬화 문자열 — {"format":"yh-editor","version":1,"blocks":[...]}'
+        modifier: { type: [string, "null"] }
+    HistoryRow:
+      type: object
+      description: >-
+        ArticleHistory 행(append-only 원장). 목록(GET /api/articles/:id/history)은 본문 blob 없이
+        hasSnapshot 파생 필드를 싣고, 본문은 단건 스냅샷 라우트로 지연 조회한다.
+      properties:
+        id: { type: integer }
+        articleId: { type: string }
+        eventType:
+          type: string
+          enum: [create, edit, status, distribute, distribute-failed, distribute-retry]
+        action: { type: [string, "null"], description: status=send|hold|kill|approveDelete|embargo / distribute=press|nonpress }
+        fromStatus: { type: [string, "null"] }
+        toStatus: { type: [string, "null"] }
+        actorUserId: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        snapshotTitle: { type: [string, "null"] }
+        targetId: { type: [integer, "null"], description: 배부 실패/재전송 이벤트의 수신처 id — 그 외 NULL }
+        reason: { type: [string, "null"], description: 배부 실패 고정 토큰 — 경로·본문·예외 원문 없음 }
+        hasSnapshot: { type: boolean, description: 목록 조회의 파생 필드(본문 스냅샷 존재 여부) }
+    User:
+      type: object
+      description: Z 조회·로그인 응답의 사용자(SAFE_FIELDS) — password·잠금 필드(failedLoginCount 등)는 어떤 응답에도 없다.
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        role: { type: string, enum: [R, D, Z] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+        active: { type: [string, "null"], enum: [Y, N, null] }
+    UserPublic:
+      type: object
+      description: 비-Z의 GET /api/users 투영(정확 4필드).
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+    DistributionTarget:
+      type: object
+      description: 배부 수신처(ADR-008) — 행 삭제 없음(deactivate soft delete만).
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { type: string, enum: [press, nonpress] }
+        spoolDir: { type: string, description: 스풀 하위 폴더 슬러그 }
+        active: { type: string, enum: [Y, N] }
+        createdAt: { type: [string, "null"] }
+        updatedAt: { type: [string, "null"] }
+    ReceiverConfig:
+      type: object
+      description: 수집 수신 설정의 응답 투영(SAFE_FIELDS 10키) — password·apiKey는 쓰기 전용 시크릿으로 어떤 응답에도 없다.
+      properties:
+        id: { type: integer }
+        sourceId: { type: [string, "null"] }
+        type: { type: [string, "null"], enum: [FTP, API, null] }
+        name: { type: [string, "null"] }
+        host: { type: [string, "null"] }
+        port: { type: [string, "null"] }
+        apiEndpoint: { type: [string, "null"] }
+        active: { type: [string, "null"], enum: [Y, N, null] }
+        createdAt: { type: [string, "null"] }
+        username: { type: [string, "null"] }
+# paths는 step3~step11이 도메인별로 append한다 — 다른 step이 쓴 절은 수정하지 않는다(decisions (18)).
+# 아래 /api/health 1건은 후속 step이 따라 쓸 형식 본보기다(요약·설명·응답 스키마 참조 방식).
+# health는 9개 도메인 태그 밖의 liveness 프로브다 — 도메인 라우트는 반드시 tags를 명시한다.
+paths:
+  /api/health:
+    get:
+      operationId: health
+      summary: 헬스체크
+      description: >-
+        항상 200 {"ok":true}. 인증 불요. Electron 셸의 서버 주소 프로브가 상태코드가 아니라
+        본문 {ok:true}까지 판정하므로 본문 shape이 계약이다.
+      security: []
+      responses:
+        '200':
+          description: 서버 생존
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'

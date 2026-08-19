@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "health",
+      "method": "GET",
+      "path": "/api/health",
+      "auth": "public",
+      "profile": "default",
+      "expect": ["success"],
+      "notes": "응답 {ok:true} 고정 — Electron 셸 프로브가 본문까지 판정한다."
+    },
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/api/login",
+      "auth": "public",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "locked", "rate-limited"],
+      "notes": "unauthenticated=invalid-credentials 401. locked 423(계정 잠금 5회/15분)·rate-limited 429(IP 15분/10회)는 auth-negative 프로파일 소유. inactive 403은 도달 불가(시드 계정 비활성화 금지) — README 미동결 목록."
+    },
+    {
+      "id": "logout",
+      "method": "POST",
+      "path": "/api/logout",
+      "auth": "public",
+      "profile": "default",
+      "expect": ["success"],
+      "notes": "항상 200 {ok:true}(미인증 포함) + sid 쿠키 Max-Age=0. body.sessionId 폴백 판독 있음."
+    },
+    {
+      "id": "session",
+      "method": "GET",
+      "path": "/api/session",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "F5 세션 복원 — 200 {ok:true,user:{userId,name,role,department,departmentCode,active}}."
+    },
+    {
+      "id": "users-list",
+      "method": "GET",
+      "path": "/api/users",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "Z=전체 명단(SAFE_FIELDS 6키 — password·잠금 필드 없음), 비-Z=4필드 투영(userId,name,department,departmentCode). 둘 다 success 태그."
+    },
+    {
+      "id": "users-create",
+      "method": "POST",
+      "path": "/api/users",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "입력 검증 없음(role 미검증 포함) — 게이트 통과 시 항상 성공. 응답 user에 password 없음."
+    },
+    {
+      "id": "users-update",
+      "method": "PUT",
+      "path": "/api/users/:id",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "존재하지 않는 id도 200 {ok:true,changes:0} — not-found 없음."
+    },
+    {
+      "id": "receiver-config-list",
+      "method": "GET",
+      "path": "/api/receiver-config",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "SAFE_FIELDS 10키 — password·apiKey 미노출(쓰기 전용 시크릿)."
+    },
+    {
+      "id": "receiver-config-create",
+      "method": "POST",
+      "path": "/api/receiver-config",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "입력 검증 없음 — 게이트 통과 시 항상 성공({ok:true,id})."
+    },
+    {
+      "id": "receiver-config-delete",
+      "method": "DELETE",
+      "path": "/api/receiver-config/:id",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "설정 행만 삭제(수집된 기사 불변). 없는 id도 200 {ok:true,changes:0}. 케이스는 자기가 만든 행만 지운다(decisions (14))."
+    },
+    {
+      "id": "distribution-targets-list",
+      "method": "GET",
+      "path": "/api/distribution-targets",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "삭제 라우트 없음 — 제거는 deactivate(soft delete)뿐."
+    },
+    {
+      "id": "distribution-targets-create",
+      "method": "POST",
+      "path": "/api/distribution-targets",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "validation"],
+      "notes": "validation=invalid-name·invalid-kind·invalid-spool-dir·duplicate-spool-dir 400(fail fallback — 전역 매핑 없음)."
+    },
+    {
+      "id": "distribution-targets-update",
+      "method": "PUT",
+      "path": "/api/distribution-targets/:id",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "not-found", "validation"],
+      "notes": "validation=invalid-kind·invalid-active 등 400(fail fallback)."
+    },
+    {
+      "id": "distribution-targets-deactivate",
+      "method": "POST",
+      "path": "/api/distribution-targets/:id/deactivate",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "not-found"],
+      "notes": "active='N' soft delete — PUT body {active:'N'}과 같은 전이의 두 번째 진입점."
+    },
+    {
+      "id": "distribution-tick",
+      "method": "POST",
+      "path": "/api/distribution/tick",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "disabled"],
+      "notes": "body 미판독(파라미터를 받으면 엠바고 무력화 — ADR-004). disabled=spool-disabled 503(minimal 프로파일). 인가가 스풀 판정보다 먼저다."
+    },
+    {
+      "id": "distribution-failures",
+      "method": "GET",
+      "path": "/api/distribution/failures",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "빈 목록 shape + 인가만 동결 — 실패 행 존재 상태는 API로 결정적으로 만들 수 없어 backend 테스트 소유(excluded (f)). 쿼리는 limit만 전달."
+    },
+    {
+      "id": "distribution-retry",
+      "method": "POST",
+      "path": "/api/distribution/retry",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["unauthenticated", "forbidden", "not-found", "disabled"],
+      "notes": "not-found=no-failure 404. success·409 계열(stale-cycle 등)·500 계열은 실패 원장을 API로 만들 수 없어 미동결(excluded (f)) — README 미동결 목록. disabled=spool-disabled 503(minimal)."
+    },
+    {
+      "id": "articles-search",
+      "method": "GET",
+      "path": "/api/articles/search",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "?q= 전문 검색 — 응답 행은 투영(lockerSessionId·lockerClientId 없음)."
+    },
+    {
+      "id": "articles-list",
+      "method": "GET",
+      "path": "/api/articles",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "필터 화이트리스트는 FILTER_KEYS 13키(부록 A의 '15키'는 드리프트 — 코드 정본). 반복 쿼리 키는 배열(IN). 페이징·총수 필드 없음."
+    },
+    {
+      "id": "articles-get",
+      "method": "GET",
+      "path": "/api/articles/:id",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "not-found"],
+      "notes": "200 {ok:true,article,contents} — 본문(markupVersion) 포함. contents는 투영 후."
+    },
+    {
+      "id": "articles-history",
+      "method": "GET",
+      "path": "/api/articles/:id/history",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "이력 없음·기사 없음도 200 빈 배열(404 아님). ?sendOnly=1 또는 ?type=send 필터."
+    },
+    {
+      "id": "articles-history-snapshot",
+      "method": "GET",
+      "path": "/api/articles/:id/history/:historyId",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "not-found"],
+      "notes": "비정수 historyId·스냅샷 부재·타 기사 스코프 전부 404 not-found."
+    },
+    {
+      "id": "articles-create",
+      "method": "POST",
+      "path": "/api/articles",
+      "auth": "session-role",
+      "roles": ["R", "D", "Z"],
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "초기 status는 서버 결정(기본 RDS — 송고 의도여도 DPS 아님·배부 훅 미발화). body.role 무시, 부서·작성자 미전송 시 세션 stamp. 비 R/D/Z 403은 로그인 예산 규율로 도달 경로 없음 — README 미동결 목록. 본문 limit 10mb(라우트 자체 파서)."
+    },
+    {
+      "id": "articles-action",
+      "method": "POST",
+      "path": "/api/articles/:id/action",
+      "auth": "session-role",
+      "roles": ["R", "D", "Z"],
+      "profile": "minimal",
+      "expect": ["success", "unauthenticated", "validation", "not-found", "conflict"],
+      "notes": "주 프로파일 minimal — 배부 훅 비활성이라 전이 관측이 결정적(step6). 배부 켜진 송고 계약은 step10(default) 소유. validation=unknown-action·no-end-marker 400, conflict=forbidden-transition 409(fail fallback도 409)."
+    },
+    {
+      "id": "articles-derive",
+      "method": "POST",
+      "path": "/api/articles/:id/derive",
+      "auth": "session-role",
+      "roles": ["R", "D", "Z"],
+      "profile": "minimal",
+      "expect": ["success", "unauthenticated", "validation", "not-found"],
+      "notes": "주 프로파일 minimal(articles-action과 동일 사유). validation=unknown-mode 400. author는 세션 stamp — 클라 author/role/status 무시."
+    },
+    {
+      "id": "articles-translate",
+      "method": "POST",
+      "path": "/api/articles/:id/translate",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["unauthenticated", "not-found", "graceful"],
+      "notes": "graceful=키 미설정 프로파일에서 200 {ok:false,reason:'no-key',translatedText:원문}. ok:true 번역 성공은 외부 키 필요 — 미동결(README). 본문은 서버 DB에서만 취한다."
+    },
+    {
+      "id": "articles-update",
+      "method": "PUT",
+      "path": "/api/articles/:id",
+      "auth": "lock-holder",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "not-found"],
+      "notes": "forbidden=not-holder 403(x-edit-client 탭 불일치·비보유자). 본문 limit 10mb(라우트 자체 파서). 성공은 {ok:true,changes}."
+    },
+    {
+      "id": "articles-lock",
+      "method": "POST",
+      "path": "/api/articles/:id/lock",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "not-found", "forbidden"],
+      "notes": "DPS 기사는 D 전용(editDps — Z 포함 비 D는 403 forbidden). 잠금 충돌은 401 reason:'locked'(전역 매핑 — 423 아님·코드 주석의 409 언급은 드리프트). x-edit-client가 보유자 식별자."
+    },
+    {
+      "id": "articles-unlock",
+      "method": "POST",
+      "path": "/api/articles/:id/unlock",
+      "auth": "lock-holder",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "not-found"],
+      "notes": "이미 해제된 잠금 해제는 멱등 200. forbidden=not-holder 403."
+    },
+    {
+      "id": "articles-force-unlock",
+      "method": "POST",
+      "path": "/api/articles/:id/force-unlock",
+      "auth": "session-role",
+      "roles": ["D", "Z"],
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "not-found"],
+      "notes": "R은 403 FORBIDDEN(라우트 직접)."
+    },
+    {
+      "id": "media-search",
+      "method": "GET",
+      "path": "/api/media/search",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "키 미설정이면 결정적 데모 폴백 — 항상 200 {ok:true,items,error}. 서비스의 demo 플래그는 라우트가 떨군다(응답 키 3종 고정)."
+    },
+    {
+      "id": "upload",
+      "method": "POST",
+      "path": "/api/upload",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "validation"],
+      "notes": "base64 JSON 계약(14확장자·디코드 5MB). validation=invalid-file·too-large 400(라우트 직접). 5MB 정확 경계는 미동결(excluded (j)). 성공 path=/uploads/<32hex>.<ext>."
+    },
+    {
+      "id": "photos-create",
+      "method": "POST",
+      "path": "/api/photos",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "validation"],
+      "notes": "validation=invalid-src 400(라우트 직접 — photoService 판정). registeredBy는 세션 stamp·append-only."
+    },
+    {
+      "id": "photos-search",
+      "method": "GET",
+      "path": "/api/photos/search",
+      "auth": "session",
+      "profile": "default",
+      "expect": ["success", "unauthenticated"],
+      "notes": "캡션 부분일치(LIKE)·최신 등록 우선."
+    },
+    {
+      "id": "collection-receive",
+      "method": "POST",
+      "path": "/api/collection/receive",
+      "auth": "token",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden", "disabled"],
+      "notes": "default=x-collection-token 일치 시 success·불일치/부재 401. minimal=무토큰 개방(step8), failclosed=503 collection-disabled(step8). forbidden=unregistered·inactive 403."
+    },
+    {
+      "id": "collection-pull",
+      "method": "POST",
+      "path": "/api/collection/pull",
+      "auth": "token",
+      "profile": "default",
+      "expect": ["unauthenticated", "forbidden", "validation", "disabled"],
+      "notes": "success는 실 API 소스 호출 필요(egress 0 규율) — README 미동결 목록. validation=no-active-api-source·fetch-failed 400(fail fallback — 전역 매핑 없음). failclosed=503."
+    },
+    {
+      "id": "stream",
+      "method": "GET",
+      "path": "/api/stream",
+      "auth": "session",
+      "profile": "default",
+      "sse": true,
+      "expect": ["success", "unauthenticated"],
+      "notes": "success=ready 프레임 수신. 미인증은 스트림을 열기 전 401 JSON. 무효화 신호만(행 데이터 없음) — sse.md."
+    },
+    {
+      "id": "logs-digest",
+      "method": "GET",
+      "path": "/api/logs/digest",
+      "auth": "admin",
+      "profile": "default",
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "24h 창(06:00 KST 정렬) 경계는 미동결(excluded (i)) — shape·인가만 동결."
+    },
+    {
+      "id": "logs-stream",
+      "method": "GET",
+      "path": "/api/logs/stream",
+      "auth": "admin",
+      "profile": "default",
+      "sse": true,
+      "expect": ["success", "unauthenticated", "forbidden"],
+      "notes": "Z 전용 실데이터 push(ADR-007 예외). 401/403은 스트림을 열기 전 JSON. 접속 시 최근 2000건 replay 후 실시간 — sse.md."
+    }
+  ]
+}

@@ -11,7 +11,8 @@
     {
       "step": 0,
       "name": "contract-inventory",
-      "status": "pending"
+      "status": "done",
+      "summary": "docs/api-contract/ 신설(README.md·endpoints.json·reason-tokens.md·sse.md·openapi.yaml 뼈대) + scripts/contract-inventory-check.mjs. 실측: 라우트 39행(GET 16/POST 19/PUT 3/DELETE 1 — 부록 A와 완전 일치, REST 37+SSE 2), 전역 STATUS_BY_REASON 22종 + 라우트 로컬 15행 + 서비스 유출 토큰 → HTTP 관측 가능 reason 합집합 39종(코드 grep 대 openapi enum 기계 대조 diff 0, 표1 22키는 코드 선언 순서까지 일치). 드리프트 검사: 기본 exit 0(inventory-ok routes=39, spec-paths 미충족은 경고) · --require-spec-paths에서 미기재 31경로 exit 1. 변이 실증 2종: (a) photos-search 1행 삭제 → 'route in server but missing in inventory: GET /api/photos/search' 포함 3에러 exit 1, (b) articles-get path 오타 → 양방향 차이 정확 2건 exit 1, 각각 원복 후 green 재확인. 코드↔문서 드리프트 기록 2건(README 착수): 계획서 '토큰 21종'↔실측 22+로컬, 부록 A #19 '필터 15키'↔FILTER_KEYS 13키. 추가 발견(코드 내부): server/index.js 629행 주석이 전역 locked를 409로 언급하나 실값 401(잠금 충돌 401 — 기존 테스트도 401 단언, reason-tokens.md 표1 #8에 기록) · not-dps/unknown-role/unknown-capability 3토큰은 매핑 존재하나 현행 HTTP 도달 경로 없음. expect 태그는 도달 가능만 수록 — 도달 불가 축(login inactive 403·비 R/D/Z 403·retry success/409·pull success·translate ok:true)은 README 미동결 목록에 기록. AC: npm test 1327/1327(51 suites)·lint clean·AC 2번 커맨드 출력 '39 {\"GET\":16,\"POST\":19,\"PUT\":3,\"DELETE\":1} 39'. 서버 코드·package.json 무수정, 새 의존성 0."
     },
     {
       "step": 1,
