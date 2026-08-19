@@ -22,6 +22,19 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- SQLite JDBC — 하네스가 시드한 임시 news.db(APS_DB_FILE) 접근. 원본 news.db 무접촉. -->
+		<dependency>
+			<groupId>org.xerial</groupId>
+			<artifactId>sqlite-jdbc</artifactId>
+			<version>3.47.2.0</version>
+		</dependency>
+
+		<!-- BCryptPasswordEncoder(검증·해시)만 사용 — starter-security 금지(전 라우트 기본 잠금 함정). -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-crypto</artifactId>
+		</dependency>
+
 		<!-- 테스트 스타터 (MockMvc). starter-security 금지: 전 라우트 기본 잠금 함정. -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
