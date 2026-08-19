@@ -1,0 +1,19 @@
+# 빌드 산출물 — 커밋 금지
+target/
+
+# 런타임 데이터 디렉토리(임시 news.db 사본 등) — 커밋 금지
+data/
+*.log
+
+# maven wrapper 는 스크립트만 커밋한다(jar 는 실행 시 캐시에서 온다)
+.mvn/wrapper/maven-wrapper.jar
+
+### IDE ###
+.idea
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings
+.vscode/

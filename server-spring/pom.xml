@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.0</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>harness</groupId>
+	<artifactId>server-spring</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>server-spring</name>
+	<description>기사 작성기 Spring 서버 (phase 68 — REST 계약 패리티 대상)</description>
+
+	<properties>
+		<java.version>21</java.version>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+	</properties>
+
+	<dependencies>
+		<!--
+			이 step(0)이 필요로 하는 최소 의존성만 둔다.
+			- DB/JDBC 의존성은 step2가, BCrypt(spring-security-crypto)는 step4가 각자 추가한다
+			  (안 쓰는 의존성이 미리 들어가면 step2의 오프라인 폴백 판정이 흐려진다 — index.json decisions (3)).
+			- spring-boot-starter-security / spring-session-* 는 이 phase 전체에서 금지다:
+			  전 라우트 기본 잠금과 프레임워크 기본 401/403 shape이 계약({ok:false, reason:...} JSON)과
+			  충돌한다(P0 스파이크 pom.xml 주석의 실측 경고).
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>
