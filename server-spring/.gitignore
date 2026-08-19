@@ -1,0 +1,14 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.properties
+.mvn/wrapper/maven-wrapper.jar
+
+### IDE ###
+.idea
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings
+.vscode/

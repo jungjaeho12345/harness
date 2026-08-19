@@ -1,0 +1,12 @@
+{
+  "project": "article-production-system",
+  "phase": "68-spring-auth",
+  "steps": [
+    { "step": 0, "name": "spring-skeleton", "status": "completed", "completed_at": "2026-08-19T09:10:00+0900", "summary": "server-spring/ 신설(Maven, Java21, Spring Boot 4.1.0). deps: spring-boot-starter-webmvc + sqlite-jdbc 3.47.2.0 + spring-security-crypto (starter-security 미도입). 패키지 base harness.server. Application(@SpringBootApplication + @EnableConfigurationProperties(AppConfig)), AppConfig(@ConfigurationProperties(prefix=app): dbPath 기본값 없음·prodCookie 기본 false), HealthController(GET /api/health → {ok:true} 정확 1키 JSON). Maven wrapper 동봉(./mvnw, chmod +x — Boot 4.1은 WebMvcTest 패키지가 org.springframework.boot.webmvc.test.autoconfigure). 테스트: HealthControllerTest @WebMvcTest 슬라이스(DB 비의존) green. CORS/CSRF/CSP/HTTPS강제/전역레이트리밋·정적서빙 미구현(계약 표면 밖). 리포 news.db 부재(무접촉). npm test 1328 불변." },
+    { "step": 1, "name": "db-access", "status": "pending" },
+    { "step": 2, "name": "session-core", "status": "pending" },
+    { "step": 3, "name": "auth-login", "status": "pending" },
+    { "step": 4, "name": "admin-routes", "status": "pending" },
+    { "step": 5, "name": "spring-contract-harness", "status": "pending" }
+  ]
+}
