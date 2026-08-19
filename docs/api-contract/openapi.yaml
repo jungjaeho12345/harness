@@ -1,0 +1,3075 @@
+# 기사 작성기 REST/SSE 계약 — OpenAPI 3.1 실측 스냅샷 (phase 67).
+# 코드가 정본이다(server/index.js + src/services/**) — 불일치 시 이 문서를 코드에 맞춘다.
+# 기계 게이트의 입력은 endpoints.json이다(decisions (3)) — 이 YAML은 사람·Spring 도구용이며
+# 자동 판정은 "인벤토리 39행과 paths 절의 (method, path) 오퍼레이션이 1:1인가"까지다
+# (scripts/contract-inventory-check.mjs --require-spec-paths — Express 표기 ':id'와 이 문서의 '{id}'를
+#  정규화해 양방향 비교한다. 스키마 수준 검증은 YAML 파서 의존성이 필요해 미도입 — open_questions (a)).
+# 경로 파라미터가 있는 path 항목에는 실측 Express 경로를 x-express-path로 함께 적는다(표기 대조용).
+openapi: 3.1.0
+info:
+  title: 기사 작성기 API (계약 동결 스냅샷)
+  version: 1.0.0
+  description: >-
+    코드가 정본이며 이 문서는 실측 스냅샷이다(2026-08-19, phase 67).
+    39 라우트(REST 37 + SSE 2)의 계약을 동결한다. 측정 조건: SPA_DIR 미설정 ·
+    외부 API 키 미설정 · .env 미로드 · NODE_ENV 미설정(prod-cookie 프로파일 제외).
+    상태코드로 성공을 판정할 수 없다 — 200인데 ok:false인 graceful 응답이 존재한다(번역).
+servers:
+  - url: http://127.0.0.1:3001
+    description: 예시 — 계약 스위트는 CONTRACT_BASE_URL로만 서버를 가리킨다
+tags:
+  - name: auth
+    description: 로그인/로그아웃/세션 복원
+  - name: users
+    description: 사용자 관리(Z) + 명단 조회
+  - name: receiver-config
+    description: 수집 수신 설정(Z 전용)
+  - name: articles
+    description: 기사 조회/검색/작성/수정/전이/파생/번역/이력
+  - name: locks
+    description: 편집 잠금(lock/unlock/force-unlock)
+  - name: media
+    description: 미디어 검색 프록시 · 업로드 · 사진DB
+  - name: collection
+    description: 수집 인제스트(receive/pull — 토큰·loopback)
+  - name: distribution
+    description: 배부 수신처 CRUD · tick · 실패/재전송(Z 전용, ADR-008)
+  - name: stream
+    description: SSE(무효화 신호 스트림 · Z 전용 로그 스트림) + 로그 다이제스트
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: sid
+      description: >-
+        로그인 시 발급되는 64-hex 세션 토큰 쿠키. HttpOnly · Path=/ · Max-Age=3600 ·
+        비프로덕션 SameSite=Lax / 프로덕션 Secure; SameSite=None. 판독은 쿠키 우선.
+    sessionHeader:
+      type: apiKey
+      in: header
+      name: x-session-id
+      description: 세션 토큰의 헤더 폴백(쿠키가 없을 때). 쿼리스트링 폴백은 없다.
+    collectionToken:
+      type: apiKey
+      in: header
+      name: x-collection-token
+      description: >-
+        수집 인제스트 전용(COLLECTION_TOKEN 설정 시 필수). 세션과 무관하다.
+        비-loopback 바인딩 + 토큰 미설정이면 수집 라우트는 503 collection-disabled(fail-closed).
+  parameters:
+    # x-edit-client는 인증 수단이 아니라 편집 탭(잠금 보유자) 식별자다 — securityScheme이 아니라
+    # 파라미터로 둔다. 인가는 항상 "검증된 세션의 userId + 이 값" 대조다(헤더 단독 인가 금지, ADR-004).
+    EditClientHeader:
+      name: x-edit-client
+      in: header
+      required: false
+      schema:
+        type: string
+      description: 편집 탭 식별자(잠금 보유자 판정) — lock/unlock/PUT 기사 수정에서 사용.
+  schemas:
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          const: true
+    ErrorResponse:
+      type: object
+      required: [ok, reason]
+      properties:
+        ok:
+          const: false
+        reason:
+          type: string
+          description: 고정 사유 토큰 — 매핑 전수는 reason-tokens.md(표 1·2·3 합집합 39종).
+          enum:
+            - unauthenticated
+            - invalid-credentials
+            - inactive
+            - forbidden
+            - not-holder
+            - not-dps
+            - not-found
+            - locked
+            - forbidden-transition
+            - unknown-role
+            - no-end-marker
+            - unknown-action
+            - unknown-mode
+            - unknown-capability
+            - unregistered
+            - spool-disabled
+            - tick-failed
+            - no-failure
+            - status-changed
+            - kind-changed
+            - stale-cycle
+            - retry-in-flight
+            - invalid-file
+            - too-large
+            - invalid-src
+            - spool-write-failed
+            - invalid-spool-dir
+            - invalid-article-id
+            - collection-disabled
+            - forbidden-origin
+            - internal-error
+            - invalid-name
+            - invalid-kind
+            - invalid-active
+            - duplicate-spool-dir
+            - no-active-api-source
+            - fetch-failed
+            - no-key
+            - error
+    ContentsRow:
+      type: object
+      description: >-
+        Contents 행의 응답 투영(contentsProjection.toPublicContents 통과 후).
+        lockerSessionId·lockerClientId 컬럼은 어떤 응답에도 **없다**(세션 토큰 원문·편집 탭
+        식별자 = 권한 상승 재료 — PRIVATE_CONTENTS_COLS 단일 출처). 시간은 ISO-8601 UTC 문자열.
+      properties:
+        articleId: { type: string }
+        title: { type: [string, "null"] }
+        content: { type: [string, "null"], description: 평문 컬럼 — 현재 미사용 }
+        author: { type: [string, "null"] }
+        modifier: { type: [string, "null"] }
+        sender: { type: [string, "null"] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        editedAt: { type: [string, "null"] }
+        sentAt: { type: [string, "null"] }
+        distributedAt: { type: [string, "null"], description: 스풀 기록 시각 = 배부 지시 완료(발송 완료 아님, ADR-008) }
+        embargoAt: { type: [string, "null"] }
+        secondEmbargoAt: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [RDS, DPS, RRH, RRK, DDH, DDK, DPD, DES, EPS, EEK, EEH]
+        lockYN: { type: [string, "null"], enum: [Y, N, null] }
+        lockerUserId: { type: [string, "null"], description: 잠금 표시 UI 계약 — 노출 유지 }
+        lockedAt: { type: [string, "null"] }
+        coAuthor: { type: [string, "null"] }
+        # category는 Contents 실컬럼이며 파생(derive)이 복사하는 필드다 — step12에서 누락을 실측 정정했다.
+        category: { type: [string, "null"] }
+        region: { type: [string, "null"] }
+        attribute: { type: [string, "null"] }
+        keyword: { type: [string, "null"] }
+        internalComment: { type: [string, "null"] }
+        externalComment: { type: [string, "null"] }
+        attachmentFile: { type: [string, "null"] }
+        referenceFile: { type: [string, "null"] }
+    Article:
+      type: object
+      description: Article 행(본문 마크업 담당) — GET /api/articles/:id의 article 키.
+      properties:
+        articleId: { type: string }
+        title: { type: [string, "null"] }
+        content: { type: [string, "null"], description: 평문 컬럼 — 현재 미사용 }
+        markupVersion:
+          type: [string, "null"]
+          description: '블록 JSON 직렬화 문자열 — {"format":"yh-editor","version":1,"blocks":[...]}'
+        modifier: { type: [string, "null"] }
+    HistoryRow:
+      type: object
+      description: >-
+        ArticleHistory 행(append-only 원장). 목록(GET /api/articles/:id/history)은 본문 blob 없이
+        hasSnapshot 파생 필드를 싣고, 본문은 단건 스냅샷 라우트로 지연 조회한다.
+      properties:
+        id: { type: integer }
+        articleId: { type: string }
+        eventType:
+          type: string
+          enum: [create, edit, status, distribute, distribute-failed, distribute-retry]
+        action: { type: [string, "null"], description: status=send|hold|kill|approveDelete|embargo / distribute=press|nonpress }
+        fromStatus: { type: [string, "null"] }
+        toStatus: { type: [string, "null"] }
+        actorUserId: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        snapshotTitle: { type: [string, "null"] }
+        targetId: { type: [integer, "null"], description: 배부 실패/재전송 이벤트의 수신처 id — 그 외 NULL }
+        reason: { type: [string, "null"], description: 배부 실패 고정 토큰 — 경로·본문·예외 원문 없음 }
+        hasSnapshot: { type: boolean, description: 목록 조회의 파생 필드(본문 스냅샷 존재 여부) }
+    User:
+      type: object
+      description: Z 조회·로그인 응답의 사용자(SAFE_FIELDS) — password·잠금 필드(failedLoginCount 등)는 어떤 응답에도 없다.
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        role: { type: string, enum: [R, D, Z] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+        active: { type: [string, "null"], enum: [Y, N, null] }
+    UserPublic:
+      type: object
+      description: 비-Z의 GET /api/users 투영(정확 4필드).
+      properties:
+        userId: { type: string }
+        name: { type: [string, "null"] }
+        department: { type: [string, "null"] }
+        departmentCode: { type: [string, "null"] }
+    DistributionTarget:
+      type: object
+      description: 배부 수신처(ADR-008) — 행 삭제 없음(deactivate soft delete만).
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { type: string, enum: [press, nonpress] }
+        spoolDir: { type: string, description: 스풀 하위 폴더 슬러그 }
+        active: { type: string, enum: [Y, N] }
+        createdAt: { type: [string, "null"] }
+        updatedAt: { type: [string, "null"] }
+    ReceiverConfig:
+      type: object
+      description: 수집 수신 설정의 응답 투영(SAFE_FIELDS 10키) — password·apiKey는 쓰기 전용 시크릿으로 어떤 응답에도 없다.
+      properties:
+        id: { type: integer }
+        sourceId: { type: [string, "null"] }
+        type: { type: [string, "null"], enum: [FTP, API, null] }
+        name: { type: [string, "null"] }
+        host: { type: [string, "null"] }
+        port: { type: [string, "null"] }
+        apiEndpoint: { type: [string, "null"] }
+        active: { type: [string, "null"], enum: [Y, N, null] }
+        createdAt: { type: [string, "null"] }
+        username: { type: [string, "null"] }
+    # 위 HistoryRow는 **DB 컬럼** 스키마이고, 아래 2개는 **실제 응답 투영**이다
+    # (목록은 snapshotTitle·markupVersion을 싣지 않고 파생 3키 title·version·status를 더한다).
+    HistoryListRow:
+      type: object
+      description: >-
+        GET /api/articles/:id/history의 행(실측 12키 고정). 모델 8컬럼 + hasSnapshot(정수 1/0) +
+        파생 3키(title·version·status). 본문(markupVersion)과 저장 컬럼 snapshotTitle은 싣지 않는다.
+      required: [id, articleId, eventType, action, fromStatus, toStatus, actorUserId, createdAt, hasSnapshot, title, version, status]
+      properties:
+        id: { type: integer }
+        articleId: { type: string }
+        eventType:
+          type: string
+          enum: [edit, status, distribute, distribute-failed, distribute-retry]
+        action: { type: [string, "null"], description: "status 행=send|hold|kill|approveDelete|embargo / edit 행=null" }
+        fromStatus: { type: [string, "null"], description: 전이 행만 값이 있다 }
+        toStatus: { type: [string, "null"], description: 전이 행만 값이 있다 }
+        actorUserId: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        hasSnapshot:
+          type: integer
+          enum: [0, 1]
+          description: 본문 스냅샷 존재 여부 — 불리언이 아니라 SQL CASE 산출 정수다.
+        title: { type: string, description: "표시용 제목(저장된 파생 제목 우선, 없으면 본문 첫 텍스트 줄). 값 없으면 ''" }
+        version: { type: integer, description: 1-base. 최초 저장 본문이 v1이므로 첫 편집 스냅샷 행은 2다 }
+        status: { type: string, description: "전이 행=toStatus, 전이 이전 구간=가장 오래된 전이의 fromStatus 역승계. 없으면 ''" }
+    HistorySnapshotItem:
+      type: object
+      description: >-
+        GET /api/articles/:id/history/:historyId의 item(실측 7키). 목록 행과 달리 본문을 싣고
+        전이 컬럼(fromStatus·toStatus)과 hasSnapshot은 없다.
+      required: [id, articleId, eventType, action, actorUserId, createdAt, markupVersion]
+      properties:
+        id: { type: integer }
+        articleId: { type: string }
+        eventType: { type: string }
+        action: { type: [string, "null"] }
+        actorUserId: { type: [string, "null"] }
+        createdAt: { type: [string, "null"] }
+        markupVersion:
+          type: [string, "null"]
+          description: 스냅샷 본문. 스냅샷이 없는 전이 행을 조회하면 null이다(그래도 200).
+
+    # 요청 스키마 공통 규율: 선언된 키만 저장되고 **나머지 키는 400이 아니라 조용히 무시된다**(ADR-004 신뢰 경계).
+    ArticleCreateRequest:
+      type: object
+      additionalProperties: true
+      description: >-
+        POST /api/articles 요청. 저장되는 키는 아래 선언분뿐이다(Article 3키 + Contents 16키 + 의도 action).
+        `role`·`status`·`articleId`·`sender`·`sentAt`·`createdAt`·`editedAt`·`distributedAt`·
+        `content`·잠금 4컬럼(lockYN·lockerUserId·lockerSessionId·lockerClientId·lockedAt)은
+        보내도 무시된다 — 서버가 결정하거나 다른 라우트가 소유한다(ADR-004 신뢰 경계).
+      properties:
+        title: { type: string }
+        markupVersion:
+          type: string
+          description: '본문 블록 JSON 직렬화 문자열. base64 인라인 이미지 때문에 커질 수 있어 이 라우트만 10mb 파서다.'
+        author:
+          type: string
+          description: 미전송이면 세션 사용자(name, 없으면 userId)로 stamp된다. **명시하면 그 값이 보존된다**.
+        modifier: { type: string }
+        department:
+          type: string
+          description: 비면 세션 부서로 stamp된다(departmentCode도 함께).
+        departmentCode: { type: string }
+        embargoAt: { type: string }
+        secondEmbargoAt: { type: string }
+        coAuthor: { type: string }
+        category: { type: string }
+        region: { type: string }
+        attribute: { type: string }
+        keyword: { type: string }
+        internalComment: { type: string }
+        externalComment: { type: string }
+        attachmentFile:
+          type: string
+          description: 파일 참조 문자열 — 서버가 스킴 방어 규칙(sanitizeFileRef)으로 정규화한다.
+        referenceFile: { type: string }
+        action:
+          type: string
+          enum: [hold, send]
+          description: >-
+            저장되는 값이 아니라 **초기 status 계산 입력**이다. hold → D·Z는 DDH / R은 RRH.
+            그 밖(send·미전달·정의 외)은 전부 RDS다.
+    ArticleUpdateRequest:
+      type: object
+      additionalProperties: true
+      description: >-
+        PUT /api/articles/{id} 요청(부분 수정 — 보낸 키만 갱신된다).
+        저장 키 집합은 create와 같고 `action`은 없다(전이는 action 라우트 전용).
+        `modifier`는 보내도 세션 userId로 덮어쓴다. `department`를 빈 값으로 보내면 세션 부서로 보정한다.
+      properties:
+        title: { type: string }
+        markupVersion: { type: string }
+        author: { type: string }
+        department:
+          type: string
+          description: 빈 문자열이면 세션 부서·부서코드로 보정된다. 키 자체가 없으면 기존 값 보존.
+        departmentCode: { type: string }
+        embargoAt: { type: string }
+        secondEmbargoAt: { type: string }
+        coAuthor: { type: string }
+        category: { type: string }
+        region: { type: string }
+        attribute: { type: string }
+        keyword: { type: string }
+        internalComment: { type: string }
+        externalComment: { type: string }
+        attachmentFile: { type: string }
+        referenceFile: { type: string }
+    ArticleCreateResponse:
+      type: object
+      required: [ok, articleId]
+      properties:
+        ok: { const: true }
+        articleId:
+          type: string
+          pattern: '^AKR\d{8}\d{9}$'
+          description: 서버 발급 — 'AKR' + 발급일 YYYYMMDD + 난수 9자리(충돌 시 재발급).
+    ArticleUpdateResponse:
+      type: object
+      required: [ok, changes]
+      properties:
+        ok: { const: true }
+        changes:
+          type: integer
+          description: 갱신된 행 수(Article + Contents). 현행 구현의 고정 관측값은 2다.
+
+    # 미디어·업로드 축 스키마. 거부 응답은 공용 ErrorResponse를 쓴다
+    # (reason enum에 no-key·error·invalid-file·too-large·invalid-src가 포함돼 있다).
+    TranslateRequest:
+      type: object
+      description: 번역 옵션. 본문 텍스트는 받지 않는다(서버가 DB에서 취한다 — ADR-004).
+      properties:
+        targetLang:
+          type: string
+          default: ko
+          description: 목표 언어 코드. 생략 시 서버가 'ko'를 쓴다(키 없는 구성에서는 외부 호출이 없어 사용 여부 관측 불가).
+    TranslateResponse:
+      type: object
+      description: >-
+        성공/실패가 같은 200이다. 실패(graceful)여도 translatedText에 **원문**이 담긴다 —
+        호출자는 ok만 보고 판정하고, 실패 시 원문을 그대로 보여주면 된다.
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        reason:
+          type: string
+          enum: [no-key, error]
+          description: ok:false일 때만 존재. no-key=키 미설정 / error=외부 호출·응답 파싱 실패.
+        translatedText:
+          type: string
+          description: 성공이면 번역문, 실패면 원문 폴백. 빈 본문 기사는 ok:true + 빈 문자열이다.
+        sourceLang:
+          type: string
+          description: 성공 시에만, 그리고 provider가 감지 언어를 준 경우에만 존재(미검증 — 외부 키 필요).
+    MediaImageItem:
+      type: object
+      description: 이미지 검색 원소(키 미설정 데모 폴백 실측 — 정확히 2키).
+      properties:
+        title: { type: string }
+        link: { type: string, description: 이미지 URL }
+    MediaVideoItem:
+      type: object
+      description: 영상 검색 원소(키 미설정 데모 폴백 실측 — 정확히 3키).
+      properties:
+        title: { type: string }
+        videoId: { type: string, description: 임베드 가능한 11자 YouTube video id }
+        url: { type: string }
+    MediaSearchResponse:
+      type: object
+      description: 응답 키 3종 고정. ok는 항상 true이고 실패는 error 플래그로만 표현된다.
+      required: [ok, items, error]
+      properties:
+        ok: { const: true }
+        items:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/MediaImageItem'
+              - $ref: '#/components/schemas/MediaVideoItem'
+        error:
+          type: boolean
+          description: 외부 호출 실패면 true(items는 빈 배열). 키 미설정 데모 폴백은 false다.
+    UploadRequest:
+      type: object
+      required: [filename, contentBase64]
+      properties:
+        filename:
+          type: string
+          description: >-
+            원본 파일명 — **확장자 판정에만** 쓴다(저장 경로에 반영되지 않는다).
+            확장자는 소문자로 비교하며 화이트리스트 14종 밖이면 invalid-file이다.
+        contentBase64:
+          type: string
+          description: 데이터 URI prefix 없는 raw base64. 디코드 후 5,242,880바이트를 넘으면 too-large.
+    UploadResponse:
+      type: object
+      required: [ok, path, filename]
+      properties:
+        ok: { const: true }
+        path:
+          type: string
+          pattern: '^/uploads/[0-9a-f]{32}\.[a-z]+$'
+          description: 서버가 발급한 저장 경로. 이 문자열이 Contents.attachmentFile/referenceFile에 저장된다.
+        filename:
+          type: string
+          description: 요청 filename 원본(대소문자 보존) — 표시용 에코다.
+    PhotoCreateRequest:
+      type: object
+      required: [src]
+      properties:
+        src:
+          type: string
+          description: '`/uploads/…` 상대경로 또는 `https://` URL만 허용(그 외 전부 invalid-src).'
+        caption: { type: string, description: 검색 대상 텍스트. 생략 시 빈 문자열. }
+        sourceArticleId: { type: string, description: 등록 시점 편집 중이던 기사아이디(best-effort). 생략 시 빈 문자열. }
+        registeredBy:
+          type: string
+          deprecated: true
+          description: >-
+            **무시된다** — 서버가 세션 userId로만 stamp한다(ADR-004). 요청에 넣지 마라.
+    PhotoCreateResponse:
+      type: object
+      required: [ok, id]
+      properties:
+        ok: { const: true }
+        id: { type: integer, description: 새 Photo 행 id(ROWID alias) }
+    PhotoRow:
+      type: object
+      description: Photo 행 전체(SELECT * — 응답 투영·마스킹이 없다).
+      properties:
+        id: { type: integer }
+        src: { type: [string, "null"] }
+        caption: { type: [string, "null"] }
+        sourceArticleId: { type: [string, "null"] }
+        registeredBy: { type: [string, "null"], description: 세션 userId로만 stamp된 값 }
+        createdAt: { type: [string, "null"], description: ISO-8601 UTC }
+    PhotoSearchResponse:
+      type: object
+      required: [ok, items]
+      properties:
+        ok: { const: true }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhotoRow'
+
+    LogRecord:
+      type: object
+      description: >-
+        로그 서비스(src/services/logService.js)의 record — 키 5개가 계약이다(/api/logs/digest의 items 원소이자
+        /api/logs/stream의 log 프레임 payload). message·line의 **실값은 어떤 문서·리포트에도 싣지 않는다**(LOGS.md).
+      required: [seq, ts, level, message, line]
+      properties:
+        seq:
+          type: integer
+          description: 프로세스 수명 동안 단조 증가(evict돼도 재사용 없음) — SSE replay 중복 필터의 근거.
+        ts:
+          type: integer
+          description: epoch ms.
+        level:
+          type: string
+          enum: [DEBUG, INFO, WARN, ERROR]
+        message:
+          type: string
+          description: 마스킹된 메시지(비밀번호·세션 토큰·쿠키/Authorization 값·본문·payload 금지).
+        line:
+          type: string
+          description: '`[YYYY-MM-DD HH:MM:SS] [LEVEL] <message>` (KST=UTC+9 벽시계 고정 오프셋).'
+
+# 아래는 components가 아니라 **최상위(들여쓰기 0) 확장 절**이다 — paths 밖, info/servers와 같은 레벨에 둔다.
+# 경로에 매달 수 없는 교차 계약(CSRF·CORS·쿠키 2변형·로그인 리밋/잠금)이라 paths에 넣을 수 없다.
+# 이 절의 존재는 docs/api-contract/README.md에도 안내한다(계약 소비자가 paths만 보고 놓치지 않도록).
+x-cross-cutting:
+  description: >-
+    경로에 매달 수 없는 미들웨어 축 계약. 측정 조건은 info.description과 같다(SPA_DIR 미설정 · .env 미로드 ·
+    NODE_ENV 미설정, prod-cookie 프로파일만 production + FORCE_HTTPS=false).
+  sessionTransport:
+    order: sid 쿠키 우선 → x-session-id 헤더 폴백
+    queryFallback: 없음 — ?session=<유효 토큰>만으로는 401(보안 사유로 제거됨, 부재가 계약)
+    singleSessionPerUser: 로그인 성공은 같은 userId의 기존 세션을 전부 무효화한다(이전 토큰 즉시 401)
+  sessionCookie:
+    name: sid
+    value: 64-hex 랜덤 토큰(역할·신원 정보 없음)
+    nonProduction: 'HttpOnly; Path=/; Max-Age=3600; SameSite=Lax (Secure 없음)'
+    production: 'HttpOnly; Path=/; Max-Age=3600; SameSite=None; Secure'
+    clearOnLogout: '동일 속성 + 빈 값 + Max-Age=0'
+  csrf:
+    scope: 상태 변경 메서드만(GET·HEAD·OPTIONS 제외)
+    absentOriginAndReferer: 통과 — 서버-서버/cron 관용(계약 스위트 전체가 이 관용 위에서 돈다)
+    refererOnly: Referer의 origin으로 판정한다(허용 출처면 통과, 파싱 불가면 403)
+    reject: '403 {ok:false, reason:forbidden-origin}'
+    allowlistSource: 비프로덕션 = http://localhost:5173 · http://127.0.0.1:5173 + ALLOWED_ORIGINS / 프로덕션 = ALLOWED_ORIGINS만
+    loopbackTolerance: 비프로덕션만(프로덕션에서는 loopback Origin도 미등록이면 403)
+  cors:
+    credentials: true (와일드카드 origin 금지)
+    methods: [GET, POST, PUT, DELETE, OPTIONS]
+    allowedHeaders: [Content-Type, x-session-id, x-collection-token, x-edit-client]
+    preflightAllowed: '2xx(실측 204) + Access-Control-Allow-Origin=요청 Origin + Access-Control-Allow-Credentials: true'
+    preflightForeign: '2xx이지만 Access-Control-Allow-Origin 부재(ACAC는 실림 — 판독 차단은 ACAO 부재가 담당)'
+  loginLimits:
+    rateLimit: IP 15분/10회 — 초과 시 429(본문 비-JSON, RateLimit-Limit 헤더 동반)
+    accountLockout: 사용자 단위 누적 실패 5회 → 15분 잠금, 잠긴 동안은 올바른 비밀번호도 423 locked
+    userEnumeration: 미존재 계정과 비밀번호 불일치가 같은 401·같은 토큰(구분 불가)
+  errorShapes:
+    rule: "거부는 {ok:false, reason:'<토큰>'} JSON이 원칙이다(401에도 바디가 반드시 있다)"
+    exceptions:
+      - '429(로그인 레이트리밋): text/html 문자열 본문 — 미들웨어가 응답을 만든다'
+      - '404(미정의 경로): SPA_DIR 미설정이면 express 기본 HTML 404 — SPA_DIR 설정 시 GET은 index.html 폴백 200이 된다(범위 밖)'
+
+# paths — 인벤토리(endpoints.json) 39행과 1:1이다(오퍼레이션 39개).
+# /api/health 1건은 도메인 라우트가 따라 쓰는 형식 본보기다(요약·설명·응답 스키마 참조 방식).
+# health는 9개 도메인 태그 밖의 liveness 프로브라 tags가 없다 — 도메인 라우트는 반드시 tags를 명시한다.
+paths:
+  /api/health:
+    get:
+      operationId: health
+      summary: 헬스체크
+      description: >-
+        항상 200 {"ok":true}. 인증 불요. Electron 셸의 서버 주소 프로브가 상태코드가 아니라
+        본문 {ok:true}까지 판정하므로 본문 shape이 계약이다.
+      security: []
+      responses:
+        '200':
+          description: 서버 생존
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+  /api/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: 로그인(세션 발급)
+      description: >-
+        아이디/비밀번호 대조 후 64-hex 세션 토큰을 발급한다. 토큰은 응답 body(sessionId)와
+        Set-Cookie(sid) 두 경로로 동시에 나가며 값이 같다.
+        **단일 세션 정책**: 로그인 성공은 같은 userId의 기존 세션을 전부 무효화한다(실측 — 이전 토큰은 즉시 401).
+        거부 사유별로 상태가 갈린다: invalid-credentials 401 · inactive 403 · locked **423**(라우트 로컬 매핑이
+        전역 401을 덮어쓴다). 사용자 존재 여부는 응답으로 알 수 없다 — 미존재 계정도 존재 계정의 비밀번호
+        불일치와 **같은 401 · 같은 invalid-credentials 토큰**이다.
+        계정 잠금은 사용자 단위 누적 실패 5회(src/services/userService.js LOCKOUT_THRESHOLD)에서 걸리고
+        15분간 유지되며, 잠긴 계정은 **올바른 비밀번호로도** 423이다.
+        IP 단위 레이트리밋은 15분/10회(server/index.js loginLimiter)이고 초과 응답은 라우트가 아니라
+        미들웨어가 만든다 — x-cross-cutting.errorShapes 참조(JSON이 아니다).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, password]
+              properties:
+                userId: { type: string }
+                password: { type: string, description: 평문 전송(TLS 종단은 외부 프록시 책임) — 응답·로그·리포트에 절대 담기지 않는다 }
+      responses:
+        '200':
+          description: 로그인 성공(응답 키 정확 3종)
+          headers:
+            Set-Cookie:
+              description: >-
+                sid=<64-hex>; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax (비프로덕션 실측) /
+                프로덕션은 여기에 Secure가 붙고 SameSite=None이다(x-cross-cutting.sessionCookie).
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, sessionId, user]
+                properties:
+                  ok: { const: true }
+                  sessionId: { type: string, pattern: '^[0-9a-f]{64}$' }
+                  user:
+                    $ref: '#/components/schemas/User'
+                    description: SAFE_FIELDS 6키(userId,name,role,department,departmentCode,active) — password·잠금 메타 없음
+        '401':
+          description: invalid-credentials(자격 불일치 · 미존재 계정 동일 응답)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: inactive(비활성 계정) — 시드 계정으로는 도달 불가라 계약 스위트 미동결
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '423':
+          description: locked(계정 잠금 5회/15분) — 올바른 비밀번호로도 거부
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: >-
+            IP 레이트리밋 초과(15분/10회). **본문이 JSON이 아니다** — express-rate-limit 기본 메시지 문자열이
+            text/html로 나간다(실측: 'Too many requests, please try again later.').
+            RateLimit-Limit: 10 등 draft-6 표준 헤더가 동반한다.
+          headers:
+            RateLimit-Limit:
+              description: 창당 허용 횟수(실측 10)
+              schema: { type: string }
+          content:
+            text/html:
+              schema: { type: string }
+  /api/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: 로그아웃(세션 무효화 + 쿠키 만료)
+      description: >-
+        **항상 200 {ok:true}**이다 — 세션이 없거나 토큰이 무효해도 성공이다(멱등).
+        토큰 판독 순서는 sid 쿠키 → x-session-id 헤더 → body.sessionId 폴백이다.
+        응답은 언제나 만료 쿠키(sid=; Max-Age=0)를 내리며, 쿠키 속성은 발급 시와 같은 조합이다
+        (비프로덕션 HttpOnly·Path=/·SameSite=Lax / 프로덕션은 Secure·SameSite=None 추가).
+        상태 변경 메서드라 CSRF Origin 게이트의 대상이다 — 교차 출처 Origin/파싱 불가 Referer는
+        라우트에 닿기 전에 403 forbidden-origin이다(x-cross-cutting.csrf).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId: { type: string, description: 쿠키·헤더가 없을 때의 마지막 폴백 판독 경로 }
+      responses:
+        '200':
+          description: 로그아웃(세션 유무 무관)
+          headers:
+            Set-Cookie:
+              description: 'sid=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax (프로덕션은 Secure; SameSite=None)'
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '403':
+          description: forbidden-origin(CSRF Origin 게이트 — 라우트 진입 전 거부)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/session:
+    get:
+      operationId: session
+      tags: [auth]
+      summary: 세션 복원(F5)
+      description: >-
+        재인증 없이 현재 신원을 돌려준다. 토큰 판독은 **sid 쿠키 우선 · x-session-id 헤더 폴백**이며
+        **?session= 쿼리 폴백은 없다**(유효한 토큰을 쿼리로만 줘도 401 — 누출 표면 제거가 계약이다).
+        매 호출 User 행을 재조회해 신원을 재도출한다(비활성·역할 변경 즉시 반영, 슬라이딩 만료 갱신).
+        미인증 401에도 **반드시 JSON 바디**가 있다({ok:false, reason:'unauthenticated'}) — SPA가 본문을 읽는다.
+        user 객체는 세션 신원 투영이라 **정확히 5키**(userId·name·role·department·departmentCode)이며
+        로그인 응답의 6키와 달리 **active가 없다**(실측. 같은 사용자라도 라우트마다 shape이 다르므로
+        하나의 DTO로 묶으면 어긋난다 — endpoints.json 'session' 행 notes도 5키로 정정했다).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: 세션 유효
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok: { const: true }
+                  user:
+                    type: object
+                    description: 세션 신원 투영(IDENTITY_FIELDS 5키) — password·active 없음
+                    required: [userId, role]
+                    properties:
+                      userId: { type: string }
+                      name: { type: [string, "null"] }
+                      role: { type: string, enum: [R, D, Z] }
+                      department: { type: [string, "null"] }
+                      departmentCode: { type: [string, "null"] }
+        '401':
+          description: unauthenticated(토큰 없음·무효·형식 오류·쿼리 전달·로그아웃 후·재로그인으로 무효화됨)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles:
+    x-express-path: '/api/articles'
+    get:
+      operationId: articlesList
+      tags: [articles]
+      summary: 기사 목록 조회(필터 화이트리스트 13키)
+      description: >-
+        세션이 있으면 역할과 무관하게 같은 목록을 받는다(역할별 행 필터는 없다 — R/D/Z 실측 동일).
+        쿼리는 FILTER_KEYS **13키**만 서버로 전달되고 그 밖의 키는 조용히 무시된다(400이 아니다).
+        계획서 부록 A의 "필터 15키"는 드리프트이며 **코드가 정본**이다(server/index.js 380~384행).
+        정렬은 createdAt DESC 고정이고 페이징·총 개수 필드는 없다.
+        배열이 되는 키는 status·excludeStatus·departments 3종뿐이며 표기는 **반복 키**다
+        (`?status=RDS&status=DDH`). 콤마 표기(`?status=RDS,DDH`)는 분해되지 않고 단일 문자열
+        'RDS,DDH'로 취급되어 아무것도 매칭하지 않는다 — Spring 기본 바인딩과 정반대이므로 주의.
+        부기(실측): Express의 확장 쿼리 파서 때문에 `status[]=DPS`·`status[0]=RDS` 같은 대괄호 표기도
+        같은 배열 필터로 동작한다. 이는 파서의 부수 효과이며 정본 표기는 반복 키다(대상 서버가
+        대괄호 표기를 지원하지 않아도 계약 위반이 아니다 — 계약 스위트는 반복 키만 단언한다).
+        부기(결함 후보 #4 — README '결함 후보' 절): 스칼라 전용 키(articleId·author·sender·department·날짜 6키)를
+        반복하면 배열이 그대로 SQL 바인딩으로 내려가 500 internal-error가 난다(고치지 않고 기록만 한다).
+        departments와 department를 함께 주면 **departments가 이긴다**(department는 무시).
+        날짜 범위는 ISO-8601 문자열의 사전식 비교라 해당 컬럼이 NULL인 행은 범위 필터에서 탈락한다
+        (미송고 기사는 sentAtFrom에, 미배부 기사는 distributedAtFrom/To에 절대 걸리지 않는다).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: articleId
+          in: query
+          required: false
+          schema: { type: string }
+          description: 기사 ID 정확 일치(스칼라 전용 — 반복 시 500).
+        - name: author
+          in: query
+          required: false
+          schema: { type: string }
+          description: 작성자 정확 일치(스칼라 전용).
+        - name: sender
+          in: query
+          required: false
+          schema: { type: string }
+          description: 송고자 정확 일치(송고 시 서버가 세션 userId로 stamp한 값 — 스칼라 전용).
+        - name: status
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items: { type: string }
+          description: 상태 IN 필터. 반복 키로 배열을 만든다(`?status=RDS&status=DDH`).
+        - name: excludeStatus
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items: { type: string }
+          description: 상태 NOT IN 필터. 반복 키 지원.
+        - name: department
+          in: query
+          required: false
+          schema: { type: string }
+          description: 부서 단일 값(스칼라 전용 — 반복 시 500). departments가 함께 오면 무시된다.
+        - name: departments
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items: { type: string }
+          description: 부서 IN 필터(반복 키). department보다 우선한다.
+        - name: createdAtFrom
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'createdAt >= 값 (ISO-8601 문자열 사전식 비교).'
+        - name: createdAtTo
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'createdAt <= 값.'
+        - name: sentAtFrom
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'sentAt >= 값. sentAt이 NULL인(미송고) 행은 탈락한다.'
+        - name: sentAtTo
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'sentAt <= 값.'
+        - name: distributedAtFrom
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'distributedAt >= 값. 미배부(NULL) 행은 탈락한다.'
+        - name: distributedAtTo
+          in: query
+          required: false
+          schema: { type: string }
+          description: 'distributedAt <= 값.'
+      responses:
+        '200':
+          description: >-
+            목록. 봉투는 정확히 {ok, items} 2키다(총 개수·페이지·커서 필드 없음).
+            items의 각 행은 Contents 29컬럼에서 잠금 2컬럼을 뺀 **27키**이며 값이 NULL인 컬럼도
+            키는 실린다(실측 키 집합: articleId, attachmentFile, attribute, author, category,
+            coAuthor, content, createdAt, department, departmentCode, distributedAt, editedAt,
+            embargoAt, externalComment, internalComment, keyword, lockYN, lockedAt, lockerUserId,
+            modifier, referenceFile, region, secondEmbargoAt, sender, sentAt, status, title).
+            잠금 보유 행도 lockYN='Y'·lockerUserId·lockedAt까지만 싣는다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok: { const: true }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContentsRow'
+        '401':
+          description: 세션 없음/무효 — {ok:false, reason:'unauthenticated'}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            결함 후보 #4(실측 — README '결함 후보' 절): 스칼라 전용 필터 키를 반복해 배열이 되면
+            전역 에러 핸들러가 {ok:false, reason:'internal-error'}로 응답한다(400이어야 할 입력 오류가
+            5xx다). 정상 입력에서는 발생하지 않는다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: articlesCreate
+      tags: [articles]
+      summary: 신규 기사 저장(서버가 status·부서·작성자를 stamp)
+      description: >-
+        세션 role이 R/D/Z여야 한다(그 밖의 role은 403 forbidden — 시드 계정이 R/D/Z 셋뿐이라
+        계약 스위트로는 도달할 수 없다: **미검증 축**).
+        저장되는 필드는 화이트리스트뿐이다 — Article 3키(title·markupVersion·modifier) +
+        Contents 16키(title·author·modifier·department·departmentCode·embargoAt·secondEmbargoAt·
+        coAuthor·category·region·attribute·keyword·internalComment·externalComment·
+        attachmentFile·referenceFile). **여기 없는 필드는 400이 아니라 조용히 무시된다.**
+        서버가 결정하는 것: `articleId`(AKR + YYYYMMDD + 난수 9자리 발급) ·
+        `status`(초기 상태 계산) · `createdAt`. 클라가 같은 이름으로 보내도 반영되지 않는다.
+        `sender`·`sentAt`·`distributedAt`·잠금 4컬럼은 화이트리스트 밖이라 저장되지 않는다(NULL 유지).
+        `role`은 라우트가 delete한다.
+        stamp 규칙: `department`가 비면 세션 부서·부서코드를 채우고, `author`가 비면 세션 사용자
+        (name, 없으면 userId)를 채운다. **`author`를 명시하면 그 값이 보존된다**(대필 입력 —
+        role/status와 달리 무시되지 않는다. "무엇이 무시되고 무엇이 존중되는가"가 계약이다).
+        초기 status는 세션 role + 의도 `action`으로 서버가 계산한다:
+        기본 **RDS** / `action:'hold'` + D·Z → **DDH** / `action:'hold'` + R → **RRH**.
+        `action:'send'`를 보내도 DPS가 되지 않고 RDS다(송고는 전이 라우트 전용이며 배부 훅도 발화하지 않는다).
+        본문 파서 limit 10mb(위 공통 4).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArticleCreateRequest'
+      responses:
+        '200':
+          description: 저장 완료 — 봉투는 {ok, articleId} 정확히 2키다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleCreateResponse'
+        '401':
+          description: 세션 없음/무효 — {ok:false, reason:'unauthenticated'}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: >-
+            {ok:false, reason:'forbidden'} — 세션 role이 R/D/Z 밖일 때만 도달한다.
+            현행 계정 체계에 그런 role이 없어 **계약 스위트 미검증**이다(코드 경로만 존재).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            {ok:false, reason:'internal-error'} — 본문이 10mb를 넘거나 JSON이 깨졌을 때
+            전역 에러 핸들러가 내는 응답이다(413·400 매핑 없음). 계약 스위트는 상한을 탐색하지 않는다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/search:
+    x-express-path: '/api/articles/search'
+    get:
+      operationId: articlesSearch
+      tags: [articles]
+      summary: 기사 전문 검색(제목·평문·본문 LIKE)
+      description: >-
+        `q`를 Article.title / Article.content / Article.markupVersion 세 컬럼에 부분 일치(LIKE)로
+        건다. **응답 행은 목록(Contents 27키)과 동형이 아니다** — Article 테이블 행(5키)이며
+        본문(markupVersion)이 그대로 실린다. 정렬 지정이 없다(DB 반환 순서 — 순서는 계약이 아니다).
+        `q` 미전달·빈 문자열은 거부가 아니라 LIKE '%%'로 **전 행 매칭**이다(400 아님).
+        무매칭은 200 빈 배열이다. 형태소·대소문자·한글 정렬 동작은 DB(LIKE·collation) 의존이라
+        계약에 넣지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: 검색어. 미전달 시 서버가 ''로 폴백한다(= 전 행 매칭).
+      responses:
+        '200':
+          description: >-
+            검색 결과. 봉투는 목록과 같은 {ok, items} 2키(총 개수 없음). 행은 Article 5키
+            (articleId, content, markupVersion, modifier, title).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok: { const: true }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Article'
+        '401':
+          description: 세션 없음/무효
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}:
+    x-express-path: '/api/articles/:id'
+    get:
+      operationId: articlesGet
+      tags: [articles]
+      summary: 기사 단건 조회(본문 포함)
+      description: >-
+        {ok, article, contents} 정확히 3키. 본문은 `article.markupVersion`이며 `contents`는
+        투영(잠금 2컬럼 제거) 후의 27키다. Article 행과 Contents 행 **둘 다** 없을 때만 404다.
+        읽기 전용이며 상태·잠금을 바꾸지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: articleId(AKR + YYYYMMDD + 난수)
+      responses:
+        '200':
+          description: 기사 단건(본문 포함)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, article, contents]
+                properties:
+                  ok: { const: true }
+                  article:
+                    $ref: '#/components/schemas/Article'
+                  contents:
+                    $ref: '#/components/schemas/ContentsRow'
+        '401':
+          description: 세션 없음/무효
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "{ok:false, reason:'not-found'} — 라우트 직접 매핑"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: articlesUpdate
+      tags: [articles]
+      summary: 기사 부분 수정(잠금 보유 탭만)
+      description: >-
+        세션만으로는 저장할 수 없다 — `x-edit-client`(편집 탭)가 잠금 보유 탭과 일치하고
+        잠금 행의 lockerUserId가 세션 userId와 같아야 한다. 아니면 **403 not-holder**다
+        (잠금 없음 · 같은 세션의 다른 탭 · 다른 사용자 · 헤더 누락 전부 같은 사유 토큰으로 수렴하며
+        누가 잠갔는지는 응답에 담기지 않는다).
+        **존재 검사가 잠금 검사보다 먼저다** — 없는 기사에 대한 저장은 403이 아니라 **404 not-found**다.
+        저장 필드 화이트리스트는 create와 같다(Article 3키 + Contents 16키). 화이트리스트 밖
+        (`status`·`sender`·`sentAt`·`distributedAt`·`articleId`·`content`·잠금 컬럼)은 조용히 무시된다.
+        `role`은 삭제되고 `modifier`는 **세션 userId로 덮어쓴다**(클라가 보낸 modifier는 버려진다).
+        `department` 키를 빈 값으로 보내면 세션 부서·부서코드로 보정한다.
+        키가 아예 없으면 건드리지 않는다(부분 수정 — 기존 값 보존).
+        `editedAt`은 서버가 매 저장마다 갱신하고, 편집 스냅샷 이력 행이 함께 쌓인다(append-only).
+        응답 `changes`는 갱신된 **행 수**다 — 현행 구현에서는 Article 1행 + Contents 1행 = **2**가
+        고정 관측값이다(modifier·editedAt이 항상 present라 두 테이블이 매번 갱신된다).
+        본문 파서 limit 10mb(위 공통 4).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: articleId(AKR + YYYYMMDD + 난수 9자리)
+        - $ref: '#/components/parameters/EditClientHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArticleUpdateRequest'
+      responses:
+        '200':
+          description: 저장 완료 — 봉투는 {ok, changes} 정확히 2키.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleUpdateResponse'
+        '401':
+          description: 세션 없음/무효
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: >-
+            {ok:false, reason:'not-holder'} — 잠금 미보유. 탭 단위 인가라 **같은 세션의 다른 탭도 거부**다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "{ok:false, reason:'not-found'} — 기사 없음(잠금 판정보다 존재 판정이 앞선다)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            {ok:false, reason:'internal-error'} — 10mb 초과·깨진 JSON(413·400 매핑 없음).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/history:
+    x-express-path: '/api/articles/:id/history'
+    get:
+      operationId: articlesHistory
+      tags: [articles]
+      summary: 기사 이력 목록(본문 blob 없음)
+      description: >-
+        append-only 원장(ArticleHistory)의 읽기. **이력이 없어도, 기사 자체가 없어도 404가 아니라
+        200 빈 배열**이다(기사 생성은 이력 행을 남기지 않으므로 갓 만든 기사도 items:[]).
+        행은 본문(markupVersion)을 싣지 않고 존재 여부만 `hasSnapshot`(불리언이 아니라 **정수 1/0**)로
+        준다. 저장 컬럼 snapshotTitle은 응답에 나오지 않고 파생 키 `title`로만 나온다.
+        파생 3키(title·version·status): version은 1-base이고 최초 저장 본문이 v1이라 첫 편집
+        스냅샷 행은 v2다. status는 전이 행이면 toStatus, 전이 이전 구간 행은 가장 오래된 전이의
+        fromStatus로 역승계한다. 정렬은 id DESC(최신순)다.
+        송고 이력 필터(sendOnly 판정, server/index.js 828~830행): `type=send`이거나
+        `sendOnly` 값이 undefined·'0'·'false'가 **아니면** 참이다 —
+        `?sendOnly=1`·`?sendOnly=`(빈 값)·`?sendOnly=no`는 전부 필터 ON,
+        `?sendOnly=0`·`?sendOnly=false`만 필터 OFF다. 필터 ON이면 eventType='status' AND
+        action='send' 행만 남는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sendOnly
+          in: query
+          required: false
+          schema: { type: string }
+          description: undefined·'0'·'false'가 아니면 참(빈 문자열도 참).
+        - name: type
+          in: query
+          required: false
+          schema: { type: string }
+          description: 값이 'send'면 sendOnly와 동일하게 참(sendOnly=0과 함께 와도 참이 이긴다).
+      responses:
+        '200':
+          description: >-
+            이력 목록. 봉투 {ok, items} 2키. 행은 12키 고정(action, actorUserId, articleId,
+            createdAt, eventType, fromStatus, hasSnapshot, id, status, title, toStatus, version).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok: { const: true }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryListRow'
+        '401':
+          description: 세션 없음/무효
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/history/{historyId}:
+    x-express-path: '/api/articles/:id/history/:historyId'
+    get:
+      operationId: articlesHistorySnapshot
+      tags: [articles]
+      summary: 기사 이력 단건 스냅샷(본문 포함)
+      description: >-
+        기사이력비교가 고른 이력 행 하나의 본문을 지연 조회한다. 조회는 (articleId, historyId)로
+        스코프되므로 **다른 기사에 속한 historyId는 404**다(id만으로 남의 본문이 새지 않는다).
+        historyId가 정수가 아니면(문자·소수) 서버가 조회 전에 404를 낸다.
+        스냅샷 보유 행으로 제한되지 않는다 — 상태 전이 행 id도 200이며 markupVersion이 null이다.
+        item은 7키(action, actorUserId, articleId, createdAt, eventType, id, markupVersion)로
+        목록 행과 다르다(fromStatus·toStatus·hasSnapshot 없음).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: historyId
+          in: path
+          required: true
+          schema: { type: integer }
+          description: ArticleHistory.id. 정수가 아니면 404(Number 변환 후 Number.isInteger 검사).
+      responses:
+        '200':
+          description: 이력 단건(본문 포함)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, item]
+                properties:
+                  ok: { const: true }
+                  item:
+                    $ref: '#/components/schemas/HistorySnapshotItem'
+        '401':
+          description: 세션 없음/무효
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: >-
+            {ok:false, reason:'not-found'} — 비정수 historyId · 존재하지 않는 id ·
+            다른 기사에 속한 id 전부 같은 응답이다(존재 여부를 구분해 알려주지 않는다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/lock:
+    x-express-path: '/api/articles/:id/lock'
+    post:
+      operationId: articlesLock
+      tags: [locks]
+      summary: 편집 잠금 획득(탭 단위)
+      description: >-
+        인증된 세션이면 비-DPS 기사는 R/D/Z 누구나 잠글 수 있다. **DPS(송고 완결) 기사의 편집
+        진입은 D 전용**이다(고침/포털고침 — editDps capability. Z도 거부되어 403 forbidden).
+        body의 `action`은 'portalRevise'면 포털고침, 그 밖의 값·미전달은 모두 'revise'로 접힌다
+        (두 분기 모두 같은 D 게이트를 통과한다).
+        잠금 획득은 **상태 전이를 일으키지 않는다**(DPS 기사를 잠가도 status는 DPS 그대로다).
+        보유자 식별자는 `x-edit-client`(편집 탭)다. 획득 규칙:
+        같은 탭 재획득(F5) 허용 · 같은 사용자의 다른 세션(재로그인) takeover 허용 ·
+        그 외(다른 사용자, **같은 세션의 다른 탭** 포함)는 거부 · lockedAt이 30분 넘게 갱신되지
+        않은 stale 잠금은 누구나 가져간다.
+        **거부 상태코드에 주의**: 잠금 충돌은 409도 423도 아닌 **401 locked**다
+        (전역 STATUS_BY_REASON.locked=401. server/index.js 629행 주석의 "409"는 코드 내부 주석
+        드리프트이며 실값은 401이다. 로그인의 계정 잠금 423은 라우트 로컬 매핑으로 별개다).
+        성공 응답은 {ok:true} 뿐이며 누가 잠갔는지·어느 탭인지는 담기지 않는다.
+        잠금 상태는 조회 응답의 lockYN='Y' · lockerUserId · lockedAt으로만 드러나고
+        lockerSessionId·lockerClientId는 **어떤 응답에도 없다**(권한 상승·탭 사칭 재료).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/EditClientHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [revise, portalRevise]
+                  description: 'portalRevise만 별도 분기이고 그 밖의 값·미전달은 revise로 접힌다.'
+      responses:
+        '200':
+          description: 획득(또는 같은 탭 재획득) — {ok:true} 1키.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '401':
+          description: >-
+            **두 의미가 같은 상태코드를 쓴다**: 세션 없음/무효는 reason:'unauthenticated',
+            다른 보유자와의 잠금 충돌은 reason:'locked'다. 상태코드가 아니라 사유 토큰으로 구분하라.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: "{ok:false, reason:'forbidden'} — DPS 기사에 대한 비-D 세션(R·Z)의 편집 진입"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "{ok:false, reason:'not-found'} — 기사 없음(권한·잠금 판정보다 앞선다)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/unlock:
+    x-express-path: '/api/articles/:id/unlock'
+    post:
+      operationId: articlesUnlock
+      tags: [locks]
+      summary: 편집 잠금 해제(보유 탭 — 멱등)
+      description: >-
+        보유 탭(`x-edit-client`) + 보유자 본인(세션 userId)만 해제한다.
+        **이미 풀려 있는 잠금의 해제도 200 {ok:true}다(멱등)** — 탭 닫기·pagehide 경로가 중복
+        호출하기 때문이다. 해제되면 lockYN='N'과 함께 lockerUserId·lockedAt도 지워진다.
+        거부 사유는 전부 **403 not-holder**로 수렴한다(다른 사용자 · 같은 사용자의 다른 탭 ·
+        신원 미상 레거시 잠금 행). 남의 탭 문자열을 그대로 흉내내도 세션 신원이 다르면 거부된다.
+        세션 일치는 요구하지 않는다 — 같은 사용자가 재로그인한 뒤에도 자기 탭의 잠금을 풀 수 있다
+        (강제하면 탭이 잠금을 놓지 못해 30분 TTL까지 남는다).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/EditClientHeader'
+      responses:
+        '200':
+          description: 해제 완료 또는 애초에 잠겨 있지 않음(둘 다 {ok:true} — 구분하지 않는다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '401':
+          description: 세션 없음/무효 — {ok:false, reason:'unauthenticated'}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: "{ok:false, reason:'not-holder'} — 보유 탭·보유자가 아니다(잠금은 그대로 유지된다)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "{ok:false, reason:'not-found'} — 기사 없음"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/force-unlock:
+    x-express-path: '/api/articles/:id/force-unlock'
+    post:
+      operationId: articlesForceUnlock
+      tags: [locks]
+      summary: 편집 잠금 강제 해제(D/Z 전용)
+      description: >-
+        보유자와 무관하게 잠금을 푼다(편집자가 브라우저를 닫아 잠금이 30분 남는 상황의 운영 수단).
+        role 게이트는 **라우트가 직접** 판정한다 — R은 403 forbidden(not-holder가 아니다)이며
+        게이트가 존재 검사보다 앞선다(없는 기사 + R도 403).
+        `x-edit-client`는 보지 않는다(어느 탭이 잠갔든 해제된다).
+        잠겨 있지 않은 기사에 대한 호출도 **200 {ok:true}**다(존재 여부만 본다).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 해제 완료(또는 애초에 잠겨 있지 않음) — {ok:true} 1키.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '401':
+          description: 세션 없음/무효 — {ok:false, reason:'unauthenticated'}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: "{ok:false, reason:'forbidden'} — R 세션(D/Z 전용 라우트)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "{ok:false, reason:'not-found'} — 기사 없음(role 게이트 통과 후 판정)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/articles/{id}/action:
+    x-express-path: '/api/articles/:id/action'
+    post:
+      operationId: articlesAction
+      tags: [articles]
+      summary: 생애주기 전이 — 송고(send)/보류(hold)/KILL(kill)/삭제승인(approveDelete)
+      description: |
+        (status, role, action) 전이표를 서버가 강제한다. **role은 검증된 세션에서만 도출**하며 요청
+        본문의 role은 무시한다(ADR-004). 잠금 보유 여부는 보지 않는다(전이는 잠금과 무관하다).
+
+        ## 전이표 — 허용 칸 전수(이 표에 없는 칸은 전부 409 `forbidden-transition`)
+
+        | 현재 status | role | action | 다음 status | 비고 |
+        |---|---|---|---|---|
+        | RDS | R | send | **RDS** | 기자 송고는 상태 유지(데스크 미송고 대기) |
+        | RDS | R | hold | RRH | |
+        | RDS | R | kill | RRK | |
+        | RDS | D·Z | send | DPS | 엠바고 설정 시 **DES**(아래 엠바고 절) |
+        | RDS | D·Z | hold | DDH | |
+        | RDS | D·Z | kill | DDK | |
+        | DPS | D·Z | send | DPS | 재송고(고침/포털고침 후) — 상태 유지 |
+        | DPS | D·Z | hold | DDH | |
+        | DPS | D·Z | approveDelete | DPD | **행은 남는다**(상태값 전이일 뿐 — DB 비파괴) |
+        | DDH | D·Z | send | DPS | 엠바고 설정 시 **DES** |
+        | DDH | D·Z | kill | DDK | 이미 보류라 hold 칸은 없다 |
+        | DES | D·Z | kill | EEK | |
+        | DES | D·Z | hold | EEH | |
+        | EPS | D·Z | kill | EEK | **미검증**(아래 참조) |
+        | EPS | D·Z | hold | EEH | **미검증**(아래 참조) |
+
+        D와 Z는 완전히 같은 표를 쓴다(계약 스위트가 RDS+send·RDS+hold·DPS+approveDelete 3칸으로 동형을
+        못 박았다). R은 `RDS` 행만 가지며 `approveDelete` 칸이 없다.
+
+        **미검증 칸**: `EPS`발 2칸은 이 스냅샷에서 관측하지 못했다 — EPS는 "실제 배부가 일어난 뒤"
+        syncEmbargoStatus가 만드는 상태라 배부가 꺼진 minimal에서는 API로 도달할 수 없다. 표의 값은
+        코드(lifecycle.js DESK_TABLE)에서 옮긴 것이며 HTTP 왕복으로는 확인되지 않았다.
+
+        ## 거부 규칙과 검사 순서(순서 자체가 계약이다)
+
+        1. 세션 없음 → **401** `unauthenticated`.
+        2. 세션 role이 R/D/Z가 아님 → **403** `forbidden`(시드 계정으로는 도달 불가 — 미검증).
+        3. `action`이 send|hold|kill|approveDelete 밖(누락 포함) → **400** `unknown-action`(라우트 직접).
+        4. 기사 없음 → **404** `not-found`.
+        5. 전이표 밖 (status, role, action) → **409** `forbidden-transition`.
+        6. `action=send`인데 본문에 `(끝)` 마커 없음 → **400** `no-end-marker`.
+           **5가 6보다 먼저다** — 전이 자체가 불가하면 마커 검사에 도달하지 않는다(실측: 마커 없는 DDK
+           기사에 send는 400이 아니라 409다). 마커 판정은 서버 DB의 `Article.markupVersion` 블록 텍스트에
+           `(끝)`이 포함되는지로만 한다(hold/kill/approveDelete은 마커를 요구하지 않는다).
+        7. lifecycle의 `unknown-role`(403)·`unknown-action`(400)은 라우트 게이트가 먼저 걸러 도달 경로가 없다.
+
+        거부 응답은 상태를 **변경하지 않는다**(되읽기로 확인 — 401/400/409 전부 원래 status 유지).
+
+        ## 엠바고 송고의 DES 진입
+
+        `embargoAt` 또는 `secondEmbargoAt`(둘 중 **하나라도** 비어 있지 않음) 기사를 D·Z가 `RDS` 또는
+        `DDH`에서 송고하면 전이 결과 DPS가 **DES**로 치환된다(엠바고 배부 대기). 판정은 DB에 저장된 값으로만
+        하며 시각 비교는 하지 않는다(도래 판정은 배부 tick의 책임). 실측 3변형(1차만·2차만·1+2차) 전부 DES다.
+        R의 송고는 전이 결과가 DPS가 아니므로(RDS 유지) 엠바고와 무관하다.
+
+        ## 송고 stamp와 부수효과
+
+        - `action=send` 성공 시에만 `sender`(세션 userId)와 `sentAt`(서버 시각 ISO-8601)을 기록한다.
+          hold/kill/approveDelete은 이 두 컬럼을 건드리지 않는다.
+        - 전이 성공 시 `ArticleHistory`에 `eventType:'status'` + `action` + `fromStatus`/`toStatus` +
+          `actorUserId`(세션 userId) 행이 남는다(GET /api/articles/{id}/history로 관측). 거부 경로는 남기지 않는다.
+        - 배부가 켜진 환경(DIST_SPOOL_DIR 설정)에서는 송고 성공 뒤 **비동기** 배부 훅이 돌고, 실제 배부가
+          성공하면 DES→EPS→DPS 승격이 뒤따른다. 이 응답은 승격 **전**의 status다(step10 소유 축).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: 기사 ID(AKR+YYYYMMDD+난수9).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [send, hold, kill, approveDelete]
+                  description: 의도 액션. 그 밖의 값·누락은 400 unknown-action.
+              description: >-
+                role·status는 받지 않는다(보내도 무시한다 — 신뢰 경계는 세션이다).
+      responses:
+        '200':
+          description: 전이 성공 — 본문은 정확히 {ok, status} 2키다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, status]
+                properties:
+                  ok: { const: true }
+                  status:
+                    type: string
+                    enum: [RDS, DPS, RRH, RRK, DDH, DDK, DPD, DES, EEK, EEH]
+                    description: 저장된 최종 status(엠바고 DES 치환 후). GET /api/articles/{id}로 되읽어도 같다.
+        '400':
+          description: unknown-action(정의 외·누락) · no-end-marker(send인데 "(끝)" 없음)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: forbidden(세션 role이 R/D/Z 밖 — 시드 계정으로는 도달 불가·미검증)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: not-found(기사 없음)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: >-
+            forbidden-transition(전이표 밖 칸). 이 라우트의 fail() fallback도 400이 아니라 **409**다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/articles/{id}/derive:
+    x-express-path: '/api/articles/:id/derive'
+    post:
+      operationId: articlesDerive
+      tags: [articles]
+      summary: 후속기사작성(followUp)/계속기사작성(continue) — 원본에서 **새 기사**를 만든다
+      description: |
+        원본을 바탕으로 새 기사를 생성한다. 항상 신규 생성 경로만 타므로 **원본은 한 글자도 바뀌지 않는다**
+        (계약 스위트가 파생 전후 `{article, contents}` 전체를 deep-equal로 단언한다 — DPS 원본에서 3회
+        연속 파생해도 불변). 새 기사는 새 `articleId`와 `status:'RDS'`를 받는다.
+
+        권한은 세션 role이 R/D/Z이면 충분하다(원본 status는 보지 않는다 — DPS·DES 기사에서도 파생된다).
+        `author`는 **세션 사용자**(name, 없으면 userId)로 서버가 stamp하며 클라가 보낸 author/role/status/
+        articleId는 무시한다.
+
+        ## 복사 규칙(실측 — news.md에 명세가 없어 코드가 정본이다)
+
+        | 필드 | followUp | continue |
+        |---|---|---|
+        | `title` | 복사 | 복사 |
+        | `markupVersion`(본문) | **빈 문자열**(주제만 이어받아 새로 작성) | 복사 |
+        | `coAuthor`·`category`·`region`·`attribute`·`keyword` | 복사 | 복사 |
+        | `internalComment`·`externalComment` | 복사 | 복사 |
+        | `attachmentFile`·`referenceFile` | 복사(저장 시 참조 스킴 정규화) | 복사 |
+        | `embargoAt`·`secondEmbargoAt` | **''로 초기화** | **''로 초기화** |
+        | `author` | 세션 사용자 | 세션 사용자 |
+        | `status` | 'RDS' | 'RDS' |
+        | `sender`·`sentAt`·`distributedAt` | null(미복사) | null(미복사) |
+        | `department`·`departmentCode` | **null(미복사)** | **null(미복사)** |
+
+        **주의(실측 드리프트)**: server/index.js 899행 주석은 "부서 등 나머지 공통정보는 서비스가 원본에서
+        복사"라고 쓰여 있으나, `deriveArticle`의 복사 목록에 `department`/`departmentCode`가 없어 파생 기사의
+        부서는 **NULL**이다(신규 작성 POST /api/articles는 세션 부서를 stamp하는 것과 대비된다). 코드가
+        정본이므로 명세는 실측을 적는다 — 이식 시 이 차이를 그대로 재현할지는 별도 판단이 필요하다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: 원본 기사 ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [followUp, continue]
+                  description: 그 밖의 값·누락은 400 unknown-mode.
+      responses:
+        '200':
+          description: 파생 성공 — 본문은 정확히 {ok, articleId} 2키이고 articleId는 **새 기사**의 것이다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, articleId]
+                properties:
+                  ok: { const: true }
+                  articleId:
+                    type: string
+                    description: 새로 발급된 기사 ID(원본 id와 다르다).
+        '400':
+          description: unknown-mode(정의 외·누락)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: forbidden(세션 role이 R/D/Z 밖 — 시드 계정으로는 도달 불가·미검증)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: not-found(원본 기사 없음)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/users:
+    get:
+      operationId: usersList
+      tags: [users]
+      summary: 사용자 명단 조회 — 역할별 응답 투영 2변형
+      description: >-
+        세션만 있으면 200이고, **응답 shape은 요청자의 세션 role이 정한다**(요청 body·쿼리가 아니라
+        x-session-id/쿠키로 검증된 세션의 role이 판정 기준이다 — ADR-004).
+        Z = 전체 명단(User 스키마 6키), 비-Z(R/D) = 정확 4키 투영(UserPublic —
+        userId·name·department·departmentCode). 비-Z 변형에는 role·active가 **없다**:
+        이 투영이 빠지면 기자가 전 사용자의 권한과 활성 상태를 보게 된다.
+        어느 변형에도 password(평문/bcrypt 해시)와 계정 잠금 필드(failedLoginCount·lockedUntil·
+        lastFailedLoginAt)는 없다. 필터 쿼리는 받지 않는다(라우트가 항상 query({})로 전체를 읽는다).
+        비활성 사용자(active='N')도 명단에 남는다 — 사용자 행 삭제 경로는 존재하지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: 명단(변형 판정 = 세션 role)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok:
+                    const: true
+                  items:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: '#/components/schemas/User'
+                        - $ref: '#/components/schemas/UserPublic'
+              examples:
+                adminView:
+                  summary: Z 세션 — SAFE_FIELDS 6키
+                  value:
+                    ok: true
+                    items:
+                      - userId: reporter
+                        name: 김기자
+                        role: R
+                        department: 정치부
+                        departmentCode: POL
+                        active: 'Y'
+                nonAdminView:
+                  summary: 비-Z 세션(R/D) — 정확 4키(role·active 없음)
+                  value:
+                    ok: true
+                    items:
+                      - userId: reporter
+                        name: 김기자
+                        department: 정치부
+                        departmentCode: POL
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: usersCreate
+      tags: [users]
+      summary: 사용자 생성 (Z 전용)
+      description: >-
+        게이트는 authorization.manageUsers(Z 전용) — 미인증 401, 비-Z 403이며 거부 시 행이 생기지 않는다.
+        **입력 검증이 없다**: role이 R/D/Z 밖(예: 'X')이어도, name·department 등이 빠져도 200이다.
+        비밀번호는 bcrypt로 저장되고 응답에는 평문도 해시도 없다(응답 user = SAFE_FIELDS 투영이며
+        **요청에서 누락된 필드는 키 자체가 없다**. active 미지정 시 'Y'가 적용된다).
+        userId는 PK라 중복 생성은 4xx가 아니라 **500 internal-error**다(제약 위반 예외가 전역 에러 핸들러로 흐른다).
+        결함 후보 2건(동결하되 고칠 대상 — README '결함 후보' 절 #1·#2): ① 빈 비밀번호도 유효 자격증명이 되고
+        role을 검증하지 않아 정의 밖 role 계정은 모든 role 게이트에서 403이 되는 복구 불가 사용자로 남는다,
+        ② 중복 userId가 4xx가 아니라 500이다. 이식 시 "그대로 재현"과 "고치고 계약 변경으로 기록" 중 하나를
+        의식적으로 고르라 — 라벨 없이 베끼면 결함이 요구사항이 된다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: PK. 중복이면 500 internal-error(결함 후보 #1 — 4xx가 아니다)
+                name: { type: string }
+                role:
+                  type: string
+                  description: 검증하지 않는다 — R/D/Z 밖 값도 그대로 저장된다(결함 후보 #2)
+                department: { type: string }
+                departmentCode: { type: string }
+                active: { type: string, enum: [Y, N], description: 미지정 시 'Y' }
+                password:
+                  type: string
+                  writeOnly: true
+                  description: >-
+                    bcrypt 해시로 저장. 미지정이면 빈 문자열이 해시된다(계정 생성은 성공한다) —
+                    결함 후보 #2: 빈 비밀번호가 유효 자격증명이 된다
+            example:
+              userId: ct-user
+              name: 계약 사용자
+              role: R
+              department: 정치부
+              departmentCode: POL
+              password: '<write-only>'
+      responses:
+        '200':
+          description: 생성됨 — user는 SAFE_FIELDS 투영(password 없음)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok:
+                    const: true
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — reason=forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            결함 후보 #1(실측): userId 중복(PK 제약 위반)이 400·409가 아니라 500 internal-error다
+            — 제약 위반 예외가 전역 에러 핸들러로 그대로 흐른다. 계약 스위트는 이 관측을 tag
+            'server-error'로 기록한다(tag 'conflict'로 적으면 존재하지 않는 409 계약이 커버리지에서
+            충족된 것처럼 보인다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/users/{id}:
+    x-express-path: '/api/users/:id'
+    put:
+      operationId: usersUpdate
+      tags: [users]
+      summary: 사용자 수정 (Z 전용)
+      description: >-
+        게이트는 authorization.manageUsers(Z 전용) — 미인증 401, 비-Z 403이며 거부 시 값이 바뀌지 않는다.
+        본문에 온 필드만 부분 갱신하고(화이트리스트 컬럼 외는 무시), 응답은 **{ok, changes}뿐이다**
+        — 사용자 객체를 돌려주지 않으므로 비밀번호 변경 요청에도 평문·해시가 실릴 자리가 없다.
+        **존재 판정을 하지 않는다**: 없는 userId도 404가 아니라 200 {ok:true, changes:0}이다.
+        비활성화는 active='N' 수정이며 행은 남는다(DELETE 라우트 없음 — DB 비파괴).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: 대상 userId(경로 파라미터). 존재하지 않아도 200 changes=0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                role: { type: string }
+                department: { type: string }
+                departmentCode: { type: string }
+                active: { type: string, enum: [Y, N] }
+                password:
+                  type: string
+                  writeOnly: true
+                  description: 오면 bcrypt 해시로 저장한다. 응답에는 실리지 않는다
+            example:
+              name: 계약 사용자(수정)
+              department: 사회부
+      responses:
+        '200':
+          description: 수행됨 — changes는 갱신된 행 수(0이면 대상 없음)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, changes]
+                properties:
+                  ok:
+                    const: true
+                  changes: { type: integer, description: '1=수정됨 · 0=대상 없음(또는 갱신 가능한 필드 없음)' }
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — reason=forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/receiver-config:
+    get:
+      operationId: receiverConfigList
+      tags: [receiver-config]
+      summary: 수집 수신 설정 목록 (Z 전용)
+      description: >-
+        Z 전용이지만 **라우트에는 게이트가 없다** — receiverConfigService가 세션 토큰을 받아
+        authorization.manageReceiverConfig로 판정한다(미인증 401 · 비-Z 403). 게이트 위치는
+        구현 자유이고 관측 계약만 동일하면 된다(Spring 이식 시 컨트롤러로 옮겨도 무방).
+        응답 원소는 SAFE_FIELDS 10키 고정이며 password(FTP)·apiKey(API)는 **쓰기 전용 시크릿**이라
+        어떤 응답에도 없다(allowlist 투영이므로 새 시크릿 컬럼이 추가돼도 자동 비노출).
+        createdAt은 서버가 채우지 않는다 — 입력이 없으면 null 그대로다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: query
+          required: false
+          schema: { type: integer }
+          description: 동등 필터
+        - name: sourceId
+          in: query
+          required: false
+          schema: { type: string }
+          description: 동등 필터
+        - name: type
+          in: query
+          required: false
+          schema: { type: string, enum: [FTP, API] }
+          description: 동등 필터
+        - name: active
+          in: query
+          required: false
+          schema: { type: string, enum: [Y, N] }
+          description: 동등 필터
+      responses:
+        '200':
+          description: >-
+            설정 목록. 쿼리 키는 화이트리스트 컬럼(id·sourceId·type·name·host·port·username·
+            password·apiEndpoint·apiKey·active·createdAt)만 AND 동등 필터로 적용되고 그 밖의 키는
+            **무시된다**(400이 아니다). 결함 후보 #3(README '결함 후보' 절): password·apiKey는 응답에
+            실리지 않지만 **필터 키로는 받아들여진다** — 값 존재 여부를 되묻는 오라클이 된다
+            (실측 기록, 이 phase는 코드 무수정).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok:
+                    const: true
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReceiverConfig'
+              example:
+                ok: true
+                items:
+                  - id: 1
+                    sourceId: yonhap-ftp
+                    type: FTP
+                    name: 연합 FTP
+                    host: 127.0.0.1
+                    port: '21'
+                    apiEndpoint: null
+                    active: 'Y'
+                    createdAt: null
+                    username: rcvuser
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — reason=forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: receiverConfigCreate
+      tags: [receiver-config]
+      summary: 수집 수신 설정 생성 (Z 전용)
+      description: >-
+        게이트는 서비스가 강제한다(미인증 401 · 비-Z 403 · 거부 시 행이 생기지 않는다).
+        **입력 검증이 없다**(type·sourceId 미검증). 응답은 {ok, id}뿐이라 시크릿을 되돌려주지 않는다.
+        시크릿(password·apiKey)은 쓰기 전용이다 — 저장은 되지만 어떤 조회 응답에도 나오지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sourceId: { type: string, description: 수집 소스 식별자(collection 라우트의 등록 판정 키) }
+                type: { type: string, enum: [FTP, API], description: 검증하지 않는다 }
+                name: { type: string }
+                host: { type: string }
+                port: { type: string }
+                username: { type: string }
+                password: { type: string, writeOnly: true, description: FTP 비밀번호 — 응답 미노출 }
+                apiEndpoint: { type: string }
+                apiKey: { type: string, writeOnly: true, description: API 키 — 응답 미노출 }
+                active: { type: string, enum: [Y, N], description: 미지정 시 DB 기본값 'Y' }
+                createdAt: { type: string, description: 서버가 채우지 않는다(입력이 없으면 null) }
+            example:
+              sourceId: yonhap-ftp
+              type: FTP
+              name: 연합 FTP
+              host: 127.0.0.1
+              port: '21'
+              username: rcvuser
+              password: '<write-only>'
+              active: 'Y'
+      responses:
+        '200':
+          description: 생성됨 — 새 행의 정수 id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok:
+                    const: true
+                  id: { type: integer, description: INTEGER PRIMARY KEY 자동 증가값 }
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — reason=forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/receiver-config/{id}:
+    x-express-path: '/api/receiver-config/:id'
+    delete:
+      operationId: receiverConfigDelete
+      tags: [receiver-config]
+      summary: 수집 수신 설정 삭제 (Z 전용) — 시스템의 유일한 행 삭제 라우트
+      description: >-
+        **삭제 범위 계약**: ReceiverConfig 설정 행 1건만 지운다. 그 sourceId로 **이미 수집된
+        Article/Contents는 절대 건드리지 않는다** — DB 비파괴 원칙의 명시적 예외 경계이며,
+        Spring 이식에서 cascade/FK ON DELETE를 붙이면 그 순간 계약 위반이다.
+        (수집 기사 불변을 실제 데이터로 확인하는 계약 케이스는 step8 collection이 소유한다.)
+        게이트는 서비스가 강제한다(미인증 401 · 비-Z 403 · 거부 시 행이 남는다).
+        **존재 판정을 하지 않는다**: 없는 id·이미 지운 id는 404가 아니라 200 {ok:true, changes:0}(멱등)이고,
+        숫자가 아닌 id도 라우트가 Number()로 NaN을 만들어 넘기므로 같은 200 changes=0이다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: >-
+            설정 행 id. 라우트가 Number(id)로 변환한다 — 숫자가 아니면 NaN이 되어 매칭 0건(200 changes=0)
+      responses:
+        '200':
+          description: 수행됨 — changes는 삭제된 설정 행 수(0이면 대상 없음)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, changes]
+                properties:
+                  ok:
+                    const: true
+                  changes: { type: integer, description: '1=삭제됨 · 0=대상 없음(재삭제·NaN id 포함)' }
+        '401':
+          description: 세션 없음/무효 — reason=unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — reason=forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/collection/receive:
+    post:
+      operationId: collectionReceive
+      tags: [collection]
+      summary: 수집 인제스트(push) — 수신 payload를 분석해 자동기사로 등록
+      description: |
+        사용자 세션 라우트가 **아니다**. 방어는 (1) 바인드 주소(loopback 여부) (2) `COLLECTION_TOKEN`
+        둘뿐이며 세션 쿠키·`x-session-id`는 어떤 판정에도 쓰이지 않는다 — 세션을 요구하도록 구현하면 계약 위반이다.
+
+        **가드 순서(계약)**: `503 collection-disabled` → `401 unauthenticated` → 서비스 판정(`403`).
+        순서가 바뀌면 미구성 서버가 구성 문제(503) 대신 토큰 오류(401)를 먼저 노출한다.
+
+        | 바인드 주소 | COLLECTION_TOKEN | 동작 |
+        | --- | --- | --- |
+        | loopback(127.0.0.0/8·localhost·::1) | 설정 | `x-collection-token` 일치 시 처리 · 불일치/부재 401 |
+        | loopback | 미설정 | **토큰 헤더를 읽지 않는다** — 무토큰 개방(헤더를 보내도 무시) |
+        | loopback 밖(예: 0.0.0.0) | 미설정 | 항상 **503 collection-disabled**(fail-closed, 토큰 헤더 유무 무관) |
+        | loopback 밖 | 설정 | loopback+설정과 동일(토큰이 유일한 방어) |
+
+        판정은 요청 시점의 환경변수를 읽는다(부트 스냅샷이 아니다).
+
+        **등록 규칙**: 미등록 `sourceId`는 수신하지 않는다(403 `unregistered`). 등록됐지만 활성 행이
+        하나도 없으면 403 `inactive`. 통과하면 파서가 `{title, content}`를 뽑아 기사 1건을 만든다 —
+        `attribute='자동기사'`(rcv.md 규칙) · 초기 `status='RDS'` · 본문은 `Article.markupVersion`
+        블록 JSON(`제목 줄` + 본문 줄들, 평문 `content` 컬럼 미사용).
+
+        **입력 검증이 없다(실측)**: `payload`가 없거나 파서가 제목·본문을 찾지 못해도 400이 아니라
+        **200으로 빈 기사(제목 `''`, 블록 1개 `''`)가 등록된다**. 호출자 책임으로 남은 계약이다.
+      security:
+        # 서버가 COLLECTION_TOKEN을 설정한 구성에서만 필수다. 미설정 구성(loopback 전제)에서는 무인증이며
+        # 그 사실 자체가 계약이라 두 대안을 모두 적는다(`{}` = 인증 없음).
+        - collectionToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceId]
+              properties:
+                sourceId:
+                  type: string
+                  description: ReceiverConfig.sourceId — 등록·활성 행이 있어야 수신한다.
+                payload:
+                  description: |
+                    파서 입력(파서 규칙이 곧 요청 계약이다).
+                    - **문자열**: 첫 줄이 제목, 나머지가 본문. CRLF는 LF로 정규화하고 선행 빈 줄은 버린다.
+                    - **객체**: `title` + (`content` 또는 `body`)에서 직접 취한다. `title`이 비고 본문이
+                      있으면 본문 첫 줄을 제목으로 승격한다.
+                    - 미전송/빈 값이면 제목·본문이 빈 기사가 만들어진다(거부되지 않는다).
+                  oneOf:
+                    - type: string
+                    - type: object
+                      properties:
+                        title: { type: string }
+                        content: { type: string }
+                        body: { type: string, description: content가 없을 때의 대체 키 }
+            examples:
+              text:
+                summary: FTP 파일 형태(문자열)
+                value: { sourceId: 'src-1', payload: "자동기사 제목\n본문 첫째 줄" }
+              object:
+                summary: API 응답 형태(객체)
+                value: { sourceId: 'src-1', payload: { title: '자동기사 제목', content: '본문' } }
+      responses:
+        '200':
+          description: 등록 성공 — 응답 키는 정확히 2개다(기사 본문·상태는 반환하지 않는다).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, articleId]
+                properties:
+                  ok: { const: true }
+                  articleId:
+                    type: string
+                    description: 발급된 기사 ID(`AKR` + 17자리 숫자).
+        '401':
+          description: >-
+            `unauthenticated` — COLLECTION_TOKEN이 설정된 서버에서 x-collection-token 헤더가
+            없거나 값이 다르다. 서비스 판정(미등록 여부) 이전에 끊긴다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: >-
+            `unregistered`(등록되지 않은 sourceId) 또는 `inactive`(등록됐으나 활성 행 없음).
+            토큰 게이트를 통과했다는 증거이기도 하다(무토큰 서버에서 401 대신 이 응답이 온다).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: >-
+            `collection-disabled` — loopback 밖 바인딩 + COLLECTION_TOKEN 미설정(fail-closed).
+            클라이언트 잘못이 아니라 서버 구성상 기능 미가용이다(`spool-disabled` 503과 동형).
+            부수효과 0: DB 등록도, 외부 호출도 하지 않는다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/collection/pull:
+    post:
+      operationId: collectionPull
+      tags: [collection]
+      summary: 수집 인제스트(pull) — 등록된 활성 API 소스를 서버가 호출해 응답을 자동기사로 등록
+      description: |
+        `/api/collection/receive`와 **동일한 노출 정책**(가드 순서 `503` → `401` → 판정)이며 세션 라우트가 아니다.
+        구성별 동작 표는 `/api/collection/receive`와 같다.
+
+        서버는 `sourceId`로 찾은 설정 중 `active != 'N'` · `type='API'` · `apiEndpoint`가 있는 첫 행의
+        `apiEndpoint`를 **1회** 호출한다(`apiKey`가 있으면 `Authorization: Bearer <apiKey>`).
+        **재시도·백오프는 없다** — 실패는 사유 토큰으로 즉시 반환한다(ADR-008).
+        응답 본문은 JSON이면 객체로, 아니면 평문 그대로 파서에 넘긴다. 그 뒤는 receive와 같은 경로다
+        (등록·활성 재확인 → 파싱 → `attribute='자동기사'`로 등록).
+
+        **성공 판정에 내용 검증이 없다(실측)**: 호출한 API 응답에 제목·본문이 없어도 200으로 빈 기사가
+        등록된다(계약 스위트는 대상 서버 자신의 `/api/health`를 소스로 걸어 이 경로를 결정적으로 관측한다).
+      security:
+        - collectionToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceId]
+              properties:
+                sourceId:
+                  type: string
+                  description: ReceiverConfig.sourceId — 활성 API 소스(apiEndpoint 보유)여야 한다.
+      responses:
+        '200':
+          description: 외부 호출·분석·등록 성공(응답 키 2개 — receive와 동일 shape).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, articleId]
+                properties:
+                  ok: { const: true }
+                  articleId: { type: string }
+        '400':
+          description: >-
+            `no-active-api-source`(활성 API 소스 없음 — FTP 전용·비활성·apiEndpoint 부재) 또는
+            `fetch-failed`(외부 호출 실패: 연결 거부·비2xx·예외). 둘 다 전역 매핑이 없어
+            fail() fallback 400으로 떨어진다(reason-tokens.md 표 3 #10·#11).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: '`unauthenticated` — 토큰 불일치/부재. 외부 호출 이전에 끊긴다.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: '`unregistered` — 등록되지 않은 sourceId(외부 호출하지 않는다).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: >-
+            `collection-disabled` — fail-closed. 가드가 라우트 최상단이라 외부 호출(fetch)까지 가지 않는다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/articles/{id}/translate:
+    x-express-path: '/api/articles/:id/translate'
+    post:
+      operationId: articlesTranslate
+      tags: [articles]
+      summary: 기사 본문 번역(외부 프록시 — graceful degrade)
+      description: >-
+        **상태코드로 성공을 판정할 수 없는 대표 라우트다.** 외부 번역 키가 없거나 외부 호출이 실패해도
+        500/400으로 감싸지 않고 **200 + {ok:false, reason, translatedText:원문}**을 그대로 내려준다
+        (reason: 키 누락=`no-key` · 외부 호출/파싱 실패=`error`). 클라이언트(httpModel)는 상태코드를
+        해석하지 않고 JSON의 `ok`만 읽으며, 이 관용이 계약의 일부다 — Spring 이식에서 4xx/5xx로 바꾸면
+        클라이언트가 조용히 깨진다.
+
+
+        번역 대상 본문은 **서버가 DB에서만** 취한다(Article.markupVersion 블록 텍스트를 개행으로 이어 사용 —
+        비면 contents.title → article.title 폴백). 요청 body의 텍스트는 신뢰하지 않으며 받지도 않는다(ADR-004).
+        읽기 전용이라 DB를 변경하지 않는다. 세션 게이트는 대상 존재 확인보다 먼저 돈다(미인증 + 없는 id → 404가 아니라 401).
+
+
+        스위트 실측(키 미설정): 본문이 있는 기사 → 200 `{ok:false, reason:'no-key', translatedText:<원문>}`,
+        `targetLang` 지정 여부와 무관하게 동일. `ok:true`(실제 번역 성공)와 `reason:'error'`는 외부 키/네트워크가
+        필요해 **미동결**이다. `targetLang` 생략 시 기본값 `ko`가 외부 요청에 쓰이는지는 외부 호출이 없어 **관측 불가**다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: articleId(AKR+YYYYMMDD+난수9)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslateRequest'
+      responses:
+        '200':
+          description: >-
+            번역 결과 또는 **graceful degrade**(키 누락/외부 실패도 200이다 — ok로만 판정하라).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslateResponse'
+        '401':
+          description: 미인증(unauthenticated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 기사 없음(not-found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/media/search:
+    get:
+      operationId: mediaSearch
+      tags: [media]
+      summary: 미디어 검색 프록시(이미지=Google CSE · 영상=YouTube)
+      description: >-
+        **항상 200이고 사유 토큰이 없다.** 응답 키는 `ok`·`items`·`error` 3종 고정이며 `ok`는 언제나 true다.
+        `error`는 사유 토큰이 아니라 **불리언 플래그**다 — 외부 호출 실패 시에만 `{ok:true, items:[], error:true}`이고,
+        정상/폴백은 `error:false`다(서비스 내부의 `demo:true` 플래그는 라우트가 응답에 싣지 않는다).
+
+
+        `type`은 `image`만 이미지 검색이고 **누락·이상값은 전부 `video`로 정규화**된다.
+
+
+        **키 미설정 시 결정적 데모 폴백**(빈 결과가 아니다): 외부 호출을 아예 하지 않고
+        이미지는 질의를 시드로 쓴 6건(원소 키 `title`·`link`), 영상은 고정 videoId 4건(원소 키 `title`·`videoId`·`url`)을
+        돌려준다. 같은 질의를 반복하면 완전히 동일한 결과다(스위트 실측). 키가 설정된 서버의 실제 검색 결과 shape은
+        **미검증**이다(스위트는 키 없는 구성에서 측정 — 외부 egress 0).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: 검색어. 누락 시 빈 문자열(데모 폴백은 '뉴스'를 시드로 쓴다).
+        - name: type
+          in: query
+          required: false
+          schema: { type: string, enum: [image, video] }
+          description: '`image`만 이미지 검색 — 누락·이상값은 video로 처리한다(400이 아니다).'
+      responses:
+        '200':
+          description: 검색 결과(외부 실패 시 빈 items + error:true, 키 미설정 시 데모 폴백)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaSearchResponse'
+        '401':
+          description: 미인증(unauthenticated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/upload:
+    post:
+      operationId: upload
+      tags: [media]
+      summary: 첨부/참고 파일 업로드(base64 JSON)
+      description: >-
+        **multipart가 아니라 base64 JSON**이다(`{filename, contentBase64}` — 데이터 URI prefix 없는 raw base64).
+        이 라우트만 본문 파서 limit이 10mb다(전역 파서는 우회한다).
+
+
+        **저장 파일명은 서버가 발급한다**: `crypto` 무작위 16바이트 hex(32자) + 검증된 소문자 확장자.
+        사용자 `filename`은 **확장자 판정에만** 쓰이므로 `../` 같은 경로 조각이 저장 경로에 끼어들 수 없다.
+        기존 파일은 절대 덮어쓰지 않는다(`wx` 플래그로 열어 충돌 시 쓰기 실패). 업로드 디렉터리는 첫 업로드 때 lazy 생성된다.
+        응답 `filename`은 요청값을 대소문자까지 그대로 되돌려주고(표시용), 응답 `path`의 확장자는 **소문자로 정규화**된다.
+
+
+        **서버는 파일 내용을 검사하지 않는다** — 확장자(화이트리스트 14종, 소문자 비교)와 디코드 후 바이트 크기(5MB=5,242,880)만 본다.
+        따라서 `.hwp`로 올린 png 바이트도 200이다(실측). 정확 5MB 경계는 **미동결**(성공 1건 + 여유 초과 1건만 측정).
+
+
+        업로드된 파일은 `GET /uploads/<hex>.<ext>`로 정적 서빙된다(스위트 실측: 200 + `image/png`).
+        **정적 서빙에는 세션 게이트가 없다**(express.static이 세션 판독보다 앞에 마운트된다) — 미인증으로도 200이며,
+        비밀은 32-hex 파일명뿐인 capability URL 모델이다. 이식 시 여기에 인증을 요구하면 발행 HTML에 재임베드된
+        이미지가 외부에서 깨진다. 이 정적 경로는 39 라우트 인벤토리 밖이라 커버리지 집계에 잡히지 않는다
+        (리포트에는 `x-uploads-static`로 남는다).
+        응답 `path` 문자열이 Contents.attachmentFile / referenceFile에 그대로 저장된다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        '200':
+          description: 저장 완료 — path는 서버가 발급한 이름이다
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          description: >-
+            `invalid-file`(filename·contentBase64가 문자열이 아님 · 확장자 없음 · 화이트리스트 밖) 또는
+            `too-large`(디코드 5MB 초과). 두 경우 모두 디스크에 아무것도 쓰지 않는다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 미인증(unauthenticated) — 본문 검증보다 세션 게이트가 먼저다
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/photos:
+    post:
+      operationId: photosCreate
+      tags: [media]
+      summary: 사진DB 등록(append-only)
+      description: >-
+        세션만 있으면 등록할 수 있다(역할 게이트 없음 — 이미지/글기사 검색과 동형).
+        **append-only다: 수정·삭제 API가 없다**(사진 삭제는 범위 밖 — DB 비파괴 원칙).
+
+
+        `src` 허용 규칙(sanitizeFileRef — 첨부/자료 파일과 같은 단일 출처): **업로드 상대경로(`/uploads/…`)
+        또는 `https://` URL만** 통과한다. `javascript:`·`data:`·`http:`·프로토콜상대(`//host`)·백슬래시 포함·
+        제어문자/공백 포함·`/uploads/../` traversal은 전부 **400 `invalid-src`**이며 행이 생기지 않는다(실측 4종).
+        등록된 src는 재임베드로 발행 HTML까지 흐르므로 이 검증이 심화 방어다.
+
+
+        **`registeredBy`는 검증된 세션의 userId로만 stamp한다** — 요청 body의 `registeredBy`는 컨트롤러에 넘기지도
+        않는다(ADR-004). 위조 값을 넣어도 무시되며, 등록 응답은 `{ok,id}`뿐이라 이 사실은 검색으로 되읽어야 관측된다(실측 확인).
+        `caption`·`sourceArticleId`는 생략 시 **빈 문자열**로 채워진다(null 아님). `createdAt`은 서버가 ISO-8601 UTC로 stamp한다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhotoCreateRequest'
+      responses:
+        '200':
+          description: 등록 완료(새 행 id)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoCreateResponse'
+        '400':
+          description: 허용 밖 src(`invalid-src`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 미인증(unauthenticated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/photos/search:
+    get:
+      operationId: photosSearch
+      tags: [media]
+      summary: 사진DB 캡션 검색
+      description: >-
+        캡션 **부분일치(LIKE `%q%`)** · **최신 등록 우선(id DESC)**. 원소는 Photo 행 6컬럼을 그대로 싣는다
+        (`id`·`src`·`caption`·`sourceArticleId`·`registeredBy`·`createdAt` — 투영·마스킹 없음).
+        `q`를 생략하거나 빈 문자열로 주면 `LIKE '%%'`가 되어 **전체 목록**이 나온다(400이 아니다).
+        결함 후보 #5(README '결함 후보' 절): `SELECT *` 무투영이라 등록자(`registeredBy`)가 전 사용자에게
+        노출된다 — 현행 계약이라 동결했지만 옳다고 승인한 것은 아니다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: 캡션 부분일치 검색어. 생략·빈 문자열이면 필터하지 않는다(전체 반환).
+      responses:
+        '200':
+          description: 검색 결과(최신 등록 우선)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoSearchResponse'
+        '401':
+          description: 미인증(unauthenticated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution-targets:
+    get:
+      operationId: distributionTargetsList
+      tags: [distribution]
+      summary: 배부 수신처 목록 (Z 전용)
+      description: >-
+        활성·비활성 수신처를 **모두** 돌려준다 — 비활성(active='N') 행은 목록에서 사라지지 않는다.
+        제거 수단이 soft delete뿐이므로(DELETE 라우트 없음) 목록이 유일한 감사 창이다.
+        쿼리는 화이트리스트 컬럼의 AND 동등 필터다(id·name·kind·spoolDir·active) —
+        그 밖의 키는 400이 아니라 무시된다. 배열·객체 값도 무시된다(필터 주입 차단).
+        응답 원소는 SAFE_FIELDS 정확 7키이며 **spoolDir(슬러그)가 포함된다** — 서버 파일시스템
+        절대 경로는 어떤 응답에도 실리지 않는다(스풀 루트는 DIST_SPOOL_DIR 환경변수의 서버 비밀).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - { name: id, in: query, required: false, schema: { type: integer }, description: 동등 필터 }
+        - { name: name, in: query, required: false, schema: { type: string }, description: 동등 필터(부분 일치 아님) }
+        - { name: kind, in: query, required: false, schema: { type: string, enum: [press, nonpress] } }
+        - { name: spoolDir, in: query, required: false, schema: { type: string } }
+        - { name: active, in: query, required: false, schema: { type: string, enum: [Y, N] } }
+      responses:
+        '200':
+          description: 수신처 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok: { const: true }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DistributionTarget'
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — forbidden (R도 D도 거부)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: distributionTargetsCreate
+      tags: [distribution]
+      summary: 배부 수신처 등록 (Z 전용)
+      description: >-
+        id·createdAt·updatedAt은 서버가 정한다(요청의 동명 필드는 채택하지 않는다).
+        검증 순서는 name → kind → spoolDir → active이며, 하나라도 어긋나면 아무것도 저장하지 않는다.
+        거부 토큰 5종(invalid-name·invalid-kind·invalid-spool-dir·duplicate-spool-dir·invalid-active)은
+        전역 상태 매핑에 없어 **fail() fallback 400**으로 나간다(reason-tokens.md 표 3).
+        spoolDir 유일성은 **비활성 행까지 포함**해 따진다(비활성 대상의 스풀 폴더가 그대로 남아 있기 때문).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind, spoolDir]
+              properties:
+                name:
+                  type: string
+                  description: trim 후 1~100자. 비문자열은 강제변환 없이 거부한다(invalid-name).
+                kind:
+                  type: string
+                  enum: [press, nonpress]
+                  description: 언론사(1차 엠바고) | 비언론사(2차 엠바고). 대소문자 보정 없음 — 'PRESS'는 invalid-kind.
+                spoolDir:
+                  type: string
+                  description: >-
+                    스풀 루트 아래 하위 폴더 **슬러그**. 규칙 ^[a-z0-9][a-z0-9_-]{0,63}$ +
+                    Windows 예약 장치명(con·prn·aux·nul·com1~9·lpt1~9) 거부. 경로 구분자·'..'·절대경로·
+                    대문자·공백·널바이트는 전부 invalid-spool-dir다(저장 시점이 경로 조작을 막는 유일한 방어).
+                active:
+                  type: string
+                  enum: [Y, N]
+                  description: 미지정이면 'Y'. 그 밖의 값은 invalid-active.
+      responses:
+        '200':
+          description: 등록 성공 — 본문은 {ok,id} 2키뿐이다(생성 행을 되돌려주지 않는다)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { const: true }
+                  id: { type: integer, description: 새 수신처 id(INTEGER PK) }
+        '400':
+          description: >-
+            검증 거부 — invalid-name · invalid-kind · invalid-spool-dir · duplicate-spool-dir · invalid-active.
+            어떤 거부도 행을 만들지 않는다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution-targets/{id}:
+    x-express-path: '/api/distribution-targets/:id'
+    put:
+      operationId: distributionTargetsUpdate
+      tags: [distribution]
+      summary: 배부 수신처 수정 (Z 전용)
+      description: >-
+        present-only 패치다: 전달한 필드만 검증·반영하고 미전달 필드는 불변이며, 전달된 필드가 하나라도
+        규칙을 어기면 아무것도 저장하지 않는다(부분 저장 금지). 대상 식별은 URL이 한다 — body의 id·createdAt은
+        무시된다(서버 소유 필드). 존재 확인이 검증보다 먼저라, 없는 id는 검증 사유로 둔갑하지 않고 not-found다.
+        **{active:'N'}은 deactivate와 같은 전이의 두 번째 진입점**이며 두 경로는 같은 헬퍼로 수렴한다
+        (updatedAt stamp 포함). 행 삭제 경로는 존재하지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+          description: 숫자로 변환되지 않는 값은 NaN이 되어 어떤 행에도 매치되지 않는다 → 404 not-found(500 아님).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: trim 후 1~100자 }
+                kind: { type: string, enum: [press, nonpress] }
+                spoolDir: { type: string, description: 슬러그 규칙은 POST와 동일. 중복 판정에서 자기 자신은 제외된다. }
+                active: { type: string, enum: [Y, N], description: active=N이면 deactivate와 같은 전이다 }
+      responses:
+        '200':
+          description: 수정 성공 — {ok,changes}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, changes]
+                properties:
+                  ok: { const: true }
+                  changes: { type: integer, description: 갱신된 행 수(정상 1). 패치가 비면 0이다. }
+        '400':
+          description: 검증 거부 — invalid-name · invalid-kind · invalid-spool-dir · duplicate-spool-dir · invalid-active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 없는 id·비수치 id — not-found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution-targets/{id}/deactivate:
+    x-express-path: '/api/distribution-targets/:id/deactivate'
+    post:
+      operationId: distributionTargetsDeactivate
+      tags: [distribution]
+      summary: 배부 수신처 비활성(soft delete, Z 전용)
+      description: >-
+        active='N'으로 내린다. **행을 지우지 않는다** — 이 시스템에 DELETE /api/distribution-targets/:id
+        라우트는 존재하지 않으며(요청하면 프레임워크 기본 404, JSON 계약 아님) 대상 제거 경로는 이것과
+        PUT {active:'N'} 둘뿐이다(ADR-008·SCHEMA.md, DB 비파괴). 비활성 행은 목록 조회에 계속 나타나고
+        그 spoolDir는 계속 점유된 것으로 취급된다(duplicate-spool-dir 판정 대상). 요청 body는 읽지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+          description: 비수치 id는 404 not-found다.
+      responses:
+        '200':
+          description: 비활성 성공 — {ok,changes}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, changes]
+                properties:
+                  ok: { const: true }
+                  changes: { type: integer }
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 없는 id·비수치 id — not-found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution/tick:
+    post:
+      operationId: distributionTick
+      tags: [distribution]
+      summary: 엠바고 시점 배부 tick (Z 전용, 외부 cron pull)
+      description: >-
+        앱에 타이머가 없다(ADR-008 (3)) — 도래한 엠바고의 배부는 외부 운영 cron이 **Z 세션의
+        x-session-id/쿠키로** 이 엔드포인트를 주기 호출해서만 일어난다(API 키·공유 시크릿 없음).
+        **요청 body는 읽지 않는다**: role·시각(now)·대상 목록·articleId를 실어도 판정에 전혀 반영되지 않는다
+        (주입이 통하면 엠바고가 무력화된다 — ADR-004). 시각은 서버 시계를 실행당 1회만 읽는다.
+        부수효과(실제 스풀 쓰기)가 있으므로 **GET으로 열려 있지 않다** — GET /api/distribution/tick은 404다
+        (브라우저 프리페치·크롤러가 배부를 트리거하면 안 된다).
+        배부 대상 상태 allowlist는 DES·EPS·DPS뿐이다(미송고·보류·킬·삭제 승인은 절대 나가지 않는다).
+        멱등의 근거는 append-only 배부 이력이다 — 같은 사이클에서 이미 나간 kind는 다시 나가지 않는다.
+        **실제 배부가 1건 이상일 때만** SSE 무효화 신호 'status'를 보낸다(변경 0건이면 재조회 낭비라 보내지 않는다).
+        응답에는 서버 파일시스템 경로(스풀 루트·spoolDir·스풀 파일명)가 **실리지 않는다** — 서비스의
+        화이트리스트 투영이 transport까지 유지되는 것이 계약이다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: >-
+            실행 요약. 기사 단위 실패는 500이 아니라 이 요약의 failed[]로 보고된다.
+            재진입(single-flight) 시에는 스캔 없이 같은 shape + skipped:'in-progress'로 즉시 반환한다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, at, scanned, distributed, failed, invalid]
+                properties:
+                  ok: { const: true }
+                  at:
+                    type: string
+                    description: 실행 시각(ISO-8601 UTC, 서버 시계). 요청으로 주입할 수 없다.
+                  scanned:
+                    type: integer
+                    description: 엠바고가 설정된 배부 가능 상태(DES·EPS·DPS) 후보 수.
+                  distributed:
+                    type: array
+                    description: 실제 스풀 기록에 성공한 기사별 요약(전 수신처 실패 시 항목이 생기지 않는다 — 거짓 완결 금지).
+                    items:
+                      type: object
+                      required: [articleId, kinds, status]
+                      properties:
+                        articleId: { type: string }
+                        kinds:
+                          type: array
+                          items: { type: string, enum: [press, nonpress] }
+                        status:
+                          type: string
+                          enum: [DES, EPS, DPS]
+                          description: 배부 반영 후 상태(1차만 설정된 기사는 DES→DPS로 곧장 간다).
+                  failed:
+                    type: array
+                    description: >-
+                      기사·수신처 단위 미배부. **식별자와 고정 사유만** 담는 화이트리스트다(경로·예외 원문 없음).
+                      reason은 spool-write-failed · status-changed(배부 직전 재검증에서 허용 상태 밖으로 전이) ·
+                      no-active-target(도래한 kind의 활성 수신처 0곳) · tick-failed(기사 단위 예외).
+                    items:
+                      type: object
+                      required: [articleId, targetId, kind, reason]
+                      properties:
+                        articleId: { type: string }
+                        targetId: { type: [integer, "null"] }
+                        kind: { type: [string, "null"], enum: [press, nonpress, null] }
+                        reason: { type: string }
+                  invalid:
+                    type: array
+                    description: 값은 있으나 파싱할 수 없는 엠바고 필드(영원히 미도래로 남으므로 표면화한다 — 무음 삼킴 금지).
+                    items:
+                      type: object
+                      required: [articleId, field]
+                      properties:
+                        articleId: { type: string }
+                        field: { type: string, enum: [embargoAt, secondEmbargoAt] }
+                  skipped:
+                    type: string
+                    enum: [in-progress]
+                    description: >-
+                      프로세스 내 single-flight 가드에 걸린 재진입(스캔 0건). 이 축은 계약 스위트가
+                      결정적으로 관측할 수 없어 **미검증**이며 코드 기준으로만 기술한다.
+        '401':
+          description: 미인증 — unauthenticated (인가가 스풀 설정 판정보다 먼저다)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: >-
+            비-Z 세션 — forbidden. body의 role:'Z' 스푸핑은 통하지 않는다. 스풀 미설정 서버에서도
+            비-Z에게는 503이 아니라 403이다(배부 설정 상태조차 알려주지 않는다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            tick-failed — 후보 조회 자체가 실패한 서버 장애(4xx로 보고하면 운영 cron이 클라이언트 잘못으로
+            오인한다). 기사 단위 실패는 여기가 아니라 200 요약의 failed[]다. 스위트 **미검증**(DB 장애 주입 불가).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: spool-disabled — DIST_SPOOL_DIR 미설정(배부 비활성 서버). minimal 프로파일에서 실측.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution/failures:
+    get:
+      operationId: distributionFailures
+      tags: [distribution]
+      summary: 미해소 배부 실패 목록 (Z 전용)
+      description: >-
+        (articleId, targetId, kind) 그룹의 **최신 이벤트가 실패인 것**만 파생해서 돌려준다(원장은 append-only라
+        해소도 새 행으로 남는다). 조회는 부수효과가 없으므로 GET이고, **스풀 설정과 무관하게 항상 결선된다**
+        (DIST_SPOOL_DIR 미설정 서버에서도 200 — 실행 계열만 503이다).
+        투영은 화이트리스트다 — 수신처 행을 스프레드하지 않으므로 spoolDir·경로가 새지 않는다.
+        빈 배열도 정상 계약이다. 쿼리는 limit만 전달되며(통짜 전달 금지) 정규화·클램프는 서비스가 한다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+          description: >-
+            표시용 창(id DESC 스캔). 양의 정수가 아니면(NaN·0·음수·미지정) 기본 200, 1000 초과는 1000으로 클램프한다.
+            어떤 값이든 400이 아니라 200이다. 재전송 게이트의 내부 조회는 이 창을 쓰지 않는다(창 밖 실패의 복구 불가 방지).
+      responses:
+        '200':
+          description: 미해소 실패 목록(historyId DESC)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok: { const: true }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - articleId
+                        - targetId
+                        - kind
+                        - reason
+                        - failedAt
+                        - historyId
+                        - targetName
+                        - targetActive
+                        - targetKind
+                        - kindDistributed
+                      properties:
+                        articleId: { type: string }
+                        targetId: { type: [integer, "null"] }
+                        kind: { type: string, enum: [press, nonpress] }
+                        reason: { type: string, description: 실패 시점의 고정 토큰(경로·예외 원문 없음) }
+                        failedAt: { type: [string, "null"] }
+                        historyId: { type: integer, description: 재전송 요청의 **유일한** 식별자 }
+                        targetName: { type: [string, "null"], description: 수신처 행 부재 시 null(방어 폴백) }
+                        targetActive: { type: string, enum: [Y, N], description: 행 부재 시 'N'(재전송 불가 쪽) }
+                        targetKind: { type: [string, "null"], enum: [press, nonpress, null] }
+                        kindDistributed:
+                          type: boolean
+                          description: 다음 tick이 이 kind를 "이번 사이클에서 이미 배부됨"으로 보는가(중복 배부 경고 근거).
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 비-Z 세션 — forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/distribution/retry:
+    post:
+      operationId: distributionRetry
+      tags: [distribution]
+      summary: 배부 실패 1건 재전송 (Z 전용)
+      description: >-
+        **식별자는 historyId 하나뿐이다** — articleId·targetId·kind·시각·경로는 전부 서버가 그 실패 행에서
+        도출한다(요청으로 받으면 임의 배부 경로가 열린다 — ADR-004). 앱은 스풀 파일을 다시 쓸 뿐이며
+        네트워크 전송을 하지 않는다(egress 0). 자동 재시도·백오프·타이머는 없다 — 복구 트리거는 Z의 명시 조작뿐이다.
+        게이트 순서는 부작용 없는 판정 → 쓰기다: 스풀 설정 → historyId 정규화 → 미해소 실패 집합 멤버십 →
+        stale-cycle(마지막 송고 경계) → 동시 재전송 → 대상 존재/활성 → 대상 kind 일치 → 기사 존재 →
+        status allowlist → 스풀 쓰기. 어떤 거부 경로에서도 파일은 쓰이지 않고 이력도 남지 않는다.
+        성공 시에만 SSE 무효화 신호 'status'를 보낸다. 응답에 file·spoolDir는 실리지 않는다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [historyId]
+              properties:
+                historyId:
+                  type: integer
+                  minimum: 1
+                  description: >-
+                    목록(GET /api/distribution/failures)의 키. 양의 정수로 정규화되지 않는 값
+                    (누락·문자열·빈 문자열·0 이하)은 **어떤 이력 조회도 하지 않고** 즉시 no-failure다(전역 스캔 봉쇄).
+      responses:
+        '200':
+          description: >-
+            재전송 성공 — 스풀 재기록 + 해소 이력(append) + distributedAt 갱신. 상태는 바꾸지 않는다.
+            실패 원장을 API만으로 만들 수 없어(수신처 CRUD가 잘못된 spoolDir를 애초에 거부한다)
+            이 축은 계약 스위트 **미검증**이며 backend 테스트가 소유한다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, articleId, targetId, kind, at]
+                properties:
+                  ok: { const: true }
+                  articleId: { type: string }
+                  targetId: { type: integer }
+                  kind: { type: string, enum: [press, nonpress] }
+                  at: { type: string, description: 재전송 시각(ISO-8601 UTC) }
+        '401':
+          description: 미인증 — unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: >-
+            비-Z 세션은 forbidden. 대상 수신처가 비활성이면 inactive(전역 매핑 403) — 후자는 스위트 미검증.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: >-
+            no-failure — 그 historyId가 미해소 실패 집합의 멤버가 아니다(존재하지 않는 id·비정수·누락 포함).
+            대상 수신처 행 또는 기사 행이 사라진 경우는 not-found다(미검증).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            재전송 거부 4종(전부 계약 스위트 **미검증** — 실패 원장이 있는 상태를 API로 만들 수 없다):
+            status-changed(기사 상태가 배부 불가로 전이) · kind-changed(수신처의 현재 kind가 실패 이력과 다름) ·
+            stale-cycle(재송고로 새 배부 사이클이 열려 이전 사이클 실패로는 보낼 수 없음) ·
+            retry-in-flight(같은 수신처 재전송 진행 중).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            서버측 장애 취급 3토큰(라우트 로컬 매핑) — spool-write-failed · invalid-spool-dir ·
+            invalid-article-id. **invalid-spool-dir는 수신처 CRUD에서는 400인 같은 토큰이다**
+            (라우트에 따라 상태가 다르다 — reason-tokens.md 표 2 #7). 저장된 값이 규칙을 어긴 것은
+            요청으로 고칠 수 있는 오류가 아니라 서버 데이터 문제라는 판단이다. 스위트 미검증.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: spool-disabled — DIST_SPOOL_DIR 미설정. 인가 통과 후 **DB를 건드리기 전에** 판정된다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/stream:
+    get:
+      operationId: stream
+      tags: [stream]
+      summary: 무효화 신호 SSE 스트림(로그인 세션이면 role 무관)
+      description: >-
+        기사 create/update/status/lock 변경을 **행 데이터 없는 무효화 신호**로만 브로드캐스트한다(ADR-005) —
+        클라이언트는 신호를 받으면 자기 권한·필터로 재조회한다. 인증 실패는 **스트림을 열기 전** 401 JSON이며
+        SSE 헤더가 나가지 않는다. 이미 200 헤더가 나간 뒤의 세션 무효화는 HTTP 상태로 표현할 수 없어
+        unauthorized 프레임 1회 + 연결 종료로 표현한다(push 시점 **비연장 peek** 재검증, 주기 타이머 없음 — ADR-008).
+        /api/logs/stream과 달리 role 게이트가 없다(로그인만).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      x-sse:
+        reference: docs/api-contract/sse.md
+        frameSyntax: 'event: <name>\ndata: <JSON 1줄>\n\n  (\n=LF · 끝의 빈 줄이 프레임 종결자 — 빠지면 EventSource가 이벤트를 디스패치하지 않는다)'
+        events:
+          ready: 'event: ready\ndata: {"ok":true}\n\n  — 접속 직후 1회(헤더 flush 직후, 원문 바이트 실측)'
+          change: 'event: change\ndata: {"kind":"create|update|status|lock"}\n\n  — payload 키는 정확히 kind 하나(행 데이터 없음)'
+          unauthorized: 'event: unauthorized\ndata: {"ok":false,"reason":"unauthenticated"}\n\n  — 이 프레임 1회 후 res.end()(로그아웃·만료·강등·비활성을 구분하지 않는다)'
+        changeKindSources:
+          create: 'POST /api/articles · POST /api/articles/{id}/derive · POST /api/collection/receive · POST /api/collection/pull · (HTTP 밖) FTP watcher 수신'
+          update: 'PUT /api/articles/{id}'
+          status: 'POST /api/articles/{id}/action · POST /api/distribution/tick(distributed 1건 이상일 때만) · POST /api/distribution/retry(재전송 성공 시에만)'
+          lock: 'POST /api/articles/{id}/lock · /unlock · /force-unlock'
+        notes:
+          - '거부/실패 응답은 신호를 내지 않는다(오신호·헛 재조회 방지).'
+          - '동시 연결 수 제한이 없다(bus.setMaxListeners(0)) — SPA는 실제로 2개를 연다. 실측: 트리거 1회에 두 연결 모두 수신.'
+          - 'id:/retry: 필드는 쓰지 않는다(Last-Event-ID 프로토콜 미구현).'
+          - '송고 훅의 비동기 엠바고 승격(DES->EPS->DPS)은 자체 신호를 내지 않는다.'
+      responses:
+        '200':
+          description: >-
+            스트림 열림. 실측 헤더 — Content-Type text/event-stream; charset=utf-8 ·
+            Cache-Control no-cache · Connection keep-alive · Transfer-Encoding chunked.
+            (Connection은 hop-by-hop이라 계약 스위트가 단언하지 않는다 — 관측만 기록.)
+          headers:
+            Cache-Control:
+              description: 실측 no-cache
+              schema:
+                type: string
+                const: no-cache
+            Connection:
+              description: 실측 keep-alive (hop-by-hop — 프록시/런타임에 따라 달라질 수 있다)
+              schema:
+                type: string
+                const: keep-alive
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 프레임 스트림(문법·이벤트 어휘는 x-sse 참조).
+              examples:
+                readyThenChange:
+                  summary: 접속 직후 ready, 이후 무효화 신호 1건
+                  value: "event: ready\ndata: {\"ok\":true}\n\nevent: change\ndata: {\"kind\":\"update\"}\n\n"
+        '401':
+          description: >-
+            미인증(쿠키·헤더 어느 쪽으로도 유효 세션이 없음) — **스트림을 열기 전** 일반 JSON으로 끝난다.
+            content-type은 application/json; charset=utf-8이며 text/event-stream이 아니다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                reason: unauthenticated
+  /api/logs/digest:
+    get:
+      operationId: logs-digest
+      tags: [stream]
+      summary: 로그 다이제스트(Z 전용)
+      description: >-
+        [전날 06:00, 당일 06:00) KST 창의 로그 record 목록(LOGS.md). in-memory 링 버퍼(cap 10000)만 읽는
+        읽기 전용 라우트다 — 파일·DB를 만들거나 건드리지 않는다. **role Z 전용**(비-Z는 403, ADR-007).
+        매일 06시 전달은 앱 타이머가 아니라 하네스 운영 루틴이 이 API를 pull해 수행한다.
+        창 경계는 계약 스위트가 동결하지 않는다(서버 시계를 주입할 수 없어 결정적 판정 불가 — excluded (i)):
+        방금 기동한 서버에서는 버퍼의 모든 record가 창 이후라 items가 항상 빈 배열이다(실측) —
+        따라서 record shape의 실측은 /api/logs/stream의 replay가 담당한다.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: 창 내부 로그 record 목록(개수는 계약이 아니다 — 절대 개수를 단언하지 마라).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, items]
+                properties:
+                  ok:
+                    const: true
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogRecord'
+        '401':
+          description: 미인증.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                reason: unauthenticated
+        '403':
+          description: 인증됐지만 role이 Z가 아님(R·D 모두 403 — 로그는 전 사용자 요청 흔적이라 Z 전용이다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                reason: forbidden
+  /api/logs/stream:
+    get:
+      operationId: logs-stream
+      tags: [stream]
+      summary: 실시간 로그 SSE 스트림(Z 전용)
+      description: >-
+        ADR-005 "무효화 신호만" 원칙의 **유일한 예외** — 로그 라인 실데이터를 push한다(ADR-007).
+        그래서 role 게이트가 붙는다: 미인증 401 · 비-Z 403이며 **둘 다 스트림을 열기 전** JSON으로 끝난다.
+        접속 즉시 링 버퍼의 최근 2000건(LOG_REPLAY_MAX)을 log 프레임으로 replay한 뒤 실시간 push를 잇는다
+        (Last-Event-ID 없이 재연결 유실을 replay로 해소하고, 중복은 클라이언트가 seq로 거른다).
+        live push 직전마다 **비연장 peek**으로 재검증하며, 세션이 죽었거나 role이 Z가 아니게 되면
+        그 로그 라인을 한 줄도 쓰지 않고 unauthorized 프레임 1회 후 종료한다(Z 전용 봉인이 시간축에서도 유지).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      x-sse:
+        reference: docs/api-contract/sse.md
+        frameSyntax: 'event: <name>\ndata: <JSON 1줄>\n\n  (/api/stream과 동일한 문법)'
+        events:
+          ready: 'event: ready\ndata: {"ok":true}\n\n  — 접속 직후 1회(두 스트림 공통)'
+          log: 'event: log\ndata: <LogRecord JSON>\n\n  — replay + 실시간(같은 이벤트 이름)'
+          unauthorized: 'event: unauthorized\ndata: {"ok":false,"reason":"unauthenticated"}\n\n  — 1회 후 res.end()'
+        replay:
+          max: 2000
+          note: '접속 시점 스냅샷의 최근 2000건. replay는 접속 시점 인증으로 충분하다(같은 tick — 재검증 없음).'
+        notes:
+          - '요청 로거가 매 요청 완료마다 INFO 1줄을 남기므로 **관측자 자신의 요청도 로그로 흘러들어온다** — 프레임 개수·내용은 비결정적이다(키 집합·문법만 계약).'
+          - '로그 라인 실값(경로·userId·메시지)은 리포트·문서에 싣지 않는다(LOGS.md 마스킹 규율).'
+      responses:
+        '200':
+          description: >-
+            스트림 열림(실측 헤더는 /api/stream과 동일). ready 프레임 1건 후 replay log 프레임이 이어진다.
+          headers:
+            Cache-Control:
+              description: 실측 no-cache
+              schema:
+                type: string
+                const: no-cache
+            Connection:
+              description: 실측 keep-alive (hop-by-hop)
+              schema:
+                type: string
+                const: keep-alive
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 프레임 스트림(문법·이벤트 어휘는 x-sse 참조).
+              examples:
+                readyThenLog:
+                  summary: ready 후 replay log 1건(message/line 실값은 마스킹해 표기)
+                  value: "event: ready\ndata: {\"ok\":true}\n\nevent: log\ndata: {\"seq\":42,\"ts\":1755590400000,\"level\":\"INFO\",\"message\":\"<redacted>\",\"line\":\"[YYYY-MM-DD HH:MM:SS] [INFO] <redacted>\"}\n\n"
+        '401':
+          description: 미인증 — 스트림을 열기 전 JSON(application/json; charset=utf-8).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                reason: unauthenticated
+        '403':
+          description: 인증됐지만 role이 Z가 아님 — 스트림을 열기 전 JSON(SSE 헤더가 나가지 않는다).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                reason: forbidden
