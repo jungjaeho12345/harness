@@ -1,0 +1,81 @@
+package harness.news.service;
+
+import java.util.List;
+import java.util.Map;
+import org.springframework.stereotype.Service;
+
+/**
+ * 인가(capability) 게이트 — 리포 루트 {@code src/services/authorization.js}와 동형이다. HTTP 비의존이며
+ * 사유 토큰만 돌려준다(상태코드 매핑은 web 계층 {@code ReasonStatus}의 몫이다).
+ *
+ * <h2>CRITICAL — acting role은 검증된 세션에서만 도출한다(ADR-004)</h2>
+ * 이 클래스의 공개 API는 <b>role을 파라미터로 받지 않는다</b>. role은 오직 {@link SessionGuard}가
+ * 매 호출 User 행을 다시 읽어 만든 신원에서 읽는다. 그래서
+ * <ul>
+ *   <li>요청 본문·헤더·쿼리의 {@code role}은 판정에 <b>닿을 방법이 구조적으로 없고</b>(누구나 Z가 되는 경로 차단),</li>
+ *   <li>강등·비활성화가 <b>재로그인 없이 다음 요청부터</b> 반영된다
+ *       ({@code contract/cases/default/session-guard.contract.js}가 동결한 축).</li>
+ * </ul>
+ * Node는 {@code assertAuthorized(role, capability)}를 함께 export하지만 여기서는 <b>일부러 비공개</b>다 —
+ * role을 받는 공개 진입점이 하나라도 있으면 위 불변식이 호출자 규율로 내려앉는다.
+ *
+ * <h2>표 구조는 Node와 동형이다</h2>
+ * 이 phase가 쓰는 행은 {@code manageUsers: [Z]} 하나뿐이다. 나머지 capability(수신 설정·배부·DPS 편집)는
+ * 그 라우트를 소유하는 phase가 <b>행만</b> 추가한다 — 도달하지 않는 행을 미리 적어 두면 검증되지 않은
+ * 인가 표가 쌓이고, 나중에 "이미 맞다"는 착시를 준다.
+ */
+@Service
+public class Authorization {
+
+	/** 사용자(USER) 관리 — Z 전용. */
+	public static final String MANAGE_USERS = "manageUsers";
+
+	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
+	static final Map<String, List<String>> CAPABILITIES = Map.of(MANAGE_USERS, List.of("Z"));
+
+	private final SessionGuard sessions;
+
+	public Authorization(SessionGuard sessions) {
+		this.sessions = sessions;
+	}
+
+	/**
+	 * 인가 판정 결과 — 성공이면 사유가 없고, 실패면 사유 토큰만 있다.
+	 * 신원을 담지 않는 것은 의도다: 게이트가 "누구인지"를 흘리기 시작하면 거부 경로에서도 신원이 새어
+	 * 나가고, 필요한 라우트는 가드에 직접 물어보면 된다(재조회는 멱등이다).
+	 */
+	public record Decision(boolean ok, String reason) {
+
+		private static Decision deny(String reason) {
+			return new Decision(false, reason);
+		}
+
+		private static final Decision ALLOWED = new Decision(true, null);
+	}
+
+	/**
+	 * 세션 토큰이 이 capability를 수행할 수 있는가.
+	 *
+	 * <p>판정 순서는 Node와 같다: <b>세션 검증이 먼저</b>고(미인증에는 capability의 존재 여부조차
+	 * 알려주지 않는다) 그다음이 표 조회다.
+	 *
+	 * @param sessionToken 쿠키·헤더에서 읽은 세션 토큰(없으면 {@code null})
+	 * @param capability {@link #CAPABILITIES}의 키
+	 * @return 거부 사유는 미인증 {@code unauthenticated} · 역할 불일치 {@code forbidden} ·
+	 *     미정의 capability {@code unknown-capability}
+	 */
+	public Decision authorize(String sessionToken, String capability) {
+		Identity actor = (sessionToken == null) ? null : this.sessions.touchSession(sessionToken);
+		if (actor == null) {
+			return Decision.deny("unauthenticated");
+		}
+		List<String> allowed = CAPABILITIES.get(capability);
+		if (allowed == null) {
+			return Decision.deny("unknown-capability");
+		}
+		if (!allowed.contains(actor.role())) {
+			return Decision.deny("forbidden");
+		}
+		return Decision.ALLOWED;
+	}
+}
