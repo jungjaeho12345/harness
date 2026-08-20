@@ -1,7 +1,6 @@
 package harness.news.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import harness.news.testsupport.TempNewsDb;
 import java.net.URI;
@@ -52,8 +51,8 @@ class HealthWireTest {
 		assertEquals("{\"ok\":true}", response.body(), "본문은 정확히 {ok:true} 한 키여야 한다");
 
 		String contentType = response.headers().firstValue("content-type").orElse("");
-		// Content-Type 문자열 원문은 step5 decisions (9)(와이어 포맷 정규화)의 입력이다 — 여기서 고치지 않고 관측만 남긴다.
-		System.out.println("[wire] GET /api/health content-type=" + contentType);
-		assertTrue(contentType.startsWith("application/json"), "JSON Content-Type이어야 한다: " + contentType);
+		// step5(와이어 포맷 정규화, decisions (9))에서 Node 실측값으로 고정했다 — 파라미터 표기까지 계약이다.
+		// 바이트 수준(헤더 줄 원문) 단언은 ContentTypeWireTest가 원시 소켓으로 한다.
+		assertEquals("application/json; charset=utf-8", contentType, "Node(express res.json) 실측값과 같아야 한다");
 	}
 }

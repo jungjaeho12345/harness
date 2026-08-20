@@ -86,6 +86,27 @@ public final class TempNewsDb {
 		return sharedDataDir;
 	}
 
+	/**
+	 * 호출할 때마다 <b>새로</b> 만드는 시드된 데이터 디렉토리.
+	 *
+	 * <p>전 기동 와이어 테스트는 실제 계정을 만들고 지우지 않으므로(DB 비파괴 규율: 삭제 SQL 0)
+	 * 클래스마다 자기 DB를 가져야 서로의 픽스처·세션에 얽히지 않는다. {@link #sharedDataDir()}는
+	 * 반대로 "DB만 있으면 되는" 컨텍스트 테스트가 재사용하는 한 벌이다. 둘 다 종료 훅으로 지운다.
+	 *
+	 * @param prefix 임시 디렉토리 접두사(어느 테스트가 만들었는지 눈으로 구분하기 위함)
+	 */
+	public static Path newDataDir(String prefix) {
+		try {
+			Path dir = Files.createTempDirectory("news-spring-" + prefix + "-");
+			seed(dir);
+			Runtime.getRuntime().addShutdownHook(new Thread(() -> deleteRecursively(dir)));
+			return dir;
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
+	}
+
 	/** 데이터 디렉토리 안의 DB 파일 경로. */
 	public static Path dbFile(Path dataDir) {
 		return dataDir.resolve(DB_FILE_NAME);
