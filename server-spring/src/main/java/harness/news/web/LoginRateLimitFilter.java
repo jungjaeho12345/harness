@@ -64,7 +64,7 @@ final class LoginRateLimitFilter implements Filter {
 	}
 
 	/**
-	 * 이 요청이 로그인 라우트인가 — 판정 규칙(후행 슬래시 · 퍼센트 인코딩 · HEAD)은 전부
+	 * 이 요청이 로그인 라우트인가 — 판정 규칙(후행 슬래시 · 경로 파라미터 · 퍼센트 인코딩 · HEAD)은 전부
 	 * {@link RoutePolicy}가 소유한다.
 	 *
 	 * <p>{@code /api/lo%67in}은 원문으로는 아무 라우트도 아니지만 Spring 디스패처는 세그먼트를 디코딩해
@@ -72,6 +72,11 @@ final class LoginRateLimitFilter implements Filter {
 	 * 뒤에도 401이 나왔다 = 인코딩 한 글자로 한도 무한 우회). step7이 이 필터 안에서 원문+디코딩 이중 판정으로
 	 * 막았고, step10이 같은 노출을 갖고 있던 경로 정책 필터와 함께 닫으려고 그 규칙을 {@link RoutePolicy}로
 	 * 옮겼다 — 규칙이 두 벌이면 한쪽만 고쳐지는 사고가 반복된다.
+	 *
+	 * <p>같은 형태의 두 번째 표면이 <b>경로 파라미터</b>({@code /api/login;x=1})다. 리뷰가 실측한 우회
+	 * (2026-08-20: {@code ;x=1}로 12회를 쳐도 전건 401 · 429 없음 · 평문이 429가 된 뒤에도 계속 401)를
+	 * {@link RoutePolicy}의 정규화 파이프라인에 파라미터 제거를 넣어 닫았다. 남는 방어가 계정 잠금 5회뿐이면
+	 * <b>미존재 계정 탐침·계정 열거는 아무 한도에도 걸리지 않는다</b> — 그래서 IP 예산은 이 경로에도 적용된다.
 	 */
 	private static boolean isLogin(HttpServletRequest request) {
 		RoutePolicy.Route route = RoutePolicy.match(request.getMethod(), request.getRequestURI());

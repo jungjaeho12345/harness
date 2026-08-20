@@ -3,11 +3,13 @@ package harness.news.web;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import harness.news.testsupport.TempNewsDb;
 import harness.news.testsupport.Wire;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -68,6 +70,31 @@ class ErrorShapeWireTest {
 		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"));
 		assertFalse(response.body().contains(SECRET_MESSAGE), "예외 메시지가 응답에 실렸다");
 		assertFalse(response.body().toLowerCase(Locale.ROOT).contains("exception"), "예외 타입이 응답에 실렸다");
+	}
+
+	@Test
+	void theFixed500ShapeDoesNotDropTheCorsHeadersOfTheEdgeFilter() {
+		// 전역 핸들러는 응답을 reset()하고 다시 쓴다 — 그 reset이 CorsFilter가 체인 진입 시 심은 헤더를
+		// 지우면 cross-origin SPA가 이 본문을 <b>읽지 못하고</b> CORS 오류로 본다(2026-08-20 실측: 0건이었다).
+		Wire.Response allowed = Wire.send(this.port, "GET", "/api/test-only-boom",
+				Map.of("Origin", "http://localhost:5173"), null);
+
+		assertEquals(500, allowed.status());
+		assertEquals("http://localhost:5173", allowed.value("access-control-allow-origin"));
+		assertEquals("true", allowed.value("access-control-allow-credentials"));
+		assertEquals("Origin", allowed.value("vary"));
+	}
+
+	@Test
+	void theFixed500ShapeKeepsTheAllowlistAsymmetryForForeignOrigins() {
+		// 되살리는 것은 "CorsFilter가 정한 것"이지 CORS 정책의 사본이 아니다 — 비허용 출처에는 ACAO가 없다.
+		Wire.Response foreign = Wire.send(this.port, "GET", "/api/test-only-boom",
+				Map.of("Origin", "http://evil.example"), null);
+
+		assertEquals(500, foreign.status());
+		assertNull(foreign.value("access-control-allow-origin"));
+		assertEquals("true", foreign.value("access-control-allow-credentials"));
+		assertEquals("Origin", foreign.value("vary"));
 	}
 
 	@Test

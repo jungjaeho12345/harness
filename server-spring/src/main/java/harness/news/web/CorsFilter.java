@@ -8,7 +8,9 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * CORS allowlist·preflight — Node의 {@code cors({credentials:true, origin: origins, ...})} 동형.
@@ -47,6 +49,13 @@ final class CorsFilter implements Filter {
 	/** preflight 응답 상태(Node 실측). */
 	static final int PREFLIGHT_STATUS = 204;
 
+	/**
+	 * 이 필터가 <b>체인 진입 시</b> 응답에 심는 헤더 이름들 — 뒤에서 응답을 갈아엎는 코드가
+	 * {@link #capture}/{@link #restore}로 되살려야 하는 대상이다({@link GlobalErrorHandler}의 {@code reset()}).
+	 */
+	private static final List<String> RESPONSE_HEADERS =
+			List.of("Vary", "Access-Control-Allow-Credentials", "Access-Control-Allow-Origin");
+
 	private final AllowedOrigins origins;
 
 	CorsFilter(AllowedOrigins origins) {
@@ -77,5 +86,29 @@ final class CorsFilter implements Filter {
 		}
 
 		chain.doFilter(request, response);
+	}
+
+	/**
+	 * 지금 응답에 실려 있는 CORS 헤더를 뜬다 — {@code response.reset()} <b>직전</b>에 부른다.
+	 *
+	 * <h2>왜 정책을 다시 계산하지 않는가</h2>
+	 * 되살리는 것은 "이 필터가 <b>이 요청에 대해</b> 내린 판정"이지 CORS 정책의 사본이 아니다. 판정 규칙
+	 * (allowlist·반향)을 다른 클래스가 한 벌 더 갖는 순간 두 곳이 갈라지고, 갈라진 쪽은 500 경로에만
+	 * 나타나 아무 게이트에도 보이지 않는다. 스냅샷은 그래서 <b>값</b>만 옮긴다.
+	 */
+	static Map<String, String> capture(HttpServletResponse response) {
+		Map<String, String> captured = new LinkedHashMap<>();
+		for (String name : RESPONSE_HEADERS) {
+			String value = response.getHeader(name);
+			if (value != null) {
+				captured.put(name, value); // 없으면 담지 않는다 — 비허용 출처의 ACAO 부재가 곧 판정이다.
+			}
+		}
+		return captured;
+	}
+
+	/** {@link #capture}로 뜬 헤더를 다시 심는다(응답이 이미 커밋됐으면 컨테이너가 무시한다). */
+	static void restore(HttpServletResponse response, Map<String, String> captured) {
+		captured.forEach(response::setHeader);
 	}
 }

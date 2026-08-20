@@ -170,4 +170,58 @@ class RoutePolicyTest {
 		assertNull(RoutePolicy.match("GET", "/api/artic%256Ces"));
 		assertFalse(RoutePolicy.requiresSession("GET", "/api/artic%256Ces"));
 	}
+
+	@Test
+	void pathParametersAreStrippedTheWayTheContainerParsesThem() {
+		// Spring의 PathContainer는 세그먼트에서 `;name=value`를 떼어내고 매칭한다 —
+		// 표가 원문만 보면 세미콜론 한 글자로 리터럴 경로 전체의 게이트가 우회된다(2026-08-20 실측).
+		assertEquals("login", RoutePolicy.match("POST", "/api/login;x=1").id());
+		assertEquals("articles-list", RoutePolicy.match("GET", "/api/articles;a=b").id());
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/articles;a=b"));
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/logs/digest;a=b"));
+		assertEquals("health", RoutePolicy.match("GET", "/api/health;a=b").id());
+		assertEquals("articles-search", RoutePolicy.match("GET", "/api/articles/search;a=b").id(),
+				"파라미터를 떼어낸 뒤에도 리터럴 경로가 :id보다 먼저 잡혀야 한다");
+	}
+
+	@Test
+	void pathParametersAreNormalizedTogetherWithEncodingAndTrailingSlashes() {
+		// 세 정규화(파라미터 제거 · 후행 슬래시 · 1회 디코딩)는 같은 파이프라인이다 — 겹쳐도 게이트는 그대로다.
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/artic%6Ces;a=b"));
+		assertEquals("articles-list", RoutePolicy.match("GET", "/api/artic%6Ces;a=b").id());
+		assertEquals("login", RoutePolicy.match("POST", "/api/lo%67in;x=1").id());
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/articles;a=b/"));
+		assertEquals("login", RoutePolicy.match("POST", "/api/login;x=1/").id());
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/artic%6Ces;a=b/"));
+	}
+
+	@Test
+	void pathParametersOnAParameterSegmentAreStrippedToo() {
+		// :id 세그먼트는 [^/]+가 `;v=2`째로 삼켜 우회가 없었지만, 파라미터를 떼어낸 뒤에도 같은 행이어야 한다
+		// — 안 그러면 라우트 id가 바뀌어(예: 다른 행이 가로채) 인가 판정이 조용히 갈라진다.
+		assertEquals("articles-get", RoutePolicy.match("GET", "/api/articles/AKR1;v=2").id());
+		assertEquals("articles-history", RoutePolicy.match("GET", "/api/articles/AKR1;v=2/history").id());
+		assertEquals("articles-lock", RoutePolicy.match("POST", "/api/articles/AKR1/lock;v=2").id());
+		assertTrue(RoutePolicy.requiresSession("PUT", "/api/users/someone;v=2"));
+		// 컨테이너도 이렇게 본다: 앞 세그먼트의 파라미터를 떼어내면 `/api/articles/history` = :id 경로다.
+		assertEquals("articles-get", RoutePolicy.match("GET", "/api/articles;a=b/history").id());
+	}
+
+	@Test
+	void unlistedPathsWithPathParametersStayUnlisted() {
+		// 파라미터 제거가 표를 넓혀 미정의 경로까지 잡으면 "미정의 = 404 비-JSON" 계약이 깨진다.
+		assertNull(RoutePolicy.match("GET", "/api/nope;a=b"));
+		assertFalse(RoutePolicy.requiresSession("GET", "/api/nope;a=b"));
+		assertNull(RoutePolicy.match("GET", "/api/articles/AKR1/nope;a=b"));
+		assertFalse(RoutePolicy.requiresSession("DELETE", "/api/articles;a=b"), "메서드가 다르면 여전히 다른 라우트다");
+	}
+
+	@Test
+	void anEncodedSemicolonIsJudgedWideNotNarrow() {
+		// %3B는 컨테이너가 파라미터 구분자로 보지 <b>않는다</b>(디코딩 전 세그먼트에서 `;`를 찾기 때문) →
+		// 컨테이너는 /api/articles%3Ba=b 를 404로 흘린다. 이 표는 디코딩한 형태에도 같은 정규화를 걸어
+		// <b>세션을 요구하는 쪽</b>으로 판정한다 — 두 방향의 오류가 비대칭이라 넓은 쪽이 안전하다.
+		// (이 한 줄이 400 계열로 바뀌는 것은 계약 변경이 아니라 의도적 판단이어야 한다.)
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/articles%3Ba=b"));
+	}
 }

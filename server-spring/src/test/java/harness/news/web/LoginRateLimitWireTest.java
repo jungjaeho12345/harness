@@ -199,6 +199,39 @@ class LoginRateLimitWireTest {
 				"컨테이너가 디코딩해 라우팅하는 경로는 레이트리밋도 같은 라우트로 봐야 한다");
 	}
 
+	/**
+	 * 경로 파라미터 우회 — {@code /api/login;x=1}은 <b>Spring 디스패처가 로그인 핸들러로 라우팅한다</b>
+	 * ({@code PathContainer}가 세그먼트에서 {@code ;name=value}를 떼어내고 매칭한다. express는 원문 매칭이라
+	 * 404다). 필터가 원문만 보면 세미콜론 한 글자로 한도가 무한 우회된다 —
+	 * 2026-08-20 실측: {@code ;x=1}로 12회를 쳐도 전건 401이었고 429가 오지 않았다.
+	 */
+	@Test
+	void pathParametersCannotBuyAFreshBudget() {
+		for (int i = 1; i <= LIMIT; i++) {
+			login();
+		}
+
+		Wire.Response viaPathParameter = Wire.json(this.port, "POST", "/api/login;x=1", Map.of(),
+				"{\"userId\":\"no-such-user-rate-limit\",\"password\":\"nope\"}");
+
+		assertEquals(429, viaPathParameter.status(),
+				"컨테이너가 파라미터를 떼어내고 라우팅하는 경로는 레이트리밋도 같은 라우트로 봐야 한다");
+	}
+
+	@Test
+	void requestsWithPathParametersConsumeTheSameIpBudget() {
+		// 반대 방향 — 우회 경로로 친 요청이 예산을 <b>소모</b>해야 한다. 소모하지 않으면 그 표면으로
+		// 계정 열거·미존재 계정 탐침을 무한히 할 수 있다(계정 잠금 5회는 존재하는 계정에만 걸린다).
+		for (int i = 1; i <= LIMIT; i++) {
+			Wire.Response response = Wire.json(this.port, "POST", "/api/login;x=1", Map.of(),
+					"{\"userId\":\"no-such-user-rate-limit\",\"password\":\"nope\"}");
+
+			assertNotEquals(429, response.status(), i + "번째 요청은 아직 한도 안이다");
+		}
+
+		assertEquals(429, login().status(), "경로 파라미터로 친 요청이 IP 예산을 소모하지 않으면 한도가 무의미하다");
+	}
+
 	@Test
 	void otherRoutesAreNotRateLimited() {
 		for (int i = 1; i <= PROBE_CAP; i++) {

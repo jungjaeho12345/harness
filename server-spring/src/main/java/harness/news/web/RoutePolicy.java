@@ -176,7 +176,7 @@ final class RoutePolicy {
 	 * @param method HTTP 메서드. {@code HEAD}는 {@code GET}으로 본다 — express가 HEAD를 GET 핸들러로
 	 *     라우팅하므로 Node의 {@code HEAD /api/articles}도 401이다.
 	 * @param path 요청 경로(쿼리 제외 — {@code getRequestURI()}의 <b>원문</b>을 그대로 준다).
-	 *     후행 슬래시와 퍼센트 인코딩은 이 클래스가 정규화한다.
+	 *     후행 슬래시 · 경로 파라미터({@code ;k=v}) · 퍼센트 인코딩은 이 클래스가 정규화한다.
 	 */
 	static Route match(String method, String path) {
 		Route direct = matchNormalized(method, path);
@@ -211,15 +211,49 @@ final class RoutePolicy {
 	}
 
 	/**
-	 * 후행 슬래시 제거 — express는 기본(strict routing off)에서 {@code /api/articles/}를 같은 라우트로 보므로,
-	 * 정규화하지 않으면 슬래시 한 개로 게이트가 뚫린다.
+	 * 정규화 파이프라인 — <b>경로 파라미터 제거 → 후행 슬래시 제거</b>. {@link #decode(String)}까지 합쳐
+	 * 세 규칙이 한 곳에 있어야 한다(규칙이 흩어지면 한쪽만 고쳐지는 사고가 반복된다 — step10의 교훈).
+	 *
+	 * <ul>
+	 *   <li><b>경로 파라미터</b>({@code ;name=value}): Spring의 {@code PathPatternParser}/{@code RequestPath}는
+	 *       세그먼트에서 이 부분을 <b>떼어내고</b> 매칭한다. 표가 원문만 보면 디스패처는
+	 *       {@code POST /api/login;x=1}을 로그인 핸들러로 보내는데 이 표는 아무 행도 돌려주지 않는다 =
+	 *       리터럴 경로 <b>전부</b>의 게이트가 세미콜론 한 글자로 우회된다(2026-08-20 실측: {@code ;x=1}로 12회를
+	 *       쳐도 전건 401 · 429 없음 · 미인증 {@code GET /api/articles;a=b}는 404).</li>
+	 *   <li><b>후행 슬래시</b>: express는 기본(strict routing off)에서 {@code /api/articles/}를 같은 라우트로 본다.</li>
+	 * </ul>
 	 */
 	private static String normalize(String path) {
-		String trimmed = path;
+		String trimmed = stripPathParameters(path);
 		while (trimmed.length() > 1 && trimmed.endsWith("/")) {
 			trimmed = trimmed.substring(0, trimmed.length() - 1);
 		}
 		return trimmed;
+	}
+
+	/**
+	 * 세그먼트마다 첫 {@code ;} 이후를 잘라낸다({@code PathContainer} 파싱과 동형).
+	 *
+	 * <p>이 정규화는 원문뿐 아니라 <b>디코딩한 형태에도</b> 걸린다(같은 파이프라인이므로). 그래서
+	 * {@code /api/articles%3Ba=b}처럼 컨테이너가 파라미터로 보지 <b>않는</b> 경로까지 세션을 요구하게 되는데,
+	 * 그것은 의도한 과대 판정이다 — 이 클래스의 규율대로 <b>넓은 쪽으로만</b> 틀린다(세지 않아 뚫리는 것보다
+	 * 세고 나서 404가 되는 편이 안전하다). 표에 없는 경로는 파라미터를 떼어내도 여전히 표 밖이므로
+	 * "미정의 경로 = 404 비-JSON" 계약은 그대로다.
+	 */
+	private static String stripPathParameters(String path) {
+		if (path.indexOf(';') < 0) {
+			return path;
+		}
+		String[] segments = path.split("/", -1);
+		StringBuilder stripped = new StringBuilder(path.length());
+		for (int i = 0; i < segments.length; i++) {
+			if (i > 0) {
+				stripped.append('/');
+			}
+			int semicolon = segments[i].indexOf(';');
+			stripped.append((semicolon < 0) ? segments[i] : segments[i].substring(0, semicolon));
+		}
+		return stripped.toString();
 	}
 
 	/**

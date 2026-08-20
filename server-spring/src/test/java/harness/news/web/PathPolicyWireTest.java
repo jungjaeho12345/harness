@@ -194,6 +194,54 @@ class PathPolicyWireTest {
 	}
 
 	@Test
+	void pathParametersDoNotBypassTheGuard() {
+		// Spring의 PathContainer는 세그먼트에서 `;name=value`를 떼어내고 매칭한다 → 디스패처는 이 요청을
+		// 기사 핸들러로 보낸다. 필터가 원문만 보면 세미콜론 한 글자로 미인증 요청이 필터를 통과하고,
+		// phase 69+가 핸들러를 붙이는 순간 그 요청이 핸들러에 도달한다(2026-08-20 실측: 이 요청은 404 HTML이었다).
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles;a=b");
+
+		assertEquals(401, response.status(), "경로 파라미터가 붙은 보호 경로가 401이 아니면 게이트가 뚫린 것이다");
+		assertEquals(UNAUTHENTICATED, response.body());
+		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void pathParametersCombinedWithEncodingDoNotBypassTheGuardEither() {
+		Wire.Response encoded = Wire.send(this.port, "GET", "/api/artic%6Ces;a=b");
+		Wire.Response withSlash = Wire.send(this.port, "GET", "/api/articles;a=b/");
+
+		assertEquals(401, encoded.status(), "인코딩 + 경로 파라미터를 겹쳐도 게이트는 그대로다");
+		assertEquals(UNAUTHENTICATED, encoded.body());
+		assertEquals(401, withSlash.status(), "경로 파라미터 + 후행 슬래시도 마찬가지다");
+	}
+
+	@Test
+	void pathParametersOnAParameterSegmentAreStillGuarded() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles/AKR20260101001;v=2");
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+	}
+
+	@Test
+	void pathParametersDoNotBlockAuthenticatedRequests() {
+		// 게이트를 넓혔어도 인증된 요청은 그대로 통과한다 — 디스패처가 파라미터를 떼어내고 라우팅하므로 핸들러가 돈다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/session;a=b",
+				Map.of("x-session-id", login()), null);
+
+		assertEquals(200, response.status(), "파라미터 방어가 인증된 요청까지 막으면 과잉 차단이다");
+	}
+
+	@Test
+	void unlistedPathsWithPathParametersAreStill404() {
+		// 파라미터 제거가 표를 넓혀 미정의 경로까지 401로 만들면 "미정의 경로 = 404 비-JSON" 계약이 깨진다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/nope;a=b");
+
+		assertEquals(404, response.status());
+		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
 	void parameterizedProtectedRoutesAreGuarded() {
 		Wire.Response get = Wire.send(this.port, "GET", "/api/articles/AKR20260101001");
 		Wire.Response history = Wire.send(this.port, "GET", "/api/articles/AKR20260101001/history");

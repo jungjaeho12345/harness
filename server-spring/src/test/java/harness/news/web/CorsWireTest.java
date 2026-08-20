@@ -135,4 +135,39 @@ class CorsWireTest {
 		assertEquals(200, response.status(), "CORS는 요청 실행을 막지 않는다 — 응답 판독만 막는다");
 		assertNull(response.value("access-control-allow-origin"));
 	}
+
+	/**
+	 * 500 응답도 CORS 헤더를 그대로 싣는다 — 전역 에러 핸들러의 {@code response.reset()}이 엣지 필터가
+	 * 심어 둔 헤더를 지우면, cross-origin SPA는 {@code {ok:false, reason:'internal-error'}} <b>본문을 읽지 못하고</b>
+	 * CORS 오류로 본다({@code web/src/model/httpModel.js}는 상태코드가 아니라 본문의 ok/reason을 읽는다).
+	 * 2026-08-20 실측: 고치기 전에는 이 응답의 CORS 헤더가 <b>0건</b>이었다(Node는 유지한다).
+	 *
+	 * <p>깨진 JSON 본문은 {@code JsonHttp.readBody}에서 예외가 되어 전역 핸들러로 흘러가는
+	 * <b>실제 500 경로</b>다(reason-tokens.md 표 2 #15의 재현 경로 — 테스트 전용 라우트가 아니다).
+	 */
+	@Test
+	void internalErrorResponsesStillCarryCorsHeaders() {
+		Wire.Response response = Wire.json(this.port, "POST", "/api/logout",
+				Map.of("Origin", ALLOWED_ORIGIN), "{");
+
+		assertEquals(500, response.status(), "선행 조건: 깨진 JSON 본문은 500 internal-error다");
+		assertEquals("{\"ok\":false,\"reason\":\"internal-error\"}", response.body());
+		assertEquals(ALLOWED_ORIGIN, response.value("access-control-allow-origin"),
+				"reset()이 ACAO를 지우면 SPA가 본문을 읽지 못하고 CORS 오류로 본다");
+		assertEquals("true", response.value("access-control-allow-credentials"));
+		assertEquals("Origin", response.value("vary"));
+	}
+
+	@Test
+	void rejectedCrossOriginWriteKeepsCredentialsAndVaryButNotAllowOrigin() {
+		// 같은 요청을 비허용 출처로 보내면 CSRF 가드가 <b>세션·본문을 보기 전에</b> 403으로 끝낸다
+		// (500까지 가지 않는다). 그 응답도 정상 응답과 같은 비대칭이어야 한다 — ACAO만 없다.
+		Wire.Response response = Wire.json(this.port, "POST", "/api/logout",
+				Map.of("Origin", FOREIGN_ORIGIN), "{");
+
+		assertEquals(403, response.status());
+		assertNull(response.value("access-control-allow-origin"));
+		assertEquals("true", response.value("access-control-allow-credentials"));
+		assertEquals("Origin", response.value("vary"));
+	}
 }
