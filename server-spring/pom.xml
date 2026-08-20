@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.0</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>harness</groupId>
+	<artifactId>server-spring</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>server-spring</name>
+	<description>기사 작성기 Spring 서버 (phase 68 — REST 계약 패리티 대상)</description>
+
+	<properties>
+		<java.version>21</java.version>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+	</properties>
+
+	<dependencies>
+		<!--
+			이 step(0)이 필요로 하는 최소 의존성만 둔다.
+			- DB/JDBC 의존성은 step2가, BCrypt(spring-security-crypto)는 step4가 각자 추가한다
+			  (안 쓰는 의존성이 미리 들어가면 step2의 오프라인 폴백 판정이 흐려진다 — index.json decisions (3)).
+			- spring-boot-starter-security / spring-session-* 는 이 phase 전체에서 금지다:
+			  전 라우트 기본 잠금과 프레임워크 기본 401/403 shape이 계약({ok:false, reason:...} JSON)과
+			  충돌한다(P0 스파이크 pom.xml 주석의 실측 경고).
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+
+		<!--
+			step2(db-access) — 직접 SQL 접근층. JPA/Hibernate·MyBatis는 채택하지 않는다(decisions (3)).
+			starter-jdbc는 JdbcClient(SQL 문자열이 코드에 그대로 남는다)와 커넥션 풀을 준다.
+			**DDL 자동화는 전부 금지**다: ddl-auto·schema.sql·data.sql·Flyway·Liquibase를 쓰지 않는다
+			(스키마 소유자는 Node 서버이며, 자동 마이그레이션은 항상 재생성 경로를 품는다 — decisions (4)).
+			의존성 해석 실측(step2 A): 이 두 좌표는 ~/.m2 캐시에 없어 최초 해석에 네트워크가 필요했다
+			(Maven Central 도달 실측 200). 해석에 성공했으므로 decisions (3)의 1순위 경로를 택했고
+			sqlite-jdbc 오프라인 폴백은 쓰지 않았다.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jdbc</artifactId>
+		</dependency>
+
+		<!-- SQLite 드라이버(런타임 JDBC). 판본은 P0 스파이크 실측판과 동일 — ~/.m2 캐시 히트. -->
+		<dependency>
+			<groupId>org.xerial</groupId>
+			<artifactId>sqlite-jdbc</artifactId>
+			<version>3.47.2.0</version>
+		</dependency>
+
+		<!--
+			step4(auth-domain) — BCrypt 하나만 쓴다.
+			**spring-boot-starter-security가 아니다**: 스타터를 넣는 순간 전 라우트가 기본 잠금이 되고
+			프레임워크 기본 401/403 shape이 계약({ok:false, reason:...} JSON)과 충돌한다(decisions (10)).
+			crypto 모듈은 단독 라이브러리라 자동설정·필터체인을 하나도 들여오지 않는다.
+			판본은 부모 BOM(spring-security 7.1.0)이 관리한다 — ~/.m2 캐시 히트라 네트워크가 필요 없다.
+		-->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-crypto</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>

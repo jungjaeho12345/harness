@@ -1,0 +1,254 @@
+package harness.news.web;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import harness.news.service.UserService;
+import harness.news.testsupport.TempNewsDb;
+import harness.news.testsupport.Wire;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+/**
+ * 경로 정책 필터의 <b>와이어</b> 계약 — 선언된 보호 경로는 미인증이면 401 JSON이다.
+ *
+ * <p>이 phase에는 기사·사용자·로그 핸들러가 없다. 그런데도
+ * {@code session-guard.contract.js}의 마지막 케이스는 죽은 토큰으로 {@code GET /api/articles}를 호출해
+ * <b>401 {@code {ok:false, reason:'unauthenticated'}}</b>를 요구한다 — 그 401을 만드는 것이 이 필터다
+ * (스텁 핸들러가 아니라 경계 정책이며, Node가 라우트 내부 세션 검사로 만드는 결과와 동형이다).
+ *
+ * <p>동시에 <b>넓히면 안 된다</b>: 표에 없는 경로는 그대로 통과시켜 컨테이너 404(비-JSON)로 흘려보내고,
+ * {@code auth: "token"} 라우트(수집 2건)는 세션 요구 대상이 아니다.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class PathPolicyWireTest {
+
+	private static final Path DATA_DIR = TempNewsDb.newDataDir("path-policy-wire");
+
+	private static final Pattern SESSION_ID = Pattern.compile("\"sessionId\":\"([0-9a-f]{64})\"");
+
+	private static final String USER_ID = "policy-r";
+
+	private static final String PASSWORD = "policy-pw-1";
+
+	private static final String UNAUTHENTICATED = "{\"ok\":false,\"reason\":\"unauthenticated\"}";
+
+	@DynamicPropertySource
+	static void dataDir(DynamicPropertyRegistry registry) {
+		registry.add("app.data-dir", () -> DATA_DIR.toAbsolutePath().toString());
+	}
+
+	@Value("${local.server.port}")
+	private int port;
+
+	@Autowired
+	private UserService users;
+
+	@BeforeEach
+	void seedFixture() {
+		Map<String, Object> dto = new LinkedHashMap<>();
+		dto.put("userId", USER_ID);
+		dto.put("password", PASSWORD);
+		dto.put("role", "R");
+		dto.put("name", "정책");
+		try {
+			this.users.create(dto);
+		}
+		catch (RuntimeException ignored) {
+			// 이미 있다 — 픽스처는 멱등이다(행을 지우지 않는다).
+		}
+	}
+
+	private String login() {
+		Wire.Response response = Wire.json(this.port, "POST", "/api/login", Map.of(),
+				"{\"userId\":\"" + USER_ID + "\",\"password\":\"" + PASSWORD + "\"}");
+		Matcher matcher = SESSION_ID.matcher(response.body());
+		assertTrue(matcher.find(), "로그인 응답에 sessionId가 없다: " + response.status());
+		return matcher.group(1);
+	}
+
+	@Test
+	void protectedRouteWithoutSessionIs401JsonEvenWithoutAHandler() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles");
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"),
+				"401에도 바디가 반드시 있다(바디 없는 401은 SPA를 세션 복원 중에 정지시킨다)");
+	}
+
+	@Test
+	void deadTokenOnAProtectedRouteIs401() {
+		String sessionId = login();
+		Wire.send(this.port, "POST", "/api/logout", Map.of("x-session-id", sessionId), null);
+
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles",
+				Map.of("x-session-id", sessionId), null);
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+	}
+
+	@Test
+	void authenticatedRequestToAnUnimplementedRouteIs404NotAStub() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles",
+				Map.of("x-session-id", login()), null);
+
+		assertEquals(404, response.status(), "구현하지 않은 라우트는 정직하게 404다(스텁 금지)");
+		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void sessionCookieIsAcceptedByTheFilterToo() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/session",
+				Map.of("Cookie", "sid=" + login()), null);
+
+		assertEquals(200, response.status(), "필터는 인증된 요청을 통과시킨다");
+	}
+
+	@Test
+	void trailingSlashDoesNotBypassTheGuard() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles/");
+
+		assertEquals(401, response.status(), "후행 슬래시로 보호 경로를 우회할 수 있으면 안 된다");
+	}
+
+	@Test
+	void headOnAProtectedRouteIsGuardedLikeGet() {
+		// express는 HEAD를 GET 핸들러로 라우팅한다 — Node 실측도 401이다.
+		Wire.Response response = Wire.send(this.port, "HEAD", "/api/articles");
+
+		assertEquals(401, response.status());
+	}
+
+	@Test
+	void publicRoutesAreNotGuarded() {
+		Wire.Response response = Wire.json(this.port, "POST", "/api/login", Map.of(),
+				"{\"userId\":\"nobody\",\"password\":\"nope\"}");
+
+		assertEquals(401, response.status());
+		assertEquals("{\"ok\":false,\"reason\":\"invalid-credentials\"}", response.body(),
+				"public 라우트가 필터에 가로채이면 사유 토큰이 unauthenticated로 바뀐다");
+	}
+
+	@Test
+	void tokenClassRoutesAreNotSessionGuarded() {
+		// auth: "token"(수집 2건)은 x-collection-token + loopback으로 인증한다 — 세션이 없는 것이 정상이다.
+		// 뭉뚱그려 세션을 요구하면 유효 토큰에도 401이 나고 그 오류가 수집 도메인 phase로 상속된다.
+		Wire.Response receive = Wire.json(this.port, "POST", "/api/collection/receive", Map.of(), "{}");
+		Wire.Response pull = Wire.json(this.port, "POST", "/api/collection/pull", Map.of(), "{}");
+
+		assertNotEquals(401, receive.status(), "collection-receive는 세션 요구 대상이 아니다");
+		assertNotEquals(401, pull.status(), "collection-pull은 세션 요구 대상이 아니다");
+		assertEquals(404, receive.status(), "이 phase에 핸들러가 없으므로 404다");
+		assertEquals(404, pull.status());
+	}
+
+	@Test
+	void percentEncodedProtectedPathDoesNotBypassTheGuard() {
+		// Spring 디스패처는 세그먼트를 디코딩해 핸들러를 찾는다(express는 원문 매칭이라 404다).
+		// 필터가 원문만 보면 인코딩 한 글자로 미인증 요청이 필터를 통과하고,
+		// phase 69+가 실제 핸들러를 붙이는 순간 그 요청이 핸들러에 도달한다(step7·step8 실측 노출).
+		Wire.Response response = Wire.send(this.port, "GET", "/api/artic%6Ces");
+
+		assertEquals(401, response.status(), "인코딩된 보호 경로가 401이 아니면 경로 정책 게이트가 뚫린 것이다");
+		assertEquals(UNAUTHENTICATED, response.body());
+		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void percentEncodedProtectedPathWithATrailingSlashDoesNotBypassTheGuardEither() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/artic%6Ces/");
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+	}
+
+	@Test
+	void percentEncodedProtectedPathStillWorksForAuthenticatedRequests() {
+		// 게이트를 넓혔어도 인증된 요청은 그대로 통과한다 — 디스패처가 디코딩해 라우팅하므로 핸들러가 실제로 돈다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/sessio%6E",
+				Map.of("x-session-id", login()), null);
+
+		assertEquals(200, response.status(), "인코딩 방어가 인증된 요청까지 막으면 과잉 차단이다");
+	}
+
+	@Test
+	void percentEncodedUnlistedPathsAreStill404() {
+		// 디코딩 판정이 표 밖 경로까지 401로 넓히면 "미정의 경로 = 404 비-JSON" 계약이 깨진다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/does-not-exi%73t");
+
+		assertEquals(404, response.status());
+		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void pathParametersDoNotBypassTheGuard() {
+		// Spring의 PathContainer는 세그먼트에서 `;name=value`를 떼어내고 매칭한다 → 디스패처는 이 요청을
+		// 기사 핸들러로 보낸다. 필터가 원문만 보면 세미콜론 한 글자로 미인증 요청이 필터를 통과하고,
+		// phase 69+가 핸들러를 붙이는 순간 그 요청이 핸들러에 도달한다(2026-08-20 실측: 이 요청은 404 HTML이었다).
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles;a=b");
+
+		assertEquals(401, response.status(), "경로 파라미터가 붙은 보호 경로가 401이 아니면 게이트가 뚫린 것이다");
+		assertEquals(UNAUTHENTICATED, response.body());
+		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void pathParametersCombinedWithEncodingDoNotBypassTheGuardEither() {
+		Wire.Response encoded = Wire.send(this.port, "GET", "/api/artic%6Ces;a=b");
+		Wire.Response withSlash = Wire.send(this.port, "GET", "/api/articles;a=b/");
+
+		assertEquals(401, encoded.status(), "인코딩 + 경로 파라미터를 겹쳐도 게이트는 그대로다");
+		assertEquals(UNAUTHENTICATED, encoded.body());
+		assertEquals(401, withSlash.status(), "경로 파라미터 + 후행 슬래시도 마찬가지다");
+	}
+
+	@Test
+	void pathParametersOnAParameterSegmentAreStillGuarded() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/articles/AKR20260101001;v=2");
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+	}
+
+	@Test
+	void pathParametersDoNotBlockAuthenticatedRequests() {
+		// 게이트를 넓혔어도 인증된 요청은 그대로 통과한다 — 디스패처가 파라미터를 떼어내고 라우팅하므로 핸들러가 돈다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/session;a=b",
+				Map.of("x-session-id", login()), null);
+
+		assertEquals(200, response.status(), "파라미터 방어가 인증된 요청까지 막으면 과잉 차단이다");
+	}
+
+	@Test
+	void unlistedPathsWithPathParametersAreStill404() {
+		// 파라미터 제거가 표를 넓혀 미정의 경로까지 401로 만들면 "미정의 경로 = 404 비-JSON" 계약이 깨진다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/nope;a=b");
+
+		assertEquals(404, response.status());
+		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void parameterizedProtectedRoutesAreGuarded() {
+		Wire.Response get = Wire.send(this.port, "GET", "/api/articles/AKR20260101001");
+		Wire.Response history = Wire.send(this.port, "GET", "/api/articles/AKR20260101001/history");
+		Wire.Response update = Wire.json(this.port, "PUT", "/api/users/someone", Map.of(), "{}");
+
+		assertEquals(401, get.status());
+		assertEquals(401, history.status());
+		assertEquals(401, update.status(), "admin 라우트도 미인증이면 401이다(역할 판정은 라우트가 한다)");
+	}
+}
