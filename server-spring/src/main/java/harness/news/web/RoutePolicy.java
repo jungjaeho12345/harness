@@ -1,8 +1,10 @@
 package harness.news.web;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import org.springframework.web.util.UriUtils;
 
 /**
  * 경로 → {@code auth} 클래스 표.
@@ -173,10 +175,27 @@ final class RoutePolicy {
 	 *
 	 * @param method HTTP 메서드. {@code HEAD}는 {@code GET}으로 본다 — express가 HEAD를 GET 핸들러로
 	 *     라우팅하므로 Node의 {@code HEAD /api/articles}도 401이다.
-	 * @param path 요청 경로(쿼리 제외). 후행 슬래시는 무시한다 — express는 기본(strict routing off)에서
-	 *     {@code /api/articles/}를 같은 라우트로 보므로, 정규화하지 않으면 슬래시 한 개로 게이트가 뚫린다.
+	 * @param path 요청 경로(쿼리 제외 — {@code getRequestURI()}의 <b>원문</b>을 그대로 준다).
+	 *     후행 슬래시와 퍼센트 인코딩은 이 클래스가 정규화한다.
 	 */
 	static Route match(String method, String path) {
+		Route direct = matchNormalized(method, path);
+		return (direct != null) ? direct : matchNormalized(method, decode(path));
+	}
+
+	/**
+	 * 이 요청이 유효 세션을 요구하는가 — 원문·디코딩 중 <b>하나라도</b> 요구하면 요구한다.
+	 * 표에 없으면 요구하지 않는다(그 요청은 통과해 컨테이너 404가 된다).
+	 */
+	static boolean requiresSession(String method, String path) {
+		return demandsSession(matchNormalized(method, path)) || demandsSession(matchNormalized(method, decode(path)));
+	}
+
+	private static boolean demandsSession(Route route) {
+		return route != null && route.auth().requiresSession();
+	}
+
+	private static Route matchNormalized(String method, String path) {
 		if (method == null || path == null) {
 			return null;
 		}
@@ -191,17 +210,44 @@ final class RoutePolicy {
 		return null;
 	}
 
-	/** 이 요청이 유효 세션을 요구하는가(표에 없으면 요구하지 않는다). */
-	static boolean requiresSession(String method, String path) {
-		Route route = match(method, path);
-		return route != null && route.auth().requiresSession();
-	}
-
+	/**
+	 * 후행 슬래시 제거 — express는 기본(strict routing off)에서 {@code /api/articles/}를 같은 라우트로 보므로,
+	 * 정규화하지 않으면 슬래시 한 개로 게이트가 뚫린다.
+	 */
 	private static String normalize(String path) {
 		String trimmed = path;
 		while (trimmed.length() > 1 && trimmed.endsWith("/")) {
 			trimmed = trimmed.substring(0, trimmed.length() - 1);
 		}
 		return trimmed;
+	}
+
+	/**
+	 * 컨테이너가 <b>라우팅에 실제로 쓰는 형태</b>(세그먼트 1회 디코딩). 인코딩이 없거나 깨졌으면 {@code null}
+	 * — 그러면 원문 판정만 남는다(깨진 인코딩은 컨테이너가 400으로 거른다. 여기서 추측하지 않는다).
+	 *
+	 * <h3>왜 원문만 보면 안 되는가(실측)</h3>
+	 * Spring의 {@code PathPatternParser}는 세그먼트를 디코딩해 매칭하므로 {@code GET /api/artic%6Ces}는
+	 * <b>{@code /api/articles} 핸들러로 라우팅된다</b>(express는 반대로 원문 매칭이라 404다 — 이식 과정에서
+	 * 새로 생긴 표면이다). 2026-08-20 실측: 원문만 보던 시절 미인증 {@code GET /api/articles}는 401인데
+	 * {@code GET /api/artic%6Ces}는 경로 정책 필터를 통과해 404가 됐다. 핸들러가 없어 404로 끝났을 뿐,
+	 * 실제 핸들러가 붙는 순간 <b>미인증 요청이 핸들러에 도달</b>한다.
+	 *
+	 * <h3>판정은 넓은 쪽으로만 틀린다</h3>
+	 * 원문·디코딩 <b>둘 다</b> 보는 이유는 두 방향의 오류가 비대칭이기 때문이다: 세지 않아 뚫리는 것보다
+	 * 세고 나서 404가 되는 편이 안전하다. 그래서 {@code /api/articles/AKR%2F1}처럼 디코딩하면 세그먼트가
+	 * 갈라져 매칭이 사라지는 경로도 원문 판정으로 게이트가 유지된다. 디코딩은 <b>한 번만</b> 한다
+	 * — 두 번 풀면 표가 컨테이너보다 넓어져 미정의 경로가 401이 되고 "미정의 = 404 비-JSON" 계약이 깨진다.
+	 */
+	private static String decode(String path) {
+		if (path == null || path.indexOf('%') < 0) {
+			return null;
+		}
+		try {
+			return UriUtils.decode(path, StandardCharsets.UTF_8);
+		}
+		catch (IllegalArgumentException ex) {
+			return null;
+		}
 	}
 }

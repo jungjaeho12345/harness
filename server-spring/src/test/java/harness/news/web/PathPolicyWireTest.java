@@ -156,6 +156,44 @@ class PathPolicyWireTest {
 	}
 
 	@Test
+	void percentEncodedProtectedPathDoesNotBypassTheGuard() {
+		// Spring 디스패처는 세그먼트를 디코딩해 핸들러를 찾는다(express는 원문 매칭이라 404다).
+		// 필터가 원문만 보면 인코딩 한 글자로 미인증 요청이 필터를 통과하고,
+		// phase 69+가 실제 핸들러를 붙이는 순간 그 요청이 핸들러에 도달한다(step7·step8 실측 노출).
+		Wire.Response response = Wire.send(this.port, "GET", "/api/artic%6Ces");
+
+		assertEquals(401, response.status(), "인코딩된 보호 경로가 401이 아니면 경로 정책 게이트가 뚫린 것이다");
+		assertEquals(UNAUTHENTICATED, response.body());
+		assertEquals("Content-Type: application/json; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
+	void percentEncodedProtectedPathWithATrailingSlashDoesNotBypassTheGuardEither() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/artic%6Ces/");
+
+		assertEquals(401, response.status());
+		assertEquals(UNAUTHENTICATED, response.body());
+	}
+
+	@Test
+	void percentEncodedProtectedPathStillWorksForAuthenticatedRequests() {
+		// 게이트를 넓혔어도 인증된 요청은 그대로 통과한다 — 디스패처가 디코딩해 라우팅하므로 핸들러가 실제로 돈다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/sessio%6E",
+				Map.of("x-session-id", login()), null);
+
+		assertEquals(200, response.status(), "인코딩 방어가 인증된 요청까지 막으면 과잉 차단이다");
+	}
+
+	@Test
+	void percentEncodedUnlistedPathsAreStill404() {
+		// 디코딩 판정이 표 밖 경로까지 401로 넓히면 "미정의 경로 = 404 비-JSON" 계약이 깨진다.
+		Wire.Response response = Wire.send(this.port, "GET", "/api/does-not-exi%73t");
+
+		assertEquals(404, response.status());
+		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
+	}
+
+	@Test
 	void parameterizedProtectedRoutesAreGuarded() {
 		Wire.Response get = Wire.send(this.port, "GET", "/api/articles/AKR20260101001");
 		Wire.Response history = Wire.send(this.port, "GET", "/api/articles/AKR20260101001/history");

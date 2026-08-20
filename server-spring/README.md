@@ -6,7 +6,40 @@
 
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
-- 현재 구현 범위(phase 68 step0): 빌드·설정·기동 경로 + `GET /api/health` 하나. DB·세션·인증은 후속 step이 올린다.
+- 현재 구현 범위(phase 68 완료): **인증/세션 축 + 그 실행에 필요한 최소 라우트 7개**. 계약 6파일(default 4 · auth-negative 1 ·
+  prod-cookie 1)이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다(마감 실측: 케이스 31 · 관측 31 · diffs 0 ·
+  자기 결정성 `--dual-run` diffs 0 · Java 257 테스트 0 실패). 기사·수집·배부·미디어·SSE는 아직 없다(아래 라우트 표).
+- 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
+
+## 구현한 라우트 · 아직 구현하지 않은 라우트
+
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 7개**다.
+
+| 라우트 | 인증 | 비고 |
+|---|---|---|
+| `GET /api/health` | public | 부팅 판정 + `health.contract.js`가 잠근다 |
+| `POST /api/login` | public | 계정 잠금 423(5회/15분) · IP 레이트리밋 429(15분/10회, 비-JSON 본문) |
+| `POST /api/logout` | public | |
+| `GET /api/session` | session | 매 요청 User 행 재도출(ADR-004) |
+| `POST /api/users` | admin(Z) | 계약 픽스처 수단 — 입력 검증 없음(Node 실측 재현) |
+| `PUT /api/users/:id` | admin(Z) | 없는 id도 `{ok:true, changes:0}`(동결된 계약) |
+| `GET /api/logs/digest` | admin(Z) | in-memory 링 버퍼(cap 10000)의 06:00 정렬 24h 창 |
+
+**나머지 32 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+
+- 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
+  (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
+- **인증된 요청은 통과시켜 404**가 되게 한다 — 구현 여부가 정직하게 드러나는 것이 의도다(스텁 금지),
+- `auth: "token"` 2건(수집)은 세션 요구 대상이 **아니다**(`x-collection-token` + loopback 인증 — 수집 도메인 phase 소유).
+
+경로 판정은 후행 슬래시(`/api/articles/`)와 **퍼센트 인코딩을 한 번 디코딩한 형태**(`/api/artic%6Ces`)까지 본다
+— Spring 디스패처가 디코딩해 라우팅하므로 원문만 보면 인코딩 한 글자로 게이트가 우회된다(2026-08-20 실측·회귀 테스트로 잠금).
+
+그래서 계약 스위트는 **담당 도메인 파일만**(`--files`) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만 쓸 수 있다
+(지금 쓰면 영구 red이며, 그 red가 정상이다).
+
+필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
+(`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
 
 ## 이 서버는 스키마를 만들지 않는다
 
@@ -117,3 +150,15 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
   직렬화 경로를 그대로 재현하지 않는다.
 - 테스트는 리포 `news.db`를 열지 않는다. DB가 필요한 테스트는 `@TempDir`의 임시 파일 DB + **테스트 리소스에만
   존재하는 DDL 픽스처**를 쓴다(main 소스에는 DDL이 없다).
+
+## 아직 검증되지 않은 것 (정직한 공백)
+
+게이트가 전부 green이어도 다음은 **검증된 적이 없다**. 안전하다고 가정하지 말 것(자세한 목록·근거는
+`phases/68-spring-auth/index.json`의 `forward_notes`).
+
+- 세션 1시간 슬라이딩 만료의 **실서버 시간축** — 계약 스위트는 시계를 주입할 수 없다(Java 단위 테스트만 덮는다).
+- 로그인 `inactive` 403 경로 — 계약 스위트가 시드 계정을 비활성화하지 않아 도달 불가.
+- 레이트리밋 15분 창의 **리셋** 타이밍(초과 관측까지만 동결) · 다이제스트 24h 창 경계의 실서버 검증.
+- 동시성 실부하(계약 스위트는 직렬 실행이고 커넥션 풀은 1이다).
+- **두 서버가 같은 `news.db`를 동시에** 여는 상황(P3 전환기) — 하네스는 프로파일마다 DB를 분리한다.
+- helmet 등가 보안 헤더(CSP·X-Content-Type-Options·HSTS)·HTTPS 강제는 **구현되어 있지 않다**(계약 밖 축).

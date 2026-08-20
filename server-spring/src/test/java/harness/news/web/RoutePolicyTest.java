@@ -127,4 +127,47 @@ class RoutePolicyTest {
 		assertNull(RoutePolicy.match("GET", "/api/articles/one/two"),
 				":id 는 세그먼트 하나만 먹는다");
 	}
+
+	@Test
+	void percentEncodedPathsAreMatchedTheWayTheContainerRoutesThem() {
+		// Spring 디스패처는 세그먼트를 디코딩해 핸들러를 찾는다(express는 원문으로 매칭한다).
+		// 표가 원문만 보면 인코딩 한 글자로 게이트가 통째로 우회된다 — step7이 로그인 필터에서 실측한 노출이다.
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/artic%6Ces"),
+				"디코딩하면 /api/articles다 — 미인증이면 401이어야 한다");
+		assertEquals("articles-list", RoutePolicy.match("GET", "/api/artic%6Ces").id());
+		assertEquals("login", RoutePolicy.match("POST", "/api/lo%67in").id());
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/sessio%6E"));
+		assertTrue(RoutePolicy.requiresSession("POST", "/api/articles/AKR1/l%6Fck"));
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/logs%2Fdigest"),
+				"%2F는 세그먼트 구분자로 디코딩된다");
+	}
+
+	@Test
+	void encodingIsNormalizedTogetherWithTrailingSlashes() {
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/artic%6Ces/"),
+				"인코딩 + 후행 슬래시를 겹쳐도 게이트는 그대로다");
+	}
+
+	@Test
+	void rawPathsStillMatchWhenDecodingWouldNot() {
+		// 판정은 원문·디코딩 <b>둘 다</b> 본다 — 넓은 쪽으로만 틀리게 만든다.
+		// %2F를 디코딩하면 :id 세그먼트가 갈라져 매칭이 사라지지만, 원문 판정이 게이트를 유지한다.
+		assertTrue(RoutePolicy.requiresSession("GET", "/api/articles/AKR%2F1"));
+		assertEquals("articles-get", RoutePolicy.match("GET", "/api/articles/AKR%2F1").id());
+	}
+
+	@Test
+	void brokenPercentEncodingIsNotAMatchAndDoesNotThrow() {
+		// 깨진 인코딩은 컨테이너가 400으로 거른다 — 여기서 추측하지 않고 원문 판정만 남긴다.
+		assertNull(RoutePolicy.match("GET", "/api/artic%zzles"));
+		assertFalse(RoutePolicy.requiresSession("GET", "/api/artic%zzles"));
+		assertNull(RoutePolicy.match("GET", "/api/artic%6"));
+	}
+
+	@Test
+	void doubleEncodingIsNotDecodedTwice() {
+		// 컨테이너도 한 번만 디코딩한다 — 두 번 풀면 표가 컨테이너보다 넓어져 미정의 경로가 401이 된다.
+		assertNull(RoutePolicy.match("GET", "/api/artic%256Ces"));
+		assertFalse(RoutePolicy.requiresSession("GET", "/api/artic%256Ces"));
+	}
 }

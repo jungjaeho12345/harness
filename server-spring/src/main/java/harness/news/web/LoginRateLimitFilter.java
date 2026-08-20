@@ -8,8 +8,6 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import org.springframework.web.util.UriUtils;
 
 /**
  * {@code POST /api/login} <b>한 라우트</b>의 IP 레이트리밋(15분/10회) — Node의 {@code loginLimiter} 동형.
@@ -66,40 +64,18 @@ final class LoginRateLimitFilter implements Filter {
 	}
 
 	/**
-	 * 이 요청이 로그인 라우트인가 — <b>원문 경로와 디코딩된 경로 둘 다</b> 본다.
+	 * 이 요청이 로그인 라우트인가 — 판정 규칙(후행 슬래시 · 퍼센트 인코딩 · HEAD)은 전부
+	 * {@link RoutePolicy}가 소유한다.
 	 *
 	 * <p>{@code /api/lo%67in}은 원문으로는 아무 라우트도 아니지만 Spring 디스패처는 세그먼트를 디코딩해
-	 * 매칭하므로 <b>로그인 핸들러가 실제로 실행된다</b>(실측 2026-08-20: 예산을 소진한 뒤에도 401이 나왔다).
-	 * 그래서 원문만 보면 인코딩 한 글자로 한도가 무한 우회된다. express는 반대로 원문으로 매칭해 404이므로,
-	 * 이 갈래는 이식 과정에서 새로 생긴 표면이다.
-	 *
-	 * <p>판정이 <b>넓은 쪽으로만</b> 틀리게 만든 것은 의도다: 세지 않아서 뚫리는 것보다 세고 나서 404가 되는
-	 * 편이 안전하다(후행 슬래시 {@code /api/login/}도 같은 취급이다).
+	 * 매칭하므로 <b>로그인 핸들러가 실제로 실행된다</b>(실측 2026-08-20: 원문만 보던 시절 예산을 소진한
+	 * 뒤에도 401이 나왔다 = 인코딩 한 글자로 한도 무한 우회). step7이 이 필터 안에서 원문+디코딩 이중 판정으로
+	 * 막았고, step10이 같은 노출을 갖고 있던 경로 정책 필터와 함께 닫으려고 그 규칙을 {@link RoutePolicy}로
+	 * 옮겼다 — 규칙이 두 벌이면 한쪽만 고쳐지는 사고가 반복된다.
 	 */
 	private static boolean isLogin(HttpServletRequest request) {
-		String uri = request.getRequestURI();
-		return matchesLogin(request.getMethod(), uri) || matchesLogin(request.getMethod(), decoded(uri));
-	}
-
-	private static boolean matchesLogin(String method, String path) {
-		if (path == null) {
-			return false;
-		}
-		RoutePolicy.Route route = RoutePolicy.match(method, path);
+		RoutePolicy.Route route = RoutePolicy.match(request.getMethod(), request.getRequestURI());
 		return route != null && LOGIN_ROUTE_ID.equals(route.id());
-	}
-
-	/** 컨테이너가 라우팅에 쓰는 형태. 인코딩이 없거나 해석 불가면 {@code null}(원문 판정만 남는다). */
-	private static String decoded(String uri) {
-		if (uri == null || uri.indexOf('%') < 0) {
-			return null;
-		}
-		try {
-			return UriUtils.decode(uri, StandardCharsets.UTF_8);
-		}
-		catch (IllegalArgumentException ex) {
-			return null; // 깨진 인코딩은 컨테이너가 400으로 거른다 — 여기서 추측하지 않는다.
-		}
 	}
 
 }

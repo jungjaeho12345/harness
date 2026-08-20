@@ -33,6 +33,11 @@ client/                 # Electron 접속형 클라이언트 셸 (phase 62 — �
   menu.js / ipcGuard.js / diag.js   # 순수 보조 모듈 (메뉴 템플릿 · sender 검증 · 진단 JSONL)
   lib/                  # Electron 비의존 순수 정책 (serverUrl · clientConfig · windowPolicy · loadFailure · permissionPolicy)
   pages/                # 셸 로컬 페이지 (setup/error — CSP meta · 인라인 스크립트 없음)
+server-spring/          # Spring Boot 포팅 서버 (C++/Spring 포팅 P1 — Node 서버와 공존, 같은 계약을 구현한다 · ADR-013)
+  src/main/java/harness/news/
+    config/ db/ model/ service/ web/ controller/   # 계층은 Node와 동형: controller → service → repository(직접 SQL) → db
+                                                   # web/ = 자체 서블릿 필터 체인(CORS·요청로그·CSRF·레이트리밋·경로 정책)과 와이어 포맷 정규화
+  README.md             # 빌드·실행·계약 검증 커맨드 · 설정 키↔환경변수 표 · 구현/미구현 라우트
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
 scripts/                # 실행 러너 (seed) + 배포 빌드/검증 (sea-build · dist-server · verify-server-exe · dist-client · verify-client · verify-integration · make-icon)
@@ -44,6 +49,7 @@ packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되�
 - **백엔드 MVC + 계층 분리**: HTTP 라우트(`server/index.js`)는 shape 매핑과 인가 게이트만 담당하고, 로직은 `controllers → services → models → db`로 내려간다. 모든 의존성은 주입 가능해서 테스트는 in-memory db/session을 주입한다(프로덕션 `news.db`에 바인딩하지 않음).
 - **프론트엔드 MVC**: `View`(순수 함수/컴포넌트) ← `Controller`(React 훅) ← `Model`(주입형 계약). Model은 `freeze`된 `MODEL_KEYS` 계약을 따르고, 실제 REST/SSE 배선은 `httpModel` 뒤에 격리한다. 테스트는 `fakeModel`을 주입한다.
 - **얇은 transport**: 비즈니스 로직은 HTTP 밖에 둔다 — 라우트는 "세션 검증 → 인가 게이트 → 컨트롤러 위임 → 응답 매핑"만 한다.
+- **두 서버, 한 계약**: Node 서버(`server/**`·`src/**`)와 Spring 서버(`server-spring/**`)가 **같은 REST 계약**(`docs/api-contract/**`)을 구현하고, 두 구현이 같은지는 사람이 아니라 계약 스위트가 판정한다 — `node scripts/spring-contract.mjs --parity`가 프로파일마다 두 서버의 리포트를 뽑아 `scripts/contract-diff.mjs`로 기계 비교한다(상태코드 정수·헤더 문자열 정확 비교). 어긋나면 **Spring을 고친다**(계약·Node는 무수정 — ADR-013).
 
 ## 데이터 흐름
 ```
