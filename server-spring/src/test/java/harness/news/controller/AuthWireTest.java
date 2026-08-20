@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import harness.news.service.UserService;
+import harness.news.testsupport.MutableClock;
 import harness.news.testsupport.TempNewsDb;
 import harness.news.testsupport.Wire;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -17,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -46,6 +52,27 @@ class AuthWireTest {
 
 	private static final String PASSWORD = "wire-pw-1";
 
+	/**
+	 * 이 클래스는 로그인을 10회 넘게 한다 — step7의 IP 레이트리밋(15분/10회, 프로세스 로컬)에 그대로 걸린다.
+	 * 한도·창은 계약값이라 프로퍼티로 끌 수 없으므로(그렇게 만들면 어느 배포에서 계약이 성립하는지가 설정에
+	 * 달린다), 테스트마다 <b>창을 넘겨</b> 예산을 리셋한다. 시각을 주입 시계로만 읽는다는 규율(decisions (14))이
+	 * 있어서 가능한 방법이다.
+	 */
+	private static final long RATE_LIMIT_WINDOW_MS = 15L * 60L * 1000L;
+
+	private static final MutableClock CLOCK = new MutableClock(Instant.parse("2026-08-20T00:00:00Z").toEpochMilli());
+
+	@TestConfiguration
+	static class MutableClockConfig {
+
+		@Bean
+		@Primary
+		Clock mutableClock() {
+			return CLOCK;
+		}
+
+	}
+
 	@DynamicPropertySource
 	static void dataDir(DynamicPropertyRegistry registry) {
 		registry.add("app.data-dir", () -> DATA_DIR.toAbsolutePath().toString());
@@ -56,6 +83,12 @@ class AuthWireTest {
 
 	@Autowired
 	private UserService users;
+
+	/** 로그인 예산 리셋 — 위 상수의 주석 참조. 계정 잠금(423)도 함께 풀려 테스트 간 독립성이 커진다. */
+	@BeforeEach
+	void freshLoginBudget() {
+		CLOCK.advance(RATE_LIMIT_WINDOW_MS + 1);
+	}
 
 	@BeforeEach
 	void seedFixtures() {

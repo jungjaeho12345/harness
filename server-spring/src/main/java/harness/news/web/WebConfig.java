@@ -3,6 +3,7 @@ package harness.news.web;
 import harness.news.config.AppProperties;
 import harness.news.service.SessionGuard;
 import jakarta.servlet.Filter;
+import java.time.Clock;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -55,6 +56,14 @@ public class WebConfig {
 	@Bean
 	public FilterRegistrationBean<Filter> csrfOriginFilter(AllowedOrigins origins, JsonHttp json) {
 		return register(new CsrfOriginFilter(origins, json), FilterOrder.CSRF_ORIGIN);
+	}
+
+	/**
+	 * 로그인 IP 레이트리밋 — 카운터는 이 빈 하나(프로세스 로컬 in-memory)다. 시각은 주입된 시계에서만 읽는다.
+	 */
+	@Bean
+	public FilterRegistrationBean<Filter> loginRateLimitFilter(Clock clock) {
+		return register(new LoginRateLimitFilter(new LoginRateLimit(clock)), FilterOrder.LOGIN_RATE_LIMIT);
 	}
 
 	@Bean

@@ -14,8 +14,10 @@ package harness.news.web;
  *   <tr><td>{@value #CSRF_ORIGIN}</td><td>CSRF Origin/Referer 가드</td>
  *       <td>교차 출처 쓰기는 <b>세션을 보기 전에</b> 403이다. 뒤로 밀면 같은 요청이 401(미인증)로 응답돼
  *           사유 토큰이 바뀐다.</td></tr>
- *   <tr><td>(30)</td><td>로그인 IP 레이트리밋</td>
- *       <td><b>step7 예약 자리</b>. Node에서도 CSRF 통과 이후·라우트 진입 시점에 센다.</td></tr>
+ *   <tr><td>{@value #LOGIN_RATE_LIMIT}</td><td>로그인 IP 레이트리밋</td>
+ *       <td>Node에서도 CSRF 통과 이후·라우트 진입 시점에 센다. 로그인은 {@code public} 라우트라 경로 정책과
+ *           순서를 다툴 일이 없지만, <b>라우트보다는 반드시 먼저</b>여야 한다 — 한도를 넘긴 요청이 라우트에
+ *           닿으면 잠긴 계정에 423이 계속 나오고 429가 영영 오지 않는다.</td></tr>
  *   <tr><td>{@value #PATH_POLICY}</td><td>경로 정책(미인증 401)</td>
  *       <td>가장 라우트에 가깝다 — Node가 라우트 <b>안에서</b> 하는 세션 검사와 같은 위치다.
  *           표에 없는 경로는 통과시켜 컨테이너 404로 흘려보낸다.</td></tr>
@@ -28,6 +30,9 @@ final class FilterOrder {
 
 	/** CSRF Origin/Referer 가드 — 상태 변경 메서드만 본다. */
 	static final int CSRF_ORIGIN = 20;
+
+	/** 로그인 IP 레이트리밋 — {@code POST /api/login} 한 라우트만 본다. */
+	static final int LOGIN_RATE_LIMIT = 30;
 
 	/** 경로 정책(선언된 보호 경로의 미인증 401) — 디스패처 직전. */
 	static final int PATH_POLICY = 40;
