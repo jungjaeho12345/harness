@@ -54,6 +54,18 @@
 			<version>3.47.2.0</version>
 		</dependency>
 
+		<!--
+			step4(auth-domain) — BCrypt 하나만 쓴다.
+			**spring-boot-starter-security가 아니다**: 스타터를 넣는 순간 전 라우트가 기본 잠금이 되고
+			프레임워크 기본 401/403 shape이 계약({ok:false, reason:...} JSON)과 충돌한다(decisions (10)).
+			crypto 모듈은 단독 라이브러리라 자동설정·필터체인을 하나도 들여오지 않는다.
+			판본은 부모 BOM(spring-security 7.1.0)이 관리한다 — ~/.m2 캐시 히트라 네트워크가 필요 없다.
+		-->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-crypto</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
