@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 전역 예외 → {@code 500 {ok:false, reason:'internal-error'}} 고정 shape.
@@ -36,6 +38,18 @@ public class GlobalErrorHandler {
 
 	public GlobalErrorHandler(JsonHttp json) {
 		this.json = json;
+	}
+
+	/**
+	 * 미정의 경로 → <b>404 + 비-JSON</b>(계약). Boot 기본 {@code /error} 처리에 맡기면 JSON 본문이 나가
+	 * 동결된 에러 shape이 깨진다 — 그래서 이 예외만 골라 {@link HtmlErrors}로 직접 응답한다.
+	 *
+	 * <p>다른 프레임워크 예외(405·415 등)는 여전히 아래 {@link #handle} 이 <b>다시 던져</b> 기본 처리로 보낸다
+	 * — 여기서 잡는 대상을 넓히면 그 상태코드들이 조용히 404로 뭉개진다.
+	 */
+	@ExceptionHandler({ NoResourceFoundException.class, NoHandlerFoundException.class })
+	public void handleNotFound(HttpServletRequest request, HttpServletResponse response) {
+		HtmlErrors.notFound(request, response);
 	}
 
 	@ExceptionHandler(Throwable.class)

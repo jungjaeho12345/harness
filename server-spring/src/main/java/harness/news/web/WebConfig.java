@@ -1,8 +1,11 @@
 package harness.news.web;
 
 import harness.news.config.AppProperties;
+import harness.news.service.SessionGuard;
+import jakarta.servlet.Filter;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -29,5 +32,40 @@ public class WebConfig {
 	@Bean
 	public SessionCookies sessionCookies(AppProperties properties) {
 		return new SessionCookies(properties.production());
+	}
+
+	/**
+	 * CORS와 CSRF 가드가 공유하는 허용 출처 목록(ADR-009) — 두 경계가 각자 목록을 들면 한쪽만 넓어졌을 때
+	 * 조용히 뚫린다.
+	 */
+	@Bean
+	public AllowedOrigins allowedOrigins(AppProperties properties) {
+		return AllowedOrigins.of(properties);
+	}
+
+	/**
+	 * 엣지 필터 등록 — 순서는 {@link FilterOrder} 한 곳에서만 정한다.
+	 * 필터는 빈이 아니라 여기서 직접 만든다(빈으로 두면 Boot가 자동 등록해 순서·중복 등록이 갈라진다).
+	 */
+	@Bean
+	public FilterRegistrationBean<Filter> corsFilter(AllowedOrigins origins) {
+		return register(new CorsFilter(origins), FilterOrder.CORS);
+	}
+
+	@Bean
+	public FilterRegistrationBean<Filter> csrfOriginFilter(AllowedOrigins origins, JsonHttp json) {
+		return register(new CsrfOriginFilter(origins, json), FilterOrder.CSRF_ORIGIN);
+	}
+
+	@Bean
+	public FilterRegistrationBean<Filter> pathPolicyFilter(SessionGuard sessions, JsonHttp json) {
+		return register(new PathPolicyFilter(sessions, json), FilterOrder.PATH_POLICY);
+	}
+
+	private static FilterRegistrationBean<Filter> register(Filter filter, int order) {
+		FilterRegistrationBean<Filter> registration = new FilterRegistrationBean<>(filter);
+		registration.addUrlPatterns("/*");
+		registration.setOrder(order);
+		return registration;
 	}
 }
