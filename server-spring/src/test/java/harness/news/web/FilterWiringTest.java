@@ -51,6 +51,8 @@ class FilterWiringTest {
 		Map<String, Integer> orders = registeredOrders();
 
 		assertEquals(Integer.valueOf(FilterOrder.CORS), orders.get("CorsFilter"), "CORS 필터가 등록되지 않았다");
+		assertEquals(Integer.valueOf(FilterOrder.REQUEST_LOG), orders.get("RequestLogFilter"),
+				"액세스 로그 필터가 등록되지 않았다");
 		assertEquals(Integer.valueOf(FilterOrder.CSRF_ORIGIN), orders.get("CsrfOriginFilter"), "CSRF 필터가 등록되지 않았다");
 		assertEquals(Integer.valueOf(FilterOrder.LOGIN_RATE_LIMIT), orders.get("LoginRateLimitFilter"),
 				"로그인 레이트리밋 필터가 등록되지 않았다");
@@ -59,6 +61,10 @@ class FilterWiringTest {
 
 	@Test
 	void corsRunsBeforeCsrfAndCsrfBeforeTheRateLimitAndThePathPolicyIsLast() {
+		assertTrue(FilterOrder.CORS < FilterOrder.REQUEST_LOG,
+				"preflight는 CORS에서 끝나므로 액세스 로그에 남지 않는다(Node 동형)");
+		assertTrue(FilterOrder.REQUEST_LOG < FilterOrder.CSRF_ORIGIN,
+				"액세스 로그가 CSRF보다 뒤면 거부된 교차 출처 쓰기가 로그에 남지 않는다(ADR-009 등록 위치)");
 		assertTrue(FilterOrder.CORS < FilterOrder.CSRF_ORIGIN,
 				"preflight가 CSRF에 도달하면 비허용 출처 preflight가 403이 된다(계약은 2xx)");
 		assertTrue(FilterOrder.CSRF_ORIGIN < FilterOrder.LOGIN_RATE_LIMIT,

@@ -66,9 +66,25 @@ class AuthorizationTest {
 
 	@Test
 	void theCapabilityTableIsShapedLikeNode() {
-		// 이 phase가 쓰는 행은 하나지만 표 구조는 Node와 동형이다(후속 phase는 행만 추가한다).
+		// 이 phase가 쓰는 행은 둘이고 표 구조는 Node와 동형이다(후속 phase는 행만 추가한다).
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_USERS),
 				"사용자 관리는 Z 전용이다(src/services/authorization.js CAPABILITIES)");
+		// Node는 이 판정을 라우트 안에서 me.role !== 'Z'로 직접 한다(server/index.js 1168~1175).
+		// 관측(미인증 401 · 비-Z 403)은 같고, 판정 자리를 표로 모아 감사 가능하게 만든 것이 차이다.
+		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.VIEW_LOGS),
+				"로그 열람은 Z 전용이다 — 로그는 전 사용자의 요청 흔적이다(ADR-007)");
+	}
+
+	@Test
+	void nonAdminSessionsCannotViewLogs() {
+		for (String userId : List.of("gate-r", "gate-d")) {
+			Authorization.Decision decision =
+					this.authorization.authorize(this.guard.createSession(userId), Authorization.VIEW_LOGS);
+
+			assertFalse(decision.ok(), userId + "는 Z가 아니다");
+			assertEquals("forbidden", decision.reason());
+		}
+		assertTrue(this.authorization.authorize(this.guard.createSession("gate-z"), Authorization.VIEW_LOGS).ok());
 	}
 
 	@Test

@@ -20,7 +20,8 @@ import org.springframework.stereotype.Service;
  * role을 받는 공개 진입점이 하나라도 있으면 위 불변식이 호출자 규율로 내려앉는다.
  *
  * <h2>표 구조는 Node와 동형이다</h2>
- * 이 phase가 쓰는 행은 {@code manageUsers: [Z]} 하나뿐이다. 나머지 capability(수신 설정·배부·DPS 편집)는
+ * 이 phase가 쓰는 행은 {@code manageUsers: [Z]}와 {@code viewLogs: [Z]} 둘이다.
+ * 나머지 capability(수신 설정·배부·DPS 편집)는
  * 그 라우트를 소유하는 phase가 <b>행만</b> 추가한다 — 도달하지 않는 행을 미리 적어 두면 검증되지 않은
  * 인가 표가 쌓이고, 나중에 "이미 맞다"는 착시를 준다.
  */
@@ -30,8 +31,21 @@ public class Authorization {
 	/** 사용자(USER) 관리 — Z 전용. */
 	public static final String MANAGE_USERS = "manageUsers";
 
+	/**
+	 * 서버 로그 열람 — Z 전용(ADR-007). 로그는 <b>전 사용자의 요청 흔적</b>이라 R/D에게 열면 안 된다.
+	 *
+	 * <p>Node는 이 게이트를 라우트 안에서 {@code me.role !== 'Z'}로 직접 판정한다
+	 * ({@code server/index.js} 1168~1175행) — 표에 행이 없다. 여기서는 <b>같은 규칙을 표의 행으로</b>
+	 * 표현한다: acting role을 판정하는 자리가 라우트마다 흩어지면 한 곳만 빠뜨려도 그대로 노출이고,
+	 * 표에 모이면 "누가 무엇을 할 수 있는가"를 한눈에 감사할 수 있다. 관측 결과(미인증 401 · 비-Z 403)는
+	 * Node와 바이트 동일하다.
+	 */
+	public static final String VIEW_LOGS = "viewLogs";
+
 	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
-	static final Map<String, List<String>> CAPABILITIES = Map.of(MANAGE_USERS, List.of("Z"));
+	static final Map<String, List<String>> CAPABILITIES = Map.of(
+			MANAGE_USERS, List.of("Z"),
+			VIEW_LOGS, List.of("Z"));
 
 	private final SessionGuard sessions;
 

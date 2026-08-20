@@ -11,6 +11,9 @@ package harness.news.web;
  *   <tr><td>{@value #CORS}</td><td>CORS</td>
  *       <td>preflight(OPTIONS)는 <b>여기서 끝난다</b> — CSRF 가드·세션 판정·핸들러 매핑 어디에도 도달하지 않는다.
  *           비허용 출처 preflight가 403이 되면 계약(2xx + ACAO 부재)이 깨진다.</td></tr>
+ *   <tr><td>{@value #REQUEST_LOG}</td><td>액세스 로그</td>
+ *       <td>CORS 다음·CSRF 앞이다(Node 동형) — <b>거부된 요청도 로그에 남아야</b> 진단이 성립한다.
+ *           preflight는 앞 필터가 이미 끝냈으므로 로그에 남지 않는다(그것도 Node와 같다).</td></tr>
  *   <tr><td>{@value #CSRF_ORIGIN}</td><td>CSRF Origin/Referer 가드</td>
  *       <td>교차 출처 쓰기는 <b>세션을 보기 전에</b> 403이다. 뒤로 밀면 같은 요청이 401(미인증)로 응답돼
  *           사유 토큰이 바뀐다.</td></tr>
@@ -27,6 +30,9 @@ final class FilterOrder {
 
 	/** CORS(preflight 종결) — 가장 먼저. */
 	static final int CORS = 10;
+
+	/** 액세스 로그 — CORS 다음, CSRF 앞(거부 403도 남긴다). */
+	static final int REQUEST_LOG = 15;
 
 	/** CSRF Origin/Referer 가드 — 상태 변경 메서드만 본다. */
 	static final int CSRF_ORIGIN = 20;

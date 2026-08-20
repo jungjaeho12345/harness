@@ -1,6 +1,7 @@
 package harness.news.web;
 
 import harness.news.config.AppProperties;
+import harness.news.service.LogService;
 import harness.news.service.SessionGuard;
 import jakarta.servlet.Filter;
 import java.time.Clock;
@@ -51,6 +52,15 @@ public class WebConfig {
 	@Bean
 	public FilterRegistrationBean<Filter> corsFilter(AllowedOrigins origins) {
 		return register(new CorsFilter(origins), FilterOrder.CORS);
+	}
+
+	/**
+	 * 액세스 로그 — 링 버퍼는 {@link LogService} 빈 하나(프로세스 로컬 in-memory)이며
+	 * {@code GET /api/logs/digest}가 같은 버퍼를 읽는다.
+	 */
+	@Bean
+	public FilterRegistrationBean<Filter> requestLogFilter(LogService logs, Clock clock) {
+		return register(new RequestLogFilter(logs, clock), FilterOrder.REQUEST_LOG);
 	}
 
 	@Bean
