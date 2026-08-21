@@ -46,23 +46,28 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 16 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
+	 * 구현된 20 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
-	 * ({@code POST /api/articles/{id}/action} · {@code POST /api/articles/{id}/derive})다.
+	 * ({@code POST /api/articles/{id}/action} · {@code POST /api/articles/{id}/derive}) + step11의
+	 * 조회 4개({@code GET /api/articles/search} · {@code GET /api/articles} ·
+	 * {@code GET /api/articles/{id}/history} · {@code GET /api/articles/{id}/history/{historyId}})다.
 	 * {@code server-spring/README.md}·index.json forward_notes (2)와 같은 목록이며 표기는 Spring 매핑
 	 * 원문({@code {userId}})이다. 행을 늘릴 때는 아래 테스트 메서드 이름과 실패 메시지의 <b>라우트 수</b>도
 	 * 같이 고쳐라 — 수치가 목록과 어긋나면 이 테스트가 주장하는 문장이 거짓이 된다.
 	 *
-	 * <p><b>{@code .../derive}는 이 phase에서 유일한 예외다</b>(index.json decisions (15)): 구현은
-	 * step10이지만 계약 편입은 <b>step11</b>이다 — 그 라우트의 계약 파일
-	 * ({@code contract/cases/minimal/transitions.contract.js})이 이력 라우트까지 있어야 green이 되기
-	 * 때문이다. 그 한 칸은 step10의 {@code ArticleLifecycleWireTest}가 와이어로 덮고 step11이 계약으로
-	 * 닫는다. 나머지 15행은 전부 scope 표의 계약 파일이 관측한다.
+	 * <p>step11이 scope 표에 {@code articles-read.contract.js}(default)와
+	 * {@code transitions.contract.js}(minimal)를 올리면서 <b>20행 전부가 계약 관측을 갖는다</b> —
+	 * decisions (15)가 step10에 남겨 두었던 한 칸({@code .../derive}: 구현은 step10, 계약 편입은
+	 * step11)이 닫혔다. 이제 "구현했는데 계약이 관측하지 않는 라우트"는 <b>0개</b>다.
 	 */
 	private static final List<String> IMPLEMENTED_ROUTES = List.of(
+			"GET /api/articles",
+			"GET /api/articles/search",
 			"GET /api/articles/{id}",
+			"GET /api/articles/{id}/history",
+			"GET /api/articles/{id}/history/{historyId}",
 			"GET /api/health",
 			"GET /api/logs/digest",
 			"GET /api/session",
@@ -85,7 +90,7 @@ class HandlerInventoryTest {
 	 * "405·415의 응답 shape이 이 서버의 다른 에러와 다르다"({@code {ok:false,reason:...}}가 아닌
 	 * charset 없는 Boot {@code /error} JSON)의 <b>출처</b>다. Node에는 이 경로가 없다(404 HTML).
 	 * 계약이 그 축을 동결하지 않아 게이트는 green이지만, 존재 자체는 여기서 명시적으로 잠근다 —
-	 * 조용히 무시하면 "핸들러는 선언한 16개뿐"이라는 문장이 사실과 어긋난 채로 남는다.
+	 * 조용히 무시하면 "핸들러는 선언한 20개뿐"이라는 문장이 사실과 어긋난 채로 남는다.
 	 */
 	private static final List<String> FRAMEWORK_ROUTES = List.of("ANY /error");
 
@@ -117,12 +122,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheSixteenImplementedRoutesHaveHandlers() {
+	void exactlyTheTwentyImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 16 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 20 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 

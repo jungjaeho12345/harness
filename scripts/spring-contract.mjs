@@ -54,11 +54,13 @@ const BUILD_HINT = `cd server-spring && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q pac
 
 // scope 표(phase 68 소유 — 후속 phase는 행만 추가한다). 파일 목록은 **알파벳 정렬 순서 그대로**여야
 // 러너가 디렉토리 스캔으로 도는 순서와 같고, auth.contract.js의 공용 세션 복구 규약이 뒤 파일에 이어진다.
-// minimal·failclosed는 수집·배부 구성 축이라 이 표에 없다(decisions (7)) — 부팅도 하지 않는다.
+// failclosed는 수집 fail-closed 구성 축이라 아직 이 표에 없다 — 부팅도 하지 않는다(phase 69 excluded (e)).
 const SCOPE = [
   {
     name: 'default',
     files: [
+      // phase 69 step11 — 목록·검색·이력이 붙으면서 green이 됐다(읽기 5라우트 전수 관측).
+      'contract/cases/default/articles-read.contract.js',
       // phase 69 step10 — 송고(action)가 붙으면서 green이 됐다(그 전에는 DPS 잠금 픽스처가 404였다).
       'contract/cases/default/articles-write.contract.js',
       'contract/cases/default/auth.contract.js',
@@ -67,6 +69,17 @@ const SCOPE = [
       'contract/cases/default/session-guard.contract.js',
       'contract/cases/default/users.contract.js',
     ],
+    extraEnv: {},
+  },
+  {
+    // phase 69 step11이 올린 4번째 프로파일. 러너 프리셋은 `spool:false, token:false`이고 **env를 주지
+    // 않는 것**이 프로파일의 정의다(스풀·수집 토큰 미설정 → Node에서 배부 결선 자체가 없어 송고 훅이
+    // 발화하지 않는다 = 전이 관측이 결정적이다). Spring은 이 phase에서 배부를 구현하지 않으므로 그
+    // 상태가 구조적으로 참이고 **추가 env가 필요 없다**(index.json decisions (2)).
+    // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 이 phase가 구현하지 않은
+    // 수집(collection-open)·배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
+    name: 'minimal',
+    files: ['contract/cases/minimal/transitions.contract.js'],
     extraEnv: {},
   },
   {

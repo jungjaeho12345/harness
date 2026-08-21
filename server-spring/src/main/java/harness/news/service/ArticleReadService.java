@@ -37,6 +37,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class ArticleReadService {
 
+	/**
+	 * 목록 조회가 허용하는 필터 키 <b>13개</b>. 어떤 키를 통과시킬지는 HTTP 계층이 소유하지만
+	 * <b>목록 자체의 단일 출처는 리포지토리</b>다({@link ArticleRepository#FILTER_KEYS}) — 두 벌이 되면
+	 * 한쪽만 늘어나 "받아 주는데 조건이 걸리지 않는" 키가 생긴다. 컨트롤러가 리포지토리를 직접 알지
+	 * 않도록 인접 계층인 여기서 되비춘다.
+	 */
+	public static final List<String> FILTER_KEYS = ArticleRepository.FILTER_KEYS;
+
 	/** 이력 목록 응답 봉투의 두 갈래 판정 키 — 송고 필터가 보는 값이다. */
 	private static final String EVENT_TYPE = "eventType";
 

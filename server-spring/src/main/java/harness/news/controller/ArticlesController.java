@@ -8,11 +8,13 @@ import harness.news.service.EditLockService;
 import harness.news.service.Identity;
 import harness.news.service.SessionGuard;
 import harness.news.web.JsonHttp;
+import harness.news.web.NodeNumber;
 import harness.news.web.ReasonStatus;
 import harness.news.web.SessionTokens;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,12 +24,14 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 기사 8라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
+ * 기사 12라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
  * 부분 수정 {@code PUT /api/articles/:id}) · 편집 잠금 3개({@code POST /api/articles/:id/lock} ·
  * {@code .../unlock} · {@code .../force-unlock}) · 생애주기 2개({@code POST /api/articles/:id/action} ·
- * {@code .../derive}). 리포 루트 {@code server/index.js}의 같은 8라우트와 1:1이다.
+ * {@code .../derive}) · 조회 4개(검색 {@code GET /api/articles/search} · 목록 {@code GET /api/articles} ·
+ * 이력 {@code GET /api/articles/:id/history} · 스냅샷 {@code .../history/:historyId}).
+ * 리포 루트 {@code server/index.js}의 같은 12라우트와 1:1이다.
  *
- * <p>여덟이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
+ * <p>열둘이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
  * 여러 벌이면 그중 하나가 드리프트하는 순간 그 라우트가 인가 우회 표면이 된다.
  *
  * <h2>컨트롤러가 하는 일은 넷뿐이다(ADR-006 · index.json decisions (13))</h2>
@@ -182,6 +186,59 @@ public class ArticlesController {
 	}
 
 	/**
+	 * 제목·본문·마크업 검색 — 200 {@code {ok:true, items}} <b>정확히 2키</b>(총수·페이징 필드가 없다).
+	 * 행은 {@code Article} 5키이며 본문 {@code markupVersion}이 실린다(목록의 {@code Contents} 행과
+	 * 동형이 아니다).
+	 *
+	 * <p>{@code q}가 없으면 <b>빈 문자열</b>이다(거부가 아니다) — 빈 질의는 {@code LIKE '%%'}라 전 행이
+	 * 매칭되고, 무매칭도 404가 아니라 200 빈 목록이다.
+	 *
+	 * <p><b>매핑 우선순위</b>: 이 리터럴 경로는 {@link #get} 의 {@code /api/articles/{id}}와 같은 자리를
+	 * 두고 겨룬다. Spring의 패턴 비교는 리터럴을 경로 변수보다 구체적으로 보므로 이 핸들러가 이긴다 —
+	 * <b>추측이 아니라 와이어로 실측했다</b>({@code ArticleQueryWireTest}가 두 라우트를 함께 부른다).
+	 * 뒤집히면 검색이 "id가 search인 기사"를 찾아 404 {@code not-found}가 되므로 조용히 깨진다.
+	 */
+	@GetMapping("/api/articles/search")
+	public void search(HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("items", this.reads.search(queryValue(request, "q")));
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 목록 조회 — 200 {@code {ok:true, items}} <b>정확히 2키</b>. 행은 투영 27키이고 잠금 비밀 2컬럼은
+	 * 어떤 경로로도 실리지 않는다. <b>역할 필터가 없다</b>(R도 남의 부서 기사를 본다 — 목록 화면의 계약).
+	 *
+	 * <p>필터는 {@link ArticleReadService#FILTER_KEYS} <b>13키 화이트리스트</b>이고 그 밖의 키는
+	 * <b>조용히 무시</b>한다(400이 아니다). 값은 <b>원문 배열 그대로</b> 넘긴다 — 콤마를 분해하거나
+	 * 트림·형변환하지 마라({@code ?status=RDS,DDH}가 매칭 0건인 것이 계약이다. Spring MVC의
+	 * {@code @RequestParam List<String>}은 기본으로 콤마를 분해하므로 <b>쓰면 즉시 계약 위반</b>이다).
+	 *
+	 * <p>배열을 받을 수 있는 키는 {@code status}·{@code excludeStatus}·{@code departments} 3개뿐이고
+	 * 나머지 10키를 반복하면 리포지토리가 예외를 던져 <b>500 {@code internal-error}</b>가 된다
+	 * (결함 후보 #4 재현 — decisions (9)). <b>여기서 400으로 미리 막지 마라</b>: 계약이 500을 동결했고
+	 * 고치는 것은 Node·명세·케이스를 함께 바꾸는 별도 판단이다.
+	 */
+	@GetMapping("/api/articles")
+	public void list(HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("items", this.reads.query(pickFilters(request)));
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
 	 * 단건 조회 — 200 {@code {ok:true, article, contents}} <b>정확히 3키</b>, 없으면 404 {@code not-found}.
 	 *
 	 * <p>한쪽 테이블 행이 없으면 그 키를 <b>싣지 않는다</b>(decisions (20)①). 그 판단은 읽기 서비스가
@@ -203,6 +260,72 @@ public class ArticlesController {
 		}
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.putAll(found);
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 이력 목록 — 200 {@code {ok:true, items}}이고 행은 <b>12키</b>(저장 8컬럼 + {@code hasSnapshot} +
+	 * 표시 파생 {@code title}·{@code version}·{@code status}). 본문 blob·저장 제목·배부 컬럼은 없다.
+	 *
+	 * <p><b>이력이 없거나 기사가 아예 없어도 200 빈 배열</b>이다(404가 아니다 — 편집 이력 패널이 새
+	 * 기사에서 오류 화면이 되면 안 된다). 단건 스냅샷({@link #historySnapshot})만 404를 쓴다 — 두 규칙을
+	 * 섞지 마라.
+	 *
+	 * <p>{@code sendOnly} 판정식은 <b>이 계층의 소유</b>다(정본도 라우트에서 판정한다): 파라미터가
+	 * <b>존재하고</b> 값이 {@code '0'}도 {@code 'false'}도 아니면 참이다(빈 문자열·{@code 'no'}도 참),
+	 * 또는 {@code type === 'send'}면 참. 계약이 8변형을 전수 동결했다.
+	 */
+	@GetMapping("/api/articles/{id}/history")
+	public void history(@PathVariable String id, HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+
+		String flag = queryValue(request, "sendOnly");
+		boolean sendOnly = (flag != null && !"0".equals(flag) && !"false".equals(flag))
+				|| "send".equals(queryValue(request, "type"));
+
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("items", this.reads.queryHistory(id, sendOnly));
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 단건 이력 스냅샷 — 200 {@code {ok:true, item}}이고 {@code item}은 <b>7키</b>(본문 포함, 전이 컬럼
+	 * 없음). 기사이력비교가 사용자가 고른 항목의 본문만 지연 조회한다.
+	 *
+	 * <p><b>스냅샷이 없는 전이 행도 200</b>이고 본문만 {@code null}이다("항목 없음"이 아니다).
+	 * 반대로 <b>비정수·미존재·타 기사 스코프는 전부 404</b> {@code not-found}다 — 세 경우를 구분해
+	 * 알려 주지 않는 것이 계약이다(id 하나로 남의 본문을 읽는 경로를 만들지 않는다. 스코프는
+	 * 리포지토리가 {@code articleId AND id}로 강제한다).
+	 *
+	 * <p>정수 판정은 {@link NodeNumber}가 소유한다 — Java의 파싱 관용을 쓰면 {@code "1.0"}·{@code "0x1"}
+	 * 같은 표기에서 두 서버가 갈린다.
+	 */
+	@GetMapping("/api/articles/{id}/history/{historyId}")
+	public void historySnapshot(@PathVariable String id, @PathVariable String historyId,
+			HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+
+		Long parsed = NodeNumber.integerOf(historyId);
+		if (parsed == null) {
+			deny(request, response, NOT_FOUND); // 정수가 아니면 조회하지 않는다(400이 아니라 404다).
+			return;
+		}
+
+		ArticleReadService.SnapshotResult found = this.reads.getHistorySnapshot(id, parsed);
+		if (!found.ok()) {
+			deny(request, response, found.reason());
+			return;
+		}
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("item", found.item());
 		this.json.write(request, response, 200, payload);
 	}
 
@@ -419,6 +542,40 @@ public class ArticlesController {
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.put("articleId", result.articleId());
 		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 목록 필터 — 화이트리스트 <b>13키</b>만, <b>값 배열 원문 그대로</b>. Node {@code pickFilters}와 1:1이다.
+	 *
+	 * <p>"키가 있는가"의 판정은 {@code query[k] !== undefined} 동형이다 — {@code ?author=} 처럼 <b>값이
+	 * 비어 있어도 존재</b>이고 그 빈 문자열이 조건이 된다. 값을 만지지 않는 이유는 두 가지다: (a) 콤마는
+	 * 문법이 아니고 (b) 스칼라 전용 키의 반복은 <b>리포지토리가 예외로 만들어</b> 500이 되어야 한다.
+	 */
+	private static Map<String, List<String>> pickFilters(HttpServletRequest request) {
+		Map<String, List<String>> filters = new LinkedHashMap<>();
+		for (String key : ArticleReadService.FILTER_KEYS) {
+			String[] values = request.getParameterValues(key);
+			if (values != null) {
+				filters.put(key, List.of(values));
+			}
+		}
+		return filters;
+	}
+
+	/**
+	 * 쿼리 파라미터 하나를 <b>Node가 보는 문자열</b>로 읽는다 — 없으면 {@code null}, 하나면 그 값,
+	 * <b>반복되면 콤마로 이어 붙인 값</b>이다.
+	 *
+	 * <p>계약이 동결하지 않은 축이라 실측으로 정했다(index.json forward_notes (4)⑤): express는 반복 키를
+	 * 배열로 파싱하고, 그 배열이 쓰이는 두 자리가 모두 {@code Array#toString}(= 콤마 결합)과 같은 결과를
+	 * 낸다 — 검색은 {@code `%${q}%`} 템플릿이 문자열화하고({@code ?q=a&q=b} → {@code LIKE '%a,b%'}),
+	 * {@code sendOnly}는 {@code flag !== '0'} 비교가 배열에 대해 <b>항상 참</b>인데 콤마 결합 문자열도
+	 * 2개 이상이면 반드시 콤마를 포함해 {@code '0'}·{@code 'false'}와 같아질 수 없다. 첫 값만 취하면
+	 * ({@code getParameter}의 기본 동작) 두 자리 모두 Node와 갈린다.
+	 */
+	private static String queryValue(HttpServletRequest request, String key) {
+		String[] values = request.getParameterValues(key);
+		return (values == null) ? null : String.join(",", values);
 	}
 
 	/**
