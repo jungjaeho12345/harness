@@ -33,6 +33,17 @@ class ReasonStatusTest {
 	}
 
 	@Test
+	void lockRoutesReachLockedAndNotDps() {
+		// step8의 잠금 3라우트가 내는 토큰이다. 편집 잠금 충돌은 401이고 423·409가 아니다
+		// (docs/api-contract/README.md 드리프트 원장 3번 — 코드 주석의 409 언급이 틀렸다).
+		assertEquals(401, ReasonStatus.of("locked"));
+		// not-dps는 lock 라우트가 '통과'로 해석해 응답이 되지 않지만, 전역 표(server/index.js
+		// STATUS_BY_REASON 328행)에 있는 매핑이라 표 자체의 패리티로 옮긴다 — 통과 처리가 깨졌을 때
+		// 폴백 400이 아니라 403으로 드러나는 것이 정본 동형이다(reason-tokens.md 표 1 #6).
+		assertEquals(403, ReasonStatus.of("not-dps"));
+	}
+
+	@Test
 	void unknownTokenFallsBackTo400() {
 		assertEquals(400, ReasonStatus.of("이런-토큰은-없다"));
 		assertEquals(400, ReasonStatus.of(null));
@@ -42,8 +53,8 @@ class ReasonStatusTest {
 	void loginOverridesLockedWith423() {
 		assertEquals(423, ReasonStatus.forLogin("locked"),
 				"계정 잠금은 로그인 라우트 로컬 매핑이다(전역 locked 401을 덮어쓴다)");
-		assertEquals(400, ReasonStatus.of("locked"),
-				"전역 locked(편집 잠금 충돌 401)는 이 phase에서 도달하지 않으므로 표에 없다 — "
+		assertEquals(401, ReasonStatus.of("locked"),
+				"같은 토큰이 라우트마다 다른 상태를 갖는다 — 전역(편집 잠금 충돌)은 401이고 "
 						+ "로그인 로컬 매핑이 전역 표를 오염시키지 않았다는 사실을 잠근다");
 	}
 

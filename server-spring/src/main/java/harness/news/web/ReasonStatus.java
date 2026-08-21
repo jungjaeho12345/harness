@@ -23,17 +23,23 @@ public final class ReasonStatus {
 	/** 로그인 라우트의 폴백 — 전역 400이 아니다({@code fail(res, r, 401)}). */
 	private static final int LOGIN_FALLBACK = 401;
 
-	/** 계정 잠금은 로그인에서만 423이다(전역 {@code locked} 401은 편집 잠금 충돌이라 여기 없다). */
+	/** 계정 잠금은 로그인에서만 423이다 — 전역 {@code locked} 401(편집 잠금 충돌)을 덮어쓴다. */
 	private static final int LOGIN_LOCKED = 423;
 
 	private static final Map<String, Integer> GLOBAL = Map.of(
 			"unauthenticated", 401,
 			"invalid-credentials", 401,
+			// 편집 잠금 충돌(phase 69 step8) — 423도 409도 아니다. 코드 주석의 409 언급은 문서화된
+			// 드리프트이고(docs/api-contract/README.md 원장 3번) 계약·기존 backend 테스트가 401을 단언한다.
+			"locked", 401,
 			"inactive", 403,
 			"forbidden", 403,
-			// 기사 단건 3라우트(phase 69 step7)가 실제로 내는 두 토큰. 잠금 라우트의 locked(401)·
-			// not-dps(403)는 아직 도달하지 않으므로 여기 없다(step8이 도달하는 시점에 넣는다).
+			// 기사 단건 3라우트(phase 69 step7)가 실제로 내는 두 토큰.
 			"not-holder", 403,
+			// lock 라우트는 not-dps를 '통과'로 해석해 응답으로 만들지 않는다(reason-tokens.md 표 1 #6:
+			// 현행 HTTP 도달 경로 없음). 그래도 전역 표(server/index.js 328행)에 있는 행이라 표의 패리티로
+			// 옮긴다 — 통과 처리가 깨졌을 때 폴백 400이 아니라 정본과 같은 403으로 드러나야 한다.
+			"not-dps", 403,
 			"not-found", 404);
 
 	private ReasonStatus() {
