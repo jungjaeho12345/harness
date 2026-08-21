@@ -63,6 +63,7 @@ const SCOPE = [
       'contract/cases/default/crosscutting.contract.js',
       'contract/cases/default/health.contract.js',
       'contract/cases/default/session-guard.contract.js',
+      'contract/cases/default/users.contract.js',
     ],
     extraEnv: {},
   },
