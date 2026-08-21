@@ -59,6 +59,8 @@ const SCOPE = [
   {
     name: 'default',
     files: [
+      // phase 69 step10 — 송고(action)가 붙으면서 green이 됐다(그 전에는 DPS 잠금 픽스처가 404였다).
+      'contract/cases/default/articles-write.contract.js',
       'contract/cases/default/auth.contract.js',
       'contract/cases/default/crosscutting.contract.js',
       'contract/cases/default/health.contract.js',

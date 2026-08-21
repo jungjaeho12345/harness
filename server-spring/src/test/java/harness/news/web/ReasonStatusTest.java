@@ -44,6 +44,27 @@ class ReasonStatusTest {
 	}
 
 	@Test
+	void lifecycleRoutesReachTheTransitionAndVocabularyTokens() {
+		// step10의 생애주기 2라우트가 내는 토큰이다. 전이 거부는 409이고(그 라우트의 폴백도 409다 —
+		// 정본 fail(res, r, 409)) 마커·어휘 거부는 400이다.
+		assertEquals(409, ReasonStatus.of("forbidden-transition"));
+		assertEquals(400, ReasonStatus.of("no-end-marker"));
+		assertEquals(400, ReasonStatus.of("unknown-action"));
+		assertEquals(400, ReasonStatus.of("unknown-mode"));
+	}
+
+	@Test
+	void theActionRouteFallsBackTo409NotThe400OfTheGlobalTable() {
+		// 정본은 action 라우트에서만 fail(res, r, 409)로 부른다 — 표에 없는 사유도 409다.
+		// derive는 fail(res, r)이라 전역 폴백 400이고, 두 라우트의 폴백이 다르다는 것이 계약이다.
+		assertEquals(409, ReasonStatus.of("이런-토큰은-없다", 409));
+		assertEquals(409, ReasonStatus.of(null, 409));
+		assertEquals(404, ReasonStatus.of("not-found", 409), "표에 있는 토큰은 라우트 폴백을 덮어쓴다");
+		assertEquals(400, ReasonStatus.of("no-end-marker", 409));
+		assertEquals(400, ReasonStatus.of("이런-토큰은-없다"), "전역 폴백은 그대로 400이다");
+	}
+
+	@Test
 	void unknownTokenFallsBackTo400() {
 		assertEquals(400, ReasonStatus.of("이런-토큰은-없다"));
 		assertEquals(400, ReasonStatus.of(null));

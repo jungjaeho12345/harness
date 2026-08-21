@@ -1,5 +1,6 @@
 package harness.news.controller;
 
+import harness.news.service.ArticleLifecycleService;
 import harness.news.service.ArticleReadService;
 import harness.news.service.ArticleWriteService;
 import harness.news.service.Authorization;
@@ -21,19 +22,20 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 기사 6라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
- * 부분 수정 {@code PUT /api/articles/:id})와 편집 잠금 3개({@code POST /api/articles/:id/lock} ·
- * {@code .../unlock} · {@code .../force-unlock}). 리포 루트 {@code server/index.js}의 같은 6라우트와
- * 1:1이다.
+ * 기사 8라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
+ * 부분 수정 {@code PUT /api/articles/:id}) · 편집 잠금 3개({@code POST /api/articles/:id/lock} ·
+ * {@code .../unlock} · {@code .../force-unlock}) · 생애주기 2개({@code POST /api/articles/:id/action} ·
+ * {@code .../derive}). 리포 루트 {@code server/index.js}의 같은 8라우트와 1:1이다.
  *
- * <p>여섯이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
+ * <p>여덟이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
  * 여러 벌이면 그중 하나가 드리프트하는 순간 그 라우트가 인가 우회 표면이 된다.
  *
  * <h2>컨트롤러가 하는 일은 넷뿐이다(ADR-006 · index.json decisions (13))</h2>
  * <ol>
  *   <li><b>신원 재도출</b> — 쿠키 우선 · {@code x-session-id} 폴백으로 토큰을 읽고 세션에서 신원을 얻는다.</li>
- *   <li><b>게이트 호출</b> — 생성은 역할 집합(R/D/Z), 수정·해제는 잠금 보유자({@link EditLockService}),
- *       DPS 기사의 편집 진입은 capability 표({@link Authorization#EDIT_DPS}), 강제 해제는 역할 집합(D/Z).</li>
+ *   <li><b>게이트 호출</b> — 생성·전이·파생은 역할 집합(R/D/Z), 수정·해제는 잠금 보유자
+ *       ({@link EditLockService}), DPS 기사의 편집 진입은 capability 표({@link Authorization#EDIT_DPS}),
+ *       강제 해제는 역할 집합(D/Z).</li>
  *   <li><b>신뢰 경계 stamp</b> — 클라 {@code role} 제거 · 빈 부서 → 세션 부서 · 빈 작성자 → 세션 사용자 ·
  *       {@code modifier} = 세션 userId.</li>
  *   <li><b>shape 매핑</b> — {@code {ok:true, …}} 봉투 조립(서비스는 봉투를 만들지 않는다).</li>
@@ -58,8 +60,33 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class ArticlesController {
 
-	/** 기사를 만들 수 있는 역할 — 그 밖의 role은 403 {@code forbidden}이다(Node {@code ROLES}). */
+	/**
+	 * 기사를 만들고 전이·파생시킬 수 있는 역할 — 그 밖의 role은 403 {@code forbidden}이다
+	 * (Node {@code ROLES}).
+	 *
+	 * <p>이 게이트를 빼면 안 된다: {@link ArticleLifecycleService}는 표 밖 role에
+	 * {@code unknown-role}을 돌려주는데 그 토큰은 이 phase의 {@link ReasonStatus} 표에 <b>없다</b>
+	 * (index.json decisions (19) — 도달하지 않는 토큰을 미리 적지 않는다). 게이트가 사라지면 그 사유가
+	 * 라우트 폴백(action은 409)을 타고 새 shape으로 나간다.
+	 */
 	private static final Set<String> WRITE_ROLES = Set.of("R", "D", "Z");
+
+	/**
+	 * 생애주기 액션 어휘 — 정본 {@code ACTION_SET}. <b>문자열 비교</b>다: 본문 값이 문자열이 아니면
+	 * 어휘에 없으므로 400이다(Node의 {@code Set.has(비문자열)}과 같은 결과).
+	 */
+	private static final Set<String> ACTIONS = Set.of("send", "hold", "kill", "approveDelete");
+
+	/** 파생 모드 어휘 — 정본 {@code DERIVE_MODE_SET}. */
+	private static final Set<String> DERIVE_MODES = Set.of("followUp", "continue");
+
+	/**
+	 * {@code action} 라우트의 실패 폴백 — 전역 400이 아니라 <b>409</b>다(정본
+	 * {@code fail(res, r, 409)}). {@code not-found} 404 · {@code no-end-marker} 400처럼 표에 있는
+	 * 토큰은 표가 이기고, 표에 없는 사유는 409로 나간다. {@code derive}는 정본이 {@code fail(res, r)}이라
+	 * 전역 폴백 400을 그대로 쓴다 — <b>두 라우트의 폴백이 다르다</b>.
+	 */
+	private static final int ACTION_FALLBACK = 409;
 
 	/**
 	 * 남의 잠금을 <b>강제로</b> 풀 수 있는 역할 — 정본은 이 판정을 라우트 안에서 직접 한다
@@ -99,15 +126,18 @@ public class ArticlesController {
 
 	private final EditLockService locks;
 
+	private final ArticleLifecycleService lifecycle;
+
 	private final JsonHttp json;
 
 	public ArticlesController(SessionGuard sessions, Authorization authorization, ArticleReadService reads,
-			ArticleWriteService writes, EditLockService locks, JsonHttp json) {
+			ArticleWriteService writes, EditLockService locks, ArticleLifecycleService lifecycle, JsonHttp json) {
 		this.sessions = sessions;
 		this.authorization = authorization;
 		this.reads = reads;
 		this.writes = writes;
 		this.locks = locks;
+		this.lifecycle = lifecycle;
 		this.json = json;
 	}
 
@@ -306,6 +336,92 @@ public class ArticlesController {
 	}
 
 	/**
+	 * 송고·보류·KILL·삭제 승인 — R/D/Z. 성공 응답은 {@code {ok:true, status}} <b>정확히 2키</b>이고
+	 * 그 {@code status}는 <b>저장된 최종 상태</b>다(엠바고 송고는 {@code DPS}가 아니라 {@code DES}다).
+	 *
+	 * <p>게이트 순서: 세션 → 역할 집합(403 {@code forbidden}) → <b>어휘 검증(400
+	 * {@code unknown-action})</b> → 서비스(존재 404 → 전이표 409 → 마커 400). 어휘 검증이 서비스보다
+	 * <b>앞</b>이라야 (a) 거부가 기사에 손대지 않고 (b) 없는 기사에 정의 밖 action을 보냈을 때 정본과 같은
+	 * 400이 나간다(뒤로 옮기면 404가 된다).
+	 *
+	 * <p>(상태, role, action) 유효성은 {@link ArticleLifecycleService}가 강제한다 — 여기서는
+	 * <b>capability 게이트만</b> 한다(정본과 같은 분업). acting role은 검증된 세션에서만 오고
+	 * {@code req.body.role}은 읽지 않는다(ADR-004).
+	 */
+	@PostMapping("/api/articles/{id}/action")
+	public void action(@PathVariable String id, HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+		if (!WRITE_ROLES.contains(actor.role())) {
+			deny(request, response, "forbidden");
+			return;
+		}
+
+		String action = JsonHttp.text(this.json.readBody(request), "action");
+		if (action == null || !ACTIONS.contains(action)) {
+			deny(request, response, "unknown-action");
+			return;
+		}
+
+		ArticleLifecycleService.ActionResult result =
+				this.lifecycle.applyAction(id, actor.role(), action, actor.userId());
+		if (!result.ok()) {
+			deny(request, response, result.reason(), ACTION_FALLBACK); // 폴백 409(전역 400이 아니다).
+			return;
+		}
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("status", result.status());
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 후속({@code followUp})·계속({@code continue}) 기사 작성 — 원본을 바탕으로 <b>새 기사</b>를 만든다.
+	 * 신규 작성과 같은 권한(R/D/Z)이고 응답은 {@code {ok:true, articleId}} <b>정확히 2키</b>다.
+	 *
+	 * <p>게이트 순서: 세션 → 역할 집합 → 모드 어휘(400 {@code unknown-mode}) → 서비스(없는 원본 404).
+	 * 실패 폴백은 <b>400</b>이다(정본 {@code fail(res, r)} — action의 409와 다르다).
+	 *
+	 * <p><b>작성자는 세션 사용자로 stamp한다</b>: {@code name ?? userId} — <b>null 병합</b>이라
+	 * 이름이 빈 문자열인 계정은 <b>빈 문자열</b>이 그대로 stamp된다. 신규 저장({@link #create})의
+	 * {@code name || userId}와 <b>연산자가 다르고</b> 그 계정에서 결과가 갈린다 — 계약 시드 계정은 전부
+	 * 이름이 채워져 있어 관측되지 않는 축이지만, 정본과 같은 의미론을 그대로 옮긴다.
+	 * 클라가 보낸 {@code author}·{@code role}·{@code status}·{@code articleId}는 쓰지 않는다(ADR-004):
+	 * 나머지 필드는 서비스가 원본에서 복사하고 신규 저장이 새 id와 {@code RDS}를 강제한다.
+	 */
+	@PostMapping("/api/articles/{id}/derive")
+	public void derive(@PathVariable String id, HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+		if (!WRITE_ROLES.contains(actor.role())) {
+			deny(request, response, "forbidden");
+			return;
+		}
+
+		String mode = JsonHttp.text(this.json.readBody(request), "mode");
+		if (mode == null || !DERIVE_MODES.contains(mode)) {
+			deny(request, response, "unknown-mode");
+			return;
+		}
+
+		// name ?? userId — 빈 문자열은 값이 있는 것이다(falsy 폴백을 쓰면 정본과 갈린다).
+		String author = (actor.name() == null) ? actor.userId() : actor.name();
+		ArticleLifecycleService.DeriveResult result = this.lifecycle.derive(id, mode, author);
+		if (!result.ok()) {
+			deny(request, response, result.reason()); // 전역 폴백 400.
+			return;
+		}
+		Map<String, Object> payload = JsonHttp.ok();
+		payload.put("articleId", result.articleId());
+		this.json.write(request, response, 200, payload);
+	}
+
+	/**
 	 * 요청의 신원 — 쿠키 우선 · {@code x-session-id} 폴백. 토큰이 없거나 세션이 죽었으면 {@code null}이다
 	 * ({@link SessionTokens}는 요청 객체를 받지 않으므로 쿼리를 읽을 방법이 구조적으로 없다).
 	 */
@@ -332,9 +448,17 @@ public class ArticlesController {
 		return new EditLockService.Requester(actor.userId(), token, request.getHeader(EDIT_CLIENT_HEADER));
 	}
 
-	/** 거부 응답 — 사유 토큰이 상태코드를 정한다({@link ReasonStatus}). */
+	/** 거부 응답 — 사유 토큰이 상태코드를 정한다({@link ReasonStatus}). 폴백은 전역 400이다. */
 	private void deny(HttpServletRequest request, HttpServletResponse response, String reason) {
-		this.json.write(request, response, ReasonStatus.of(reason), JsonHttp.fail(reason));
+		deny(request, response, reason, ReasonStatus.FALLBACK);
+	}
+
+	/**
+	 * 거부 응답 + <b>라우트 폴백</b> — 표에 없는 사유의 상태코드가 라우트마다 다르다(정본
+	 * {@code fail(res, result, fallback)}). {@code action}만 409를 쓴다({@link #ACTION_FALLBACK}).
+	 */
+	private void deny(HttpServletRequest request, HttpServletResponse response, String reason, int fallback) {
+		this.json.write(request, response, ReasonStatus.of(reason, fallback), JsonHttp.fail(reason));
 	}
 
 	/**
