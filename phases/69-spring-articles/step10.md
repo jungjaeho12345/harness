@@ -26,9 +26,10 @@
 ### A. Node 대조 리포트 실측 (구현 전, decisions (23))
 
 ```bash
-cd /d/agents/harness && node scripts/contract-run.mjs --profile default --files contract/cases/default/articles-write.contract.js --out "$TMPDIR/node-aw.json"
-cd /d/agents/harness && node scripts/contract-run.mjs --profile minimal --files contract/cases/minimal/transitions.contract.js --out "$TMPDIR/node-tr.json"
+cd /d/agents/harness && OUT="$(mktemp -d)" && node scripts/contract-run.mjs --profile default --files contract/cases/default/articles-write.contract.js --out "$OUT/node-aw.json" && node scripts/contract-run.mjs --profile minimal --files contract/cases/minimal/transitions.contract.js --out "$OUT/node-tr.json" && ls -l "$OUT"
 ```
+
+`$TMPDIR`를 쓰지 마라 — win32 Git Bash에서 비어 있을 수 있어 `--out`이 `/node-aw.json`으로 펴진다(리포 밖 보장이 깨진다). `mktemp -d`를 쓰고, 없는 셸이면 `${TMPDIR:-${TMP:-/tmp}}` 폴백으로 디렉토리를 만들어 쓴다. 두 리포트는 **한 커맨드 안에서** 같은 디렉토리에 뽑는다(셸 변수는 호출 간에 유지되지 않는다). 실제 경로를 요약에 남긴다.
 
 `articles-action`·`articles-derive` 관측의 `status`·`reason`·`bodyKeys`·`values`를 확인한다. 특히 **송고 케이스의 `values`에 배부 흔적(distributedAt 관련 값)이 없다는 것**을 눈으로 확인하고 요약에 적는다(decisions (3)의 실측 근거).
 
@@ -42,8 +43,8 @@ cd /d/agents/harness && node scripts/contract-run.mjs --profile minimal --files 
 ### C. scope 표 · 인벤토리 갱신
 
 - `scripts/spring-contract.mjs`의 default 행 `files`에 `contract/cases/default/articles-write.contract.js`를 **알파벳 순서 위치**에 추가한다(`articles-read`가 아직 없으므로 이 파일이 목록의 첫 번째가 된다).
-- `HandlerInventoryTest`에 2행 추가.
-- **derive는 예외 상황**이다(decisions (15)): 구현은 이 step, 계약 편입은 step11(그 파일이 이력 라우트를 요구한다). 그 사실을 `HandlerInventoryTest`의 목록 주석과 step 요약에 **명시**하고, 대신 아래 E의 derive 와이어 테스트로 계약 케이스의 단언을 선반영한다.
+- `HandlerInventoryTest`의 `IMPLEMENTED_ROUTES`에 2행 추가 + **메서드명·실패 메시지의 라우트 수 표기도 같은 step에서 갱신**(decisions (15)).
+- **derive는 이 phase에서 유일하게 '구현했는데 같은 step의 계약 관측이 따라오지 않는' 라우트다**(decisions (15) — scope 표가 늘어나는 step 10·11 기준): 구현은 이 step, 계약 편입은 step11(그 파일이 이력 라우트를 요구한다). 그 사실을 `HandlerInventoryTest`의 목록 주석과 step 요약에 **명시**하고, 대신 아래 E의 derive 와이어 테스트로 계약 케이스의 단언을 선반영한다.
 
 ### D. 테스트 (먼저 쓴다 — 전 기동 + 원시 HTTP)
 
@@ -75,7 +76,7 @@ cd /d/agents/harness && git status --porcelain
 
 ## 검증 절차
 
-1. red 먼저(D의 10군). 3번 AC를 구현 전에 1회 돌려 **실패 목록이 송고 관련 케이스**임을 재확인한다(step8 진단과 이어진다).
+1. red 먼저(D의 10군). 3번 AC 커맨드를 **구현 전에** 1회 돌려 **실패 목록이 송고 관련 케이스**임을 재확인한다(step8 진단과 이어진다) — 이 선실행은 **진단이며 실패가 정상**이다(AC exit 0 판정은 구현 후 실행에만 적용한다).
 2. AC 실행. `--parity`의 `[diff] A=default-node B=default-spring observations=<n> diffs=0`에서 `<n>` 증가를 기록한다.
 3. **decisions (3) 검증(이 step의 필수 관측)**: Node 대조 리포트와 Spring 리포트가 **송고 케이스에서 diff 0**이라는 사실을 요약에 명시한다 — 이것이 '배부가 켜진 Node와 배부가 없는 Spring이 이 프로파일에서 동형'이라는 기계 증명이다. 만약 diff가 나면 **Spring에 배부를 구현하지 말고** 무엇이 달랐는지 기록한 뒤 폐색(index.json open_questions에 추가)하라.
 4. **변이 실증 3종**(확인 후 원복): (a) action 실패 폴백을 400으로 바꾸면 2번이 red인가 (b) 어휘 검증을 서비스 호출 뒤로 옮기면 3번(상태 불변)이 red인가 (c) derive 작성자 stamp를 `||` 의미론으로 바꾸면 이름이 빈 계정에서 결과가 달라지는가(Java 테스트로 실증).

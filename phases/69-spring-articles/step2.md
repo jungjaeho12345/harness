@@ -14,7 +14,8 @@
 - `contract/cases/default/articles-read.contract.js` 30~36행·140~260행 — 27키·5키 shape 상수, 필터 케이스 전수(반복 키 IN/NOT IN · 콤마 미분해 · `departments` 우선 · 날짜 범위에서 NULL 행 탈락 · 화이트리스트 밖 키 무시 · **스칼라 키 반복 500**)
 - `server-spring/src/main/java/harness/news/db/RequiredSchema.java` · `db/SchemaGuard.java` — 확장 지점(요구 목록의 단일 출처)
 - `server-spring/src/main/java/harness/news/model/UserRepository.java` — 화이트리스트 SQL·바인딩·"화이트리스트 밖 키는 조용히 무시" 규율의 기존 사례
-- `server-spring/src/test/resources/db/user-schema.sql` · `testsupport/TempNewsDb.java` — 테스트 임시 DB와 DDL 픽스처가 사는 곳
+- `server-spring/src/test/resources/db/user-schema.sql` · `server-spring/src/test/java/harness/news/testsupport/TempNewsDb.java` — **정본 픽스처**(`CANONICAL_FIXTURE`)와 임시 DB가 사는 곳. 이 step이 확장하는 대상이다
+- `server-spring/src/test/java/harness/news/db/SchemaGuardTest.java` · `server-spring/src/test/java/harness/news/db/DbBootGuardTest.java` · `server-spring/src/test/resources/db/user-schema-drift.sql` — 드리프트 거부 단언(요구 목록이 넓어져도 유효해야 한다)
 - step1 산출물(시각 포매터 · articleId 형식 생성기 · 파일 참조 정화는 서비스가 쓴다)
 
 ## 배경 (동결된 계약 사실)
@@ -33,10 +34,15 @@
 
 - `RequiredSchema`에 `Article`(5) · `Contents`(**29, 스키마 순서 그대로**) 컬럼 목록을 추가하고 부팅 검증 대상 테이블에 넣는다. **이 목록이 SELECT 컬럼 나열의 단일 출처**다(`SELECT *` 금지 — decisions (5)).
 - 부팅 시 없으면 **무엇이 없는지 지목하고 기동 거부**(기존 `SchemaGuard` 동작 그대로 — 새 DDL을 실행하지 않는다).
+- **전역 파급을 먼저 알고 시작하라**: `SchemaGuard`는 `RequiredSchema.TABLES`의 **전 테이블**을 부팅에서 검증한다. 즉 목록을 넓히는 순간 그 요구는 이 step의 새 테스트뿐 아니라 **정본 픽스처로 시드된 기존 전 테스트**에 적용된다 — 그래서 B는 선택이 아니라 필수다.
 
-### B. 테스트 DDL 픽스처
+### B. 테스트 DDL 픽스처 — **정본 픽스처를 확장한다**
 
-- 테스트 리소스에 기사 3테이블(`Article`·`Contents`·`ArticleHistory`)의 픽스처 스크립트를 추가한다. **main 소스에는 DDL이 없다**(정적 스캔 테스트가 잠근다) — 픽스처는 테스트 리소스에만 존재한다. `ArticleHistory`까지 한 번에 넣어 step3이 픽스처를 다시 건드리지 않게 한다.
+- 확장 대상은 **정본 픽스처 자체**다: `TempNewsDb.CANONICAL_FIXTURE`(= `server-spring/src/test/resources/db/user-schema.sql`)에 기사 3테이블(`Article`·`Contents`·`ArticleHistory`) DDL을 **추가**한다.
+- **별도 픽스처를 만들어 리포지토리 테스트에만 적용하지 마라.** 이유: A가 요구 목록을 넓히는 순간 정본 픽스처로 시드된 **모든 `@SpringBootTest`가 컨텍스트 로딩에서 기동 거부로 죽는다**. 계획 시점에 확인된 정본 픽스처 사용처: `HandlerInventoryTest:73` · `FilterWiringTest:35` · `HealthWireTest:34` · `SessionWiringTest:40` · `ClockBeanTest:30`(`TempNewsDb.sharedDataDir()` 경유) · `UserRepositoryTest:43` · `AuthorizationTest:48` · `SessionGuardTest:60` · `UserServiceLoginTest:79`. 실제 사용처는 `TempNewsDb`·`CANONICAL_FIXTURE` 참조를 검색해 **다시 확인**하고 요약에 개수를 적는다.
+- **드리프트 픽스처는 유지한다**: `db/user-schema-drift.sql` 기반의 거부 단언(`SchemaGuardTest:49` · `DbBootGuardTest:38`)이 **넓어진 요구 목록에서도 유효한지** 확인한다. 단언이 특정 실패 메시지 문자열에 묶여 있다면 그 메시지가 여전히 참인지 실측으로 확인하라 — 단언을 **약화하지 마라**(느슨한 부분 문자열 매칭으로 바꾸는 것도 약화다).
+- `ArticleHistory`까지 한 번에 넣어 step3이 픽스처를 다시 건드리지 않게 한다.
+- **main 소스에는 DDL이 없다**(정적 스캔 테스트가 잠근다) — 픽스처는 테스트 리소스에만 존재한다.
 - 컬럼 정의는 `src/db/schema.js`와 **같은 타입 표기·같은 순서**로 옮긴다(정렬·affinity가 계약에 영향을 준다).
 
 ### C. 리포지토리
@@ -48,7 +54,7 @@
 - **트랜잭션**: 두 테이블을 함께 바꾸는 삽입·갱신은 하나의 트랜잭션이며 실패 시 원인 예외를 보존한다(롤백 실패가 원인을 덮지 않게).
 - **필터 매핑**: 입력은 `키 → 값 배열`(원문) 형태로 받는다. 배열 허용 3키만 다중 값을 IN/NOT IN으로 펴고, **나머지 키에 값이 2개 이상이면 예외**를 던진다(decisions (9)). 값이 1개면 그대로 동등/범위 조건.
 - **articleId 발급**: step1의 형식 생성기로 후보를 만들고 두 테이블 어느 쪽에도 없을 때까지 다시 뽑는다. 무한 루프 방지 상한을 두되, 상한에 걸리면 **조용히 진행하지 말고 예외**로 알린다.
-- 반환 행은 컬럼 목록 순서의 맵이며 **투영은 하지 않는다**(투영은 서비스 책임 — 내부 판정 경로가 원본을 필요로 한다, decisions (4)).
+- 반환 행은 컬럼 목록 순서의 맵이며 **투영은 하지 않는다**(투영은 서비스 책임 — 내부 판정 경로가 원본을 필요로 한다, decisions (4)). 단, `Contents` 원본 행은 step1이 정의한 **명목 타입으로 감싸 돌려준다**(decisions (4)① 타입 경계 — 투영 우회를 타입으로 막는다). `Article` 행은 투영 대상이 아니므로 평범한 맵이다.
 
 ### D. 테스트 (먼저 쓴다 — `@TempDir` 임시 파일 DB + DDL 픽스처)
 
@@ -80,10 +86,11 @@ cd /d/agents/harness && git status --porcelain
 
 1. red 먼저(D의 10군).
 2. AC 실행. `--parity`가 exit 0인지 확인 — 만약 **기동 실패**가 나면 요구 컬럼 목록이 실제 `src/db/schema.js`와 어긋난 것이다(하네스 진단에 java stdout/stderr가 붙는다). 그 경우 **스키마를 만들지 말고 목록을 고쳐라**.
-3. **변이 실증 3종**(확인 후 원복): (a) `SELECT *`로 바꾸면 1번이 red인가(키 집합이 스키마 변화에 끌려간다) (b) 스칼라 반복 키를 첫 값만 쓰도록 바꾸면 5번이 red인가 (c) 잠금 해제를 행 삭제로 바꾸면 7번이 red인가 — **(c)는 반드시 원복하고, 실험 자체를 임시 DB에서만 하라**.
-4. **DB 비파괴 확인**: Java 테스트가 리포 `news.db`를 열지 않는지(임시 디렉토리 경로만 사용) · main 소스 정적 스캔 테스트가 green인지.
-5. `git status --porcelain` 증분 = `server-spring/src/main/java/harness/news/{db,model}/**` · `server-spring/src/test/**` · `phases/69-spring-articles/index.json`.
-6. index.json step2 status·summary 갱신(어떤 컬럼 목록을 요구 대상에 넣었는지 명시).
+3. **정본 픽스처 파급 확인(이 step의 필수 관측)**: `mvnw -B verify`에서 **컨텍스트 로딩 실패 0**임을 확인한다 — 정본 픽스처를 쓰는 기존 `@SpringBootTest`(B의 목록)가 전부 green이어야 한다. 하나라도 `ApplicationContext` 로딩 실패로 죽으면 정본 픽스처 확장이 누락된 것이다(개별 테스트에 픽스처를 덧대 우회하지 마라). 그리고 드리프트 거부 단언(`SchemaGuardTest`·`DbBootGuardTest`)이 **넓어진 목록으로도** 통과하는지 확인해 실패 메시지 실측을 요약에 적는다.
+4. **변이 실증 3종**(확인 후 원복): (a) `SELECT *`로 바꾸면 1번이 red인가(키 집합이 스키마 변화에 끌려간다) (b) 스칼라 반복 키를 첫 값만 쓰도록 바꾸면 5번이 red인가 (c) 잠금 해제를 행 삭제로 바꾸면 7번이 red인가 — **(c)는 반드시 원복하고, 실험 자체를 임시 DB에서만 하라**.
+5. **DB 비파괴 확인**: Java 테스트가 리포 `news.db`를 열지 않는지(임시 디렉토리 경로만 사용) · main 소스 정적 스캔 테스트가 green인지.
+6. `git status --porcelain` 증분 = `server-spring/src/main/java/harness/news/{db,model}/**` · `server-spring/src/test/resources/db/user-schema.sql`(정본 픽스처 확장) · `server-spring/src/test/**` · `phases/69-spring-articles/index.json`.
+7. index.json step2 status·summary 갱신(어떤 컬럼 목록을 요구 대상에 넣었는지 · 정본 픽스처를 확장했다는 사실과 그 파급 범위를 명시).
 
 ## 금지사항
 

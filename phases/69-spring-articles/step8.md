@@ -44,7 +44,8 @@ step7에서 뽑은 `articles-write` Node 리포트를 다시 읽어 `articles-lo
 
 ### D. 인벤토리 갱신
 
-- `HandlerInventoryTest`에 3행 추가. scope 표는 늘리지 않는다.
+- `HandlerInventoryTest`의 `IMPLEMENTED_ROUTES`에 3행 추가 + **메서드명·실패 메시지의 라우트 수 표기도 같은 step에서 갱신**(decisions (15)). scope 표는 늘리지 않는다.
+- 이 step은 `/api/articles/{id}/lock`·`unlock`·`force-unlock`에 매핑을 붙인다 — `server-spring/src/test/**`에 그 경로들을 **미구현 전제**로 쓰는 단언이 있는지 검색해 확인한다(step7이 `PathPolicyWireTest` 프로브를 이미 재조준했다면 추가 조치가 없어야 한다. 있으면 **삭제·약화 없이** 미구현으로 남는 라우트로 재조준한다).
 
 ### E. 테스트 (먼저 쓴다 — 전 기동 + 원시 HTTP)
 
@@ -69,22 +70,23 @@ cd /d/agents/harness && npm test
 cd /d/agents/harness && git status --porcelain
 ```
 
+- **이 블록의 5개 커맨드만 exit 0 대상이다**(AC = exit 0 게이트). 아래 검증 절차의 **진단 실행은 AC가 아니며 실패가 정상**이다 — AC 블록에 넣지 마라(④ 테스터가 정상 red를 회귀로 오판한다).
 - 3번은 무회귀 확인(관측 수 불변 · `diffs=0`).
-- **진단 실행(실패가 정상)**:
-  ```bash
-  cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --profile default --files contract/cases/default/articles-write.contract.js
-  ```
-  이제 실패는 **송고(`POST .../action`)가 필요한 케이스에서만** 나야 한다(`createSentArticle` 픽스처 = DPS 잠금 게이트 케이스). 그 서명을 요약에 적는다 — step10의 잔여 범위 확정 관측이다.
 
 ## 검증 절차
 
 1. red 먼저(E의 10군).
-2. AC 실행 + 진단 실행. Java 테스트 수 증가분 기록.
-3. **변이 실증 3종**(확인 후 원복): (a) 잠금 충돌을 423으로 바꾸면 2번이 red인가 (b) DPS 게이트에서 `not-dps`를 실패로 취급하면 일반 기사 잠금이 막히는가(1번 red) (c) force-unlock에서 역할 판정을 존재 검사 뒤로 옮기면 8번의 404/403 순서가 바뀌는가.
-4. **인가 층 확인**(68 forward_notes (2)): 이 3라우트의 인가가 경로 정책 필터에만 있는지 컨트롤러에도 있는지 점검하고, 컨트롤러 게이트가 있음을 요약에 적는다.
-5. **DB 비파괴**: 거부된 요청이 잠금 컬럼을 바꾸지 않았다는 되읽기 단언(2·6·8번) 결과를 요약에 적는다.
-6. `git status --porcelain` 증분 = `server-spring/src/main/java/harness/news/{controller,service,web}/**` · `server-spring/src/test/**` · `phases/69-spring-articles/index.json`.
-7. index.json step8 status·summary 갱신.
+2. AC 실행. Java 테스트 수 증가분 기록.
+3. **진단 실행(AC 아님 — 실패가 정상이다)**: 아래를 1회 돌리고 실패 지점을 기록한다. **exit 코드로 판정하지 마라**.
+   ```bash
+   cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --profile default --files contract/cases/default/articles-write.contract.js
+   ```
+   이제 실패는 **송고(`POST .../action`)가 필요한 케이스에서만** 나야 한다(`createSentArticle` 픽스처 = DPS 잠금 게이트 케이스). 그 서명을 요약에 적는다 — step10의 잔여 범위 확정 관측이다. step7 진단에서 보이던 잠금 관련 실패가 사라졌는지도 함께 확인한다.
+4. **변이 실증 3종**(확인 후 원복): (a) 잠금 충돌을 423으로 바꾸면 2번이 red인가 (b) DPS 게이트에서 `not-dps`를 실패로 취급하면 일반 기사 잠금이 막히는가(1번 red) (c) force-unlock에서 역할 판정을 존재 검사 뒤로 옮기면 8번의 404/403 순서가 바뀌는가.
+5. **인가 층 확인**(68 forward_notes (2)): 이 3라우트의 인가가 경로 정책 필터에만 있는지 컨트롤러에도 있는지 점검하고, 컨트롤러 게이트가 있음을 요약에 적는다.
+6. **DB 비파괴**: 거부된 요청이 잠금 컬럼을 바꾸지 않았다는 되읽기 단언(2·6·8번) 결과를 요약에 적는다.
+7. `git status --porcelain` 증분 = `server-spring/src/main/java/harness/news/{controller,service,web}/**` · `server-spring/src/test/**` · `phases/69-spring-articles/index.json`.
+8. index.json step8 status·summary 갱신.
 
 ## 금지사항
 

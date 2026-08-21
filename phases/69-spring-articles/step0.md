@@ -32,10 +32,10 @@
 리포 **밖** 임시 경로에 Node 리포트를 뽑고 `users-list` 관측의 `status`·`bodyKeys`·`values`·`headers`를 눈으로 확인한다.
 
 ```bash
-cd /d/agents/harness && node scripts/contract-run.mjs --profile default --files contract/cases/default/users.contract.js --out "$TMPDIR/node-users.json"
+cd /d/agents/harness && OUT="$(mktemp -d)" && node scripts/contract-run.mjs --profile default --files contract/cases/default/users.contract.js --out "$OUT/node-users.json" && ls -l "$OUT"
 ```
 
-리포트 경로는 **리포 안에 두지 마라**. 확인한 사실(특히 `content-type` 문자열과 `bodyKeys`)을 step 요약에 1~2줄로 남긴다.
+리포트 경로는 **리포 안에 두지 마라**. `$TMPDIR`를 쓰지 마라 — win32 Git Bash에서는 비어 있을 수 있어 `--out "/node-users.json"`으로 펴진다(리포 밖 보장이 깨진다). `mktemp -d`를 쓰고, 그것이 없는 셸이면 `${TMPDIR:-${TMP:-/tmp}}` 폴백으로 디렉토리를 명시해 만든 뒤 쓴다. 실제로 쓴 절대 경로와 확인한 사실(특히 `content-type` 문자열과 `bodyKeys`)을 step 요약에 1~2줄로 남긴다.
 
 ### B. `service` 계층 — 사용자 목록
 
@@ -51,7 +51,8 @@ cd /d/agents/harness && node scripts/contract-run.mjs --profile default --files 
 
 ### D. 인벤토리·scope 표 갱신 (같은 step에서)
 
-- `HandlerInventoryTest`의 구현 라우트 목록에 `GET /api/users`를 추가한다(스텁 금지 게이트 — decisions (15)).
+- `HandlerInventoryTest`의 구현 라우트 목록(`IMPLEMENTED_ROUTES`)에 `GET /api/users`를 추가한다(스텁 금지 게이트 — decisions (15)). **같은 step에서 그 테스트의 메서드명·실패 메시지에 박힌 라우트 수 표기도 갱신한다**(`exactlyTheSevenImplementedRoutesHaveHandlers` → 8 라우트 · 실패 메시지의 '7 라우트' 문구). 수치를 그대로 두면 그 테스트가 주장하는 문장이 거짓이 된 채로 green이 된다.
+- 이 step은 `GET /api/users`에 매핑을 붙인다 — `server-spring/src/test/**`에 **그 경로를 '미구현'으로 전제한 단언이 있는지 먼저 검색**하라(있으면 step7과 같은 규율으로 다룬다: 삭제·약화 금지, 프로브를 이 phase가 구현하지 않는 라우트로 재조준). 계획 시점 관측으로는 그런 단언이 `GET /api/articles`에만 있고(`PathPolicyWireTest`) `GET /api/users`에는 없다 — 검색으로 재확인하고 결과를 요약에 1줄 남긴다.
 - `scripts/spring-contract.mjs`의 scope 표 `default` 행 `files`에 `contract/cases/default/users.contract.js`를 추가한다. **알파벳 정렬 위치를 지켜라**(러너의 디렉토리 스캔 순서와 같아야 한다 — `users.contract.js`는 목록의 마지막이다).
 
 ### E. 테스트 (먼저 쓴다 — 전 기동 `RANDOM_PORT` + 원시 HTTP, MockMvc 금지)

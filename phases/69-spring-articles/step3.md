@@ -9,7 +9,7 @@
 - `src/db/schema.js` 58~76행 — `ArticleHistory` 12컬럼(`id`는 자동 증가 정수, `targetId`는 정수)
 - `contract/cases/default/articles-read.contract.js` 37~41행·480~560행 — 이력 목록 행 **12키**(`action,actorUserId,articleId,createdAt,eventType,fromStatus,hasSnapshot,id,status,title,toStatus,version`)와 단건 스냅샷 **7키**(`action,actorUserId,articleId,createdAt,eventType,id,markupVersion`), `hasSnapshot`이 **불리언이 아니라 정수 1/0**이라는 단언, 타 기사 스코프·비정수·미존재 id 전부 404
 - step1 산출물(`decorateHistoryRows` — 이 리포지토리의 결과를 입력으로 받는다)
-- step2 산출물(테스트 DDL 픽스처에 이미 `ArticleHistory`가 들어 있다 · 바인딩 정책)
+- step2 산출물(**정본 픽스처** `server-spring/src/test/resources/db/user-schema.sql`에 이미 `ArticleHistory`가 들어 있어야 한다 · 바인딩 정책 · `server-spring/src/test/java/harness/news/testsupport/TempNewsDb.java`)
 
 ## 배경 (동결된 계약 사실)
 
@@ -25,6 +25,8 @@
 ### A. 요구 스키마 확장
 
 - `RequiredSchema`에 `ArticleHistory` 컬럼 목록을 추가하고 부팅 검증 대상에 넣는다(step2와 같은 방식 · 읽기 검증만).
+- **전역 파급 주의**: `SchemaGuard`는 `RequiredSchema.TABLES` **전 테이블**을 부팅에서 검증한다 — `ArticleHistory`가 목록에 들어가는 순간 **정본 픽스처(`TempNewsDb.CANONICAL_FIXTURE` = `server-spring/src/test/resources/db/user-schema.sql`)로 시드된 모든 `@SpringBootTest`**가 그 테이블을 요구하게 된다. step2가 이미 정본 픽스처에 3테이블을 넣었을 것이므로 새 픽스처 작업은 없어야 하지만, **정본 픽스처에 `ArticleHistory`가 실제로 들어 있는지 먼저 확인하라**. 없으면 step2와 같은 방식으로 **정본 픽스처를 확장**한다 — 별도 픽스처를 이 step의 테스트에만 적용하면 기존 `@SpringBootTest`가 컨텍스트 로딩에서 통째로 죽는다.
+- 드리프트 거부 단언(`SchemaGuardTest` · `DbBootGuardTest` · `db/user-schema-drift.sql`)이 **넓어진 요구 목록에서도** 유효한지 확인한다(단언 약화 금지).
 
 ### B. 리포지토리
 
@@ -43,7 +45,7 @@
 4. 정렬이 `id` 내림차순이다(같은 시각 문자열 3행으로 실증).
 5. 단건 스냅샷: 본문 포함 7키 · 스냅샷 없는 전이 행도 조회되고 본문이 `null` · **다른 기사 id로는 조회되지 않는다**.
 6. 표시 제목 입력 조회: 신규 행만 있으면 본문 0건 · 레거시 행(저장 제목 NULL)만 본문 동반 · 본문 길이 0인 행은 결과에서 빠진다.
-7. 요구 스키마 확장이 부팅 검증에 반영된다(컬럼 누락 픽스처로 실패 메시지 확인).
+7. 요구 스키마 확장이 부팅 검증에 반영된다(컬럼 누락 픽스처로 실패 메시지 확인). 동시에 **정본 픽스처로 시드된 기존 `@SpringBootTest`가 여전히 컨텍스트를 띄운다**(로딩 실패 0)는 것을 `verify` 결과로 확인한다.
 8. **삭제·갱신 API가 없다**는 것을 구조로 증명: 리포지토리의 public 메서드 목록을 단언하거나(리플렉션) 이력 행 수가 삽입 횟수와 같다는 시나리오로 확인한다.
 
 ## Acceptance Criteria

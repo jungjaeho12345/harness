@@ -74,7 +74,7 @@ cd /d/agents/harness && git status --porcelain
 1. red 먼저(D의 10군).
 2. AC 실행 후 Java 테스트 수 증가분 기록.
 3. **변이 실증 3종**(확인 후 원복): (a) 목록에서 투영을 빼면 3번이 red인가 (b) 송고 필터를 표시 파생 **전에** 적용하면 7번이 red인가 (c) 이력 없는 기사에 `not-found`를 돌려주면 5번이 red인가.
-4. **투영 단일 지점 확인**: 이 step이 만든 코드에서 제거 대상 컬럼명 문자열이 등장하는 곳이 투영 클래스와 컬럼 목록 상수뿐인지 확인한다(step11에서 정적 스캔 테스트로 잠근다 — 여기서는 눈으로 확인하고 요약에 적는다).
+4. **투영 단일 지점 확인(타입 경계 관점)**: 이 읽기 서비스의 **public 시그니처에 원본 행 명목 타입이 등장하지 않는지**(= 컨트롤러에게는 투영 통과 값만 넘어가는지) 확인하고 요약에 적는다. decisions (4)①의 기계 게이트는 step11이 만든다(컨트롤러 패키지에 원본 타입 부재 + 직렬화 안전망). **컬럼명 문자열 스캔에 기대지 마라** — 투영 우회 코드에는 그 이름이 등장하지 않아 스캔이 green이다(이것이 이름 스캔을 타입 경계로 바꾼 이유다).
 5. `git status --porcelain` 증분 = `server-spring/src/main/java/harness/news/service/**` · `server-spring/src/test/**` · `phases/69-spring-articles/index.json`.
 6. index.json step4 status·summary 갱신.
 
