@@ -59,9 +59,20 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void requiredHistoryColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.ArticleHistory와 순서까지 1:1이다.
+		// id는 자동 증가 정수이고 targetId도 정수 컬럼이다(VARCHAR면 수신처 매칭이 조용히 깨진다 — SCHEMA.md).
+		assertEquals(
+				List.of("id", "articleId", "eventType", "action", "fromStatus", "toStatus",
+						"actorUserId", "createdAt", "markupVersion", "snapshotTitle", "targetId", "reason"),
+				RequiredSchema.HISTORY_COLUMNS);
+		assertEquals(12, RequiredSchema.HISTORY_COLUMNS.size(), "ArticleHistory는 12컬럼이다");
+	}
+
+	@Test
 	void bootVerifiesEveryTableThisPhaseReadsOrWrites() {
 		// 부팅 검증 대상은 요구 목록 전체다 — 여기서 테이블이 빠지면 그 테이블의 드리프트가 런타임까지 산다.
-		assertEquals(Set.of("User", "Article", "Contents"), RequiredSchema.TABLES.keySet());
+		assertEquals(Set.of("User", "Article", "Contents", "ArticleHistory"), RequiredSchema.TABLES.keySet());
 	}
 
 	@Test
@@ -112,6 +123,25 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void missingHistoryColumnsAreNamedInTheFailure() {
+		// User·Article·Contents는 정본과 같고 ArticleHistory만 2컬럼이 빠진 DB — 넓어진 요구 목록에서도
+		// 컬럼 단위 지목이 살아 있는지(단언 약화 없이) 실증한다.
+		TempNewsDb.seed(tempDir, TempNewsDb.HISTORY_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("ArticleHistory"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("snapshotTitle"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("targetId"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
+	}
+
+	@Test
 	void missingArticleTablesAreNamedInTheFailure() {
 		// User만 있는 옛 드리프트 DB — 요구 목록이 넓어진 뒤로는 기사 3테이블이 통째로 없는 DB이기도 하다.
 		TempNewsDb.seed(tempDir, TempNewsDb.DRIFT_FIXTURE);
@@ -124,6 +154,7 @@ class SchemaGuardTest {
 			String message = thrown.getMessage();
 			assertTrue(message.contains("Article"), "없는 테이블 이름을 지목해야 한다: " + message);
 			assertTrue(message.contains("Contents"), "없는 테이블 이름을 전부 지목해야 한다: " + message);
+			assertTrue(message.contains("ArticleHistory"), "이력 테이블도 요구 목록에 있다: " + message);
 		}
 	}
 

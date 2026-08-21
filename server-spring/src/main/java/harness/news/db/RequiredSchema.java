@@ -62,6 +62,24 @@ public final class RequiredSchema {
 			"coAuthor", "category", "region", "attribute", "keyword",
 			"internalComment", "externalComment", "attachmentFile", "referenceFile");
 
+	/** 기사 편집·전이·배부 이벤트 원장 테이블 이름. <b>append-only</b>(삽입과 조회뿐). */
+	public static final String HISTORY_TABLE = "ArticleHistory";
+
+	/**
+	 * ArticleHistory 컬럼 12개 — {@code src/db/schema.js}의 {@code SCHEMA.ArticleHistory}와 순서까지 같다.
+	 *
+	 * <p>다른 테이블과 달리 <b>전부 TEXT affinity가 아니다</b>: {@code id}는 자동 증가 정수(ROWID 별칭)라
+	 * 삽입 대상이 아니고, {@code targetId}도 정수 컬럼이다. {@code targetId}가 VARCHAR면 숫자 id가
+	 * 문자열로 저장되어 {@code DistributionTarget.id}와의 매칭이 조용히 깨진다(SCHEMA.md가 명시한 예외).
+	 *
+	 * <p>{@code eventType} 어휘(create · edit · status · distribute · distribute-failed ·
+	 * distribute-retry)는 <b>도메인 쪽 사실</b>이고 이 목록은 컬럼만 안다 — Node 모델도 같은 규율이다
+	 * (모델은 도메인 비의존, 문자열만 둔다).
+	 */
+	public static final List<String> HISTORY_COLUMNS = List.of(
+			"id", "articleId", "eventType", "action", "fromStatus", "toStatus",
+			"actorUserId", "createdAt", "markupVersion", "snapshotTitle", "targetId", "reason");
+
 	/**
 	 * 부팅 시 존재를 확인하는 테이블 → 컬럼 목록.
 	 *
@@ -72,7 +90,8 @@ public final class RequiredSchema {
 	public static final Map<String, List<String>> TABLES = Map.of(
 			USER_TABLE, USER_COLUMNS,
 			ARTICLE_TABLE, ARTICLE_COLUMNS,
-			CONTENTS_TABLE, CONTENTS_COLUMNS);
+			CONTENTS_TABLE, CONTENTS_COLUMNS,
+			HISTORY_TABLE, HISTORY_COLUMNS);
 
 	private RequiredSchema() {
 	}
