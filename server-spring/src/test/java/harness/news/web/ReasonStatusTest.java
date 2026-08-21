@@ -25,6 +25,14 @@ class ReasonStatusTest {
 	}
 
 	@Test
+	void articleRoutesReachNotFoundAndNotHolder() {
+		// step7의 기사 단건 3라우트가 실제로 내는 두 토큰이다(그 전에는 표에 없었다).
+		// 404·403이 폴백 400으로 새면 "존재 검사가 잠금 검사보다 먼저"라는 계약이 상태코드에서 사라진다.
+		assertEquals(404, ReasonStatus.of("not-found"));
+		assertEquals(403, ReasonStatus.of("not-holder"));
+	}
+
+	@Test
 	void unknownTokenFallsBackTo400() {
 		assertEquals(400, ReasonStatus.of("이런-토큰은-없다"));
 		assertEquals(400, ReasonStatus.of(null));

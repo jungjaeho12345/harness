@@ -30,7 +30,11 @@ public final class ReasonStatus {
 			"unauthenticated", 401,
 			"invalid-credentials", 401,
 			"inactive", 403,
-			"forbidden", 403);
+			"forbidden", 403,
+			// 기사 단건 3라우트(phase 69 step7)가 실제로 내는 두 토큰. 잠금 라우트의 locked(401)·
+			// not-dps(403)는 아직 도달하지 않으므로 여기 없다(step8이 도달하는 시점에 넣는다).
+			"not-holder", 403,
+			"not-found", 404);
 
 	private ReasonStatus() {
 	}
