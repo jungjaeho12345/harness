@@ -80,6 +80,32 @@ public final class RequiredSchema {
 			"id", "articleId", "eventType", "action", "fromStatus", "toStatus",
 			"actorUserId", "createdAt", "markupVersion", "snapshotTitle", "targetId", "reason");
 
+	/** 수집(자동기사) 수신 설정 테이블 이름 — {@code rcvMgmt.do}의 저장 대상. */
+	public static final String RECEIVER_CONFIG_TABLE = "ReceiverConfig";
+
+	/**
+	 * ReceiverConfig 컬럼 12개 — {@code src/db/schema.js}의 {@code SCHEMA.ReceiverConfig}와 순서까지 같다.
+	 *
+	 * <p>{@code id}는 자동 증가 정수(ROWID 별칭)라 삽입 대상이 아니다 — 리포지토리가 화이트리스트로
+	 * 삽입 컬럼을 걸러낸다({@code ArticleHistory}의 {@code id}와 같은 규율). 나머지는 전부 VARCHAR다.
+	 * {@code password}(FTP)·{@code apiKey}(API)는 <b>쓰기 전용 시크릿</b>이라 스키마에는 있지만 서비스
+	 * 투영(SAFE_FIELDS)에는 없다.
+	 */
+	public static final List<String> RECEIVER_CONFIG_COLUMNS = List.of(
+			"id", "sourceId", "type", "name", "host", "port", "username",
+			"password", "apiEndpoint", "apiKey", "active", "createdAt");
+
+	/** 배부 대상(수신처) 테이블 이름 — ADR-008. 삭제 없음(active='N' soft delete). */
+	public static final String DISTRIBUTION_TARGET_TABLE = "DistributionTarget";
+
+	/**
+	 * DistributionTarget 컬럼 7개 — {@code src/db/schema.js}의 {@code SCHEMA.DistributionTarget}와
+	 * 순서까지 같다. {@code id}는 자동 증가 정수(ROWID 별칭)라 삽입/수정 대상이 아니고 나머지는 VARCHAR다.
+	 * {@code kind} enum·{@code spoolDir} 슬러그 검증은 서비스 계층 책임이다(모델은 도메인 비의존).
+	 */
+	public static final List<String> DISTRIBUTION_TARGET_COLUMNS = List.of(
+			"id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt");
+
 	/**
 	 * 부팅 시 존재를 확인하는 테이블 → 컬럼 목록.
 	 *
@@ -91,7 +117,9 @@ public final class RequiredSchema {
 			USER_TABLE, USER_COLUMNS,
 			ARTICLE_TABLE, ARTICLE_COLUMNS,
 			CONTENTS_TABLE, CONTENTS_COLUMNS,
-			HISTORY_TABLE, HISTORY_COLUMNS);
+			HISTORY_TABLE, HISTORY_COLUMNS,
+			RECEIVER_CONFIG_TABLE, RECEIVER_CONFIG_COLUMNS,
+			DISTRIBUTION_TARGET_TABLE, DISTRIBUTION_TARGET_COLUMNS);
 
 	private RequiredSchema() {
 	}

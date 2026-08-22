@@ -85,3 +85,32 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   targetId INTEGER,
   reason VARCHAR
 );
+
+-- ReceiverConfig 12컬럼 — 수집 수신 설정. id만 INTEGER, 나머지는 VARCHAR. active는 DEFAULT 'Y'.
+-- password(FTP)·apiKey(API)는 쓰기 전용 시크릿이라 스키마에는 있지만 서비스 투영에는 없다.
+CREATE TABLE IF NOT EXISTS ReceiverConfig (
+  id INTEGER PRIMARY KEY,
+  sourceId VARCHAR,
+  type VARCHAR,
+  name VARCHAR,
+  host VARCHAR,
+  port VARCHAR,
+  username VARCHAR,
+  password VARCHAR,
+  apiEndpoint VARCHAR,
+  apiKey VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR
+);
+
+-- DistributionTarget 7컬럼 — 배부 대상(수신처). id만 INTEGER, 나머지는 VARCHAR. active는 DEFAULT 'Y'.
+-- 삭제 없음(active='N' soft delete). kind enum·spoolDir 슬러그 검증은 서비스 계층.
+CREATE TABLE IF NOT EXISTS DistributionTarget (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  kind VARCHAR,
+  spoolDir VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR,
+  updatedAt VARCHAR
+);
