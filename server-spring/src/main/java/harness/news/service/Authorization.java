@@ -59,12 +59,20 @@ public class Authorization {
 	 */
 	public static final String MANAGE_RECEIVER_CONFIG = "manageReceiverConfig";
 
+	/**
+	 * 배부 대상(수신처) 관리 — Z 전용({@code src/services/authorization.js}
+	 * {@code manageDistributionTarget: ['Z']}, ADR-008). phase 70이 distribution-targets 4라우트를
+	 * 구현하며 추가한 행이다(R도 D도 안 된다).
+	 */
+	public static final String MANAGE_DISTRIBUTION_TARGET = "manageDistributionTarget";
+
 	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
 	static final Map<String, List<String>> CAPABILITIES = Map.of(
 			MANAGE_USERS, List.of("Z"),
 			VIEW_LOGS, List.of("Z"),
 			EDIT_DPS, List.of("D"),
-			MANAGE_RECEIVER_CONFIG, List.of("Z"));
+			MANAGE_RECEIVER_CONFIG, List.of("Z"),
+			MANAGE_DISTRIBUTION_TARGET, List.of("Z"));
 
 	/** 고침/포털고침으로 인정하는 액션(Node {@code REVISE_ACTIONS}). 그 밖의 값은 어휘 밖이다. */
 	private static final Set<String> REVISE_ACTIONS = Set.of("revise", "portalRevise");

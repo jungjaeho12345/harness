@@ -1,0 +1,258 @@
+package harness.news.service;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.zaxxer.hikari.HikariDataSource;
+import harness.news.db.NewsDataSource;
+import harness.news.model.ArticleRepository;
+import harness.news.model.DistributionTargetRepository;
+import harness.news.model.UserRepository;
+import harness.news.testsupport.MutableClock;
+import harness.news.testsupport.TempNewsDb;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.JdbcTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/**
+ * 배부 대상 서비스 — 리포 루트 {@code src/services/distributionTargetService.js}와 동형.
+ *
+ * <p>잠그는 축: (1) 검증 순서 name→kind→spoolDir→active. (2) duplicate-spool-dir는 비활성 행까지 포함.
+ * (3) update present-only + 존재 확인이 검증보다 먼저(없는/비수치 id → not-found). (4) update·deactivate가
+ * 같은 applyPatch로 수렴해 둘 다 updatedAt stamp. (5) 4 op Z 게이트. (6) 투영 7키·NULL 키 보존.
+ */
+class DistributionTargetServiceTest {
+
+	@TempDir
+	Path tempDir;
+
+	private HikariDataSource dataSource;
+
+	private DistributionTargetRepository targets;
+
+	private SessionGuard guard;
+
+	private MutableClock clock;
+
+	private DistributionTargetService service;
+
+	@BeforeEach
+	void setUp() {
+		TempNewsDb.seed(this.tempDir);
+		this.dataSource = NewsDataSource.create(this.tempDir);
+		UserRepository users = new UserRepository(JdbcClient.create(this.dataSource));
+		ArticleRepository articles = new ArticleRepository(JdbcClient.create(this.dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)),
+				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
+		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), users);
+		Authorization authorization = new Authorization(this.guard, articles);
+		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource));
+		this.clock = new MutableClock(Instant.parse("2026-08-22T00:00:00.000Z").toEpochMilli());
+		this.service = new DistributionTargetService(this.targets, authorization, this.clock);
+		insertUser("dt-z", "Z");
+		insertUser("dt-r", "R");
+		insertUser("dt-d", "D");
+	}
+
+	@AfterEach
+	void tearDown() {
+		if (this.dataSource != null) {
+			this.dataSource.close();
+		}
+	}
+
+	private String zToken() {
+		return this.guard.createSession("dt-z");
+	}
+
+	// --- create 검증 순서 name → kind → spoolDir → active -----------------------------------------
+
+	@Test
+	void createValidatesInTheContractOrder() {
+		// 네 필드를 동시에 틀리게 보내고, 앞의 것을 하나씩 고치며 다음 토큰이 순서대로 나오는지 본다.
+		assertEquals("invalid-name",
+				this.service.create(zToken(), entry("kind", "bogus", "spoolDir", "../bad", "active", "x")).reason(),
+				"name이 없으면 name이 가장 먼저다");
+		assertEquals("invalid-kind",
+				this.service.create(zToken(), entry("name", "ok", "kind", "bogus", "spoolDir", "../bad", "active", "x")).reason());
+		assertEquals("invalid-spool-dir",
+				this.service.create(zToken(), entry("name", "ok", "kind", "press", "spoolDir", "../bad", "active", "x")).reason());
+		assertEquals("invalid-active",
+				this.service.create(zToken(), entry("name", "ok", "kind", "press", "spoolDir", "ok-slug", "active", "x")).reason());
+	}
+
+	@Test
+	void createSucceedsWithDefaultActiveYAndNoRowOnRejection() {
+		DistributionTargetService.Result ok = this.service.create(zToken(),
+				entry("name", "대상", "kind", "press", "spoolDir", "sp-ok"));
+		assertTrue(ok.ok());
+		assertTrue(ok.id() > 0);
+		assertEquals("Y", this.targets.findById(ok.id()).get().get("active"), "active 미지정이면 Y");
+
+		// 거부는 행을 만들지 않는다.
+		assertFalse(this.service.create(zToken(), entry("name", "x", "kind", "press", "spoolDir", "../bad")).ok());
+		assertEquals(0, this.targets.query(Map.of("name", "x")).size());
+	}
+
+	@Test
+	void nonStringNameIsRejectedWithoutCoercion() {
+		// String.valueOf(비문자열)이 통과하는 결함 차단.
+		assertEquals("invalid-name",
+				this.service.create(zToken(), entry("name", 123, "kind", "press", "spoolDir", "sp-n")).reason());
+		assertEquals("invalid-name",
+				this.service.create(zToken(), entry("name", "   ", "kind", "press", "spoolDir", "sp-n")).reason(),
+				"공백만 있는 이름도 거부");
+	}
+
+	// --- duplicate-spool-dir (비활성 포함) --------------------------------------------------------
+
+	@Test
+	void duplicateSpoolDirIsRejectedIncludingInactiveRows() {
+		int first = this.service.create(zToken(), entry("name", "A", "kind", "press", "spoolDir", "sp-dup")).id();
+		assertEquals("duplicate-spool-dir",
+				this.service.create(zToken(), entry("name", "B", "kind", "press", "spoolDir", "sp-dup")).reason());
+
+		// 첫 대상을 비활성으로 내려도 그 슬러그는 여전히 사용 중이다(비활성 행까지 유일성에 포함).
+		this.service.deactivate(zToken(), String.valueOf(first));
+		assertEquals("N", this.targets.findById(first).get().get("active"));
+		assertEquals("duplicate-spool-dir",
+				this.service.create(zToken(), entry("name", "C", "kind", "press", "spoolDir", "sp-dup")).reason(),
+				"비활성 대상의 스풀 폴더도 duplicate로 걸린다");
+	}
+
+	// --- update present-only · 존재 확인이 검증보다 먼저 -------------------------------------------
+
+	@Test
+	void updateIsPresentOnlyAndChecksExistenceBeforeValidation() {
+		int id = this.service.create(zToken(), entry("name", "원래", "kind", "press", "spoolDir", "sp-up")).id();
+
+		// present-only: name만 보내면 그것만 바뀌고 kind는 불변.
+		assertEquals(1, this.service.update(zToken(), String.valueOf(id), entry("name", "바뀜")).changes());
+		Map<String, Object> after = this.targets.findById(id).get();
+		assertEquals("바뀜", after.get("name"));
+		assertEquals("press", after.get("kind"), "전달하지 않은 필드는 불변");
+
+		// 전달 필드 하나라도 위반이면 아무것도 저장 안 됨.
+		assertEquals("invalid-kind", this.service.update(zToken(), String.valueOf(id), entry("kind", "bogus")).reason());
+		assertEquals("바뀜", this.targets.findById(id).get().get("name"), "거부된 update는 아무것도 바꾸지 않는다");
+
+		// 존재 확인이 검증보다 먼저 — 없는 id에 잘못된 필드를 보내도 not-found(검증 토큰이 아니다).
+		assertEquals("not-found", this.service.update(zToken(), "999999", entry("kind", "bogus")).reason());
+		assertEquals("not-found", this.service.update(zToken(), "abc", entry("name", "x")).reason(),
+				"비수치 id는 NaN → not-found(500 아님)");
+	}
+
+	// --- update·deactivate 수렴 + updatedAt stamp -------------------------------------------------
+
+	@Test
+	void updateAndDeactivateBothStampUpdatedAtViaTheSamePatchPath() {
+		int id = this.service.create(zToken(), entry("name", "시각", "kind", "press", "spoolDir", "sp-ts")).id();
+		String created = (String) this.targets.findById(id).get().get("updatedAt");
+
+		this.clock.advance(60_000);
+		assertEquals(1, this.service.update(zToken(), String.valueOf(id), entry("name", "새이름")).changes());
+		String afterUpdate = (String) this.targets.findById(id).get().get("updatedAt");
+		assertNotEquals(created, afterUpdate, "update가 updatedAt을 stamp한다");
+
+		this.clock.advance(60_000);
+		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(id)).changes());
+		Map<String, Object> afterDeactivate = this.targets.findById(id).get();
+		assertNotEquals(afterUpdate, afterDeactivate.get("updatedAt"), "deactivate도 같은 applyPatch로 stamp한다");
+		assertEquals("N", afterDeactivate.get("active"), "deactivate는 active='N'");
+		assertTrue(this.targets.findById(id).isPresent(), "deactivate는 행을 지우지 않는다");
+	}
+
+	@Test
+	void deactivateAndPutActiveNConvergeToTheSameResult() {
+		int viaDeactivate = this.service.create(zToken(), entry("name", "a", "kind", "press", "spoolDir", "sp-a")).id();
+		int viaPut = this.service.create(zToken(), entry("name", "b", "kind", "press", "spoolDir", "sp-b")).id();
+
+		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(viaDeactivate)).changes());
+		assertEquals(1, this.service.update(zToken(), String.valueOf(viaPut), entry("active", "N")).changes());
+
+		assertEquals("N", this.targets.findById(viaDeactivate).get().get("active"));
+		assertEquals("N", this.targets.findById(viaPut).get().get("active"), "PUT {active:N}도 같은 전이다");
+	}
+
+	// --- 인가 게이트 -----------------------------------------------------------------------------
+
+	@Test
+	void nonAdminSessionsAreForbiddenOnAllFourOpsAndTouchNoRow() {
+		int existing = this.service.create(zToken(), entry("name", "g", "kind", "press", "spoolDir", "sp-g")).id();
+		for (String userId : List.of("dt-r", "dt-d")) {
+			String token = this.guard.createSession(userId);
+			assertEquals("forbidden", this.service.query(token, Map.of()).reason(), userId);
+			assertEquals("forbidden",
+					this.service.create(token, entry("name", "x", "kind", "press", "spoolDir", "sp-x")).reason());
+			assertEquals("forbidden",
+					this.service.update(token, String.valueOf(existing), entry("name", "y")).reason());
+			assertEquals("forbidden", this.service.deactivate(token, String.valueOf(existing)).reason());
+		}
+		// 거부는 아무것도 바꾸지 않았다.
+		Map<String, Object> row = this.targets.findById(existing).get();
+		assertEquals("g", row.get("name"));
+		assertEquals("Y", row.get("active"));
+		assertEquals(0, this.targets.query(Map.of("spoolDir", "sp-x")).size());
+	}
+
+	@Test
+	void missingOrUnknownTokensAreUnauthenticated() {
+		String dead = "0".repeat(64);
+		for (String token : new String[] {null, dead}) {
+			assertEquals("unauthenticated", this.service.query(token, Map.of()).reason());
+			assertEquals("unauthenticated",
+					this.service.create(token, entry("name", "x", "kind", "press", "spoolDir", "sp-u")).reason());
+			assertEquals("unauthenticated", this.service.update(token, "1", entry("name", "x")).reason());
+			assertEquals("unauthenticated", this.service.deactivate(token, "1").reason());
+		}
+	}
+
+	// --- 투영 7키 · NULL 키 보존 -------------------------------------------------------------------
+
+	@Test
+	void projectionIsExactlyTheSevenSafeFieldsWithNullKeysPreserved() {
+		// createdAt/updatedAt 없이 리포지토리에 직접 심어 NULL 키 보존을 본다.
+		this.targets.insert(entry("name", "raw", "kind", "press", "spoolDir", "sp-raw"));
+
+		Map<String, Object> item = this.service.query(zToken(), Map.of("spoolDir", "sp-raw")).items().get(0);
+		assertEquals(
+				List.of("id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt"),
+				List.copyOf(item.keySet()), "정확 7키(Node 순서)");
+		assertNull(item.get("createdAt"), "심지 않은 컬럼은 null이고 키는 남는다");
+		assertNull(item.get("updatedAt"));
+	}
+
+	// --- 도우미 ---------------------------------------------------------------------------------
+
+	private static Map<String, Object> entry(Object... keyValues) {
+		Map<String, Object> map = new LinkedHashMap<>();
+		for (int i = 0; i < keyValues.length; i += 2) {
+			map.put((String) keyValues[i], keyValues[i + 1]);
+		}
+		return map;
+	}
+
+	private void insertUser(String userId, String role) {
+		Map<String, Object> row = new LinkedHashMap<>();
+		row.put("userId", userId);
+		row.put("name", userId);
+		row.put("password", "$2a$10$hashhashhashhashhashha");
+		row.put("role", role);
+		row.put("active", "Y");
+		new UserRepository(JdbcClient.create(this.dataSource)).insert(row);
+	}
+}
