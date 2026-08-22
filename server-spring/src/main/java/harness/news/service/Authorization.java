@@ -34,6 +34,15 @@ public class Authorization {
 	public static final String MANAGE_USERS = "manageUsers";
 
 	/**
+	 * 수집 수신 설정(ReceiverConfig) 관리 — Z 전용({@code src/services/authorization.js}
+	 * {@code manageReceiverConfig: ['Z']}). 조회·생성·삭제 3라우트가 이 게이트를 탄다.
+	 *
+	 * <p>이 capability는 이 phase(70)가 그 라우트를 소유하면서 추가한 행이다 — 도달하는 게이트만 표에
+	 * 적는다(69 Authorization 규율). role은 세션에서만 도출한다(클래스 주석).
+	 */
+	public static final String MANAGE_RECEIVER_CONFIG = "manageReceiverConfig";
+
+	/**
 	 * 서버 로그 열람 — Z 전용(ADR-007). 로그는 <b>전 사용자의 요청 흔적</b>이라 R/D에게 열면 안 된다.
 	 *
 	 * <p>Node는 이 게이트를 라우트 안에서 {@code me.role !== 'Z'}로 직접 판정한다
@@ -56,6 +65,7 @@ public class Authorization {
 	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
 	static final Map<String, List<String>> CAPABILITIES = Map.of(
 			MANAGE_USERS, List.of("Z"),
+			MANAGE_RECEIVER_CONFIG, List.of("Z"),
 			VIEW_LOGS, List.of("Z"),
 			EDIT_DPS, List.of("D"));
 

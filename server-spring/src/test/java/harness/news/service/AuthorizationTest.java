@@ -80,6 +80,9 @@ class AuthorizationTest {
 		// 이 phase가 쓰는 행은 둘이고 표 구조는 Node와 동형이다(후속 phase는 행만 추가한다).
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_USERS),
 				"사용자 관리는 Z 전용이다(src/services/authorization.js CAPABILITIES)");
+		// phase 70 step3이 추가한 행 — 수신 설정 관리는 Z 전용이다(manageReceiverConfig: ['Z']).
+		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_RECEIVER_CONFIG),
+				"수신 설정 관리는 Z 전용이다");
 		// Node는 이 판정을 라우트 안에서 me.role !== 'Z'로 직접 한다(server/index.js 1168~1175).
 		// 관측(미인증 401 · 비-Z 403)은 같고, 판정 자리를 표로 모아 감사 가능하게 만든 것이 차이다.
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.VIEW_LOGS),
