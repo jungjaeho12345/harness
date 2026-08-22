@@ -6,15 +6,15 @@
 
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
-- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인**): 라우트 **20개**. 계약 10파일(default 7 · minimal 1 ·
-  auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
-  (phase 69 마감 실측 2026-08-21: 케이스 158 · 관측 **170**(default 118 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
-  diffs 0 · 자기 결정성 `--dual-run` 170관측 diffs 0 · Java **584 테스트 0 실패**). 수집·배부·미디어·SSE·번역은 아직 없다(아래 라우트 표).
+- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD**): 라우트 **27개**. 계약 12파일(default 9 ·
+  minimal 1 · auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
+  (phase 70 마감 실측 2026-08-22: 관측 **215**(default 163 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
+  diffs 0 · 자기 결정성 `--dual-run` 215관측 diffs 0 · Java **637 테스트 0 실패**). 수집·배부 실행·미디어·SSE·번역은 아직 없다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 20개**다
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 27개**다
 (`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
 
 | 라우트 | 인증 | 비고 |
@@ -39,8 +39,19 @@
 | `POST /api/articles/:id/force-unlock` | session-role | D/Z 전용이고 게이트 순서가 **역할 403 → 존재 404**(다른 라우트와 반대) |
 | `POST /api/articles/:id/action` | session-role | 전이표 → `(끝)` 마커 → 엠바고 DES 진입 → stamp·이력 · 사유 폴백 409 |
 | `POST /api/articles/:id/derive` | session-role | `followUp`·`continue` 2모드 · 작성자는 `name ?? userId`(**null 병합** — create의 `||`와 다르다) |
+| `GET /api/receiver-config` | admin(Z) | 원소 SAFE_FIELDS **10키** · `password`·`apiKey`는 쓰기 전용 시크릿(투영 밖) · 화이트리스트 AND 동등 필터 |
+| `POST /api/receiver-config` | admin(Z) | 응답 `{ok,id}`뿐(시크릿 미반향) · 입력 검증 없음(계약이 동결) |
+| `DELETE /api/receiver-config/:id` | admin(Z) | **이 서버 유일의 행 삭제 라우트** — 설정 행만 지우고 수집된 Article/Contents는 불변(DB 비파괴 원칙의 명시적 예외 경계, SCHEMA.md 76행). 없는 id·재삭제·비수치 id(`/abc`=NaN) 전부 200 `changes:0`(404 아님) |
+| `GET /api/distribution-targets` | admin(Z) | 원소 SAFE_FIELDS **7키**(spoolDir 실림) · `active`로 자동 필터링하지 않는다(비활성 행도 목록에 남는다) |
+| `POST /api/distribution-targets` | admin(Z) | 검증 순서 name→kind→spoolDir→active · 거부 5토큰(invalid-name·-kind·-spool-dir·duplicate-spool-dir·invalid-active) 전부 폴백 **400** |
+| `PUT /api/distribution-targets/:id` | admin(Z) | present-only · 없는/비수치 id는 **404 not-found**(500 아님) · `{active:"N"}`이 soft delete의 두 번째 진입점 |
+| `POST /api/distribution-targets/:id/deactivate` | admin(Z) | **soft delete** — 행을 지우지 않고 `active='N'` UPDATE(update와 같은 `applyPatch`로 수렴, updatedAt stamp). 제거 라우트는 없다 |
 
-**나머지 19 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+**배부 대상에는 행 삭제 경로가 없다** — `DELETE /api/distribution-targets/:id`는 핸들러 미등록으로 **404**다
+(Express는 method+path를 함께 매칭해 미등록 메서드를 405가 아니라 404로 떨구므로, Spring도 메서드 불일치를
+`GlobalErrorHandler`에서 404로 수렴시킨다 — phase 70 `distribution-targets.contract.js`가 이 동형을 계약으로 관측한다).
+
+**나머지 12 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
   (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
@@ -60,14 +71,17 @@ Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계�
 필터가 잠근다. 고치지 않은 이유: 매칭 정책을 바꾸면 39 라우트 전부의 판정이 함께 움직이므로 도메인 phase가 개별로 판단할 것이
 아니라 **경로 정규화 정책을 한 번에 다루는 별도 판단**이 필요하다. **라우트를 늘리는 phase마다 같은 divergence가 새로 생긴다.**
 
-**배부 훅은 이 서버에 없다**(ADR-008을 따르는 배부 phase 소유 — 앱 내 타이머·직접 전송을 만들지 않았다). 그래도 패리티가
-깨지지 않는 근거는 두 가지다: `minimal` 프로파일은 스풀 미설정이라 Node에서도 배부 결선 자체가 없고, `default`는 결선되지만
-계약이 시드하는 DB에 **`DistributionTarget` 행이 0건**이라 송고의 관측 가능한 부수효과가 0이다(`distributedAt` 갱신·`distribute`
-이력·DES→EPS 승격 어느 것도 생기지 않는다). 추정이 아니라 두 프로파일 **170관측 diffs 0**으로 확인한 사실이며, 배부 phase가
-송고 훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다.
+**배부 실행 훅은 이 서버에 없다**(ADR-008을 따르는 배부 실행 phase 소유 — 앱 내 타이머·직접 전송을 만들지 않았다. phase 70은
+배부 대상을 **검증·저장만** 한다). 그래도 패리티가 깨지지 않는 근거: `minimal` 프로파일은 스풀 미설정이라 Node에서도 배부 결선
+자체가 없고, `default`는 결선되지만 (a) `distribution-targets.contract.js`가 대상 행을 만들되 자기 `after`에서 **전부
+deactivate로 회수**하고(활성인 채로 남기지 않는다) (b) 러너가 파일을 순차(`--test-concurrency=1`) 실행하며 알파벳 순서상 그
+파일이 송고하는 `articles-write.contract.js`보다 뒤에 오므로 — **활성 대상이 송고와 공존하는 창이 없다**. 그래서 `distributedAt`
+갱신·`distribute` 이력·DES→EPS 승격 어느 것도 생기지 않는다(`distributedAt`은 기사 27키 투영의 컬럼명으로만 나타나고 값은
+null이다). 추정이 아니라 두 파일이 함께 든 `default` 프로파일 **215관측 diffs 0**으로 확인한 사실이며, 배부 실행 phase가 송고
+훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다.
 
 그래서 계약 스위트는 **담당 도메인 파일만**(`--files`·scope 표) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만
-쓸 수 있다(지금 쓰면 남은 19 라우트 때문에 영구 red이며, 그 red가 정상이다).
+쓸 수 있다(지금 쓰면 남은 12 라우트 때문에 영구 red이며, 그 red가 정상이다).
 
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
