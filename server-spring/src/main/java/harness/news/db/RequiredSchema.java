@@ -96,6 +96,19 @@ public final class RequiredSchema {
 			"id", "sourceId", "type", "name", "host", "port", "username",
 			"password", "apiEndpoint", "apiKey", "active", "createdAt");
 
+	/** 배부 수신처 테이블 이름(ADR-008). 행 삭제 없음 — 제거는 {@code active='N'} soft delete뿐이다. */
+	public static final String DISTRIBUTION_TARGET_TABLE = "DistributionTarget";
+
+	/**
+	 * DistributionTarget 컬럼 7개 — {@code src/db/schema.js}의 {@code SCHEMA.DistributionTarget}과 순서까지
+	 * 같다. {@code id}만 INTEGER(자동 증가)라 삽입/수정 대상이 아니고 정수로 읽는다 — 나머지는 VARCHAR다.
+	 *
+	 * <p>이 목록이 <b>SELECT 나열의 단일 출처</b>다({@code SELECT *} 금지). {@code kind}(press/nonpress) enum과
+	 * {@code spoolDir} 슬러그 검증은 서비스 계층의 몫이고, 모델은 컬럼만 안다(계층 분리).
+	 */
+	public static final List<String> DISTRIBUTION_TARGET_COLUMNS = List.of(
+			"id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt");
+
 	/**
 	 * 부팅 시 존재를 확인하는 테이블 → 컬럼 목록.
 	 *
@@ -108,7 +121,8 @@ public final class RequiredSchema {
 			ARTICLE_TABLE, ARTICLE_COLUMNS,
 			CONTENTS_TABLE, CONTENTS_COLUMNS,
 			HISTORY_TABLE, HISTORY_COLUMNS,
-			RECEIVER_CONFIG_TABLE, RECEIVER_CONFIG_COLUMNS);
+			RECEIVER_CONFIG_TABLE, RECEIVER_CONFIG_COLUMNS,
+			DISTRIBUTION_TARGET_TABLE, DISTRIBUTION_TARGET_COLUMNS);
 
 	private RequiredSchema() {
 	}

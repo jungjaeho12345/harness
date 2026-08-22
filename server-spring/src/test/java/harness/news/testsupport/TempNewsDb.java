@@ -46,6 +46,9 @@ public final class TempNewsDb {
 	/** ReceiverConfig 2컬럼(password·apiKey)만 빠진 드리프트 픽스처 — 수신 설정 축의 컬럼 단위 거부 실증용. */
 	public static final String RECEIVER_CONFIG_DRIFT_FIXTURE = "db/receiver-config-schema-drift.sql";
 
+	/** DistributionTarget 2컬럼(spoolDir·updatedAt)만 빠진 드리프트 픽스처 — 배부 수신처 축의 컬럼 단위 거부 실증용. */
+	public static final String DISTRIBUTION_TARGET_DRIFT_FIXTURE = "db/distribution-target-schema-drift.sql";
+
 	/** 데이터 디렉토리 안의 DB 파일 이름 — 서버가 여는 이름과 같아야 한다. */
 	public static final String DB_FILE_NAME = "news.db";
 

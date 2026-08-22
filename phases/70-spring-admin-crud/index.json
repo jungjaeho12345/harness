@@ -11,7 +11,7 @@
   "steps": [
     { "step": 0, "name": "spool-dir", "status": "done", "summary": "SpoolDir.sanitize(Object) 순수 헬퍼 이식(src/services/spoolDir.js 1:1) — 정규식 ^[a-z0-9][a-z0-9_-]{0,63}$ + 예약 장치명 Set + 타입 게이트(비문자열 강제변환 없이 '' 반환). SpoolDirTest 9건. Java 584→593, parity 170/0, npm 1328." },
     { "step": 1, "name": "receiver-config-repository", "status": "done", "summary": "ReceiverConfigRepository(query/insert/remove) + RequiredSchema에 RECEIVER_CONFIG(12컬럼)·TABLES 추가. 정본 픽스처 user-schema.sql에 ReceiverConfig+DistributionTarget DDL 한 번에 추가(step2 대비), article/history drift 픽스처에도 두 테이블 보강, receiver-config drift 픽스처 신설. remove(double)는 NaN→0 스킵(작업A 실측). NoSchemaSqlInMainSourcesTest를 '행 DELETE는 ReceiverConfig 하나만 허용'으로 정밀화(decisions(1)). Java 593→608, parity 170/0, npm 1328." },
-    { "step": 2, "name": "distribution-target-repository", "status": "pending" },
+    { "step": 2, "name": "distribution-target-repository", "status": "done", "summary": "DistributionTargetRepository(query/findById/insert/update — 삭제 함수 없음) + RequiredSchema에 DISTRIBUTION_TARGET(7컬럼)·TABLES 추가. distribution-target drift 픽스처 신설(정본/RC/기타 픽스처는 step1이 이미 처리). findById(double)·update(double)는 NaN→null/0(작업A 실측), present-only update·no-op(0컬럼→0). 삭제 메서드 부재를 리플렉션으로 단언. Java 608→621, parity 170/0, npm 1328." },
     { "step": 3, "name": "receiver-config-service", "status": "pending" },
     { "step": 4, "name": "distribution-target-service", "status": "pending" },
     { "step": 5, "name": "receiver-config-http", "status": "pending" },

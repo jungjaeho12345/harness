@@ -82,9 +82,20 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void requiredDistributionTargetColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.DistributionTarget과 순서까지 1:1이다(SELECT 나열의 단일 출처).
+		// id만 INTEGER(자동 증가)이고 나머지는 VARCHAR다. 행 삭제 없음(active='N' soft delete만).
+		assertEquals(
+				List.of("id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt"),
+				RequiredSchema.DISTRIBUTION_TARGET_COLUMNS);
+		assertEquals(7, RequiredSchema.DISTRIBUTION_TARGET_COLUMNS.size(), "DistributionTarget은 7컬럼이다");
+	}
+
+	@Test
 	void bootVerifiesEveryTableThisPhaseReadsOrWrites() {
 		// 부팅 검증 대상은 요구 목록 전체다 — 여기서 테이블이 빠지면 그 테이블의 드리프트가 런타임까지 산다.
-		assertEquals(Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig"),
+		assertEquals(
+				Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig", "DistributionTarget"),
 				RequiredSchema.TABLES.keySet());
 	}
 
@@ -169,6 +180,25 @@ class SchemaGuardTest {
 			assertTrue(message.contains("ReceiverConfig"), "어느 테이블인지 지목해야 한다: " + message);
 			assertTrue(message.contains("password"), "빠진 컬럼을 지목해야 한다: " + message);
 			assertTrue(message.contains("apiKey"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
+	}
+
+	@Test
+	void missingDistributionTargetColumnsAreNamedInTheFailure() {
+		// 다른 5테이블은 정본과 같고 DistributionTarget만 2컬럼이 빠진 DB — 넓어진 요구 목록에서도
+		// 컬럼 단위 지목이 살아 있는지(단언 약화 없이) 실증한다.
+		TempNewsDb.seed(tempDir, TempNewsDb.DISTRIBUTION_TARGET_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("DistributionTarget"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("spoolDir"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("updatedAt"), "빠진 컬럼을 전부 지목해야 한다: " + message);
 			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
 		}
 	}
