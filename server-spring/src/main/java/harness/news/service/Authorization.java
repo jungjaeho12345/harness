@@ -53,11 +53,18 @@ public class Authorization {
 	 */
 	public static final String EDIT_DPS = "editDps";
 
+	/**
+	 * 수집(자동기사) 수신 설정 관리 — Z 전용({@code src/services/authorization.js}
+	 * {@code manageReceiverConfig: ['Z']}). phase 70이 receiver-config 3라우트를 구현하며 추가한 행이다.
+	 */
+	public static final String MANAGE_RECEIVER_CONFIG = "manageReceiverConfig";
+
 	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
 	static final Map<String, List<String>> CAPABILITIES = Map.of(
 			MANAGE_USERS, List.of("Z"),
 			VIEW_LOGS, List.of("Z"),
-			EDIT_DPS, List.of("D"));
+			EDIT_DPS, List.of("D"),
+			MANAGE_RECEIVER_CONFIG, List.of("Z"));
 
 	/** 고침/포털고침으로 인정하는 액션(Node {@code REVISE_ACTIONS}). 그 밖의 값은 어휘 밖이다. */
 	private static final Set<String> REVISE_ACTIONS = Set.of("revise", "portalRevise");
