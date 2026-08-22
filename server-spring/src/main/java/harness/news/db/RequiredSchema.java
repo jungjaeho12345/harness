@@ -80,6 +80,22 @@ public final class RequiredSchema {
 			"id", "articleId", "eventType", "action", "fromStatus", "toStatus",
 			"actorUserId", "createdAt", "markupVersion", "snapshotTitle", "targetId", "reason");
 
+	/** 수집 수신 설정 테이블 이름. 시스템 유일의 행 삭제 라우트(receiver-config-delete)의 대상이다. */
+	public static final String RECEIVER_CONFIG_TABLE = "ReceiverConfig";
+
+	/**
+	 * ReceiverConfig 컬럼 12개 — {@code src/db/schema.js}의 {@code SCHEMA.ReceiverConfig}와 순서까지 같다.
+	 *
+	 * <p>이 목록이 <b>SELECT 나열의 단일 출처</b>다({@code SELECT *} 금지). {@code id}만 INTEGER(자동 증가)라
+	 * 삽입 대상이 아니고 정수로 읽는다 — 나머지는 VARCHAR다. {@code password}·{@code apiKey}는 응답 투영
+	 * 밖 시크릿이지만 <b>요구 스키마(=읽기 나열)에는 남긴다</b>: 시크릿을 뺀 allowlist 투영은 서비스 계층의
+	 * 몫이고, 모델은 컬럼만 안다(계층 분리). 응답 키 집합이 스키마 변경에 조용히 넓어지지 않게 하는 것이
+	 * 이 목록의 목적이다.
+	 */
+	public static final List<String> RECEIVER_CONFIG_COLUMNS = List.of(
+			"id", "sourceId", "type", "name", "host", "port", "username",
+			"password", "apiEndpoint", "apiKey", "active", "createdAt");
+
 	/**
 	 * 부팅 시 존재를 확인하는 테이블 → 컬럼 목록.
 	 *
@@ -91,7 +107,8 @@ public final class RequiredSchema {
 			USER_TABLE, USER_COLUMNS,
 			ARTICLE_TABLE, ARTICLE_COLUMNS,
 			CONTENTS_TABLE, CONTENTS_COLUMNS,
-			HISTORY_TABLE, HISTORY_COLUMNS);
+			HISTORY_TABLE, HISTORY_COLUMNS,
+			RECEIVER_CONFIG_TABLE, RECEIVER_CONFIG_COLUMNS);
 
 	private RequiredSchema() {
 	}

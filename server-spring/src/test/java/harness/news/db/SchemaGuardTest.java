@@ -70,9 +70,22 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void requiredReceiverConfigColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.ReceiverConfig와 순서까지 1:1이다(SELECT 나열의 단일 출처).
+		// id만 INTEGER(자동 증가)이고 나머지는 VARCHAR다. password·apiKey는 응답 투영 밖 시크릿이지만
+		// 요구 스키마(=읽기 나열)에는 남긴다 — 시크릿을 뺀 allowlist 투영은 서비스 계층의 몫이다.
+		assertEquals(
+				List.of("id", "sourceId", "type", "name", "host", "port", "username",
+						"password", "apiEndpoint", "apiKey", "active", "createdAt"),
+				RequiredSchema.RECEIVER_CONFIG_COLUMNS);
+		assertEquals(12, RequiredSchema.RECEIVER_CONFIG_COLUMNS.size(), "ReceiverConfig는 12컬럼이다");
+	}
+
+	@Test
 	void bootVerifiesEveryTableThisPhaseReadsOrWrites() {
 		// 부팅 검증 대상은 요구 목록 전체다 — 여기서 테이블이 빠지면 그 테이블의 드리프트가 런타임까지 산다.
-		assertEquals(Set.of("User", "Article", "Contents", "ArticleHistory"), RequiredSchema.TABLES.keySet());
+		assertEquals(Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig"),
+				RequiredSchema.TABLES.keySet());
 	}
 
 	@Test
@@ -137,6 +150,25 @@ class SchemaGuardTest {
 			assertTrue(message.contains("ArticleHistory"), "어느 테이블인지 지목해야 한다: " + message);
 			assertTrue(message.contains("snapshotTitle"), "빠진 컬럼을 지목해야 한다: " + message);
 			assertTrue(message.contains("targetId"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
+	}
+
+	@Test
+	void missingReceiverConfigColumnsAreNamedInTheFailure() {
+		// User·Article·Contents·ArticleHistory·DistributionTarget는 정본과 같고 ReceiverConfig만 2컬럼이
+		// 빠진 DB — 넓어진 요구 목록에서도 컬럼 단위 지목이 살아 있는지(단언 약화 없이) 실증한다.
+		TempNewsDb.seed(tempDir, TempNewsDb.RECEIVER_CONFIG_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("ReceiverConfig"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("password"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("apiKey"), "빠진 컬럼을 전부 지목해야 한다: " + message);
 			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
 		}
 	}

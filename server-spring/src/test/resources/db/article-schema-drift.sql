@@ -73,3 +73,30 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   targetId INTEGER,
   reason VARCHAR
 );
+
+-- ReceiverConfig·DistributionTarget는 정본과 같다 — 이 드리프트는 Contents 축뿐이라
+-- "테이블 없음"이 아니라 컬럼 단위 지목이 되게 두 테이블을 온전히 둔다(요구 목록 확장 대비).
+CREATE TABLE IF NOT EXISTS ReceiverConfig (
+  id INTEGER PRIMARY KEY,
+  sourceId VARCHAR,
+  type VARCHAR,
+  name VARCHAR,
+  host VARCHAR,
+  port VARCHAR,
+  username VARCHAR,
+  password VARCHAR,
+  apiEndpoint VARCHAR,
+  apiKey VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS DistributionTarget (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  kind VARCHAR,
+  spoolDir VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR,
+  updatedAt VARCHAR
+);

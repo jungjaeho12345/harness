@@ -85,3 +85,33 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   targetId INTEGER,
   reason VARCHAR
 );
+
+-- ReceiverConfig 12컬럼 — 수집 수신 설정. id만 INTEGER(자동 증가). password·apiKey는 응답에
+-- 절대 나가지 않는 시크릿이다(투영 allowlist는 서비스 계층). 이 테이블은 시스템 유일의 행 삭제
+-- 라우트(receiver-config-delete)의 대상이며, 삭제는 설정 행만 지운다(수집 기사 불변 — 비파괴 예외).
+CREATE TABLE IF NOT EXISTS ReceiverConfig (
+  id INTEGER PRIMARY KEY,
+  sourceId VARCHAR,
+  type VARCHAR,
+  name VARCHAR,
+  host VARCHAR,
+  port VARCHAR,
+  username VARCHAR,
+  password VARCHAR,
+  apiEndpoint VARCHAR,
+  apiKey VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR
+);
+
+-- DistributionTarget 7컬럼 — 배부 수신처(ADR-008). id만 INTEGER(자동 증가). 행 삭제 없음
+-- (active='N' soft delete만). spoolDir는 슬러그 문자열 컬럼일 뿐이다(파일 쓰기는 배부 실행 phase).
+CREATE TABLE IF NOT EXISTS DistributionTarget (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  kind VARCHAR,
+  spoolDir VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR,
+  updatedAt VARCHAR
+);

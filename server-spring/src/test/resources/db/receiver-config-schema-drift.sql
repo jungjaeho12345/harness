@@ -1,12 +1,12 @@
--- 테스트 전용 드리프트 픽스처(이력 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
+-- 테스트 전용 드리프트 픽스처(수신 설정 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
 -- 스키마 정의 SQL이 없다.
 --
--- User·Article·Contents는 정본과 같고 **ArticleHistory에서 2컬럼만 빠져 있다**
--- (snapshotTitle · targetId). 결함이 정확히 그 둘뿐이라, 넓어진 부팅 검증이 "무엇이 없는지"를
--- 다른 결함에 가려지지 않은 채 지목하는지 실증할 수 있다.
+-- User·Article·Contents·ArticleHistory·DistributionTarget는 정본과 같고 **ReceiverConfig에서 2컬럼만
+-- 빠져 있다**(password · apiKey). 결함이 정확히 그 둘뿐이라, 넓어진 부팅 검증이 "무엇이 없는지"를
+-- 다른 결함에 가려지지 않은 채(테이블 없음이 아니라 컬럼 단위로) 지목하는지 실증할 수 있다.
 --
--- 왜 이 축을 따로 두는가: snapshotTitle이 없는 DB로 뜨면 이력 표시 제목이 런타임에 조용히 깨지고,
--- targetId가 없으면 배부 이벤트 기록이 통째로 실패한다 — 부팅에서 잡혀야 한다.
+-- DistributionTarget을 온전히 둔 이유: step2가 요구 목록에 DistributionTarget을 추가한 뒤에도 이 픽스처가
+-- "테이블 없음"이 아니라 ReceiverConfig 컬럼 드리프트만 내게 하기 위해서다.
 CREATE TABLE IF NOT EXISTS User (
   userId TEXT PRIMARY KEY,
   name TEXT,
@@ -70,11 +70,12 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   actorUserId VARCHAR,
   createdAt VARCHAR,
   markupVersion VARCHAR,
+  snapshotTitle VARCHAR,
+  targetId INTEGER,
   reason VARCHAR
 );
 
--- ReceiverConfig·DistributionTarget는 정본과 같다 — 이 드리프트는 ArticleHistory 축뿐이라
--- "테이블 없음"이 아니라 컬럼 단위 지목이 되게 두 테이블을 온전히 둔다(요구 목록 확장 대비).
+-- ReceiverConfig — password·apiKey 두 컬럼이 빠졌다(그 둘이 이 픽스처의 결함이다).
 CREATE TABLE IF NOT EXISTS ReceiverConfig (
   id INTEGER PRIMARY KEY,
   sourceId VARCHAR,
@@ -83,9 +84,7 @@ CREATE TABLE IF NOT EXISTS ReceiverConfig (
   host VARCHAR,
   port VARCHAR,
   username VARCHAR,
-  password VARCHAR,
   apiEndpoint VARCHAR,
-  apiKey VARCHAR,
   active VARCHAR DEFAULT 'Y',
   createdAt VARCHAR
 );
