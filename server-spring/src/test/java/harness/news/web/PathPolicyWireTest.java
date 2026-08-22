@@ -23,7 +23,8 @@ import org.springframework.test.context.DynamicPropertySource;
 /**
  * 경로 정책 필터의 <b>와이어</b> 계약 — 선언된 보호 경로는 미인증이면 401 JSON이다.
  *
- * <p>이 phase에는 기사·사용자·로그 핸들러가 없다. 그런데도
+ * <p>보호 경로의 401은 <b>핸들러가 있든 없든</b> 이 필터가 만든다(phase 69는 39 라우트 중 11개만
+ * 구현했고 {@code GET /api/articles}에도 아직 핸들러가 없다). 그리고
  * {@code session-guard.contract.js}의 마지막 케이스는 죽은 토큰으로 {@code GET /api/articles}를 호출해
  * <b>401 {@code {ok:false, reason:'unauthenticated'}}</b>를 요구한다 — 그 401을 만드는 것이 이 필터다
  * (스텁 핸들러가 아니라 경계 정책이며, Node가 라우트 내부 세션 검사로 만드는 결과와 동형이다).
@@ -100,9 +101,21 @@ class PathPolicyWireTest {
 		assertEquals(UNAUTHENTICATED, response.body());
 	}
 
+	/**
+	 * <b>스텁 금지의 와이어 게이트</b> — 구현하지 않은 라우트는 {@code ok:true} 스텁이 아니라 정직한 404다.
+	 *
+	 * <p>프로브 경로는 <b>구현 중인 도메인 밖</b>이어야 한다. phase 69 step7이 {@code POST /api/articles}를
+	 * 붙이는 순간 이 프로브가 쓰던 {@code GET /api/articles}는 <b>405</b>가 됐다(경로에 매핑은 있고 메서드가
+	 * 없다 → Boot {@code /error} JSON. 2026-08-21 실측: {@code expected: <404> but was: <405>}), 그리고
+	 * step11에서 목록이 구현되면 200이 된다. 그래서 <b>phase 69 내내 미구현으로 남는</b>
+	 * {@code GET /api/media/search}(미디어 도메인 phase 소유 — index.json excluded (b))로 재조준했다.
+	 *
+	 * <p>이 단언을 지우거나 405를 허용으로 넓히지 마라: 그러면 스텁 0을 지키는 와이어 게이트가 사라진다.
+	 * 미디어 라우트를 구현하는 phase는 <b>같은 규율로</b> 다시 미구현 라우트를 골라 재조준하면 된다.
+	 */
 	@Test
 	void authenticatedRequestToAnUnimplementedRouteIs404NotAStub() {
-		Wire.Response response = Wire.send(this.port, "GET", "/api/articles",
+		Wire.Response response = Wire.send(this.port, "GET", "/api/media/search",
 				Map.of("x-session-id", login()), null);
 
 		assertEquals(404, response.status(), "구현하지 않은 라우트는 정직하게 404다(스텁 금지)");

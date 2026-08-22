@@ -59,6 +59,36 @@ class NoSchemaSqlInMainSourcesTest {
 		assertTrue(hits.isEmpty(), "main 소스에 금지된 스키마/삭제 SQL이 있다: " + hits);
 	}
 
+	/**
+	 * 이력 원장은 <b>append-only</b>다 — 삽입과 조회뿐이고 그 행을 고치거나 지우는 문장이 없다.
+	 *
+	 * <p>{@code ArticleHistory} 행은 감사 기록만이 아니라 판정 입력이다(사이클 경계·배부 멱등).
+	 * 지우면 복구 수단이 없고, 고치면 "언제 무엇이 일어났는가"가 사후에 흔들린다. 위의 전역 스캔은
+	 * {@code delete from}·DDL만 막으므로 이 원장 전용 갱신 문장은 여기서 따로 막는다.
+	 */
+	@Test
+	void mainSourcesNeverRewriteTheHistoryLedger() throws IOException {
+		List<Pattern> ledgerMutations = List.of(
+				Pattern.compile("(?i)\\bupdate\\s+ArticleHistory\\b"),
+				Pattern.compile("(?i)\\bdelete\\s+.{0,40}ArticleHistory\\b"),
+				Pattern.compile("(?i)\\binsert\\s+or\\s+replace\\b"),
+				Pattern.compile("(?i)\\breplace\\s+into\\b"));
+
+		List<String> hits = new ArrayList<>();
+		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
+			for (Path file : files.filter(Files::isRegularFile).toList()) {
+				String text = Files.readString(file, StandardCharsets.UTF_8);
+				for (Pattern pattern : ledgerMutations) {
+					if (pattern.matcher(text).find()) {
+						hits.add(file + " ~ " + pattern.pattern());
+					}
+				}
+			}
+		}
+
+		assertTrue(hits.isEmpty(), "이력 원장(append-only)을 고치거나 지우는 SQL이 main 소스에 있다: " + hits);
+	}
+
 	@Test
 	void mainResourcesDeclareNoAutomaticMigration() throws IOException {
 		Path resources = Path.of("src", "main", "resources");

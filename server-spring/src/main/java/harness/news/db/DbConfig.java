@@ -6,6 +6,8 @@ import javax.sql.DataSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.JdbcTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * DB 계층 배선(합성 루트).
@@ -30,6 +32,22 @@ public class DbConfig {
 	@Bean
 	public JdbcClient jdbcClient(DataSource dataSource) {
 		return JdbcClient.create(dataSource);
+	}
+
+	/**
+	 * 두 테이블(Article·Contents) 동시 변경의 원자성 경계 — Node {@code articleModel.tx()}와 같은 자리다.
+	 *
+	 * <p>스스로 {@code BEGIN}/{@code COMMIT}을 쓰지 않고 트랜잭션 매니저를 거치는 이유는 <b>커넥션이
+	 * 하나</b>이기 때문이다({@link NewsDataSource#MAX_POOL_SIZE}). 직접 커넥션을 꺼내 트랜잭션을 열면
+	 * 그 안에서 {@link JdbcClient}가 <b>두 번째 커넥션</b>을 요청해 풀이 고갈된다(교착). 매니저는 커넥션을
+	 * 스레드에 묶어 두므로 같은 트랜잭션 안의 모든 문장이 그 하나를 쓴다.
+	 *
+	 * <p>배선을 여기 명시하는 것은 자동설정에 기대지 않기 위해서다 — 이 빈이 없으면 원자성이 조용히
+	 * 사라지는 것이 아니라 배선이 실패해야 한다.
+	 */
+	@Bean
+	public TransactionTemplate transactionTemplate(DataSource dataSource) {
+		return new TransactionTemplate(new JdbcTransactionManager(dataSource));
 	}
 
 	/**

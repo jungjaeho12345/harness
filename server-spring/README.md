@@ -6,14 +6,16 @@
 
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
-- 현재 구현 범위(phase 68 완료): **인증/세션 축 + 그 실행에 필요한 최소 라우트 7개**. 계약 6파일(default 4 · auth-negative 1 ·
-  prod-cookie 1)이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다(마감 실측: 케이스 31 · 관측 31 · diffs 0 ·
-  자기 결정성 `--dual-run` diffs 0 · Java 276 테스트 0 실패). 기사·수집·배부·미디어·SSE는 아직 없다(아래 라우트 표).
+- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인**): 라우트 **20개**. 계약 10파일(default 7 · minimal 1 ·
+  auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
+  (phase 69 마감 실측 2026-08-21: 케이스 158 · 관측 **170**(default 118 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
+  diffs 0 · 자기 결정성 `--dual-run` 170관측 diffs 0 · Java **584 테스트 0 실패**). 수집·배부·미디어·SSE·번역은 아직 없다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 7개**다.
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 20개**다
+(`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
 
 | 라우트 | 인증 | 비고 |
 |---|---|---|
@@ -21,11 +23,24 @@
 | `POST /api/login` | public | 계정 잠금 423(5회/15분) · IP 레이트리밋 429(15분/10회, 비-JSON 본문) |
 | `POST /api/logout` | public | |
 | `GET /api/session` | session | 매 요청 User 행 재도출(ADR-004) |
+| `GET /api/users` | session | 역할별 투영 — Z는 6키, 비-Z는 `userId,name,department,departmentCode` 4키로 **재조립**(빼기 방식 금지) |
 | `POST /api/users` | admin(Z) | 계약 픽스처 수단 — 입력 검증 없음(Node 실측 재현) |
 | `PUT /api/users/:id` | admin(Z) | 없는 id도 `{ok:true, changes:0}`(동결된 계약) |
 | `GET /api/logs/digest` | admin(Z) | in-memory 링 버퍼(cap 10000)의 06:00 정렬 24h 창 |
+| `GET /api/articles` | session | 필터 13키 화이트리스트 · 반복 키가 IN/NOT IN이고 **콤마는 문법이 아니다** · 스칼라 전용 키를 반복하면 500(Node 실측 재현) |
+| `GET /api/articles/search` | session | 리터럴이 `/{id}`보다 먼저 잡힌다(와이어로 실증) · `q` 미전달·빈 값 모두 빈 질의 |
+| `GET /api/articles/:id` | session | `{ok,article,contents}` · contents는 **27키 투영**(`lockerSessionId`·`lockerClientId` 부재) · 한쪽 테이블 행이 없으면 그 키를 싣지 않는다 |
+| `GET /api/articles/:id/history` | session | append-only 원장 조회 · 행 12키(본문 blob 없음) · 제목·version·status는 **조회 시 파생**(부트 백필 없음) |
+| `GET /api/articles/:id/history/:historyId` | session | 스냅샷 본문 · 비정수·미존재·타 기사 스코프는 전부 404 |
+| `POST /api/articles` | session-role | 서버 stamp 신뢰 경계 — `status`·`sender`·`articleId`·부서·작성자를 클라가 정하지 못한다 |
+| `PUT /api/articles/:id` | lock-holder | 게이트 순서 **존재 404 → 보유자 403** · `modifier`는 세션 사용자 · `changes`는 두 갱신문의 합(실측 2) |
+| `POST /api/articles/:id/lock` | session | 충돌은 **401 `locked`**(423·409가 아니다) · DPS 기사는 D 전용 · 응답은 `{ok:true}`뿐(보유자 은닉) |
+| `POST /api/articles/:id/unlock` | lock-holder | 보유자가 아니면 403 `not-holder` · 멱등 200(이미 풀렸으면 아무것도 쓰지 않는다) |
+| `POST /api/articles/:id/force-unlock` | session-role | D/Z 전용이고 게이트 순서가 **역할 403 → 존재 404**(다른 라우트와 반대) |
+| `POST /api/articles/:id/action` | session-role | 전이표 → `(끝)` 마커 → 엠바고 DES 진입 → stamp·이력 · 사유 폴백 409 |
+| `POST /api/articles/:id/derive` | session-role | `followUp`·`continue` 2모드 · 작성자는 `name ?? userId`(**null 병합** — create의 `||`와 다르다) |
 
-**나머지 32 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+**나머지 19 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
   (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
@@ -38,8 +53,21 @@
 `GET /api/articles;a=b`는 404였고 `POST /api/login;x=1`은 IP 레이트리밋을 무한 우회했다). 정규화 규칙은 `RoutePolicy` 한 곳이
 소유하고 판정은 **넓은 쪽으로만** 틀린다(세지 않아 뚫리는 것보다 세고 나서 404가 되는 편이 안전하다).
 
-그래서 계약 스위트는 **담당 도메인 파일만**(`--files`) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만 쓸 수 있다
-(지금 쓰면 영구 red이며, 그 red가 정상이다).
+그 규율에는 **알려진 divergence**가 딸려 있다(phase 69 step7 실측 2026-08-21 — 고치지 않고 기록한다). 라우트에 핸들러가
+붙는 순간 **인증된** 요청의 도달 여부가 두 서버에서 갈린다: `GET /api/artic%6Ces/<id>`는 Node **404 text/html** · Spring
+**200 JSON**이고, `GET /api/articles/<id>;v=2`는 Node 404 `{ok:false,reason:"not-found"}`(express는 `;v=2`를 id에 붙인다) ·
+Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계약이 관측하는 축인 **미인증이면 401**은 양쪽 동형이며 그것은 경로 정책
+필터가 잠근다. 고치지 않은 이유: 매칭 정책을 바꾸면 39 라우트 전부의 판정이 함께 움직이므로 도메인 phase가 개별로 판단할 것이
+아니라 **경로 정규화 정책을 한 번에 다루는 별도 판단**이 필요하다. **라우트를 늘리는 phase마다 같은 divergence가 새로 생긴다.**
+
+**배부 훅은 이 서버에 없다**(ADR-008을 따르는 배부 phase 소유 — 앱 내 타이머·직접 전송을 만들지 않았다). 그래도 패리티가
+깨지지 않는 근거는 두 가지다: `minimal` 프로파일은 스풀 미설정이라 Node에서도 배부 결선 자체가 없고, `default`는 결선되지만
+계약이 시드하는 DB에 **`DistributionTarget` 행이 0건**이라 송고의 관측 가능한 부수효과가 0이다(`distributedAt` 갱신·`distribute`
+이력·DES→EPS 승격 어느 것도 생기지 않는다). 추정이 아니라 두 프로파일 **170관측 diffs 0**으로 확인한 사실이며, 배부 phase가
+송고 훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다.
+
+그래서 계약 스위트는 **담당 도메인 파일만**(`--files`·scope 표) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만
+쓸 수 있다(지금 쓰면 남은 19 라우트 때문에 영구 red이며, 그 red가 정상이다).
 
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
@@ -80,6 +108,16 @@ curl -i http://127.0.0.1:15731/api/health   # 200 {"ok":true}
 **"Spring을 어떻게 띄우는가"를 아는 코드는 그 파일뿐**이다(계약 러너 `scripts/contract-run.mjs`가 Node 서버에
 대해 갖는 소유 경계와 동형). 이 하네스가 이후 phase의 진행률 측정 수단이다 — 각 step의 합격 기준이
 "이 커맨드로 계약 파일 N개가 green"이다.
+
+scope 표에는 지금 **4 프로파일**이 올라 있다(`default` 7파일 · `minimal` 1 · `auth-negative` 1 · `prod-cookie` 1 = 계약 10파일).
+
+- `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users가 여기 있다.
+- **`minimal`** — 러너 프리셋이 `spool:false, token:false`이고 **env를 주지 않는 것**이 프로파일의 정의다. 스풀·수집 토큰이
+  없으면 Node에서 배부 결선 자체가 없어 송고 훅(비동기 배부 → `syncEmbargoStatus` 승격 DES→EPS→DPS)이 발화하지 않는다
+  = **전이 관측이 결정적**이다. 그래서 상태 기계 계약(`transitions.contract.js`)이 이 프로파일에 있다. Spring은 배부 구현이
+  없어 그 상태가 구조적으로 참이고 추가 env가 필요 없다(`extraEnv: {}`).
+- `auth-negative` — 로그인 실패·잠금·레이트리밋 전용 인스턴스(카운터 격리).
+- `prod-cookie` — `APP_ENV=production`(쿠키 Secure·SameSite=None).
 
 ```bash
 # 1) jar를 먼저 만든다 — 하네스는 Maven을 호출하지 않는다(빌드 실패가 계약 실패와 섞이면 진단이 무너진다)
@@ -157,7 +195,7 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 ## 아직 검증되지 않은 것 (정직한 공백)
 
 게이트가 전부 green이어도 다음은 **검증된 적이 없다**. 안전하다고 가정하지 말 것(자세한 목록·근거는
-`phases/68-spring-auth/index.json`의 `forward_notes`).
+`phases/68-spring-auth/index.json`·`phases/69-spring-articles/index.json`의 `forward_notes`).
 
 - 세션 1시간 슬라이딩 만료의 **실서버 시간축** — 계약 스위트는 시계를 주입할 수 없다(Java 단위 테스트만 덮는다).
 - 로그인 `inactive` 403 경로 — 계약 스위트가 시드 계정을 비활성화하지 않아 도달 불가.
@@ -165,3 +203,21 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 - 동시성 실부하(계약 스위트는 직렬 실행이고 커넥션 풀은 1이다).
 - **두 서버가 같은 `news.db`를 동시에** 여는 상황(P3 전환기) — 하네스는 프로파일마다 DB를 분리한다.
 - helmet 등가 보안 헤더(CSP·X-Content-Type-Options·HSTS)·HTTPS 강제는 **구현되어 있지 않다**(계약 밖 축).
+
+기사 도메인(phase 69)이 남긴 공백 8가지 — 각 항목의 **유일한 방어선**을 함께 적는다:
+
+- 편집 잠금 **30분 TTL 만료**의 실서버 시간축 · **재로그인 takeover** — 계약은 시계를 주입할 수 없고 로그인 예산 규율상
+  같은 사용자로 재로그인하지 않는다. `EditLockServiceTest`의 고정 시계 테스트가 유일한 방어선이다.
+- **엠바고 시각 비교의 부재** — 과거 시각도 파싱 불가 문자열도 DES로 간다(Node 실측 동형). 계약 픽스처는 전부 미래 시각이라
+  이 축을 관측하지 못하고 `ArticleLifecycleServiceTest`의 과거·파싱불가·동시각 3변형만 덮는다.
+- `EPS`발 전이 2칸(kill→EEK · hold→EEH)과 `unknown-role` 403 — 계약 스위트에 **도달 경로가 없다**(EPS는 실제 배부 뒤에만 생기고
+  시드 계정은 R/D/Z뿐). Java 단위 테스트가 리포지토리로 상태를 직접 놓아 덮는다.
+- 본문 **10MB 경계** — Node는 기사 쓰기 라우트만 10mb 파서를 쓰고 Spring은 컨테이너 기본값이다(양쪽 다 미관측).
+- **NULL 키 보존**(비-Z 사용자 투영)·**숫자 바인딩 표현**(`42` → `"42.0"`)·**비-ASCII 필터 값의 쿼리 왕복**·`hasSnapshot`의
+  정수/불리언 구분 — 계약 픽스처가 그 입력을 만들지 않거나(부서가 채워진 계정·문자열 전용·ASCII 토큰) JSON 파서를 거치며
+  구분이 사라진다. 전부 Java 와이어/단위 테스트가 유일한 관측점이다.
+- 반복 쿼리 키의 **미동결 조합** 일부(`?sendOnly=1&sendOnly=0` 등) · `historyId`의 비십진 표기 — 실측으로 동형을 맞췄으나
+  계약이 동결한 축이 아니다(`NodeNumberTest`·와이어 테스트가 덮는다).
+- **인코딩·경로 파라미터가 붙은 인증 요청**의 도달 여부(위 divergence) — 계약 밖이며 **고치지 않았다**.
+- **부트 백필 미이식** — Node 부팅은 `snapshotTitle` 빈 컬럼을 채우지만(쓰기) Spring은 하지 않고 조회 폴백으로 같은 표시 값을
+  만든다. 레거시 이력 행이 있는 실 DB를 두 서버가 번갈아 여는 P3 전환기에는 **동작이 다르다**.

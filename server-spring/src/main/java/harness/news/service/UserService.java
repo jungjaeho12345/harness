@@ -3,6 +3,7 @@ package harness.news.service;
 import harness.news.model.UserRepository;
 import harness.news.model.UserRow;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -147,6 +148,27 @@ public class UserService {
 		row.put("active", row.get("active") == null ? "Y" : row.get("active"));
 		this.users.insert(row); // 화이트리스트 밖 키는 리포지토리가 조용히 무시한다(Node 동형).
 		return projectDefined(row);
+	}
+
+	/**
+	 * 전체 사용자 명단 — 행마다 SAFE_FIELDS 6키로 투영한다(Node {@code query({})} = {@code map(sanitize)}).
+	 *
+	 * <p>비밀번호 해시와 잠금 메타({@code failedLoginCount}·{@code lockedUntil}·{@code lastFailedLoginAt})는
+	 * 투영을 통과하지 못하므로 <b>어떤 경로로도</b> 나가지 않는다. 키는 항상 6개이고 값이 SQL NULL이면
+	 * {@code null}이다(키를 빼면 "정확 6키" 계약이 값에 따라 무너진다 — index.json decisions (5)·(20)).
+	 *
+	 * <p><b>이 서비스는 role을 모른다.</b> 역할별 투영 축소(비-Z 4키)는 컨트롤러가 세션에서 재도출한
+	 * 신원으로 판단한다(Node 동형: 라우트가 재투영한다). 여기에 role 파라미터를 만들면 acting role이
+	 * 서비스 호출자의 규율로 내려앉는다(ADR-004).
+	 *
+	 * @return 새 리스트(호출자가 바꿔도 DB·서비스에 되먹임되지 않는다)
+	 */
+	public List<Map<String, Object>> list() {
+		List<Map<String, Object>> items = new ArrayList<>();
+		for (UserRow row : this.users.query(Map.of())) {
+			items.add(project(row));
+		}
+		return items;
 	}
 
 	/**

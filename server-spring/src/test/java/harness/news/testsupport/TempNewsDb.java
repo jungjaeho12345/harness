@@ -25,11 +25,23 @@ import java.util.List;
  */
 public final class TempNewsDb {
 
-	/** Node `src/db/schema.js`의 User와 1:1인 정본 픽스처. */
+	/**
+	 * Node `src/db/schema.js`와 1:1인 <b>정본</b> 픽스처 — User·Article·Contents·ArticleHistory.
+	 *
+	 * <p>부팅 스키마 검증({@code SchemaGuard})은 {@code RequiredSchema.TABLES}의 전 테이블을 보므로
+	 * 이 픽스처가 요구 목록을 따라가지 못하면 <b>이것으로 시드된 모든 @SpringBootTest가 컨텍스트 로딩에서
+	 * 죽는다</b>. 요구 목록을 넓히는 step이 이 파일도 같이 넓힌다(phase 69 forward_notes (9)).
+	 */
 	public static final String CANONICAL_FIXTURE = "db/user-schema.sql";
 
-	/** 잠금 컬럼 2개가 빠진 드리프트 픽스처(부팅 검증이 거부해야 하는 DB). */
+	/** User 잠금 컬럼 2개가 빠진 드리프트 픽스처(부팅 검증이 거부해야 하는 DB). 기사 3테이블도 없다. */
 	public static final String DRIFT_FIXTURE = "db/user-schema-drift.sql";
+
+	/** Contents 2컬럼(secondEmbargoAt·lockerSessionId)만 빠진 드리프트 픽스처 — 컬럼 단위 거부 실증용. */
+	public static final String ARTICLE_DRIFT_FIXTURE = "db/article-schema-drift.sql";
+
+	/** ArticleHistory 2컬럼(snapshotTitle·targetId)만 빠진 드리프트 픽스처 — 이력 축의 컬럼 단위 거부 실증용. */
+	public static final String HISTORY_DRIFT_FIXTURE = "db/history-schema-drift.sql";
 
 	/** 데이터 디렉토리 안의 DB 파일 이름 — 서버가 여는 이름과 같아야 한다. */
 	public static final String DB_FILE_NAME = "news.db";

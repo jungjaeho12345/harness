@@ -6,7 +6,15 @@
 -- Node의 createSchema로 임시 DATA_DIR을 시드한다. 이 이중 경로가 어긋나면 "Java 테스트는 green인데
 -- 계약 실행이 red"가 되므로, 그 조합을 보면 이 픽스처의 드리프트를 가장 먼저 의심하라.
 --
--- User 컬럼 10개·DEFAULT 값은 src/db/schema.js 의 SCHEMA.User 와 1:1로 일치해야 한다.
+-- 이 파일은 **정본 픽스처**다(TempNewsDb.CANONICAL_FIXTURE). 부팅 스키마 검증(SchemaGuard)은
+-- RequiredSchema.TABLES의 전 테이블을 보므로, 요구 목록이 넓어지면 이 픽스처로 시드된 전 기동
+-- 테스트(@SpringBootTest)가 컨텍스트 로딩에서 함께 죽는다. 그래서 요구 목록 확장과 이 파일의
+-- 확장은 항상 같은 step에서 한다(phase 69 forward_notes (9)).
+--
+-- 컬럼 이름·타입 표기·순서·DEFAULT 값은 src/db/schema.js 의 SCHEMA 와 1:1로 일치해야 한다
+-- (정렬·affinity가 계약에 영향을 준다).
+
+-- User 10컬럼.
 CREATE TABLE IF NOT EXISTS User (
   userId TEXT PRIMARY KEY,
   name TEXT,
@@ -18,4 +26,62 @@ CREATE TABLE IF NOT EXISTS User (
   failedLoginCount TEXT DEFAULT '0',
   lockedUntil TEXT,
   lastFailedLoginAt TEXT
+);
+
+-- Article 5컬럼 — 본문 마크업. Contents와 articleId로 1:1이다.
+CREATE TABLE IF NOT EXISTS Article (
+  articleId VARCHAR PRIMARY KEY,
+  title VARCHAR,
+  content VARCHAR,
+  markupVersion VARCHAR,
+  modifier VARCHAR
+);
+
+-- Contents 29컬럼 — 공통정보·생애주기·편집 잠금. 응답 투영은 여기서 2컬럼을 뺀 27키다.
+CREATE TABLE IF NOT EXISTS Contents (
+  articleId VARCHAR PRIMARY KEY,
+  title VARCHAR,
+  content VARCHAR,
+  author VARCHAR,
+  modifier VARCHAR,
+  sender VARCHAR,
+  department VARCHAR,
+  departmentCode VARCHAR,
+  createdAt VARCHAR,
+  editedAt VARCHAR,
+  sentAt VARCHAR,
+  distributedAt VARCHAR,
+  embargoAt VARCHAR,
+  secondEmbargoAt VARCHAR,
+  status VARCHAR,
+  lockYN VARCHAR DEFAULT 'N',
+  lockerUserId VARCHAR,
+  lockerSessionId VARCHAR,
+  lockerClientId VARCHAR,
+  lockedAt VARCHAR,
+  coAuthor VARCHAR,
+  category VARCHAR,
+  region VARCHAR,
+  attribute VARCHAR,
+  keyword VARCHAR,
+  internalComment VARCHAR,
+  externalComment VARCHAR,
+  attachmentFile VARCHAR,
+  referenceFile VARCHAR
+);
+
+-- ArticleHistory 12컬럼 — append-only 원장(갱신·삭제 없음). id·targetId만 INTEGER다.
+CREATE TABLE IF NOT EXISTS ArticleHistory (
+  id INTEGER PRIMARY KEY,
+  articleId VARCHAR,
+  eventType VARCHAR,
+  action VARCHAR,
+  fromStatus VARCHAR,
+  toStatus VARCHAR,
+  actorUserId VARCHAR,
+  createdAt VARCHAR,
+  markupVersion VARCHAR,
+  snapshotTitle VARCHAR,
+  targetId INTEGER,
+  reason VARCHAR
 );

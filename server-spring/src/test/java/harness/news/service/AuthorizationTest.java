@@ -7,10 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zaxxer.hikari.HikariDataSource;
 import harness.news.db.NewsDataSource;
+import harness.news.model.ArticleRepository;
 import harness.news.model.UserRepository;
 import harness.news.testsupport.MutableClock;
 import harness.news.testsupport.TempNewsDb;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +23,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.JdbcTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 인가(capability) 게이트 — 리포 루트 {@code src/services/authorization.js}와 동형.
@@ -39,6 +45,8 @@ class AuthorizationTest {
 
 	private UserRepository users;
 
+	private ArticleRepository articles;
+
 	private SessionGuard guard;
 
 	private Authorization authorization;
@@ -48,8 +56,11 @@ class AuthorizationTest {
 		TempNewsDb.seed(this.tempDir);
 		this.dataSource = NewsDataSource.create(this.tempDir);
 		this.users = new UserRepository(JdbcClient.create(this.dataSource));
+		this.articles = new ArticleRepository(JdbcClient.create(this.dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)),
+				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
 		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), this.users);
-		this.authorization = new Authorization(this.guard);
+		this.authorization = new Authorization(this.guard, this.articles);
 		insert("gate-z", "Z");
 		insert("gate-r", "R");
 		insert("gate-d", "D");
@@ -73,6 +84,87 @@ class AuthorizationTest {
 		// 관측(미인증 401 · 비-Z 403)은 같고, 판정 자리를 표로 모아 감사 가능하게 만든 것이 차이다.
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.VIEW_LOGS),
 				"로그 열람은 Z 전용이다 — 로그는 전 사용자의 요청 흔적이다(ADR-007)");
+		// phase 69 step8이 추가한 행 — DPS 기사의 고침/포털고침 진입은 D <b>하나</b>다.
+		// Z를 넣으면 권한 모델이 갈라진다(news.md 권한 규칙 · src/services/authorization.js).
+		assertEquals(List.of("D"), Authorization.CAPABILITIES.get(Authorization.EDIT_DPS),
+				"DPS 편집 진입은 D 전용이다(Z도 포함하지 않는다)");
+	}
+
+	// --- DPS 편집 진입 게이트(editDps) -------------------------------------------------------------
+
+	@Test
+	void editingADpsArticleIsAllowedForTheDeskOnly() {
+		seedArticle("gate-dps", "DPS");
+
+		assertTrue(this.authorization.editDps(this.guard.createSession("gate-d"), "gate-dps", "revise").ok(),
+				"D는 DPS 기사의 고침 진입을 얻는다");
+		assertTrue(this.authorization.editDps(this.guard.createSession("gate-d"), "gate-dps", "portalRevise").ok(),
+				"포털고침도 같은 capability다");
+		for (String userId : List.of("gate-r", "gate-z")) {
+			Authorization.Decision decision =
+					this.authorization.editDps(this.guard.createSession(userId), "gate-dps", "revise");
+
+			assertFalse(decision.ok(), userId + "는 D가 아니다");
+			assertEquals("forbidden", decision.reason(), "Z에게도 DPS 편집 진입을 열지 않는다");
+		}
+	}
+
+	@Test
+	void aNonDpsArticleAnswersNotDpsWhichTheLockRouteTreatsAsAPass() {
+		seedArticle("gate-rds", "RDS");
+
+		Authorization.Decision decision =
+				this.authorization.editDps(this.guard.createSession("gate-r"), "gate-rds", "revise");
+
+		assertFalse(decision.ok(), "게이트 자체는 통과가 아니다");
+		assertEquals("not-dps", decision.reason(),
+				"not-dps는 '이 게이트의 대상이 아니다'라는 신호다 — 라우트가 통과로 해석한다");
+	}
+
+	@Test
+	void theGateOrderIsSessionThenActionThenExistenceThenStatusThenRole() {
+		seedArticle("gate-dps", "DPS");
+		String reporter = this.guard.createSession("gate-r");
+
+		// (1) 세션이 먼저다 — 미인증에는 기사 존재 여부조차 알려주지 않는다.
+		assertEquals("unauthenticated", this.authorization.editDps(null, "gate-dps", "revise").reason());
+		// (2) 액션 어휘가 존재 검사보다 앞이다(정본 순서 그대로).
+		assertEquals("unknown-action", this.authorization.editDps(reporter, "없는-기사", "send").reason());
+		// (3) 존재가 상태·역할보다 앞이다 — 없는 기사는 403이 아니라 404로 수렴한다.
+		assertEquals("not-found", this.authorization.editDps(reporter, "없는-기사", "revise").reason());
+		// (4) 상태가 역할보다 앞이다 — 비-DPS면 R에게도 forbidden이 아니라 not-dps다.
+		seedArticle("gate-rds", "RDS");
+		assertEquals("not-dps", this.authorization.editDps(reporter, "gate-rds", "revise").reason());
+		// (5) 마지막이 역할이다.
+		assertEquals("forbidden", this.authorization.editDps(reporter, "gate-dps", "revise").reason());
+	}
+
+	@Test
+	void anArticleRowWithoutContentsIsNotFound() {
+		// Article 행만 있고 Contents 행이 없는 기사는 '없는 기사'다(정본 !row || !row.contents).
+		// 리포지토리는 두 행을 함께 만들므로 이 상태는 임시 DB에 직접 넣는다(테스트 픽스처 전용 INSERT).
+		TempNewsDb.exec(TempNewsDb.dbFile(this.tempDir),
+				"INSERT INTO Article (articleId, title) VALUES ('gate-orphan', '제목만 있는 행')");
+
+		assertEquals("not-found",
+				this.authorization.editDps(this.guard.createSession("gate-d"), "gate-orphan", "revise").reason());
+	}
+
+	@Test
+	void editDpsRoleComesFromTheSessionSoADemotionAppliesImmediately() {
+		seedArticle("gate-dps", "DPS");
+		String sessionId = this.guard.createSession("gate-d");
+		assertTrue(this.authorization.editDps(sessionId, "gate-dps", "revise").ok());
+
+		this.users.update("gate-d", Map.of("role", "R")); // 재로그인 없음.
+
+		assertEquals("forbidden", this.authorization.editDps(sessionId, "gate-dps", "revise").reason(),
+				"강등된 계정의 기존 세션이 DPS 편집 진입을 유지하면 권한 상승이다");
+	}
+
+	private void seedArticle(String articleId, String status) {
+		this.articles.insert(Map.of("articleId", articleId, "title", "게이트 픽스처"),
+				Map.of("articleId", articleId, "title", "게이트 픽스처", "status", status));
 	}
 
 	@Test
