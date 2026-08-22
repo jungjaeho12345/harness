@@ -46,23 +46,24 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 20 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
+	 * 구현된 23 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
 	 * ({@code POST /api/articles/{id}/action} · {@code POST /api/articles/{id}/derive}) + step11의
 	 * 조회 4개({@code GET /api/articles/search} · {@code GET /api/articles} ·
-	 * {@code GET /api/articles/{id}/history} · {@code GET /api/articles/{id}/history/{historyId}})다.
+	 * {@code GET /api/articles/{id}/history} · {@code GET /api/articles/{id}/history/{historyId}}) +
+	 * <b>phase 70 step3의 수집 수신 설정 3개</b>({@code GET /api/receiver-config} ·
+	 * {@code POST /api/receiver-config} · {@code DELETE /api/receiver-config/{id}})다.
 	 * {@code server-spring/README.md}·index.json forward_notes (2)와 같은 목록이며 표기는 Spring 매핑
 	 * 원문({@code {userId}})이다. 행을 늘릴 때는 아래 테스트 메서드 이름과 실패 메시지의 <b>라우트 수</b>도
-	 * 같이 고쳐라 — 수치가 목록과 어긋나면 이 테스트가 주장하는 문장이 거짓이 된다.
+	 * 같이 고쳐라 — 수치가 목록과 어긋나면 이 테스트가 주장하는 문장이 거짓이 된다(같은 커밋에서 이동).
 	 *
-	 * <p>step11이 scope 표에 {@code articles-read.contract.js}(default)와
-	 * {@code transitions.contract.js}(minimal)를 올리면서 <b>20행 전부가 계약 관측을 갖는다</b> —
-	 * decisions (15)가 step10에 남겨 두었던 한 칸({@code .../derive}: 구현은 step10, 계약 편입은
-	 * step11)이 닫혔다. 이제 "구현했는데 계약이 관측하지 않는 라우트"는 <b>0개</b>다.
+	 * <p>phase 70 step3이 scope 표에 {@code receiver-config.contract.js}(default)를 올리면서 이 3행도
+	 * 계약 관측을 갖는다. 이제도 "구현했는데 계약이 관측하지 않는 라우트"는 <b>0개</b>다.
 	 */
 	private static final List<String> IMPLEMENTED_ROUTES = List.of(
+			"DELETE /api/receiver-config/{id}",
 			"GET /api/articles",
 			"GET /api/articles/search",
 			"GET /api/articles/{id}",
@@ -70,6 +71,7 @@ class HandlerInventoryTest {
 			"GET /api/articles/{id}/history/{historyId}",
 			"GET /api/health",
 			"GET /api/logs/digest",
+			"GET /api/receiver-config",
 			"GET /api/session",
 			"GET /api/users",
 			"POST /api/articles",
@@ -80,6 +82,7 @@ class HandlerInventoryTest {
 			"POST /api/articles/{id}/unlock",
 			"POST /api/login",
 			"POST /api/logout",
+			"POST /api/receiver-config",
 			"POST /api/users",
 			"PUT /api/articles/{id}",
 			"PUT /api/users/{userId}");
@@ -122,12 +125,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheTwentyImplementedRoutesHaveHandlers() {
+	void exactlyTheTwentyThreeImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 20 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 23 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 
