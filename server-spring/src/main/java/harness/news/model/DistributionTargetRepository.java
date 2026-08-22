@@ -1,0 +1,179 @@
+package harness.news.model;
+
+import harness.news.db.RequiredSchema;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+/**
+ * 배부 대상(수신처) 데이터 접근 계층 — 직접 SQL(ORM 없음, ADR-002). 비즈니스 규칙은 없다.
+ *
+ * <p>리포 루트 {@code src/models/distributionTargetModel.js}와 1:1이다. 연산은 넷이다:
+ * 조회({@link #query}) · 단건({@link #findById}) · 생성({@link #insert}) · 부분 갱신({@link #update}).
+ *
+ * <p><b>삭제 연산은 두지 않는다.</b> 대상 제거는 {@code active='N'} 업데이트(soft delete)가 유일한
+ * 경로다(SCHEMA.md 99행·ADR-008 — step1이 좁힌 유일 삭제 예외는 ReceiverConfig 하나뿐이고 이 테이블은
+ * 그 예외에 들지 않는다). 이 테이블에 대한 행 삭제 SQL은 정적 스캔이 여전히 거부한다(주석에도 그 토큰을
+ * 쓰지 않는다).
+ *
+ * <p>이 클래스의 계약 셋.
+ * <ol>
+ *   <li><b>컬럼은 화이트리스트({@link RequiredSchema#DISTRIBUTION_TARGET_COLUMNS})로만 다룬다.</b> 필터·삽입·
+ *       갱신 모두 그 목록으로만 SQL을 조립한다.</li>
+ *   <li><b>화이트리스트 밖 키는 조용히 무시한다.</b> {@code active}로 <b>자동 필터링하지 않는다</b> —
+ *       비활성 행도 목록에 남는 것이 계약이다(decisions (5)).</li>
+ *   <li><b>검증(kind enum·spoolDir 슬러그·name 필수)은 하지 않는다</b> — 서비스 계층 책임이다(step5).</li>
+ * </ol>
+ *
+ * <p>{@code id}는 자동 증가 정수(ROWID 별칭)라 삽입/수정 대상이 아니고 조회 결과에서는 정수로 읽는다.
+ * id 파라미터를 {@code double}로 받는 이유는 Node 동형이다: 서비스가 {@code Number(id)}로 정규화하며
+ * 비수치 id는 NaN이 되어 어떤 행에도 매치되지 않는다(→ not-found, 500 아님). {@code long}이면 NaN을
+ * 담을 수 없다. 값 바인딩 정책은 {@link ColumnValues}(phase 69 decisions (8)) 단일 출처다.
+ */
+@Repository
+public class DistributionTargetRepository {
+
+	/**
+	 * 삽입/수정 화이트리스트 6개 = 요구 컬럼 7개 − {@code id}.
+	 *
+	 * <p>{@code id}는 자동 증가 정수(ROWID 별칭)라 삽입·SET 대상이 아니다.
+	 */
+	static final List<String> WRITABLE_COLUMNS = RequiredSchema.DISTRIBUTION_TARGET_COLUMNS.stream()
+			.filter((column) -> !column.equals("id"))
+			.toList();
+
+	/** 조회 컬럼은 화이트리스트를 그대로 나열한다 — {@code SELECT *}는 쓰지 않는다. */
+	private static final String SELECT_ALL_COLUMNS =
+			"SELECT " + String.join(", ", RequiredSchema.DISTRIBUTION_TARGET_COLUMNS)
+					+ " FROM " + RequiredSchema.DISTRIBUTION_TARGET_TABLE;
+
+	/** 정수로 읽는 컬럼 — 나머지는 전부 문자열이다. */
+	private static final String ID = "id";
+
+	private final JdbcClient jdbcClient;
+
+	public DistributionTargetRepository(JdbcClient jdbcClient) {
+		this.jdbcClient = jdbcClient;
+	}
+
+	/**
+	 * 화이트리스트 컬럼만 AND 동등 필터로 적용한다. 화이트리스트 밖 키·{@code null} 값은 무시하고
+	 * {@code active}로 자동 필터링하지 않는다(비활성 행도 남는다). 정렬은 {@code ORDER BY id}.
+	 */
+	public List<Map<String, Object>> query(Map<String, ?> filters) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> params = new ArrayList<>();
+		if (filters != null) {
+			for (String column : RequiredSchema.DISTRIBUTION_TARGET_COLUMNS) {
+				Object value = filters.get(column);
+				if (value == null) {
+					continue;
+				}
+				conditions.add(column + " = ?");
+				params.add(ColumnValues.bind(value));
+			}
+		}
+		String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+		return this.jdbcClient.sql(SELECT_ALL_COLUMNS + where + " ORDER BY id")
+				.params(params)
+				.query(DistributionTargetRepository::mapRow)
+				.list();
+	}
+
+	/**
+	 * 단건 조회(전체 행). 존재 판정에 쓴다 — 비수치 id는 NaN으로 넘어와 어떤 행에도 매치되지 않아 빈
+	 * {@link Optional}이다(서비스가 not-found로 수렴시킨다).
+	 */
+	public Optional<Map<String, Object>> findById(double id) {
+		return this.jdbcClient.sql(SELECT_ALL_COLUMNS + " WHERE id = ?")
+				.param(ColumnValues.bind(Double.valueOf(id)))
+				.query(DistributionTargetRepository::mapRow)
+				.optional();
+	}
+
+	/**
+	 * 값이 주어진 화이트리스트 컬럼만 삽입한다({@code id} 제외 — 자동 증가).
+	 *
+	 * @return 새 행의 id(정수)
+	 * @throws IllegalArgumentException 화이트리스트 컬럼이 하나도 남지 않을 때(빈 삽입문을 만들지 않는다)
+	 */
+	public int insert(Map<String, ?> entry) {
+		List<String> columns = new ArrayList<>();
+		List<Object> params = new ArrayList<>();
+		if (entry != null) {
+			for (String column : WRITABLE_COLUMNS) {
+				if (!entry.containsKey(column)) {
+					continue;
+				}
+				columns.add(column);
+				params.add(ColumnValues.bind(entry.get(column)));
+			}
+		}
+		if (columns.isEmpty()) {
+			throw new IllegalArgumentException(RequiredSchema.DISTRIBUTION_TARGET_TABLE + ": 입력할 컬럼이 없습니다");
+		}
+		this.jdbcClient.sql("INSERT INTO " + RequiredSchema.DISTRIBUTION_TARGET_TABLE
+						+ " (" + String.join(", ", columns) + ") VALUES (" + placeholders(columns.size()) + ")")
+				.params(params)
+				.update();
+		return lastInsertRowId();
+	}
+
+	/**
+	 * present-only SET — 전달한 화이트리스트 컬럼만 바꾸고 나머지는 불변. {@code id}는 SET 대상이 아니다.
+	 * 대상 컬럼이 없으면 SQL을 실행하지 않고 0이다(계약이 이 수를 그대로 싣는다).
+	 *
+	 * @return 영향 받은 행 수
+	 */
+	public int update(double id, Map<String, ?> fields) {
+		List<String> assignments = new ArrayList<>();
+		List<Object> params = new ArrayList<>();
+		if (fields != null) {
+			for (String column : WRITABLE_COLUMNS) {
+				if (!fields.containsKey(column)) {
+					continue;
+				}
+				assignments.add(column + " = ?");
+				params.add(ColumnValues.bind(fields.get(column)));
+			}
+		}
+		if (assignments.isEmpty()) {
+			return 0;
+		}
+		params.add(ColumnValues.bind(Double.valueOf(id)));
+		return this.jdbcClient.sql("UPDATE " + RequiredSchema.DISTRIBUTION_TARGET_TABLE
+						+ " SET " + String.join(", ", assignments) + " WHERE id = ?")
+				.params(params)
+				.update();
+	}
+
+	/** 방금 삽입한 행의 ROWID(= INTEGER PK 값). */
+	private int lastInsertRowId() {
+		Integer id = this.jdbcClient.sql("SELECT last_insert_rowid()")
+				.query(Integer.class)
+				.single();
+		return id == null ? 0 : id;
+	}
+
+	/**
+	 * 컬럼 목록 순서의 맵. 값이 SQL NULL이어도 <b>키는 남긴다</b>. {@code id}만 정수로 읽고 나머지는 문자열이다.
+	 */
+	private static Map<String, Object> mapRow(ResultSet rs, int rowNum) throws SQLException {
+		Map<String, Object> row = new LinkedHashMap<>();
+		for (String column : RequiredSchema.DISTRIBUTION_TARGET_COLUMNS) {
+			row.put(column, column.equals(ID) ? rs.getLong(column) : rs.getString(column));
+		}
+		return row;
+	}
+
+	private static String placeholders(int count) {
+		return String.join(", ", Collections.nCopies(count, "?"));
+	}
+}
