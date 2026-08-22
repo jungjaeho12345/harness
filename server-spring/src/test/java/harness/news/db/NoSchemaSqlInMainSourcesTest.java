@@ -27,7 +27,16 @@ class NoSchemaSqlInMainSourcesTest {
 
 	private static final Path MAIN_SOURCES = Path.of("src", "main", "java");
 
-	/** 금지 패턴. 주석·문자열을 구분하지 않는다 — 주석에도 쓰지 않는 편이 안전하고 판정이 단순하다. */
+	/**
+	 * 금지 패턴(스키마 생성/변경/삭제·자동 마이그레이션). 주석·문자열을 구분하지 않는다 — 주석에도 쓰지
+	 * 않는 편이 안전하고 판정이 단순하다.
+	 *
+	 * <p>이 상수는 <b>리소스 스캔</b>({@link #mainResourcesDeclareNoAutomaticMigration})과
+	 * java-main 스캔이 공유한다. 그래서 여기 있는 {@code delete from}은 <b>모든 테이블</b>을 막는
+	 * 전면 금지로 남긴다 — java-main 쪽의 ReceiverConfig 예외는 이 공유 상수를 완화하는 것이 아니라
+	 * {@link #mainSourcesContainNoSchemaMutatingSql}의 <b>메서드-로컬 패턴</b>으로만 좁힌다(공유 상수를
+	 * 완화하면 리소스에도 {@code DELETE FROM ReceiverConfig}가 허용되는 과다완화가 된다 — phase 70 검토 권고).
+	 */
 	private static final List<Pattern> FORBIDDEN = List.of(
 			Pattern.compile("(?i)\\bcreate\\s+(table|index|view|trigger)\\b"),
 			Pattern.compile("(?i)\\balter\\s+table\\b"),
@@ -39,6 +48,26 @@ class NoSchemaSqlInMainSourcesTest {
 			Pattern.compile("(?i)flyway"),
 			Pattern.compile("(?i)liquibase"));
 
+	/**
+	 * java-main 스캔의 DDL 금지 패턴 — {@link #FORBIDDEN}에서 {@code delete from}만 뺀 나머지다.
+	 * 삭제는 아래 {@link #DELETE_FROM_OTHER_TABLE}가 ReceiverConfig 하나만 예외로 두고 좁혀서 본다.
+	 */
+	private static final List<Pattern> MAIN_JAVA_DDL_FORBIDDEN = FORBIDDEN.stream()
+			.filter((pattern) -> !pattern.pattern().contains("delete"))
+			.toList();
+
+	/**
+	 * <b>ReceiverConfig가 아닌</b> 테이블의 {@code DELETE FROM}만 잡는다(negative lookahead).
+	 *
+	 * <p>{@code DELETE FROM ReceiverConfig}는 이 서버 유일의 행 삭제 예외 경계다(SCHEMA.md 76행·계약
+	 * 파일 7~9행: 설정 행만 지우고 수집된 Article/Contents는 불변 = DB 비파괴 원칙의 명시적 예외). 그
+	 * 하나만 허용하고 나머지 6테이블(User·Article·Contents·ArticleHistory·DistributionTarget·Photo)의
+	 * 행 삭제는 여전히 red다 — {@code (?!receiverconfig\b)}가 그 부재를 적극 단언한다(예: {@code DELETE
+	 * FROM Contents}·{@code DELETE FROM DistributionTarget}는 잔여 매치로 잡힌다).
+	 */
+	private static final Pattern DELETE_FROM_OTHER_TABLE =
+			Pattern.compile("(?i)\\bdelete\\s+from\\s+(?!receiverconfig\\b)");
+
 	@Test
 	void mainSourcesContainNoSchemaMutatingSql() throws IOException {
 		assertTrue(Files.isDirectory(MAIN_SOURCES),
@@ -48,15 +77,20 @@ class NoSchemaSqlInMainSourcesTest {
 		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
 			for (Path file : files.filter(Files::isRegularFile).toList()) {
 				String text = Files.readString(file, StandardCharsets.UTF_8);
-				for (Pattern pattern : FORBIDDEN) {
+				for (Pattern pattern : MAIN_JAVA_DDL_FORBIDDEN) {
 					if (pattern.matcher(text).find()) {
 						hits.add(file + " ~ " + pattern.pattern());
 					}
 				}
+				// 삭제는 ReceiverConfig 하나만 예외 — 그 외 테이블의 DELETE FROM은 여전히 금지다.
+				if (DELETE_FROM_OTHER_TABLE.matcher(text).find()) {
+					hits.add(file + " ~ " + DELETE_FROM_OTHER_TABLE.pattern());
+				}
 			}
 		}
 
-		assertTrue(hits.isEmpty(), "main 소스에 금지된 스키마/삭제 SQL이 있다: " + hits);
+		assertTrue(hits.isEmpty(),
+				"main 소스에 금지된 스키마/삭제 SQL이 있다(허용은 DELETE FROM ReceiverConfig 하나뿐): " + hits);
 	}
 
 	/**
