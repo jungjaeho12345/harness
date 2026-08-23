@@ -46,9 +46,12 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 23 라우트 — phase 68이 만든 7개 + phase 70 step5의 수신 설정 3개
+	 * 구현된 27 라우트 — phase 68이 만든 7개 + phase 70 step5의 수신 설정 3개
 	 * ({@code GET /api/receiver-config} · {@code POST /api/receiver-config} ·
-	 * {@code DELETE /api/receiver-config/{id}}) + phase 69 step0의 {@code GET /api/users} +
+	 * {@code DELETE /api/receiver-config/{id}}) + phase 70 step6의 배부 수신처 4개
+	 * ({@code GET /api/distribution-targets} · {@code POST /api/distribution-targets} ·
+	 * {@code PUT /api/distribution-targets/{id}} · {@code POST /api/distribution-targets/{id}/deactivate} —
+	 * {@code DELETE}는 라우트 미등록이 계약이라 넣지 않는다) + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
@@ -67,6 +70,7 @@ class HandlerInventoryTest {
 	private static final List<String> IMPLEMENTED_ROUTES = List.of(
 			"DELETE /api/receiver-config/{id}",
 			"GET /api/articles",
+			"GET /api/distribution-targets",
 			"GET /api/articles/search",
 			"GET /api/articles/{id}",
 			"GET /api/articles/{id}/history",
@@ -82,11 +86,14 @@ class HandlerInventoryTest {
 			"POST /api/articles/{id}/force-unlock",
 			"POST /api/articles/{id}/lock",
 			"POST /api/articles/{id}/unlock",
+			"POST /api/distribution-targets",
+			"POST /api/distribution-targets/{id}/deactivate",
 			"POST /api/login",
 			"POST /api/logout",
 			"POST /api/receiver-config",
 			"POST /api/users",
 			"PUT /api/articles/{id}",
+			"PUT /api/distribution-targets/{id}",
 			"PUT /api/users/{userId}");
 
 	/**
@@ -127,12 +134,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheTwentyThreeImplementedRoutesHaveHandlers() {
+	void exactlyTheTwentySevenImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 23 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 27 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 

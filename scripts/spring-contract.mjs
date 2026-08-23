@@ -65,6 +65,8 @@ const SCOPE = [
       'contract/cases/default/articles-write.contract.js',
       'contract/cases/default/auth.contract.js',
       'contract/cases/default/crosscutting.contract.js',
+      // phase 70 step6 — 배부 수신처 4라우트가 붙으면서 green이 됐다(Z 전용·SAFE 7키·soft delete·DELETE 부재).
+      'contract/cases/default/distribution-targets.contract.js',
       'contract/cases/default/health.contract.js',
       // phase 70 step5 — 수신 설정 3라우트가 붙으면서 green이 됐다(Z 전용·SAFE 10키·삭제 멱등).
       'contract/cases/default/receiver-config.contract.js',
