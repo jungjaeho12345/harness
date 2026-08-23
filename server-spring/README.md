@@ -6,15 +6,16 @@
 
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
-- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인**): 라우트 **20개**. 계약 10파일(default 7 · minimal 1 ·
-  auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
-  (phase 69 마감 실측 2026-08-21: 케이스 158 · 관측 **170**(default 118 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
-  diffs 0 · 자기 결정성 `--dual-run` 170관측 diffs 0 · Java **584 테스트 0 실패**). 수집·배부·미디어·SSE·번역은 아직 없다(아래 라우트 표).
+- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD**): 라우트 **27개**. 계약 12파일
+  (default 9 · minimal 1 · auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
+  (phase 70 마감 실측 2026-08-23: 관측 **215**(default 163 · minimal 45 · auth-negative 4 · prod-cookie 3) · diffs 0 ·
+  자기 결정성 `--dual-run` 215관측 diffs 0 · default covered **23/39** · Java **661 테스트 0 실패**). 수집·배부 실행·미디어·SSE·번역은
+  아직 없다(아래 라우트 표). 배부 수신처는 **검증·저장만** 하고 스풀 쓰기·tick은 배부 실행 phase 소유다(ADR-008).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 20개**다
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 27개**다
 (`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
 
 | 라우트 | 인증 | 비고 |
@@ -39,8 +40,19 @@
 | `POST /api/articles/:id/force-unlock` | session-role | D/Z 전용이고 게이트 순서가 **역할 403 → 존재 404**(다른 라우트와 반대) |
 | `POST /api/articles/:id/action` | session-role | 전이표 → `(끝)` 마커 → 엠바고 DES 진입 → stamp·이력 · 사유 폴백 409 |
 | `POST /api/articles/:id/derive` | session-role | `followUp`·`continue` 2모드 · 작성자는 `name ?? userId`(**null 병합** — create의 `||`와 다르다) |
+| `GET /api/receiver-config` | admin(Z) | SAFE 10키 투영 · `password`·`apiKey`는 쓰기 전용 시크릿이라 어떤 응답에도 없다 · `createdAt`은 서버 미stamp라 `null` · 필터 원문 단일값(콤마 미분해) |
+| `POST /api/receiver-config` | admin(Z) | 입력 검증 없음(Node 재현) · 응답은 `{ok,id}`뿐(시크릿 미반향) |
+| `DELETE /api/receiver-config/:id` | admin(Z) | **이 서버 유일의 행 삭제 라우트** — `ReceiverConfig` 설정 행만 지운다(수집 Article/Contents 불변) · 재삭제·NaN id는 멱등 200 `changes:0` |
+| `GET /api/distribution-targets` | admin(Z) | SAFE 7키 투영(`spoolDir` 포함 — Z 전용 관리 화면) · 필터 원문 단일값(콤마 미분해) |
+| `POST /api/distribution-targets` | admin(Z) | 검증 순서 name→kind→spoolDir→active · 5종 거부 전부 폴백 400 · `createdAt`·`updatedAt` stamp |
+| `PUT /api/distribution-targets/:id` | admin(Z) | present-only · 없는/비수치 id는 404 `not-found`(500 아님) · `{active:'N'}`은 soft delete 두 번째 진입점 |
+| `POST /api/distribution-targets/:id/deactivate` | admin(Z) | soft delete — `active='N'`로 두고 행을 지우지 않는다(목록 생존) · 없는/비수치 id는 404 |
 
-**나머지 19 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+**배부 수신처에는 삭제 라우트가 없다**(`DELETE /api/distribution-targets/:id`는 매핑 미등록). Spring은 `PUT`이 매핑된
+경로에 `DELETE`가 오면 405를 내지만, express는 method-mismatch를 404로 fall-through하므로 `GlobalErrorHandler`가 그 405를
+미정의 경로와 같은 404 HTML로 접는다(Node 동형). 제거는 `active='N'` soft delete뿐이다(ADR-008·DB 비파괴).
+
+**나머지 12 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
   (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
@@ -67,7 +79,7 @@ Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계�
 송고 훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다.
 
 그래서 계약 스위트는 **담당 도메인 파일만**(`--files`·scope 표) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만
-쓸 수 있다(지금 쓰면 남은 19 라우트 때문에 영구 red이며, 그 red가 정상이다).
+쓸 수 있다(지금 쓰면 남은 12 라우트 때문에 영구 red이며, 그 red가 정상이다).
 
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).

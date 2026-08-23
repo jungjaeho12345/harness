@@ -99,8 +99,9 @@ class HandlerInventoryTest {
 	/**
 	 * 이 phase가 <b>쓰지 않은</b> 프레임워크 매핑 — Boot 기본 {@code BasicErrorController}다.
 	 * 인벤토리에 없는 Spring 전용 표면이며, index.json forward_notes (13)이 기록한
-	 * "405·415의 응답 shape이 이 서버의 다른 에러와 다르다"({@code {ok:false,reason:...}}가 아닌
+	 * "415의 응답 shape이 이 서버의 다른 에러와 다르다"({@code {ok:false,reason:...}}가 아닌
 	 * charset 없는 Boot {@code /error} JSON)의 <b>출처</b>다. Node에는 이 경로가 없다(404 HTML).
+	 * (phase 70이 405 method-mismatch는 express 동형으로 404 HTML로 접어 이 표면에서 뺐다 — {@code GlobalErrorHandler}.)
 	 * 계약이 그 축을 동결하지 않아 게이트는 green이지만, 존재 자체는 여기서 명시적으로 잠근다 —
 	 * 조용히 무시하면 "핸들러는 선언한 20개뿐"이라는 문장이 사실과 어긋난 채로 남는다.
 	 */
