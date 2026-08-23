@@ -83,6 +83,9 @@ class AuthorizationTest {
 		// phase 70 step3이 추가한 행 — 수신 설정 관리는 Z 전용이다(manageReceiverConfig: ['Z']).
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_RECEIVER_CONFIG),
 				"수신 설정 관리는 Z 전용이다");
+		// phase 70 step4가 추가한 행 — 배부 수신처 관리는 Z 전용이다(manageDistributionTarget: ['Z']).
+		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_DISTRIBUTION_TARGET),
+				"배부 수신처 관리는 Z 전용이다(ADR-008)");
 		// Node는 이 판정을 라우트 안에서 me.role !== 'Z'로 직접 한다(server/index.js 1168~1175).
 		// 관측(미인증 401 · 비-Z 403)은 같고, 판정 자리를 표로 모아 감사 가능하게 만든 것이 차이다.
 		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.VIEW_LOGS),

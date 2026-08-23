@@ -43,6 +43,14 @@ public class Authorization {
 	public static final String MANAGE_RECEIVER_CONFIG = "manageReceiverConfig";
 
 	/**
+	 * 배부 수신처(DistributionTarget) 관리 — Z 전용(ADR-008 · {@code src/services/authorization.js}
+	 * {@code manageDistributionTarget: ['Z']}). 조회·생성·수정·비활성 4라우트가 이 게이트를 탄다.
+	 *
+	 * <p>이 phase(70) step4가 그 라우트를 소유하면서 추가한 행이다. role은 세션에서만 도출한다(클래스 주석).
+	 */
+	public static final String MANAGE_DISTRIBUTION_TARGET = "manageDistributionTarget";
+
+	/**
 	 * 서버 로그 열람 — Z 전용(ADR-007). 로그는 <b>전 사용자의 요청 흔적</b>이라 R/D에게 열면 안 된다.
 	 *
 	 * <p>Node는 이 게이트를 라우트 안에서 {@code me.role !== 'Z'}로 직접 판정한다
@@ -66,6 +74,7 @@ public class Authorization {
 	static final Map<String, List<String>> CAPABILITIES = Map.of(
 			MANAGE_USERS, List.of("Z"),
 			MANAGE_RECEIVER_CONFIG, List.of("Z"),
+			MANAGE_DISTRIBUTION_TARGET, List.of("Z"),
 			VIEW_LOGS, List.of("Z"),
 			EDIT_DPS, List.of("D"));
 
