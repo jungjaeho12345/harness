@@ -304,6 +304,18 @@ class DistributionTargetsWireTest {
 		assertEquals(404, res.status(), "DELETE 라우트가 등록되면 안 된다(행 삭제 경로 없음 · ADR-008)");
 		assertFalse(res.body().contains("\"ok\":true"), "삭제 성공 응답이 있어서는 안 된다");
 
+		// 405→404 등가를 못박는다: 이 응답은 정본 미정의-라우트 404와 바이트 단위로 같아야 한다. 같은 테스트에서
+		// 진짜 미매핑 경로(PathPolicyWireTest가 phase 내내 미구현으로 쓰는 /api/media/search)의 404를 포착해
+		// 본문·Content-Type을 대조한다 — 미등록 DELETE가 스텁도, 405도, 특수 응답도 아님을 실증한다.
+		Wire.Response canonical404 = Wire.send(this.port, "GET",
+				"/api/media/search", sid(adminSid()), null);
+		assertEquals(404, canonical404.status(), "정본 미정의-라우트 프로브가 404가 아니다: " + canonical404.body());
+		assertFalse(canonical404.body().isEmpty(), "정본 404 본문이 비어 대조 대상이 없다");
+		assertEquals(canonical404.body(), res.body(),
+				"미등록 DELETE의 404 본문이 정본 미정의-라우트 404 HTML과 같아야 한다");
+		assertEquals(canonical404.line("content-type"), res.line("content-type"),
+				"미등록 DELETE의 Content-Type이 정본 미정의-라우트 404와 같아야 한다");
+
 		// 행은 그대로 남아 있다 — "행 삭제 경로가 없다"의 실증이다.
 		Map<String, Object> mine = findBySpoolDir("wire-spool-del");
 		assertFalse(mine.isEmpty(), "DELETE 요청이 수신처 행을 지웠다(ADR-008 위반)");

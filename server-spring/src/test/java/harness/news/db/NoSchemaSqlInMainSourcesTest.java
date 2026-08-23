@@ -50,13 +50,24 @@ class NoSchemaSqlInMainSourcesTest {
 			Pattern.compile("(?i)flyway"),
 			Pattern.compile("(?i)liquibase"));
 
-	/** 행 삭제문 매처 — {@code DELETE FROM <table>}에서 테이블 이름을 잡는다. */
-	private static final Pattern DELETE_FROM = Pattern.compile("(?i)\\bdelete\\s+from\\s+(\\w+)");
+	/**
+	 * 행 삭제문 매처(<b>broad</b>) — {@code DELETE FROM}이면 형태 불문 잡는다. 이 코드베이스의 지배적
+	 * 관용구인 연결식({@code "DELETE FROM " + RequiredSchema.SOME_TABLE + ...})도, 인라인 리터럴
+	 * ({@code "DELETE FROM Article ..."})도 모두 걸린다. {@code FROM} 뒤에 곧바로 단어 문자를 요구하지
+	 * 않는다 — 연결식은 {@code FROM } 다음이 따옴표라 그 방식이면 그물을 빠져나간다.
+	 */
+	private static final Pattern DELETE_FROM = Pattern.compile("(?i)\\bdelete\\s+from\\b");
 
-	/** 행 {@code DELETE}가 허용되는 <b>유일한</b> 파일과 테이블(decisions (1)). */
+	/**
+	 * 설계상 유일하게 승인된 <b>실제</b> 행 삭제문만 잡는 매처 — 연결식 {@code "DELETE FROM " + <table> ...}.
+	 * 문자열 리터럴 시작(따옴표)과 뒤이은 {@code +}를 요구하므로 javadoc 주석의
+	 * {@code {@code DELETE FROM ReceiverConfig ...}}는 매치되지 않는다. 즉 <b>주석이 아니라 실행되는
+	 * 문장</b>을 센다 — 주석 문구를 바꿔도 초록이 되지 않고, 실문장이 사라지면 곧바로 실패한다.
+	 */
+	private static final Pattern REAL_ROW_DELETE = Pattern.compile("\"DELETE FROM \"\\s*\\+");
+
+	/** 행 {@code DELETE}가 허용되는 <b>유일한</b> 파일(decisions (1)). 테이블 이름이 아니라 파일로 승인한다. */
 	private static final String ROW_DELETE_ALLOWED_FILE = "ReceiverConfigRepository.java";
-
-	private static final String ROW_DELETE_ALLOWED_TABLE = "ReceiverConfig";
 
 	@Test
 	void mainSourcesContainNoSchemaMutatingSql() throws IOException {
@@ -72,15 +83,11 @@ class NoSchemaSqlInMainSourcesTest {
 						hits.add(file + " ~ " + pattern.pattern());
 					}
 				}
-				// 행 DELETE: ReceiverConfigRepository에서 ReceiverConfig 테이블을 겨냥할 때만 허용하고
-				// 그 밖(다른 파일·다른 테이블)은 금지한다.
-				var delete = DELETE_FROM.matcher(text);
-				while (delete.find()) {
-					boolean allowedFile = file.getFileName().toString().equals(ROW_DELETE_ALLOWED_FILE);
-					boolean allowedTable = delete.group(1).equals(ROW_DELETE_ALLOWED_TABLE);
-					if (!allowedFile || !allowedTable) {
-						hits.add(file + " ~ DELETE FROM " + delete.group(1) + " (설계 예외 밖의 행 삭제)");
-					}
+				// 행 DELETE: ReceiverConfigRepository 파일에서만 허용하고 그 밖의 모든 파일에서는 형태 불문
+				// 금지한다 — 연결식("DELETE FROM " + VAR)도 인라인 리터럴("DELETE FROM Article ...")도 잡힌다.
+				boolean allowedFile = file.getFileName().toString().equals(ROW_DELETE_ALLOWED_FILE);
+				if (!allowedFile && DELETE_FROM.matcher(text).find()) {
+					hits.add(file + " ~ DELETE FROM (설계 예외 밖의 행 삭제)");
 				}
 			}
 		}
@@ -90,21 +97,21 @@ class NoSchemaSqlInMainSourcesTest {
 
 	@Test
 	void theOnlyRowDeleteIsReceiverConfigDelete() throws IOException {
-		// 설계상 유일한 행 삭제(receiver-config-delete)가 실제로 존재하고 ReceiverConfig만 겨냥하는지
-		// 적극적으로 확인한다 — 예외가 조용히 사라지거나 다른 테이블로 번지지 않게(decisions (1)).
-		List<String> deletes = new ArrayList<>();
+		// 설계상 유일한 행 삭제(receiver-config-delete)가 실제로 존재하는지 적극 확인한다. 주석 문구가 아니라
+		// 실행되는 연결식 문장("DELETE FROM " + <table> ...)을 센다 — 예외가 조용히 사라지지 않게(decisions
+		// (1)). 실문장이 제거·개명되면 이 목록이 비어 실패하고, 존재하는 동안만 통과한다.
+		List<String> realDeletes = new ArrayList<>();
 		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
 			for (Path file : files.filter(Files::isRegularFile).toList()) {
 				String text = Files.readString(file, StandardCharsets.UTF_8);
-				var delete = DELETE_FROM.matcher(text);
-				while (delete.find()) {
-					deletes.add(file.getFileName().toString() + ":" + delete.group(1));
+				if (REAL_ROW_DELETE.matcher(text).find()) {
+					realDeletes.add(file.getFileName().toString());
 				}
 			}
 		}
 
-		assertEquals(List.of(ROW_DELETE_ALLOWED_FILE + ":" + ROW_DELETE_ALLOWED_TABLE), deletes,
-				"행 DELETE는 ReceiverConfigRepository의 ReceiverConfig 하나뿐이어야 한다");
+		assertEquals(List.of(ROW_DELETE_ALLOWED_FILE), realDeletes,
+				"실제 행 DELETE 문장은 ReceiverConfigRepository 하나뿐이어야 한다(주석이 아니라 실행문 기준)");
 	}
 
 	/**
