@@ -46,7 +46,9 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 20 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
+	 * 구현된 23 라우트 — phase 68이 만든 7개 + phase 70 step5의 수신 설정 3개
+	 * ({@code GET /api/receiver-config} · {@code POST /api/receiver-config} ·
+	 * {@code DELETE /api/receiver-config/{id}}) + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
@@ -63,6 +65,7 @@ class HandlerInventoryTest {
 	 * step11)이 닫혔다. 이제 "구현했는데 계약이 관측하지 않는 라우트"는 <b>0개</b>다.
 	 */
 	private static final List<String> IMPLEMENTED_ROUTES = List.of(
+			"DELETE /api/receiver-config/{id}",
 			"GET /api/articles",
 			"GET /api/articles/search",
 			"GET /api/articles/{id}",
@@ -70,6 +73,7 @@ class HandlerInventoryTest {
 			"GET /api/articles/{id}/history/{historyId}",
 			"GET /api/health",
 			"GET /api/logs/digest",
+			"GET /api/receiver-config",
 			"GET /api/session",
 			"GET /api/users",
 			"POST /api/articles",
@@ -80,6 +84,7 @@ class HandlerInventoryTest {
 			"POST /api/articles/{id}/unlock",
 			"POST /api/login",
 			"POST /api/logout",
+			"POST /api/receiver-config",
 			"POST /api/users",
 			"PUT /api/articles/{id}",
 			"PUT /api/users/{userId}");
@@ -122,12 +127,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheTwentyImplementedRoutesHaveHandlers() {
+	void exactlyTheTwentyThreeImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 20 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 23 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 

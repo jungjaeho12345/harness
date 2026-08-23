@@ -57,6 +57,17 @@ public final class NodeNumber {
 		return (long) value;
 	}
 
+	/**
+	 * {@code Number(raw)} — 경로 변수를 {@code double}로 숫자화한다(ECMAScript {@code ToNumber}). 비수치는
+	 * {@code NaN}이다. 관리자 CRUD 라우트가 {@code Number(req.params.id)} 동형으로 경로 id를 서비스({@code double}
+	 * 인자)에 넘길 때 쓴다 — receiver-config-delete의 {@code 'abc'}는 NaN→매치 0→{@code changes:0}, distribution
+	 * update/deactivate의 {@code 'abc'}·없는 id는 NaN/미매치→{@code not-found}로 수렴한다(index.json decisions (7)).
+	 * 값 계산만 하고 반올림·클램프·기본값 같은 관용은 넣지 않는다.
+	 */
+	public static double numberOf(String raw) {
+		return valueOf(raw);
+	}
+
 	/** {@code Number(raw)} — 문자열 하나에 대한 ECMAScript {@code ToNumber}. */
 	private static double valueOf(String raw) {
 		if (raw == null) {
