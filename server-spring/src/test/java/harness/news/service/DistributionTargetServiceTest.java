@@ -60,7 +60,8 @@ class DistributionTargetServiceTest {
 				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
 		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), users);
 		Authorization authorization = new Authorization(this.guard, articles);
-		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource));
+		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)));
 		this.clock = new MutableClock(Instant.parse("2026-08-22T00:00:00.000Z").toEpochMilli());
 		this.service = new DistributionTargetService(this.targets, authorization, this.clock);
 		insertUser("dt-z", "Z");
@@ -118,6 +119,38 @@ class DistributionTargetServiceTest {
 				"공백만 있는 이름도 거부");
 	}
 
+	/**
+	 * <b>누락·{@code null} 필드는 사유 토큰이지 예외가 아니다.</b> {@code Set.of(...).contains(null)}은
+	 * NPE라 kind를 빼고 보낸 요청이 전역 핸들러를 타고 500 {@code internal-error}가 된다 — Node는
+	 * {@code KINDS.has(undefined)}가 거짓이라 400 {@code invalid-kind}다(2026-08-24 리뷰 high-2).
+	 *
+	 * <p>{@code checkName}은 처음부터 타입 게이트({@code instanceof})를 앞세워 이 벡터가 없었다 —
+	 * 집합 검사 둘만 빠져 있었고, 계약·와이어·서비스 케이스가 전부 kind를 실어 보내 0관측이었다.
+	 */
+	@Test
+	void missingOrNullSetFieldsAreReasonTokensNotExceptions() {
+		assertEquals("invalid-kind",
+				this.service.create(zToken(), entry("name", "ok", "spoolDir", "sp-nk")).reason(),
+				"kind 누락은 400 사유 토큰이다(NPE 아님)");
+		assertEquals("invalid-kind",
+				this.service.create(zToken(), entry("name", "ok", "kind", null, "spoolDir", "sp-nk")).reason());
+		assertEquals("invalid-kind",
+				this.service.create(zToken(), entry("name", "ok", "kind", 1, "spoolDir", "sp-nk")).reason(),
+				"비문자열 kind도 강제변환 없이 거부");
+		assertEquals("invalid-active", this.service
+				.create(zToken(), entry("name", "ok", "kind", "press", "spoolDir", "sp-na", "active", null)).reason(),
+				"active:null은 '미지정'이 아니다 — 키가 있으므로 검증 대상이다");
+		assertEquals(0, this.targets.query(Map.of("name", "ok")).size(), "거부된 create는 행을 만들지 않는다");
+
+		int id = this.service.create(zToken(), entry("name", "설정", "kind", "press", "spoolDir", "sp-nn")).id();
+		assertEquals("invalid-kind", this.service.update(zToken(), id, entry("kind", null)).reason());
+		assertEquals("invalid-active",
+				this.service.update(zToken(), id, entry("active", null)).reason());
+		Map<String, Object> untouched = this.targets.findById(id).get();
+		assertEquals("press", untouched.get("kind"), "거부된 update는 아무것도 바꾸지 않는다");
+		assertEquals("Y", untouched.get("active"));
+	}
+
 	// --- duplicate-spool-dir (비활성 포함) --------------------------------------------------------
 
 	@Test
@@ -127,7 +160,7 @@ class DistributionTargetServiceTest {
 				this.service.create(zToken(), entry("name", "B", "kind", "press", "spoolDir", "sp-dup")).reason());
 
 		// 첫 대상을 비활성으로 내려도 그 슬러그는 여전히 사용 중이다(비활성 행까지 유일성에 포함).
-		this.service.deactivate(zToken(), String.valueOf(first));
+		this.service.deactivate(zToken(), first);
 		assertEquals("N", this.targets.findById(first).get().get("active"));
 		assertEquals("duplicate-spool-dir",
 				this.service.create(zToken(), entry("name", "C", "kind", "press", "spoolDir", "sp-dup")).reason(),
@@ -141,19 +174,19 @@ class DistributionTargetServiceTest {
 		int id = this.service.create(zToken(), entry("name", "원래", "kind", "press", "spoolDir", "sp-up")).id();
 
 		// present-only: name만 보내면 그것만 바뀌고 kind는 불변.
-		assertEquals(1, this.service.update(zToken(), String.valueOf(id), entry("name", "바뀜")).changes());
+		assertEquals(1, this.service.update(zToken(), id, entry("name", "바뀜")).changes());
 		Map<String, Object> after = this.targets.findById(id).get();
 		assertEquals("바뀜", after.get("name"));
 		assertEquals("press", after.get("kind"), "전달하지 않은 필드는 불변");
 
 		// 전달 필드 하나라도 위반이면 아무것도 저장 안 됨.
-		assertEquals("invalid-kind", this.service.update(zToken(), String.valueOf(id), entry("kind", "bogus")).reason());
+		assertEquals("invalid-kind", this.service.update(zToken(), id, entry("kind", "bogus")).reason());
 		assertEquals("바뀜", this.targets.findById(id).get().get("name"), "거부된 update는 아무것도 바꾸지 않는다");
 
 		// 존재 확인이 검증보다 먼저 — 없는 id에 잘못된 필드를 보내도 not-found(검증 토큰이 아니다).
-		assertEquals("not-found", this.service.update(zToken(), "999999", entry("kind", "bogus")).reason());
-		assertEquals("not-found", this.service.update(zToken(), "abc", entry("name", "x")).reason(),
-				"비수치 id는 NaN → not-found(500 아님)");
+		assertEquals("not-found", this.service.update(zToken(), 999999, entry("kind", "bogus")).reason());
+		assertEquals("not-found", this.service.update(zToken(), Double.NaN, entry("name", "x")).reason(),
+				"비수치 id는 라우트의 Number() 판독에서 NaN이 되어 not-found로 수렴한다(500 아님)");
 	}
 
 	// --- update·deactivate 수렴 + updatedAt stamp -------------------------------------------------
@@ -164,12 +197,12 @@ class DistributionTargetServiceTest {
 		String created = (String) this.targets.findById(id).get().get("updatedAt");
 
 		this.clock.advance(60_000);
-		assertEquals(1, this.service.update(zToken(), String.valueOf(id), entry("name", "새이름")).changes());
+		assertEquals(1, this.service.update(zToken(), id, entry("name", "새이름")).changes());
 		String afterUpdate = (String) this.targets.findById(id).get().get("updatedAt");
 		assertNotEquals(created, afterUpdate, "update가 updatedAt을 stamp한다");
 
 		this.clock.advance(60_000);
-		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(id)).changes());
+		assertEquals(1, this.service.deactivate(zToken(), id).changes());
 		Map<String, Object> afterDeactivate = this.targets.findById(id).get();
 		assertNotEquals(afterUpdate, afterDeactivate.get("updatedAt"), "deactivate도 같은 applyPatch로 stamp한다");
 		assertEquals("N", afterDeactivate.get("active"), "deactivate는 active='N'");
@@ -197,7 +230,7 @@ class DistributionTargetServiceTest {
 		assertEquals(created.get("createdAt"), created.get("updatedAt"), "생성 시점에는 두 시각이 같다");
 
 		this.clock.advance(90_000);
-		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(id)).changes());
+		assertEquals(1, this.service.deactivate(zToken(), id).changes());
 
 		Map<String, Object> patched = this.targets.findById(id).get();
 		assertEquals("2026-08-22T00:00:00.000Z", patched.get("createdAt"), "createdAt은 갱신 경로에서 불변이다");
@@ -209,8 +242,8 @@ class DistributionTargetServiceTest {
 		int viaDeactivate = this.service.create(zToken(), entry("name", "a", "kind", "press", "spoolDir", "sp-a")).id();
 		int viaPut = this.service.create(zToken(), entry("name", "b", "kind", "press", "spoolDir", "sp-b")).id();
 
-		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(viaDeactivate)).changes());
-		assertEquals(1, this.service.update(zToken(), String.valueOf(viaPut), entry("active", "N")).changes());
+		assertEquals(1, this.service.deactivate(zToken(), viaDeactivate).changes());
+		assertEquals(1, this.service.update(zToken(), viaPut, entry("active", "N")).changes());
 
 		assertEquals("N", this.targets.findById(viaDeactivate).get().get("active"));
 		assertEquals("N", this.targets.findById(viaPut).get().get("active"), "PUT {active:N}도 같은 전이다");
@@ -227,8 +260,8 @@ class DistributionTargetServiceTest {
 			assertEquals("forbidden",
 					this.service.create(token, entry("name", "x", "kind", "press", "spoolDir", "sp-x")).reason());
 			assertEquals("forbidden",
-					this.service.update(token, String.valueOf(existing), entry("name", "y")).reason());
-			assertEquals("forbidden", this.service.deactivate(token, String.valueOf(existing)).reason());
+					this.service.update(token, existing, entry("name", "y")).reason());
+			assertEquals("forbidden", this.service.deactivate(token, existing).reason());
 		}
 		// 거부는 아무것도 바꾸지 않았다.
 		Map<String, Object> row = this.targets.findById(existing).get();
@@ -244,8 +277,8 @@ class DistributionTargetServiceTest {
 			assertEquals("unauthenticated", this.service.query(token, Map.of()).reason());
 			assertEquals("unauthenticated",
 					this.service.create(token, entry("name", "x", "kind", "press", "spoolDir", "sp-u")).reason());
-			assertEquals("unauthenticated", this.service.update(token, "1", entry("name", "x")).reason());
-			assertEquals("unauthenticated", this.service.deactivate(token, "1").reason());
+			assertEquals("unauthenticated", this.service.update(token, 1, entry("name", "x")).reason());
+			assertEquals("unauthenticated", this.service.deactivate(token, 1).reason());
 		}
 	}
 

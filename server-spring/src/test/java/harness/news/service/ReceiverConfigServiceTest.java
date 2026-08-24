@@ -59,7 +59,8 @@ class ReceiverConfigServiceTest {
 				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
 		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), users);
 		Authorization authorization = new Authorization(this.guard, articles);
-		this.configs = new ReceiverConfigRepository(JdbcClient.create(this.dataSource));
+		this.configs = new ReceiverConfigRepository(JdbcClient.create(this.dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)));
 		this.service = new ReceiverConfigService(this.configs, authorization);
 		insertUser("rc-z", "Z");
 		insertUser("rc-r", "R");

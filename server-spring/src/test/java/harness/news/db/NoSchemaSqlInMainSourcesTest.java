@@ -1,5 +1,6 @@
 package harness.news.db;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -136,6 +137,26 @@ class NoSchemaSqlInMainSourcesTest {
 	 */
 	private static boolean deletesAnotherTable(String text) {
 		return DELETE_FROM_OTHER_TABLE.matcher(inlineTableConstants(text)).find();
+	}
+
+	/**
+	 * 파생 목록({@link #MAIN_JAVA_DDL_FORBIDDEN})이 공유 목록에서 <b>정확히 {@code delete from} 하나만</b>
+	 * 뺀 나머지임을 못 박는다.
+	 *
+	 * <p>왜 필요한가(2026-08-24 리뷰 low): 그 목록은 정규식의 <b>소스 문자열</b>에 {@code "delete"}가
+	 * 들었는지로 걸러 만든다 — 필터는 의도를 모르고 글자만 본다. 앞으로 그 낱말이 든 패턴(예: 원장 전용
+	 * 삭제 금지)을 {@link #FORBIDDEN}에 추가하면 java-main 스캔에서 <b>조용히 빠져</b> 아무도 모르게
+	 * 방어가 줄어든다. 크기와 구성을 단언해 두면 그 추가가 여기서 red가 되어 드러난다.
+	 */
+	@Test
+	void theDerivedMainJavaListDropsExactlyTheDeleteFromPattern() {
+		List<String> shared = FORBIDDEN.stream().map(Pattern::pattern).toList();
+		List<String> derived = MAIN_JAVA_DDL_FORBIDDEN.stream().map(Pattern::pattern).toList();
+		List<String> dropped = shared.stream().filter((pattern) -> !derived.contains(pattern)).toList();
+
+		assertEquals(List.of("(?i)\\bdelete\\s+from\\b"), dropped,
+				"java-main 스캔에서 빠지는 패턴은 delete from 하나뿐이어야 한다(나머지 DDL 금지는 그대로다)");
+		assertEquals(shared.size() - 1, derived.size(), "파생 목록 크기");
 	}
 
 	/**

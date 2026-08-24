@@ -8,8 +8,8 @@
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
 - 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD**): 라우트 **27개**. 계약 12파일(default 9 ·
   minimal 1 · auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
-  (phase 70 마감 실측 2026-08-22: 관측 **215**(default 163 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
-  diffs 0 · 자기 결정성 `--dual-run` 215관측 diffs 0 · Java **637 테스트 0 실패**). 수집·배부 실행·미디어·SSE·번역은 아직 없다(아래 라우트 표).
+  (phase 70 리뷰 반영 후 최종 실측 2026-08-24: 관측 **215**(default 163 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
+  diffs 0 · 자기 결정성 `--dual-run` 215관측 diffs 0 · Java **670 테스트 0 실패**). 수집·배부 실행·미디어·SSE·번역은 아직 없다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트

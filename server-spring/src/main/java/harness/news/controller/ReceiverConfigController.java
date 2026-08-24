@@ -2,12 +2,14 @@ package harness.news.controller;
 
 import harness.news.service.ReceiverConfigService;
 import harness.news.web.JsonHttp;
+import harness.news.web.NodeNumber;
 import harness.news.web.ReasonStatus;
 import harness.news.web.SessionTokens;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -76,12 +78,16 @@ public class ReceiverConfigController {
 	}
 
 	/**
-	 * 삭제 — Z 전용. 경로 변수 id를 {@code Number()} 동형으로 double로 만들어 서비스에 넘긴다
-	 * (비수치 {@code /abc}는 NaN이 되어 어떤 행에도 매치되지 않는다 → 200 changes:0, 500 아님).
+	 * 삭제 — Z 전용. 경로 변수 id를 {@link NodeNumber#toNumber} <b>단일 출처</b>로 double로 만들어 서비스에
+	 * 넘긴다(Node 라우트의 {@code Number(req.params.id)} 자리와 같다). 비수치 {@code /abc}는 NaN이 되어
+	 * 어떤 행에도 매치되지 않는다 → 200 changes:0(500 아님).
+	 *
+	 * <p>여기서 {@code Double.parseDouble}로 재구현하면 {@code /5d}·{@code /0x1p3} 같은 <b>Java 전용
+	 * 표기</b>가 값이 되어, Node가 지우지 않는 행을 Spring만 지운다(2026-08-24 리뷰 high-1 실측).
 	 */
 	@DeleteMapping("/api/receiver-config/{id}")
 	public void remove(@PathVariable String id, HttpServletRequest request, HttpServletResponse response) {
-		ReceiverConfigService.Result result = this.configs.remove(tokenOf(request), numberOf(id));
+		ReceiverConfigService.Result result = this.configs.remove(tokenOf(request), NodeNumber.toNumber(id));
 		if (!result.ok()) {
 			deny(request, response, result.reason());
 			return;
@@ -92,41 +98,27 @@ public class ReceiverConfigController {
 	}
 
 	/**
-	 * 쿼리 파라미터 → 필터 맵(파라미터당 첫 값). Node 라우트가 {@code req.query}를 그대로 넘기는 것과 동형이다.
+	 * 쿼리 파라미터 → 필터 맵. Node 라우트가 {@code req.query}를 그대로 넘기는 것과 동형이다 — 그래서
+	 * <b>express(qs)가 만드는 값의 모양</b>을 그대로 재현한다: 한 번 온 키는 문자열, <b>반복된 키는 값
+	 * 리스트</b>다.
+	 *
+	 * <p>첫 값으로 접지 마라(2026-08-24 리뷰 med): {@code ?sourceId=a&sourceId=b}에서 Node는 배열을
+	 * 그대로 바인딩에 내려 드라이버 예외 → 500 {@code internal-error}가 된다. 첫 값만 취하면 같은 URL에
+	 * Spring만 200 목록을 준다. 리스트는 {@code ColumnValues.bind}가 거부하므로 <b>저절로</b> 같은 500으로
+	 * 수렴한다(여기서 상태코드를 만들지 않는다).
 	 *
 	 * <p>{@code getParameterValues}로 읽는다 — {@code getParameter(}는 {@code ?session=} 폴백 부활을 막는
-	 * 정적 스캔({@code WebWiringTest})이 금지한 API다(화이트리스트 밖 키·시크릿은 리포지토리가 무시하므로
-	 * 첫 값만 넘겨도 계약이 성립한다).
+	 * 정적 스캔({@code WebWiringTest})이 금지한 API다.
 	 */
 	private static Map<String, Object> queryFilters(HttpServletRequest request) {
 		Map<String, Object> filters = new LinkedHashMap<>();
 		for (String name : Collections.list(request.getParameterNames())) {
 			String[] values = request.getParameterValues(name);
 			if (values != null && values.length > 0) {
-				filters.put(name, values[0]);
+				filters.put(name, (values.length == 1) ? values[0] : List.of(values));
 			}
 		}
 		return filters;
-	}
-
-	/**
-	 * JS {@code Number()} 동형 — 삭제 라우트의 id 정규화. 정수·소수 문자열은 그 값, 공백은 0, 그 밖은 NaN이다.
-	 * 계약이 관측하는 경로는 정수 id(매치 후 삭제)와 {@code 'abc'}(NaN → 매치 0)뿐이다.
-	 */
-	private static double numberOf(String raw) {
-		if (raw == null) {
-			return Double.NaN;
-		}
-		String trimmed = raw.trim();
-		if (trimmed.isEmpty()) {
-			return 0.0; // JS Number('')===0
-		}
-		try {
-			return Double.parseDouble(trimmed);
-		}
-		catch (NumberFormatException ex) {
-			return Double.NaN; // JS Number('abc')===NaN
-		}
 	}
 
 	private static String tokenOf(HttpServletRequest request) {

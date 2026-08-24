@@ -237,7 +237,84 @@ class ReceiverConfigWireTest {
 		assertNotNull(survivor.contents(), "Contents 행이 사라졌다");
 	}
 
+	// --- 7. 삭제 id는 Node의 Number() 의미론으로만 읽는다(정책 단일 출처) ---------------------------
+
+	/**
+	 * <b>Java 전용 표기는 어떤 행에도 닿지 않는다</b> — {@code 5d}·{@code 5D}·{@code 5f}·{@code 0x5p0}은
+	 * {@code Double.parseDouble}이 받아들이지만 Node의 {@code Number(...)}는 전부 {@code NaN}이다.
+	 *
+	 * <p>왜 이 축이 최우선인가(2026-08-24 리뷰 high-1): 이 라우트는 <b>행 삭제가 허용된 유일한 테이블</b>을
+	 * 다룬다. 판정이 Node보다 관대하면 {@code DELETE /api/receiver-config/5d}가 Node에서는 changes:0인데
+	 * Spring에서만 <b>id 5 행을 지운다</b> — 계약이 관측하지 않는 표기에서 데이터가 사라진다.
+	 */
+	@Test
+	void javaOnlyNumberSpellingsNeverDeleteARow() {
+		String source = unique("ct-src");
+		int id = createConfig(configBody(source));
+
+		for (String spelling : List.of(id + "d", id + "D", id + "f", id + "F",
+				"0x" + Integer.toHexString(id) + "p0")) {
+			Wire.Response response = delete("/api/receiver-config/" + spelling, zToken());
+			assertEquals(200, response.status(), spelling + " 삭제 응답 상태");
+			assertEquals("{\"ok\":true,\"changes\":0}", response.body(),
+					spelling + "은(는) Node에서 NaN이다 — 어떤 행에도 매치되지 않는다");
+		}
+
+		assertEquals(1, this.rows.query(Map.of("id", id)).size(),
+				"Node가 지우지 않는 표기로 행이 사라졌다 — 유일한 행 삭제 라우트가 Node보다 관대하다");
+	}
+
+	/**
+	 * 반대 방향 — <b>Node가 값으로 읽는 표기는 Spring도 같은 행에 닿아야 한다</b>: 진법 접두
+	 * ({@code 0x10}·{@code 0b101}·{@code 0o17})와 JS 공백 선행(NBSP {@code U+00A0})이다.
+	 * {@code Double.parseDouble}은 진법 접두를 거부하고 {@code String.trim()}은 NBSP를 걷어내지 못한다 —
+	 * 둘 다 <b>Node가 지우는 행을 Spring만 남긴다</b>(같은 URL에 changes가 갈린다).
+	 */
+	@Test
+	void theSpellingsNodeReadsAsThatIdDeleteTheSameRow() {
+		// 표기마다 자기 행을 따로 만든다 — 삭제가 서로의 대상을 지우지 않게.
+		int hex = createConfig(configBody(unique("ct-src")));
+		int binary = createConfig(configBody(unique("ct-src")));
+		int octal = createConfig(configBody(unique("ct-src")));
+		int padded = createConfig(configBody(unique("ct-src")));
+
+		assertDeletesRow("0x" + Integer.toHexString(hex), hex);
+		assertDeletesRow("0b" + Integer.toBinaryString(binary), binary);
+		assertDeletesRow("0o" + Integer.toOctalString(octal), octal);
+		assertDeletesRow("%C2%A0" + padded, padded); // NBSP는 JS 공백 — Number()가 걷어낸다.
+	}
+
+	// --- 8. 반복 쿼리 키는 값 리스트 그대로 넘어간다(첫 값으로 접지 않는다) --------------------------
+
+	/**
+	 * express(qs)는 {@code ?sourceId=a&sourceId=b}를 <b>배열</b>로 준다. Node 모델은 그 배열을 그대로
+	 * 바인딩에 내려 드라이버가 예외를 던지고 전역 핸들러가 500 {@code internal-error}로 만든다.
+	 * Spring이 첫 값만 취하면 같은 URL에 <b>Spring만 200 목록</b>을 준다(본문이 갈린다).
+	 */
+	@Test
+	void aRepeatedFilterKeyIsBoundAsAListAndFailsClosedWith500() {
+		String source = unique("ct-src");
+		createConfig(configBody(source));
+
+		Wire.Response repeated = list(zToken(), "sourceId=" + source + "&sourceId=zzz");
+
+		assertEquals(500, repeated.status(), "반복 키를 첫 값으로 접으면 Node(500)와 갈린다");
+		assertEquals("{\"ok\":false,\"reason\":\"internal-error\"}", repeated.body());
+	}
+
 	// --- 도구 ------------------------------------------------------------------------------------
+
+	private void assertDeletesRow(String spelling, int id) {
+		Wire.Response response = delete("/api/receiver-config/" + spelling, zToken());
+		assertEquals(200, response.status(), spelling + " 삭제 응답 상태");
+		assertEquals("{\"ok\":true,\"changes\":1}", response.body(),
+				spelling + "은(는) Node에서 id " + id + "다 — 그 행이 지워져야 한다");
+		assertEquals(0, this.rows.query(Map.of("id", id)).size(), spelling + "이(가) 행을 지우지 않았다");
+	}
+
+	private static String configBody(String sourceId) {
+		return "{\"sourceId\":\"" + sourceId + "\",\"type\":\"FTP\"}";
+	}
 
 	private Wire.Response list(String token, String query) {
 		String path = "/api/receiver-config" + (query == null ? "" : "?" + query);

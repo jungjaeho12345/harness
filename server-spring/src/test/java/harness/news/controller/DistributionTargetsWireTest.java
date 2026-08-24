@@ -231,6 +231,110 @@ class DistributionTargetsWireTest {
 		assertTrue(this.rows.findById(id).isPresent(), "DELETE 요청이 행을 지웠다(ADR-008 위반)");
 	}
 
+	// --- 7. 경로 id는 Node의 Number() 의미론으로만 읽는다 ------------------------------------------
+
+	/**
+	 * <b>Java 전용 표기는 어떤 행에도 닿지 않는다</b>({@code 5d}·{@code 5D}·{@code 5f}·{@code 0x5p0}).
+	 * {@code Double.parseDouble}을 그대로 쓰면 Node가 404를 주는 URL로 Spring만 <b>남의 행을 고치거나
+	 * 비활성으로 내린다</b>(2026-08-24 리뷰 high-1 — receiver-config 삭제와 같은 결함의 다른 라우트).
+	 */
+	@Test
+	void javaOnlyNumberSpellingsNeverReachARow() {
+		String spool = unique("sp");
+		String name = unique("t");
+		int id = createTarget(name, "press", spool);
+
+		for (String spelling : List.of(id + "d", id + "D", id + "f", "0x" + Integer.toHexString(id) + "p0")) {
+			Wire.Response put = update(spelling, "{\"name\":\"hijacked\"}");
+			assertEquals(404, put.status(), spelling + " PUT은 Node에서 not-found다");
+			assertEquals("{\"ok\":false,\"reason\":\"not-found\"}", put.body());
+
+			Wire.Response off = deactivate(spelling);
+			assertEquals(404, off.status(), spelling + " deactivate는 Node에서 not-found다");
+			assertEquals("{\"ok\":false,\"reason\":\"not-found\"}", off.body());
+		}
+
+		Map<String, Object> row = this.rows.findById(id).orElseThrow();
+		assertEquals(name, row.get("name"), "Node가 닿지 않는 표기가 행을 고쳤다");
+		assertEquals("Y", row.get("active"), "Node가 닿지 않는 표기가 행을 비활성으로 내렸다");
+	}
+
+	/**
+	 * 반대 방향 — Node가 <b>값으로 읽는</b> 표기(진법 접두 · JS 공백 선행)는 같은 행에 닿아야 한다.
+	 * {@code Double.parseDouble}은 {@code 0x10}을 거부하고 {@code String.trim()}은 NBSP를 못 걷어낸다 —
+	 * 둘 다 Node가 200 changes:1을 주는 URL에 Spring만 404를 준다.
+	 */
+	@Test
+	void theSpellingsNodeReadsAsThatIdReachTheSameRow() {
+		int hex = createTarget(unique("t"), "press", unique("sp"));
+		int padded = createTarget(unique("t"), "press", unique("sp"));
+
+		Wire.Response byHex = update("0x" + Integer.toHexString(hex), "{\"name\":\"hex-renamed\"}");
+		assertEquals(200, byHex.status(), "0x 접두는 Node에서 같은 id다");
+		assertEquals("{\"ok\":true,\"changes\":1}", byHex.body());
+		assertEquals("hex-renamed", this.rows.findById(hex).orElseThrow().get("name"));
+
+		Wire.Response byPadded = deactivate("%C2%A0" + padded);
+		assertEquals(200, byPadded.status(), "NBSP는 JS 공백이라 Number()가 걷어낸다");
+		assertEquals("{\"ok\":true,\"changes\":1}", byPadded.body());
+		assertEquals("N", this.rows.findById(padded).orElseThrow().get("active"));
+	}
+
+	// --- 8. 누락·null 필드는 400 사유 토큰이다(500이 아니다) ---------------------------------------
+
+	/**
+	 * {@code Set.of(...).contains(null)}은 <b>NPE</b>다 — kind를 빼고 보낸 생성 요청이 전역 핸들러를 타고
+	 * 500 {@code internal-error}가 되면 Node(400 {@code invalid-kind})와 갈린다(2026-08-24 리뷰 high-2).
+	 * 검증기는 {@code checkName}처럼 <b>타입 게이트를 먼저</b> 세워야 한다.
+	 */
+	@Test
+	void missingOrNullKindAndActiveAre400ReasonTokensNot500() {
+		record Case(String body, String reason) { }
+		List<Case> cases = List.of(
+				new Case("{\"name\":\"" + unique("t") + "\",\"spoolDir\":\"" + unique("sp") + "\"}", "invalid-kind"),
+				new Case("{\"name\":\"" + unique("t") + "\",\"kind\":null,\"spoolDir\":\"" + unique("sp") + "\"}",
+						"invalid-kind"),
+				new Case("{\"name\":\"" + unique("t") + "\",\"kind\":\"press\",\"spoolDir\":\"" + unique("sp")
+						+ "\",\"active\":null}", "invalid-active"));
+
+		for (Case c : cases) {
+			Wire.Response res = create(c.body());
+			assertEquals(400, res.status(), "누락·null 필드는 500이 아니라 400이다: " + c.body());
+			assertEquals("{\"ok\":false,\"reason\":\"" + c.reason() + "\"}", res.body());
+		}
+
+		int id = createTarget(unique("t"), "press", unique("sp"));
+		for (Case c : List.of(new Case("{\"kind\":null}", "invalid-kind"),
+				new Case("{\"active\":null}", "invalid-active"))) {
+			Wire.Response res = update(String.valueOf(id), c.body());
+			assertEquals(400, res.status(), "PUT의 null 필드도 500이 아니다: " + c.body());
+			assertEquals("{\"ok\":false,\"reason\":\"" + c.reason() + "\"}", res.body());
+		}
+		assertEquals("Y", this.rows.findById(id).orElseThrow().get("active"), "거부된 PUT은 아무것도 바꾸지 않는다");
+	}
+
+	// --- 9. 반복 쿼리 키는 값 리스트 그대로 넘어간다(첫 값으로 접지 않는다) --------------------------
+
+	/**
+	 * express(qs)는 {@code ?kind=press&kind=nonpress}를 <b>배열</b>로 준다. Node 서비스의
+	 * {@code pickFilters}는 문자열·숫자가 아닌 값을 버리므로 그 요청은 <b>필터 없는 전체 목록</b>이다.
+	 * 첫 값으로 접으면 Spring만 좁힌 목록을 준다(같은 200에 본문이 다르다).
+	 */
+	@Test
+	void aRepeatedFilterKeyIsDroppedSoTheListStaysUnfiltered() {
+		String pressSpool = unique("sp");
+		String nonpressSpool = unique("sp");
+		createTarget(unique("t"), "press", pressSpool);
+		createTarget(unique("t"), "nonpress", nonpressSpool);
+
+		Wire.Response repeated = list(zToken(), "kind=press&kind=nonpress");
+
+		assertEquals(200, repeated.status());
+		assertTrue(repeated.body().contains("\"spoolDir\":\"" + pressSpool + "\""), "press 행이 없다");
+		assertTrue(repeated.body().contains("\"spoolDir\":\"" + nonpressSpool + "\""),
+				"첫 값으로 접으면 nonpress 행이 사라진다 — Node는 필터를 통째로 버린다");
+	}
+
 	// --- 도구 ------------------------------------------------------------------------------------
 
 	private Wire.Response create(String body) {

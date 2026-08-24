@@ -36,7 +36,9 @@ import org.springframework.stereotype.Service;
  *
  * <h2>id·시각은 서버가 정한다</h2>
  * id는 자동 증가, {@code createdAt}·{@code updatedAt}은 주입 {@link Clock}으로 stamp한다(entry의 동명 필드
- * 무시). 비수치 id는 {@code Number(id)=NaN}으로 정규화되어 어떤 행에도 매치되지 않는다 → not-found(500 아님).
+ * 무시). 경로 id는 <b>라우트가 {@code Number()} 의미론으로 읽은 수</b>로 들어온다(판독 정책의 단일 출처는
+ * {@code NodeNumber} — 여기서 재구현하지 않는다). 비수치 id는 그 판독에서 {@code NaN}이 되어 어떤 행에도
+ * 매치되지 않는다 → not-found(500 아님).
  */
 @Service
 public class DistributionTargetService {
@@ -144,15 +146,18 @@ public class DistributionTargetService {
 	/**
 	 * present-only 수정 — 게이트 → 존재 확인(검증보다 먼저) → 전달 필드만 검증·반영. 하나라도 위반이면
 	 * 아무것도 저장하지 않는다.
+	 *
+	 * <p>{@code id}는 <b>이미 {@code Number()} 의미론으로 읽힌 수</b>다(라우트가 그 판독의 유일한 자리다 —
+	 * Node {@code index.js}의 {@code Number(req.params.id)} 동형). 숫자가 아니었던 id는 {@code NaN}으로
+	 * 들어와 어떤 행에도 매치되지 않아 not-found로 수렴한다(500 아님).
 	 */
-	public Result update(String sessionToken, String id, Map<String, ?> fields) {
+	public Result update(String sessionToken, double id, Map<String, ?> fields) {
 		Authorization.Decision gate = gate(sessionToken);
 		if (!gate.ok()) {
 			return Result.deny(gate.reason());
 		}
-		double key = normalizeId(id);
 		// 존재 확인을 검증보다 먼저 — 없는 id가 검증 reason으로 둔갑하지 않도록.
-		if (this.targets.findById(key).isEmpty()) {
+		if (this.targets.findById(id).isEmpty()) {
 			return Result.deny("not-found");
 		}
 		Map<String, ?> input = fields == null ? Map.of() : fields;
@@ -173,7 +178,7 @@ public class DistributionTargetService {
 			patch.put("kind", kind.value());
 		}
 		if (input.containsKey("spoolDir")) {
-			Field spoolDir = checkSpoolDir(input.get("spoolDir"), key); // 자기 자신은 중복에서 제외.
+			Field spoolDir = checkSpoolDir(input.get("spoolDir"), id); // 자기 자신은 중복에서 제외.
 			if (!spoolDir.ok()) {
 				return Result.deny(spoolDir.reason());
 			}
@@ -186,18 +191,21 @@ public class DistributionTargetService {
 			}
 			patch.put("active", active.value());
 		}
-		return applyPatch(key, patch);
+		return applyPatch(id, patch);
 	}
 
-	/** 비활성(soft delete) — 행을 지우지 않는다. update와 같은 헬퍼로 수렴한다. */
-	public Result deactivate(String sessionToken, String id) {
+	/**
+	 * 비활성(soft delete) — 행을 지우지 않는다. update와 같은 헬퍼로 수렴하고 id 판독도 같다
+	 * (라우트가 {@code Number()} 의미론으로 읽은 수를 그대로 받는다).
+	 */
+	public Result deactivate(String sessionToken, double id) {
 		Authorization.Decision gate = gate(sessionToken);
 		if (!gate.ok()) {
 			return Result.deny(gate.reason());
 		}
 		Map<String, Object> patch = new LinkedHashMap<>();
 		patch.put("active", "N");
-		return applyPatch(normalizeId(id), patch);
+		return applyPatch(id, patch);
 	}
 
 	/**
@@ -231,13 +239,28 @@ public class DistributionTargetService {
 		return Field.of(trimmed);
 	}
 
-	/** 집합 검사 — 비문자열은 자연 거부된다(대소문자 보정 없음). */
+	/**
+	 * 집합 검사 — <b>타입 게이트를 먼저</b> 세운다(대소문자 보정 없음).
+	 *
+	 * <p>{@code Set.of(...)}는 {@code contains(null)}에 <b>NPE</b>를 던진다({@code ImmutableCollections}).
+	 * kind를 빼고 보낸 생성 요청({@code {"name":"x","spoolDir":"ok"}})이 그 예외를 타고 전역 핸들러로 가면
+	 * 500 {@code internal-error}가 되는데, Node는 {@code KINDS.has(undefined)}가 거짓이라 400
+	 * {@code invalid-kind}다(2026-08-24 리뷰 high-2 — 계약·와이어·서비스 케이스가 전부 kind를 실어 보내
+	 * 0관측이던 벡터다). {@code checkName}과 같은 형태로 맞춘다.
+	 */
 	private static Field checkKind(Object value) {
-		return KINDS.contains(value) ? Field.of((String) value) : Field.fail("invalid-kind");
+		if (!(value instanceof String text) || !KINDS.contains(text)) {
+			return Field.fail("invalid-kind");
+		}
+		return Field.of(text);
 	}
 
+	/** 같은 이유로 타입 게이트 선행 — {@code active:null}·비문자열은 400 {@code invalid-active}다. */
 	private static Field checkActive(Object value) {
-		return ACTIVE.contains(value) ? Field.of((String) value) : Field.fail("invalid-active");
+		if (!(value instanceof String text) || !ACTIVE.contains(text)) {
+			return Field.fail("invalid-active");
+		}
+		return Field.of(text);
 	}
 
 	/**
@@ -266,27 +289,12 @@ public class DistributionTargetService {
 	}
 
 	/**
-	 * id 정규화 — Node {@code normalizeId(id)=Number(id)}. DB의 id는 INTEGER PK라 double로 맞춰
-	 * findById/update가 같은 타입을 보게 한다. 숫자로 변환되지 않는 id는 NaN이 되어 어떤 행에도 매치되지
-	 * 않는다 → not-found로 수렴(500 아님).
+	 * 허용 키의 원시값(문자열/숫자)만 통과 — 배열·객체는 무시한다(필터 주입·바인딩 오류 차단).
+	 *
+	 * <p>반복된 쿼리 키({@code ?kind=press&kind=nonpress})가 값 리스트로 들어오면 여기서 <b>버려져</b>
+	 * 필터 없는 전체 목록이 된다 — Node {@code pickFilters}의 {@code typeof v === 'string' || 'number'}와
+	 * 같은 결과다(라우트가 첫 값으로 접으면 이 수렴이 성립하지 않는다).
 	 */
-	private static double normalizeId(String id) {
-		if (id == null) {
-			return Double.NaN;
-		}
-		String trimmed = id.trim();
-		if (trimmed.isEmpty()) {
-			return 0.0; // JS Number('')===0
-		}
-		try {
-			return Double.parseDouble(trimmed);
-		}
-		catch (NumberFormatException ex) {
-			return Double.NaN; // JS Number('abc')===NaN
-		}
-	}
-
-	/** 허용 키의 원시값(문자열/숫자)만 통과 — 배열·객체는 무시한다(필터 주입·바인딩 오류 차단). */
 	private static Map<String, Object> pickFilters(Map<String, ?> filters) {
 		Map<String, Object> out = new LinkedHashMap<>();
 		if (filters != null) {

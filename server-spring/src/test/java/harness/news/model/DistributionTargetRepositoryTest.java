@@ -8,15 +8,24 @@ import com.zaxxer.hikari.HikariDataSource;
 import harness.news.db.NewsDataSource;
 import harness.news.testsupport.TempNewsDb;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.JdbcTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * DistributionTarget 리포지토리 — 리포 루트 {@code src/models/distributionTargetModel.js}와 1:1 대응하는
@@ -42,7 +51,8 @@ class DistributionTargetRepositoryTest {
 	void setUp() {
 		TempNewsDb.seed(this.tempDir);
 		this.dataSource = NewsDataSource.create(this.tempDir);
-		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource));
+		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)));
 	}
 
 	@AfterEach
@@ -158,6 +168,56 @@ class DistributionTargetRepositoryTest {
 	@Test
 	void findByIdOfAbsentIsEmpty() {
 		assertTrue(this.targets.findById(999_999).isEmpty());
+	}
+
+	// --- 동시 삽입: 돌려주는 id는 자기 행의 id다 ---------------------------------------------------
+
+	/**
+	 * <b>{@code insert}가 돌려주는 id는 자기가 넣은 행의 id다</b> — 동시 삽입에서도.
+	 *
+	 * <p>왜 필요한가(2026-08-24 리뷰 med-4): {@code INSERT}와 {@code SELECT last_insert_rowid()}가 별도
+	 * 호출이면 두 문장 사이에서 커넥션이 반납된다. 풀 상한이 1이라 모든 스레드가 <b>같은 물리 커넥션</b>을
+	 * 쓰고 {@code last_insert_rowid()}는 그 커넥션 단위 상태다 — A의 INSERT → B의 INSERT → A의 SELECT면
+	 * A가 <b>B의 id</b>를 받는다. 생성 응답이 남의 대상 id를 실으면 그 뒤의 수정·비활성이 <b>남의 행</b>에
+	 * 적용된다. Node는 단일 스레드라 없는 결함이라 계약이 관측하지 않는다.
+	 */
+	@Test
+	void concurrentInsertsEachReturnTheIdOfTheirOwnRow() throws Exception {
+		Map<String, Integer> byMarker = new ConcurrentHashMap<>();
+		int workers = 6;
+		int perWorker = 12;
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(workers);
+		List<Future<?>> running = new ArrayList<>();
+		try {
+			for (int worker = 0; worker < workers; worker++) {
+				int index = worker;
+				running.add(pool.submit(() -> {
+					start.await();
+					for (int i = 0; i < perWorker; i++) {
+						String marker = "sp-" + index + "-" + i;
+						byMarker.put(marker, this.targets.insert(row("name", marker, "kind", "press",
+								"spoolDir", marker)));
+					}
+					return null;
+				}));
+			}
+			start.countDown();
+			for (Future<?> task : running) {
+				task.get(120, TimeUnit.SECONDS);
+			}
+		}
+		finally {
+			pool.shutdownNow();
+		}
+
+		assertEquals(workers * perWorker, byMarker.size(), "모든 삽입이 끝나야 판정이 성립한다");
+		for (Map.Entry<String, Integer> inserted : byMarker.entrySet()) {
+			Optional<Map<String, Object>> found = this.targets.findById(inserted.getValue());
+			assertTrue(found.isPresent(), "돌려준 id의 행이 없다: " + inserted);
+			assertEquals(inserted.getKey(), found.get().get("spoolDir"),
+					"삽입이 남의 행 id를 돌려줬다 — INSERT와 last_insert_rowid() 사이에 커넥션이 반납된다");
+		}
 	}
 
 	// --- 값 바인딩 정책(decisions (13)) -----------------------------------------------------------

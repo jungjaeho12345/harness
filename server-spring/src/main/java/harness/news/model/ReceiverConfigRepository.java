@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 수집(자동기사) 수신 설정 데이터 접근 계층 — 직접 SQL(ORM 없음, ADR-002). 비즈니스 규칙은 없다.
@@ -61,8 +62,11 @@ public class ReceiverConfigRepository {
 
 	private final JdbcClient jdbcClient;
 
-	public ReceiverConfigRepository(JdbcClient jdbcClient) {
+	private final TransactionTemplate transactions;
+
+	public ReceiverConfigRepository(JdbcClient jdbcClient, TransactionTemplate transactions) {
 		this.jdbcClient = jdbcClient;
+		this.transactions = transactions;
 	}
 
 	/**
@@ -94,6 +98,12 @@ public class ReceiverConfigRepository {
 	/**
 	 * 값이 주어진 화이트리스트 컬럼만 삽입한다({@code id} 제외 — 자동 증가).
 	 *
+	 * <p><b>삽입과 id 판독은 한 트랜잭션이다</b>(2026-08-24 리뷰 med): {@code last_insert_rowid()}는
+	 * <b>커넥션 단위 상태</b>이고 풀 상한이 1이라 모든 스레드가 같은 물리 커넥션을 쓴다. 두 문장을 따로
+	 * 실행하면 그 사이에 커넥션이 반납돼 A의 INSERT → B의 INSERT → A의 SELECT 순서에서 A가 <b>B의 id</b>를
+	 * 받고, 그 id로 삭제하면 남의 설정 행이 사라진다. Node는 단일 스레드라 없는 결함이라 계약이 관측하지
+	 * 않는다 — 묶는 것이 유일한 방어선이다({@code ArticleRepository}의 확립된 관례).
+	 *
 	 * @return 새 행의 id(정수)
 	 * @throws IllegalArgumentException 화이트리스트 컬럼이 하나도 남지 않을 때(빈 삽입문을 만들지 않는다)
 	 */
@@ -112,11 +122,14 @@ public class ReceiverConfigRepository {
 		if (columns.isEmpty()) {
 			throw new IllegalArgumentException(RequiredSchema.RECEIVER_CONFIG_TABLE + ": 입력할 컬럼이 없습니다");
 		}
-		this.jdbcClient.sql("INSERT INTO " + RequiredSchema.RECEIVER_CONFIG_TABLE
-						+ " (" + String.join(", ", columns) + ") VALUES (" + placeholders(columns.size()) + ")")
-				.params(params)
-				.update();
-		return lastInsertRowId();
+		Integer id = this.transactions.execute((status) -> {
+			this.jdbcClient.sql("INSERT INTO " + RequiredSchema.RECEIVER_CONFIG_TABLE
+							+ " (" + String.join(", ", columns) + ") VALUES (" + placeholders(columns.size()) + ")")
+					.params(params)
+					.update();
+			return lastInsertRowId();
+		});
+		return id == null ? 0 : id;
 	}
 
 	/**
@@ -142,7 +155,7 @@ public class ReceiverConfigRepository {
 				.update();
 	}
 
-	/** 방금 삽입한 행의 ROWID(= INTEGER PK 값). */
+	/** 방금 삽입한 행의 ROWID(= INTEGER PK 값). <b>반드시 삽입과 같은 트랜잭션(=같은 커넥션)에서 부른다.</b> */
 	private int lastInsertRowId() {
 		Integer id = this.jdbcClient.sql("SELECT last_insert_rowid()")
 				.query(Integer.class)
