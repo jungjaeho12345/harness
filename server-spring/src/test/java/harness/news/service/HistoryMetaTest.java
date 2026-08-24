@@ -47,6 +47,47 @@ class HistoryMetaTest {
 				"{\"blocks\":[{\"type\":\"text\",\"text\":\"  첫 줄  \\n둘째 줄\"},{\"type\":\"text\",\"text\":\"셋째\"}]}"));
 	}
 
+	/**
+	 * 첫 줄의 앞뒤를 걷어내는 집합은 <b>JS {@code .trim()}의 집합</b>이다 — Java의 {@code strip()}도
+	 * {@code trim()}도 아니다.
+	 *
+	 * <p>이 파생 값은 {@code ArticleHistoryRecorder}를 거쳐 {@code ArticleHistory.snapshotTitle} 컬럼에
+	 * <b>영속</b>되고 {@code GET /api/articles/:id/history}의 {@code title}로 나간다 — 집합이 한 글자라도
+	 * 갈리면 같은 편집에 두 서버가 <b>다른 값을 쓴다</b>. 붙여넣기 본문의 NBSP는 실제로 흔하다.
+	 * 계약 픽스처는 ASCII 제목만 쓰므로 이 축의 유일한 방어선은 이 테스트다.
+	 *
+	 * <p>기대값은 Node 실측이다: {@code " x ".trim() === "x"}(NBSP·U+FEFF·U+2007·U+202F는
+	 * 걷힌다) / {@code "x".trim() === "x"}(U+001C~U+001F는 <b>JS 공백이 아니다</b> — Java
+	 * {@code Character.isWhitespace}만 참이다).
+	 */
+	@Test
+	void theFirstLineIsTrimmedWithJavaScriptWhitespaceNotJavaWhitespace() {
+		// 평문 레거시 경로로 돌린다 — U+0009·U+000B·U+000C는 JSON 문자열에 날것으로 넣을 수 없다(파서가 거부).
+		for (int cp : new int[] { 0x00A0, 0xFEFF, 0x2007, 0x202F, 0x1680, 0x2000, 0x205F, 0x3000, 0x2028, 0x2029,
+				0x000B, 0x000C, 0x0009, 0x0020 }) {
+			String pad = ch(cp);
+			assertEquals("제목", HistoryMeta.snapshotTitle(pad + "제목" + pad),
+					"U+" + Integer.toHexString(cp) + "는 JS .trim()이 걷어내는 공백이다");
+		}
+		for (int cp : new int[] { 0x001C, 0x001D, 0x001E, 0x001F, 0x0085, 0x200B }) {
+			String pad = ch(cp);
+			assertEquals(pad + "제목" + pad, HistoryMeta.snapshotTitle(pad + "제목" + pad),
+					"U+" + Integer.toHexString(cp) + "는 JS 공백이 아니다 — 제목의 일부로 남는다");
+		}
+	}
+
+	@Test
+	void theBlockDocumentPathTrimsTheSameWay() {
+		// 실제로 영속되는 경로(블록 문서)에서도 같은 집합이어야 한다 — 붙여넣기 본문의 NBSP가 여기로 온다.
+		String nbsp = ch(0x00A0);
+
+		assertEquals("제목", HistoryMeta.snapshotTitle(body(nbsp + "제목" + nbsp)));
+		assertEquals("", HistoryMeta.snapshotTitle(body(nbsp + " " + ch(0xFEFF) + ch(0x202F))),
+				"전부 공백이면 빈 제목이다");
+		assertEquals("가운데" + nbsp + "공백", HistoryMeta.snapshotTitle(body("가운데" + nbsp + "공백")),
+				"가운데 공백은 건드리지 않는다");
+	}
+
 	@Test
 	void theTitleIsTruncatedToTwoHundredCharacters() {
 		String long300 = "가".repeat(300);
@@ -240,6 +281,11 @@ class HistoryMetaTest {
 		item.put("snapshotTitle", storedTitle);
 		item.put("markupVersion", markupVersion);
 		return item;
+	}
+
+	/** 보이지 않는 문자는 <b>소스에 심지 않는다</b> — 코드포인트로 만든다(diff가 사실을 감추지 않게). */
+	private static String ch(int codePoint) {
+		return String.valueOf((char) codePoint);
 	}
 
 	private static String body(String firstLine) {
