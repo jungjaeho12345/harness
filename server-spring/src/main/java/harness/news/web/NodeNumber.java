@@ -1,5 +1,6 @@
 package harness.news.web;
 
+import harness.news.service.NodeString;
 import java.util.regex.Pattern;
 
 /**
@@ -20,6 +21,10 @@ import java.util.regex.Pattern;
  *
  * <p><b>이 클래스는 값을 만들지 않는다</b> — 판정만 한다. 반올림·클램프·기본값 같은 관용을 넣지 마라
  * (그 순간 두 서버가 같은 입력에 다른 행을 돌려준다).
+ *
+ * <p>선행·후행 공백 제거는 {@link NodeString}이 소유한다 — {@code ToNumber}가 걷어내는 집합은
+ * {@code String.prototype.trim}과 같은 집합이며, 그 술어를 여기 따로 두면 정책이 두 벌이 되어
+ * 한쪽만 고쳐진다(실제로 그랬다 — {@code HistoryMeta}가 {@code strip()}을 쓰고 있었다).
  */
 public final class NodeNumber {
 
@@ -62,7 +67,7 @@ public final class NodeNumber {
 		if (raw == null) {
 			return Double.NaN; // 경로 파라미터는 null이 될 수 없지만 판정이 입력에 의존하지 않게 한다.
 		}
-		String trimmed = trim(raw);
+		String trimmed = NodeString.trim(raw);
 		if (trimmed.isEmpty()) {
 			return 0.0; // Number('') === 0 이다(NaN이 아니다).
 		}
@@ -88,34 +93,6 @@ public final class NodeNumber {
 			value = value * radix + Character.digit(digits.charAt(i), radix);
 		}
 		return value;
-	}
-
-	/**
-	 * JS의 {@code WhiteSpace} + {@code LineTerminator}를 걷어낸다. {@link String#trim()}은 U+00A0·U+FEFF를
-	 * 남기고 {@link String#strip()}은 U+00A0를 공백으로 보지 않아 둘 다 쓸 수 없다. 유니코드 공백 목록을
-	 * <b>문자 리터럴로 늘어놓지 않는다</b> — 보이지 않는 문자를 소스에 심으면 diff가 사실을 감춘다.
-	 */
-	private static String trim(String raw) {
-		int start = 0;
-		int end = raw.length();
-		while (start < end && isWhitespace(raw.charAt(start))) {
-			start++;
-		}
-		while (end > start && isWhitespace(raw.charAt(end - 1))) {
-			end--;
-		}
-		return raw.substring(start, end);
-	}
-
-	private static boolean isWhitespace(char c) {
-		if (c == '\t' || c == '\n' || c == '\f' || c == '\r') {
-			return true;
-		}
-		if (c == 0x000B || c == 0x2028 || c == 0x2029 || c == 0xFEFF) {
-			return true; // VT · LINE/PARAGRAPH SEPARATOR · BOM(ZERO WIDTH NO-BREAK SPACE)
-		}
-		// <USP> = 유니코드 공백 구분자(U+0020·U+00A0·U+1680·U+2000~200A·U+202F·U+205F·U+3000).
-		return Character.getType(c) == Character.SPACE_SEPARATOR;
 	}
 
 }
