@@ -1,5 +1,6 @@
 package harness.news.db;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -89,7 +90,9 @@ class NoSchemaSqlInMainSourcesTest {
 			"USER_TABLE", RequiredSchema.USER_TABLE,
 			"ARTICLE_TABLE", RequiredSchema.ARTICLE_TABLE,
 			"CONTENTS_TABLE", RequiredSchema.CONTENTS_TABLE,
-			"HISTORY_TABLE", RequiredSchema.HISTORY_TABLE);
+			"HISTORY_TABLE", RequiredSchema.HISTORY_TABLE,
+			"RECEIVER_CONFIG_TABLE", RequiredSchema.RECEIVER_CONFIG_TABLE,
+			"DISTRIBUTION_TARGET_TABLE", RequiredSchema.DISTRIBUTION_TARGET_TABLE);
 
 	@Test
 	void mainSourcesContainNoSchemaMutatingSql() throws IOException {
@@ -106,7 +109,8 @@ class NoSchemaSqlInMainSourcesTest {
 					}
 				}
 				// 삭제는 ReceiverConfig 하나만 예외 — 그 외 테이블의 DELETE FROM은 여전히 금지다.
-				if (DELETE_FROM_OTHER_TABLE.matcher(text).find()) {
+				// 원문과 "이어붙이기를 편 형태"를 둘 다 본다(아래 자기 검사 테스트가 그 이유를 적는다).
+				if (deletesAnotherTable(text)) {
 					hits.add(file + " ~ " + DELETE_FROM_OTHER_TABLE.pattern());
 				}
 			}
@@ -114,6 +118,50 @@ class NoSchemaSqlInMainSourcesTest {
 
 		assertTrue(hits.isEmpty(),
 				"main 소스에 금지된 스키마/삭제 SQL이 있다(허용은 DELETE FROM ReceiverConfig 하나뿐): " + hits);
+	}
+
+	/**
+	 * ReceiverConfig가 아닌 테이블의 삭제인가 — <b>원문</b>과 <b>이어붙이기를 편 형태</b>를 둘 다 본다.
+	 *
+	 * <p>펼치기가 필요한 이유(2026-08-24 테스터 게이트 변이 실측): 원문만 보는 정규식
+	 * ({@code \bdelete\s+from\s+})은 문자열을 끊어 쓴 {@code "delete from" + " Article WHERE ..."}를
+	 * <b>놓친다</b>({@code from} 뒤가 공백이 아니라 따옴표다). 실제로 그 형태로 수신설정 삭제가 Article
+	 * 테이블 전체를 함께 비우게 만든 변이에서 <b>Java 651 테스트·계약 default 163관측이 전부 green</b>이었다.
+	 * {@link #inlineTableConstants}가 따옴표·{@code +}를 공백으로 지우므로 그 형태가 다시 판정 대상이 된다.
+	 *
+	 * <p>판정은 <b>펼친 형태 하나로만</b> 한다. 원문까지 함께 OR로 보면 허용된 예외를 상수로 쓴
+	 * {@code "DELETE FROM " + RequiredSchema.RECEIVER_CONFIG_TABLE}가 원문 쪽에서 걸려 <b>오탐</b>이 된다
+	 * (아래 자기 검사가 그 경계를 잠근다). 펼치기는 따옴표·{@code +}를 공백으로 만들 뿐이라 원문이 잡던
+	 * 형태({@code DELETE FROM Contents})는 펼친 뒤에도 그대로 잡힌다.
+	 */
+	private static boolean deletesAnotherTable(String text) {
+		return DELETE_FROM_OTHER_TABLE.matcher(inlineTableConstants(text)).find();
+	}
+
+	/**
+	 * 삭제 스캐너가 <b>공허하지 않다</b>는 증거 — 실제 변이와 같은 형태를 심어 잡히는지 확인하고, 동시에
+	 * 유일한 예외({@code DELETE FROM ReceiverConfig})는 계속 통과함을 못 박는다.
+	 *
+	 * <p>이 자기 검사가 없으면 lookahead가 넓어져 <b>모든</b> 삭제를 허용하도록 망가져도(또는 반대로
+	 * 예외까지 막도록 좁아져도) 테스트는 조용히 green이다.
+	 */
+	@Test
+	void theDeleteScanSeesThroughConcatenationAndStillAllowsTheReceiverConfigException() {
+		for (String planted : List.of(
+				"sql(\"DELETE FROM Contents WHERE articleId = ?\")",
+				"sql(\"DELETE FROM DistributionTarget WHERE id = ?\")",
+				"sql(\"delete from\" + \" Article WHERE articleId IS NOT NULL\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.DISTRIBUTION_TARGET_TABLE + \" WHERE id = ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.HISTORY_TABLE + \" WHERE articleId = ?\")")) {
+			assertTrue(deletesAnotherTable(planted), "다른 테이블의 행 삭제를 놓친다 — 스캐너가 공허하다: " + planted);
+		}
+
+		for (String allowed : List.of(
+				"sql(\"DELETE FROM ReceiverConfig WHERE id = ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.RECEIVER_CONFIG_TABLE + \" WHERE id = ?\")")) {
+			assertFalse(deletesAnotherTable(allowed),
+					"유일한 행 삭제 예외(DELETE FROM ReceiverConfig)까지 막고 있다: " + allowed);
+		}
 	}
 
 	/**

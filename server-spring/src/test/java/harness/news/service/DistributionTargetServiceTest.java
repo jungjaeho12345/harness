@@ -176,6 +176,34 @@ class DistributionTargetServiceTest {
 		assertTrue(this.targets.findById(id).isPresent(), "deactivate는 행을 지우지 않는다");
 	}
 
+	/**
+	 * 시각은 <b>주입된 시계에서만</b> 온다 — 벽시계 직접 호출을 막는 정적 스캔({@code ClockDisciplineTest})의
+	 * 행동 짝이다.
+	 *
+	 * <p>왜 필요한가(2026-08-24 테스터 게이트 변이 실측): {@code create}의 stamp를
+	 * {@code Instant.now()}로 바꾼 변이에서 <b>이 서비스의 행동 테스트 10건이 전부 green</b>이었다
+	 * (기존 테스트는 "값이 달라졌다"만 볼 뿐 그 값이 어디서 왔는지 묻지 않는다). 정적 스캔 하나가 유일한
+	 * 방어선이면 스캔이 못 보는 형태(주입 시계를 무시하고 다른 시각 소스를 쓰는 헬퍼)에서 그대로 뚫린다.
+	 *
+	 * <p>{@code createdAt}이 갱신 경로에서 <b>불변</b>이라는 사실도 함께 잠근다(감사 기록의 기준선).
+	 */
+	@Test
+	void createStampsBothTimesFromTheInjectedClockAndCreatedAtNeverMoves() {
+		int id = this.service.create(zToken(), entry("name", "시계", "kind", "press", "spoolDir", "sp-clk")).id();
+
+		Map<String, Object> created = this.targets.findById(id).get();
+		assertEquals("2026-08-22T00:00:00.000Z", created.get("createdAt"),
+				"주입 시계 값 그대로다(ISO-8601 UTC 밀리초 3자리 + Z)");
+		assertEquals(created.get("createdAt"), created.get("updatedAt"), "생성 시점에는 두 시각이 같다");
+
+		this.clock.advance(90_000);
+		assertEquals(1, this.service.deactivate(zToken(), String.valueOf(id)).changes());
+
+		Map<String, Object> patched = this.targets.findById(id).get();
+		assertEquals("2026-08-22T00:00:00.000Z", patched.get("createdAt"), "createdAt은 갱신 경로에서 불변이다");
+		assertEquals("2026-08-22T00:01:30.000Z", patched.get("updatedAt"), "updatedAt은 진행한 주입 시계 값이다");
+	}
+
 	@Test
 	void deactivateAndPutActiveNConvergeToTheSameResult() {
 		int viaDeactivate = this.service.create(zToken(), entry("name", "a", "kind", "press", "spoolDir", "sp-a")).id();

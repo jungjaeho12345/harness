@@ -150,6 +150,46 @@ class ReceiverConfigRepositoryTest {
 		assertEquals(0, this.configs.remove(999_999));
 	}
 
+	/**
+	 * <b>예외 경계는 자기 행 하나에서 끝난다</b> — 다른 테이블로도, 같은 테이블의 다른 행으로도 번지지 않는다.
+	 *
+	 * <p>왜 이 테스트가 필요한가(2026-08-24 테스터 게이트 변이 실측): {@code remove}가 설정 행을 지우면서
+	 * <b>Article 테이블 전체를 함께 비우도록</b> 고친 변이에서 Java 651 테스트·계약 default 163관측이
+	 * <b>전부 green</b>이었다. 정적 삭제 스캔은 {@code "delete from" + " Article ..."}처럼 문자열을 끊어
+	 * 쓰면 원문 정규식({@code \bdelete\s+from\s+})에 걸리지 않았고, "수집된 기사는 불변"을 <b>행 수로</b>
+	 * 확인하는 테스트는 어디에도 없었다(계약 파일 8~9행이 그 확인을 후속 collection phase로 미룬다).
+	 * 즉 이 서버 유일의 행 삭제 예외가 다른 테이블로 번져도 아무 게이트가 울리지 않는 상태였다.
+	 *
+	 * <p>여기서 잠그는 것: 설정 행 1개를 지운 뒤 ① 남은 ReceiverConfig 행 ② 수집된 Article·Contents
+	 * ③ 이력 원장 ④ 배부 대상 ⑤ 사용자 행이 전부 그대로다. 정적 스캔과 덮는 벡터가 다르다 —
+	 * 여기는 "행이 실제로 남는다"를, 스캔은 "그런 SQL이 소스에 있다"를 본다.
+	 */
+	@Test
+	void removeTouchesOnlyItsOwnRowAndLeavesEveryOtherTableIntact() {
+		JdbcClient sql = JdbcClient.create(this.dataSource);
+		sql.sql("INSERT INTO Article (articleId, title) VALUES ('rc-keep-1', '수집 기사')").update();
+		sql.sql("INSERT INTO Contents (articleId, title, status) VALUES ('rc-keep-1', '수집 기사', 'DES')").update();
+		sql.sql("INSERT INTO ArticleHistory (articleId, eventType) VALUES ('rc-keep-1', 'edit')").update();
+		sql.sql("INSERT INTO DistributionTarget (name, kind, spoolDir) VALUES ('t', 'press', 'sp-keep')").update();
+		sql.sql("INSERT INTO User (userId, role) VALUES ('rc-keep-u', 'Z')").update();
+
+		int keep = this.configs.insert(row("sourceId", "src-keep"));
+		int drop = this.configs.insert(row("sourceId", "src-drop"));
+
+		assertEquals(1, this.configs.remove(drop), "자기 행 하나만 지운다");
+
+		assertEquals(1, this.configs.query(row("id", keep)).size(), "다른 설정 행은 남는다(WHERE 없는 삭제 금지)");
+		for (String table : List.of("Article", "Contents", "ArticleHistory", "DistributionTarget", "User")) {
+			assertEquals(1, count(sql, table),
+					table + " 행이 사라졌다 — 유일한 행 삭제 예외가 다른 테이블로 번졌다");
+		}
+	}
+
+	private static int count(JdbcClient sql, String table) {
+		Integer rows = sql.sql("SELECT COUNT(*) FROM " + table).query(Integer.class).single();
+		return rows == null ? -1 : rows;
+	}
+
 	@Test
 	void removeOfNanIdReturnsZeroChangesNotAnError() {
 		// Node 동형: DELETE /api/receiver-config/abc → Number('abc')=NaN → 어떤 행에도 매치되지 않아 200 changes:0.

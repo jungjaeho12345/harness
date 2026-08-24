@@ -2,8 +2,11 @@ package harness.news.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import harness.news.model.ArticleAggregate;
+import harness.news.model.ArticleRepository;
 import harness.news.model.ReceiverConfigRepository;
 import harness.news.service.SessionGuard;
 import harness.news.service.UserService;
@@ -72,6 +75,10 @@ class ReceiverConfigWireTest {
 	/** "거부/삭제가 행에 미친 영향"을 DB에서 직접 확인하는 음성/양성 증거. */
 	@Autowired
 	private ReceiverConfigRepository rows;
+
+	/** 설정 삭제가 <b>수집된 기사</b>에 손대지 않았음을 확인하는 이웃 테이블 증거(픽스처 삽입 겸용). */
+	@Autowired
+	private ArticleRepository articles;
 
 	@BeforeEach
 	void seedUsers() {
@@ -196,6 +203,38 @@ class ReceiverConfigWireTest {
 		Wire.Response nan = delete("/api/receiver-config/abc", zToken());
 		assertEquals(200, nan.status(), "비수치 id는 500이 아니라 200 changes:0이다");
 		assertEquals("{\"ok\":true,\"changes\":0}", nan.body());
+	}
+
+	// --- 6. 예외 경계: 설정 행만 사라지고 수집된 기사는 불변 -----------------------------------------
+
+	/**
+	 * <b>유일한 행 삭제 라우트의 경계를 라우트 밖에서 확인한다</b> — 설정 행을 지운 뒤 이미 수집된
+	 * {@code Article}·{@code Contents}가 그대로 있는지 DB에서 직접 본다(SCHEMA.md 76행·계약 파일 7~9행이
+	 * 동결한 DB 비파괴 원칙의 예외 경계).
+	 *
+	 * <p>왜 와이어 층에도 두는가(2026-08-24 테스터 게이트 변이 실측): 이 확인이 없던 시점에 삭제가
+	 * Article 테이블 전체를 함께 비우도록 고친 변이가 <b>Java 651 테스트·계약 default 163관측을 전부
+	 * green으로 통과</b>했다. 계약 파일은 "수집 기사 불변"의 실측을 후속 collection phase로 미뤄 두었고,
+	 * 리포지토리 테스트만으로는 서비스·컨트롤러 층에 심어진 같은 결함을 잡지 못한다 — 라우트를 실제로
+	 * 때려서 확인하는 이 테스트가 층에 무관한 그물이다.
+	 */
+	@Test
+	void deletingAConfigRowLeavesAlreadyCollectedArticlesUntouched() {
+		String articleId = unique("rcw-keep");
+		this.articles.insert(
+				Map.of("articleId", articleId, "title", "수집된 기사", "content", "<p>본문</p>"),
+				Map.of("articleId", articleId, "title", "수집된 기사", "status", "DES"));
+
+		int id = createConfig("{\"sourceId\":\"" + unique("ct-src") + "\",\"type\":\"FTP\"}");
+		Wire.Response deleted = delete("/api/receiver-config/" + id, zToken());
+		assertEquals(200, deleted.status());
+		assertEquals("{\"ok\":true,\"changes\":1}", deleted.body());
+		assertEquals(0, this.rows.query(Map.of("id", id)).size(), "설정 행은 사라진다");
+
+		ArticleAggregate survivor = this.articles.findById(articleId);
+		assertNotNull(survivor, "수집된 기사가 설정 삭제와 함께 사라졌다 — 예외 경계가 번졌다");
+		assertNotNull(survivor.article(), "Article 행이 사라졌다");
+		assertNotNull(survivor.contents(), "Contents 행이 사라졌다");
 	}
 
 	// --- 도구 ------------------------------------------------------------------------------------
