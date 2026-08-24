@@ -1,0 +1,29 @@
+{
+  "project": "기사 작성기",
+  "phase": "50-hygiene-cleanup",
+  "steps": [
+    { "step": 0, "name": "dist-reason-token", "status": "pending" },
+    { "step": 1, "name": "status-guard-read", "status": "pending" },
+    { "step": 2, "name": "mgmt-reason-message", "status": "pending" },
+    { "step": 3, "name": "save-override-atomic", "status": "pending" },
+    { "step": 4, "name": "marker-align", "status": "pending" },
+    { "step": 5, "name": "docs-notes", "status": "pending" }
+  ],
+  "excluded": [
+    {
+      "candidate": "DES 고착 경로 · tick invalid 보고의 스냅샷 기준 · single-flight 워치독 (phase 49 리뷰 이관분)",
+      "verdict": "제외(캐리오버)",
+      "rationale": "phase 49에서 이미 제외 확정된 3건이다. tick invalid는 보고 전용이라 배부 판정에 영향이 없고(다음 tick에서 자동 정정), 워치독은 setTimeout 도입이 필요해 ADR-008 (3)의 '앱 내 타이머 0건' 불변식을 정면으로 위반한다(phase 48 step3가 grep으로 잠근 불변식). DES 고착은 articleService.DES_ENTRY_STATUSES가 RDS·DDH로 좁혀져 있어 재진입 경로 자체가 없다. phase 50에서 재포함하지 않는다."
+    },
+    {
+      "candidate": "대안 설계 — editorAlign.setLineAlign에 '(끝)' 마커 줄 정렬 금지 가드 추가",
+      "verdict": "기각(step4에서 승계를 채택)",
+      "rationale": "마커 줄 정렬을 '애초에 불가'로 막는 방향도 후보였으나 기각한다. (1) phase 49 step4가 sortDocument의 마커 재정규화에서 이미 'align 승계'를 확정 결정으로 채택했다 — 반대 방향을 지금 도입하면 같은 마커에 대해 두 규칙이 공존한다. (2) 가드 추가는 위생이 아니라 스펙 변경(사용자가 쓸 수 있던 조작을 없앰)이라 사용자 확정이 필요하다. (3) 저장된 기존 본문에 이미 align이 붙은 마커가 있을 수 있어, 가드만으로는 유실 경로가 닫히지 않는다. 따라서 step4는 '재생성 시 승계'만 한다."
+    },
+    {
+      "candidate": "tick의 fresh read(distributionTickService.js:150 getById)를 status-only 조회로 교체",
+      "verdict": "제외",
+      "rationale": "step1의 최적화 대상이 아니다. tick의 재조회는 status뿐 아니라 embargoAt/secondEmbargoAt를 fresh 값으로 다시 판정(dueKinds)하는 데 쓰이므로 Contents 전체가 필요하다. 또한 기사당 1회(수신처 수에 비례하지 않음)라 절감 효과도 없다."
+    }
+  ]
+}
