@@ -1,5 +1,7 @@
 package harness.news.db;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -28,7 +30,16 @@ class NoSchemaSqlInMainSourcesTest {
 
 	private static final Path MAIN_SOURCES = Path.of("src", "main", "java");
 
-	/** 금지 패턴. 주석·문자열을 구분하지 않는다 — 주석에도 쓰지 않는 편이 안전하고 판정이 단순하다. */
+	/**
+	 * 금지 패턴(스키마 생성/변경/삭제·자동 마이그레이션). 주석·문자열을 구분하지 않는다 — 주석에도 쓰지
+	 * 않는 편이 안전하고 판정이 단순하다.
+	 *
+	 * <p>이 상수는 <b>리소스 스캔</b>({@link #mainResourcesDeclareNoAutomaticMigration})과
+	 * java-main 스캔이 공유한다. 그래서 여기 있는 {@code delete from}은 <b>모든 테이블</b>을 막는
+	 * 전면 금지로 남긴다 — java-main 쪽의 ReceiverConfig 예외는 이 공유 상수를 완화하는 것이 아니라
+	 * {@link #mainSourcesContainNoSchemaMutatingSql}의 <b>메서드-로컬 패턴</b>으로만 좁힌다(공유 상수를
+	 * 완화하면 리소스에도 {@code DELETE FROM ReceiverConfig}가 허용되는 과다완화가 된다 — phase 70 검토 권고).
+	 */
 	private static final List<Pattern> FORBIDDEN = List.of(
 			Pattern.compile("(?i)\\bcreate\\s+(table|index|view|trigger)\\b"),
 			Pattern.compile("(?i)\\balter\\s+table\\b"),
@@ -39,6 +50,26 @@ class NoSchemaSqlInMainSourcesTest {
 			Pattern.compile("(?i)ddl-auto"),
 			Pattern.compile("(?i)flyway"),
 			Pattern.compile("(?i)liquibase"));
+
+	/**
+	 * java-main 스캔의 DDL 금지 패턴 — {@link #FORBIDDEN}에서 {@code delete from}만 뺀 나머지다.
+	 * 삭제는 아래 {@link #DELETE_FROM_OTHER_TABLE}가 ReceiverConfig 하나만 예외로 두고 좁혀서 본다.
+	 */
+	private static final List<Pattern> MAIN_JAVA_DDL_FORBIDDEN = FORBIDDEN.stream()
+			.filter((pattern) -> !pattern.pattern().contains("delete"))
+			.toList();
+
+	/**
+	 * <b>ReceiverConfig가 아닌</b> 테이블의 {@code DELETE FROM}만 잡는다(negative lookahead).
+	 *
+	 * <p>{@code DELETE FROM ReceiverConfig}는 이 서버 유일의 행 삭제 예외 경계다(SCHEMA.md 76행·계약
+	 * 파일 7~9행: 설정 행만 지우고 수집된 Article/Contents는 불변 = DB 비파괴 원칙의 명시적 예외). 그
+	 * 하나만 허용하고 나머지 6테이블(User·Article·Contents·ArticleHistory·DistributionTarget·Photo)의
+	 * 행 삭제는 여전히 red다 — {@code (?!receiverconfig\b)}가 그 부재를 적극 단언한다(예: {@code DELETE
+	 * FROM Contents}·{@code DELETE FROM DistributionTarget}는 잔여 매치로 잡힌다).
+	 */
+	private static final Pattern DELETE_FROM_OTHER_TABLE =
+			Pattern.compile("(?i)\\bdelete\\s+from\\s+(?!receiverconfig\\b)");
 
 	/**
 	 * 이력 원장 전용 금지 패턴. 위의 전역 목록은 {@code delete from}·DDL만 막으므로 원장을 <b>고치는</b>
@@ -60,7 +91,9 @@ class NoSchemaSqlInMainSourcesTest {
 			"USER_TABLE", RequiredSchema.USER_TABLE,
 			"ARTICLE_TABLE", RequiredSchema.ARTICLE_TABLE,
 			"CONTENTS_TABLE", RequiredSchema.CONTENTS_TABLE,
-			"HISTORY_TABLE", RequiredSchema.HISTORY_TABLE);
+			"HISTORY_TABLE", RequiredSchema.HISTORY_TABLE,
+			"RECEIVER_CONFIG_TABLE", RequiredSchema.RECEIVER_CONFIG_TABLE,
+			"DISTRIBUTION_TARGET_TABLE", RequiredSchema.DISTRIBUTION_TARGET_TABLE);
 
 	@Test
 	void mainSourcesContainNoSchemaMutatingSql() throws IOException {
@@ -71,15 +104,85 @@ class NoSchemaSqlInMainSourcesTest {
 		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
 			for (Path file : files.filter(Files::isRegularFile).toList()) {
 				String text = Files.readString(file, StandardCharsets.UTF_8);
-				for (Pattern pattern : FORBIDDEN) {
+				for (Pattern pattern : MAIN_JAVA_DDL_FORBIDDEN) {
 					if (pattern.matcher(text).find()) {
 						hits.add(file + " ~ " + pattern.pattern());
 					}
 				}
+				// 삭제는 ReceiverConfig 하나만 예외 — 그 외 테이블의 DELETE FROM은 여전히 금지다.
+				// 원문과 "이어붙이기를 편 형태"를 둘 다 본다(아래 자기 검사 테스트가 그 이유를 적는다).
+				if (deletesAnotherTable(text)) {
+					hits.add(file + " ~ " + DELETE_FROM_OTHER_TABLE.pattern());
+				}
 			}
 		}
 
-		assertTrue(hits.isEmpty(), "main 소스에 금지된 스키마/삭제 SQL이 있다: " + hits);
+		assertTrue(hits.isEmpty(),
+				"main 소스에 금지된 스키마/삭제 SQL이 있다(허용은 DELETE FROM ReceiverConfig 하나뿐): " + hits);
+	}
+
+	/**
+	 * ReceiverConfig가 아닌 테이블의 삭제인가 — <b>원문</b>과 <b>이어붙이기를 편 형태</b>를 둘 다 본다.
+	 *
+	 * <p>펼치기가 필요한 이유(2026-08-24 테스터 게이트 변이 실측): 원문만 보는 정규식
+	 * ({@code \bdelete\s+from\s+})은 문자열을 끊어 쓴 {@code "delete from" + " Article WHERE ..."}를
+	 * <b>놓친다</b>({@code from} 뒤가 공백이 아니라 따옴표다). 실제로 그 형태로 수신설정 삭제가 Article
+	 * 테이블 전체를 함께 비우게 만든 변이에서 <b>Java 651 테스트·계약 default 163관측이 전부 green</b>이었다.
+	 * {@link #inlineTableConstants}가 따옴표·{@code +}를 공백으로 지우므로 그 형태가 다시 판정 대상이 된다.
+	 *
+	 * <p>판정은 <b>펼친 형태 하나로만</b> 한다. 원문까지 함께 OR로 보면 허용된 예외를 상수로 쓴
+	 * {@code "DELETE FROM " + RequiredSchema.RECEIVER_CONFIG_TABLE}가 원문 쪽에서 걸려 <b>오탐</b>이 된다
+	 * (아래 자기 검사가 그 경계를 잠근다). 펼치기는 따옴표·{@code +}를 공백으로 만들 뿐이라 원문이 잡던
+	 * 형태({@code DELETE FROM Contents})는 펼친 뒤에도 그대로 잡힌다.
+	 */
+	private static boolean deletesAnotherTable(String text) {
+		return DELETE_FROM_OTHER_TABLE.matcher(inlineTableConstants(text)).find();
+	}
+
+	/**
+	 * 파생 목록({@link #MAIN_JAVA_DDL_FORBIDDEN})이 공유 목록에서 <b>정확히 {@code delete from} 하나만</b>
+	 * 뺀 나머지임을 못 박는다.
+	 *
+	 * <p>왜 필요한가(2026-08-24 리뷰 low): 그 목록은 정규식의 <b>소스 문자열</b>에 {@code "delete"}가
+	 * 들었는지로 걸러 만든다 — 필터는 의도를 모르고 글자만 본다. 앞으로 그 낱말이 든 패턴(예: 원장 전용
+	 * 삭제 금지)을 {@link #FORBIDDEN}에 추가하면 java-main 스캔에서 <b>조용히 빠져</b> 아무도 모르게
+	 * 방어가 줄어든다. 크기와 구성을 단언해 두면 그 추가가 여기서 red가 되어 드러난다.
+	 */
+	@Test
+	void theDerivedMainJavaListDropsExactlyTheDeleteFromPattern() {
+		List<String> shared = FORBIDDEN.stream().map(Pattern::pattern).toList();
+		List<String> derived = MAIN_JAVA_DDL_FORBIDDEN.stream().map(Pattern::pattern).toList();
+		List<String> dropped = shared.stream().filter((pattern) -> !derived.contains(pattern)).toList();
+
+		assertEquals(List.of("(?i)\\bdelete\\s+from\\b"), dropped,
+				"java-main 스캔에서 빠지는 패턴은 delete from 하나뿐이어야 한다(나머지 DDL 금지는 그대로다)");
+		assertEquals(shared.size() - 1, derived.size(), "파생 목록 크기");
+	}
+
+	/**
+	 * 삭제 스캐너가 <b>공허하지 않다</b>는 증거 — 실제 변이와 같은 형태를 심어 잡히는지 확인하고, 동시에
+	 * 유일한 예외({@code DELETE FROM ReceiverConfig})는 계속 통과함을 못 박는다.
+	 *
+	 * <p>이 자기 검사가 없으면 lookahead가 넓어져 <b>모든</b> 삭제를 허용하도록 망가져도(또는 반대로
+	 * 예외까지 막도록 좁아져도) 테스트는 조용히 green이다.
+	 */
+	@Test
+	void theDeleteScanSeesThroughConcatenationAndStillAllowsTheReceiverConfigException() {
+		for (String planted : List.of(
+				"sql(\"DELETE FROM Contents WHERE articleId = ?\")",
+				"sql(\"DELETE FROM DistributionTarget WHERE id = ?\")",
+				"sql(\"delete from\" + \" Article WHERE articleId IS NOT NULL\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.DISTRIBUTION_TARGET_TABLE + \" WHERE id = ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.HISTORY_TABLE + \" WHERE articleId = ?\")")) {
+			assertTrue(deletesAnotherTable(planted), "다른 테이블의 행 삭제를 놓친다 — 스캐너가 공허하다: " + planted);
+		}
+
+		for (String allowed : List.of(
+				"sql(\"DELETE FROM ReceiverConfig WHERE id = ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.RECEIVER_CONFIG_TABLE + \" WHERE id = ?\")")) {
+			assertFalse(deletesAnotherTable(allowed),
+					"유일한 행 삭제 예외(DELETE FROM ReceiverConfig)까지 막고 있다: " + allowed);
+		}
 	}
 
 	/**

@@ -1,0 +1,55 @@
+package harness.news.service;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.Test;
+
+/**
+ * spoolDir 슬러그 규칙({@link SpoolDir#sanitizeSpoolDir}) — 리포 루트 {@code src/services/spoolDir.js}와 동형.
+ * 경로 조작 차단의 유일 방어점이라 유효/무효 경계를 전수로 잠근다(계약 픽스처는 {@code ct-}로 시작하는
+ * ASCII 슬러그만 쓰므로 예약 장치명·대문자·구분자 거부는 이 단위 테스트가 유일한 방어선이다 —
+ * forward_notes (3)③).
+ */
+class SpoolDirTest {
+
+	@Test
+	void validSlugsPassThroughUnchanged() {
+		assertEquals("ct-press-1", SpoolDir.sanitizeSpoolDir("ct-press-1"));
+		assertEquals("a", SpoolDir.sanitizeSpoolDir("a"), "1자 소문자 영숫자는 유효");
+		assertEquals("abc_def-123", SpoolDir.sanitizeSpoolDir("abc_def-123"));
+		assertEquals("0start", SpoolDir.sanitizeSpoolDir("0start"), "숫자로 시작해도 유효");
+		String max = "a".repeat(64);
+		assertEquals(max, SpoolDir.sanitizeSpoolDir(max), "64자는 유효");
+	}
+
+	@Test
+	void invalidSlugsBecomeEmptyString() {
+		assertEquals("", SpoolDir.sanitizeSpoolDir(""), "빈 문자열");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("Uppercase"), "대문자");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("../escape"), "부모 참조");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("a/b"), "경로 구분자");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("a\\b"), "역슬래시");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("a b"), "공백");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("-start"), "구분자로 시작(첫 글자는 영숫자여야)");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("a".repeat(65)), "65자는 초과");
+		assertEquals("", SpoolDir.sanitizeSpoolDir("널\0바이트"), "제어/유니코드");
+	}
+
+	@Test
+	void reservedWindowsDeviceNamesAreRejected() {
+		for (String reserved : new String[] {"con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}) {
+			assertEquals("", SpoolDir.sanitizeSpoolDir(reserved), reserved + "는 Windows 예약 장치명이다");
+		}
+		// 예약어를 포함하지만 정확히 그 이름이 아니면 통과한다.
+		assertEquals("console", SpoolDir.sanitizeSpoolDir("console"));
+		assertEquals("com10", SpoolDir.sanitizeSpoolDir("com10"), "com10은 예약어가 아니다");
+	}
+
+	@Test
+	void nonStringInputBecomesEmptyWithoutCoercion() {
+		// 타입 게이트 — String.valueOf를 쓰면 '123'/'true'가 슬러그를 통과해 검증기가 무력화된다.
+		assertEquals("", SpoolDir.sanitizeSpoolDir(null));
+		assertEquals("", SpoolDir.sanitizeSpoolDir(123));
+		assertEquals("", SpoolDir.sanitizeSpoolDir(Boolean.TRUE));
+	}
+}

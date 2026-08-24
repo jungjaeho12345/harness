@@ -1,13 +1,12 @@
--- 테스트 전용 드리프트 픽스처(기사 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
+-- 테스트 전용 드리프트 픽스처(배부 대상 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
 -- 스키마 정의 SQL이 없다.
 --
--- User·Article·ArticleHistory는 정본과 같고 **Contents에서 2컬럼만 빠져 있다**
--- (secondEmbargoAt · lockerSessionId). 즉 이 DB의 결함은 정확히 그 둘뿐이라, 부팅 스키마 검증이
--- "무엇이 없는지" 지목하는지를 다른 결함에 가려지지 않은 채 실증할 수 있다.
+-- User·Article·Contents·ArticleHistory·ReceiverConfig는 정본과 같고 **DistributionTarget에서 2컬럼만
+-- 빠져 있다**(spoolDir · updatedAt). 결함이 정확히 그 둘뿐이라, 부팅 검증이 "무엇이 없는지"를 다른
+-- 결함에 가려지지 않은 채 지목하는지 실증할 수 있다.
 --
--- 왜 이 축을 따로 두는가: db/user-schema-drift.sql은 요구 목록이 넓어진 뒤로 기사 3테이블이 통째로
--- 없는 DB가 되어(테이블 없음) **컬럼 단위** 검증을 실증하지 못한다. lockerSessionId가 없는 DB로 뜨면
--- 재로그인 takeover 판정이 런타임에 조용히 깨진다 — 부팅에서 잡혀야 한다.
+-- 왜 이 축을 따로 두는가: spoolDir 컬럼이 없는 DB로 뜨면 배부 대상 저장이 런타임에 조용히 깨진다 —
+-- 부팅에서 잡혀야 한다.
 CREATE TABLE IF NOT EXISTS User (
   userId TEXT PRIMARY KEY,
   name TEXT,
@@ -43,9 +42,11 @@ CREATE TABLE IF NOT EXISTS Contents (
   sentAt VARCHAR,
   distributedAt VARCHAR,
   embargoAt VARCHAR,
+  secondEmbargoAt VARCHAR,
   status VARCHAR,
   lockYN VARCHAR DEFAULT 'N',
   lockerUserId VARCHAR,
+  lockerSessionId VARCHAR,
   lockerClientId VARCHAR,
   lockedAt VARCHAR,
   coAuthor VARCHAR,
@@ -74,8 +75,6 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   reason VARCHAR
 );
 
--- ReceiverConfig·DistributionTarget는 정본과 같다(이 픽스처의 결함은 Contents 2컬럼뿐이라
--- 컬럼 단위 지목이 '테이블 없음'에 가려지지 않는다).
 CREATE TABLE IF NOT EXISTS ReceiverConfig (
   id INTEGER PRIMARY KEY,
   sourceId VARCHAR,
@@ -91,12 +90,11 @@ CREATE TABLE IF NOT EXISTS ReceiverConfig (
   createdAt VARCHAR
 );
 
+-- spoolDir·updatedAt 2컬럼이 빠진 DistributionTarget(부팅 검증이 지목해야 하는 컬럼 단위 결함).
 CREATE TABLE IF NOT EXISTS DistributionTarget (
   id INTEGER PRIMARY KEY,
   name VARCHAR,
   kind VARCHAR,
-  spoolDir VARCHAR,
   active VARCHAR DEFAULT 'Y',
-  createdAt VARCHAR,
-  updatedAt VARCHAR
+  createdAt VARCHAR
 );

@@ -72,3 +72,30 @@ CREATE TABLE IF NOT EXISTS ArticleHistory (
   markupVersion VARCHAR,
   reason VARCHAR
 );
+
+-- ReceiverConfig·DistributionTarget는 정본과 같다(이 픽스처의 결함은 ArticleHistory 2컬럼뿐이라
+-- 컬럼 단위 지목이 '테이블 없음'에 가려지지 않는다).
+CREATE TABLE IF NOT EXISTS ReceiverConfig (
+  id INTEGER PRIMARY KEY,
+  sourceId VARCHAR,
+  type VARCHAR,
+  name VARCHAR,
+  host VARCHAR,
+  port VARCHAR,
+  username VARCHAR,
+  password VARCHAR,
+  apiEndpoint VARCHAR,
+  apiKey VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS DistributionTarget (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  kind VARCHAR,
+  spoolDir VARCHAR,
+  active VARCHAR DEFAULT 'Y',
+  createdAt VARCHAR,
+  updatedAt VARCHAR
+);

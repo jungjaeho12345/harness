@@ -6,6 +6,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.ErrorResponse;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.NoHandlerFoundException;
@@ -52,13 +53,21 @@ public class GlobalErrorHandler {
 	}
 
 	/**
-	 * 미정의 경로 → <b>404 + 비-JSON</b>(계약). Boot 기본 {@code /error} 처리에 맡기면 JSON 본문이 나가
-	 * 동결된 에러 shape이 깨진다 — 그래서 이 예외만 골라 {@link HtmlErrors}로 직접 응답한다.
+	 * 미정의 경로·<b>메서드 불일치</b> → <b>404 + 비-JSON</b>(계약). Boot 기본 {@code /error} 처리에 맡기면
+	 * JSON 본문이 나가 동결된 에러 shape이 깨진다 — 그래서 이 예외들만 골라 {@link HtmlErrors}로 직접 응답한다.
 	 *
-	 * <p>다른 프레임워크 예외(405·415 등)는 여전히 아래 {@link #handle} 이 <b>다시 던져</b> 기본 처리로 보낸다
-	 * — 여기서 잡는 대상을 넓히면 그 상태코드들이 조용히 404로 뭉개진다.
+	 * <p><b>메서드 불일치({@link HttpRequestMethodNotSupportedException})도 404다</b>: Express는 method+path를
+	 * 함께 매칭해 <b>미등록 메서드를 405가 아니라 404로</b> 떨군다(경로에 다른 메서드 핸들러가 있어도 마찬가지).
+	 * phase 70의 {@code distribution-targets.contract.js}가 {@code DELETE /api/distribution-targets/:id}
+	 * (PUT은 있고 DELETE는 없는 경로)를 <b>404</b>로 동결하면서 이 동형이 계약으로 관측된다(그 전까지는 어떤
+	 * 계약도 메서드 불일치를 관측하지 않아 Spring의 405가 문서화된 미관측 divergence로 남아 있었다 —
+	 * forward_notes (13)). 미지원 미디어타입 415({@link org.springframework.web.HttpMediaTypeNotSupportedException})은
+	 * 여기 넣지 않는다 — Node가 그 경로를 자격 실패로 수렴시키는 자리(로그인)를 이미 갖고 있고 계약이 415를
+	 * 관측하지 않으므로, 아래 {@link #handle}이 다시 던져 기본 처리로 보낸다(대상을 415까지 넓히면 미관측
+	 * 상태코드가 조용히 404로 뭉개진다).
 	 */
-	@ExceptionHandler({ NoResourceFoundException.class, NoHandlerFoundException.class })
+	@ExceptionHandler({ NoResourceFoundException.class, NoHandlerFoundException.class,
+			HttpRequestMethodNotSupportedException.class })
 	public void handleNotFound(HttpServletRequest request, HttpServletResponse response) {
 		HtmlErrors.notFound(request, response);
 	}

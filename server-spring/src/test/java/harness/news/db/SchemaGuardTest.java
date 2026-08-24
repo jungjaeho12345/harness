@@ -70,9 +70,69 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void requiredReceiverConfigColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.ReceiverConfig와 순서까지 1:1이다(id 포함 — SELECT 나열의 단일 출처).
+		// password·apiKey는 스키마에는 있지만 서비스 투영(SAFE_FIELDS)에는 없는 쓰기 전용 시크릿이다.
+		assertEquals(
+				List.of("id", "sourceId", "type", "name", "host", "port", "username",
+						"password", "apiEndpoint", "apiKey", "active", "createdAt"),
+				RequiredSchema.RECEIVER_CONFIG_COLUMNS);
+		assertEquals(12, RequiredSchema.RECEIVER_CONFIG_COLUMNS.size(), "ReceiverConfig는 12컬럼이다");
+	}
+
+	@Test
+	void requiredDistributionTargetColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.DistributionTarget와 순서까지 1:1이다(id 포함).
+		assertEquals(
+				List.of("id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt"),
+				RequiredSchema.DISTRIBUTION_TARGET_COLUMNS);
+		assertEquals(7, RequiredSchema.DISTRIBUTION_TARGET_COLUMNS.size(), "DistributionTarget는 7컬럼이다");
+	}
+
+	@Test
 	void bootVerifiesEveryTableThisPhaseReadsOrWrites() {
 		// 부팅 검증 대상은 요구 목록 전체다 — 여기서 테이블이 빠지면 그 테이블의 드리프트가 런타임까지 산다.
-		assertEquals(Set.of("User", "Article", "Contents", "ArticleHistory"), RequiredSchema.TABLES.keySet());
+		// phase 70이 ReceiverConfig·DistributionTarget를 additive로 넣어 4→6테이블이 됐다.
+		assertEquals(
+				Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig", "DistributionTarget"),
+				RequiredSchema.TABLES.keySet());
+	}
+
+	@Test
+	void missingReceiverConfigColumnsAreNamedInTheFailure() {
+		// 다른 5테이블은 정본과 같고 ReceiverConfig만 2컬럼(apiKey·createdAt)이 빠진 DB — 결함이 그 둘뿐이라
+		// 컬럼 단위 지목이 다른 문제에 가려지지 않는다.
+		TempNewsDb.seed(tempDir, TempNewsDb.RECEIVER_CONFIG_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("ReceiverConfig"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("apiKey"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("createdAt"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
+	}
+
+	@Test
+	void missingDistributionTargetColumnsAreNamedInTheFailure() {
+		// 다른 5테이블은 정본과 같고 DistributionTarget만 2컬럼(spoolDir·updatedAt)이 빠진 DB.
+		TempNewsDb.seed(tempDir, TempNewsDb.DISTRIBUTION_TARGET_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("DistributionTarget"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("spoolDir"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("updatedAt"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
 	}
 
 	@Test
