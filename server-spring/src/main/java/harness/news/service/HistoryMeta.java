@@ -36,6 +36,11 @@ public final class HistoryMeta {
 	 *
 	 * <p>프론트 {@code bodyTitle}과 동형이어야 한다 — 텍스트 블록만 세고, 깨진 JSON·평문 레거시는
 	 * 문자열 그대로 취급한다.
+	 *
+	 * <p>다듬기는 {@link NodeString#trim(String)}이다({@link String#strip()}·{@link String#trim()}
+	 * 금지 — 셋의 공백 집합이 서로 다르다). 이 값은 {@code ArticleHistory.snapshotTitle}로 <b>영속</b>되고
+	 * 이력 응답의 {@code title}로 나가므로, 집합이 갈리면 같은 편집에 두 서버가 다른 값을 쓴다.
+	 * 붙여넣기 본문의 NBSP는 실제로 흔하고 계약 픽스처는 ASCII 제목만 쓴다.
 	 */
 	public static String snapshotTitle(Object markupVersion) {
 		if (markupVersion == null) {
@@ -48,7 +53,7 @@ public final class HistoryMeta {
 
 		String text = textOf(raw);
 		int lineEnd = text.indexOf('\n');
-		String firstLine = ((lineEnd < 0) ? text : text.substring(0, lineEnd)).strip();
+		String firstLine = NodeString.trim((lineEnd < 0) ? text : text.substring(0, lineEnd));
 		return (firstLine.length() > MAX_HISTORY_TITLE_LEN)
 				? firstLine.substring(0, MAX_HISTORY_TITLE_LEN) : firstLine;
 	}
