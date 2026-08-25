@@ -66,6 +66,34 @@ class CollectionParserTest {
 
 	// --- 스칼라 payload: 강제변환은 빼지도 더하지도 않는다 ----------------------------------------
 
+	/**
+	 * 제어문자는 <b>공백이 아니다</b> — 제목에 그대로 남는다.
+	 *
+	 * <p>이 축이 따로 필요한 이유: {@link String#trim()}은 {@code U+0020} <b>이하를 전부</b> 걷어내므로
+	 * {@code U+0001}·{@code U+0007}·{@code U+001B}까지 지운다. JS {@code trim}은 그러지 않는다. 즉 다듬기를
+	 * {@code NodeString.trim} 대신 표준 메서드로 바꾸는 변이는 NBSP 축뿐 아니라 <b>이 축에서도</b>
+	 * 갈리는데, NBSP 케이스만 있으면 "{@code strip()}으로 바꾸는" 변이는 여기서 잡히지 않는다
+	 * ({@code strip()}은 NBSP를 안 지우고 제어문자를 지운다 — 두 케이스가 서로를 덮지 못한다).
+	 *
+	 * <p>기대값은 Node 실측이다(2026-08-25 {@code src/parsers/defaultParser.js} 직접 실행).
+	 */
+	@Test
+	void controlCharactersAreNotWhitespaceSoTheyStayInTheTitleAndBody() {
+		String payload = "T" + ch(0x0001) + ch(0x0007) + ch(0x001B) + "\nB" + ch(0x0000) + "C";
+
+		assertParsed("T" + ch(0x0001) + ch(0x0007) + ch(0x001B), "B" + ch(0x0000) + "C", payload,
+				"제어문자는 JS 공백 집합에 없다 — String.trim()/strip()으로 바꾸면 여기서 red다");
+		// U+001C~U+001F는 반대 방향이다: Character.isWhitespace는 참, JS는 거짓.
+		assertParsed("T" + ch(0x001C) + ch(0x001F), "", "T" + ch(0x001C) + ch(0x001F), "Java 전용 구분자");
+	}
+
+	/** 줄 구분자({@code U+2028}·{@code U+2029})는 JS 공백이지만 {@code split}의 개행은 아니다. */
+	@Test
+	void lineSeparatorsAreTrimmedButDoNotSplitTheTitleFromTheBody() {
+		assertParsed("T", "B", ch(0x2028) + "T" + ch(0x2029) + "\nB", "앞뒤의 줄 구분자는 다듬긴다");
+		assertParsed("A" + ch(0x2028) + "B", "", "A" + ch(0x2028) + "B", "가운데의 줄 구분자는 줄을 나누지 않는다");
+	}
+
 	@Test
 	void nullAndScalarPayloadsGoThroughStringCoercion() {
 		assertParsed("", "", null, "null·undefined는 빈 문자열이다('null'이 아니다)");

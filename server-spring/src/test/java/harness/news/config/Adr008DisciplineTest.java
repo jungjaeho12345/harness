@@ -58,19 +58,36 @@ class Adr008DisciplineTest {
 	private record Rule(String name, List<Pattern> patterns, List<String> exemptFiles) {
 	}
 
-	/** 1군 — 주기 실행(예외 0). ADR-008 (3): 시점 배부는 앱 내 타이머가 아니라 tick pull이다. */
+	/**
+	 * 1군 — 주기 실행(예외 0). ADR-008 (3): 시점 배부는 앱 내 타이머가 아니라 tick pull이다.
+	 *
+	 * <p><b>2026-08-25 ④ 테스트 게이트 변이 실측</b>: {@code ScheduledThreadPoolExecutor}(인터페이스가
+	 * 아니라 구현 클래스로 선언)와 {@code TimeUnit.SECONDS.sleep(...)}은 <b>둘 다 통과했다</b>. 문자열
+	 * 조립도 리플렉션도 아닌 <b>가장 평범한 JDK 표기</b>이며 실제로 손이 먼저 가는 형태다 —
+	 * "덮지 못하는 벡터(끊어 쓴 문자열·리플렉션)"와 성질이 다르므로 여기서 닫는다.
+	 */
 	private static final Rule PERIODIC_EXECUTION = new Rule("주기 실행", List.of(
 			Pattern.compile("@\\s*(?:[\\w.]+\\.)?Scheduled\\b"),
 			Pattern.compile("@\\s*(?:[\\w.]+\\.)?EnableScheduling\\b"),
 			Pattern.compile("\\bTaskScheduler\\b"),
 			Pattern.compile("\\bScheduledExecutorService\\b"),
+			Pattern.compile("\\bScheduledThreadPoolExecutor\\b"),
 			Pattern.compile("\\bExecutors\\s*\\.\\s*newScheduled\\w*\\s*\\("),
 			Pattern.compile("\\bnew\\s+(java\\.util\\.)?Timer\\s*\\("),
 			Pattern.compile("\\bThread\\s*\\.\\s*sleep\\s*\\("),
+			// TimeUnit.SECONDS.sleep(...)·MILLISECONDS.sleep(...) — Thread.sleep의 다른 철자다.
+			Pattern.compile("\\bTimeUnit\\s*\\.\\s*\\w+\\s*\\.\\s*sleep\\s*\\("),
+			Pattern.compile("\\.\\s*schedule(AtFixedRate|WithFixedDelay)?\\s*\\("),
 			Pattern.compile("\\bScheduledFuture\\b")),
 			List.of());
 
-	/** 2군 — 비동기·재시도(예외 0). ADR-008 (6): 자동 재시도·백오프·재시도 큐를 두지 않는다. */
+	/**
+	 * 2군 — 비동기·재시도(예외 0). ADR-008 (6): 자동 재시도·백오프·재시도 큐를 두지 않는다.
+	 *
+	 * <p><b>변이 실측</b>: {@code new Thread(...).start()} · {@code ForkJoinPool.commonPool().execute(...)}
+	 * · {@code ThreadPoolExecutor}는 전부 통과했다. 요청 스레드 밖에서 도는 코드는 그 자체가 이 축의
+	 * 위반이다(응답이 끝난 뒤에 무슨 일이 벌어지는지 계약이 관측할 방법이 없다).
+	 */
 	private static final Rule ASYNC_AND_RETRY = new Rule("비동기·재시도", List.of(
 			Pattern.compile("@\\s*(?:[\\w.]+\\.)?Async\\b"),
 			Pattern.compile("@\\s*(?:[\\w.]+\\.)?EnableAsync\\b"),
@@ -79,10 +96,20 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\bRetryTemplate\\b"),
 			Pattern.compile("\\bCompletableFuture\\s*\\.\\s*\\w*Async\\w*\\s*\\("),
 			Pattern.compile("\\bExecutorService\\b"),
+			Pattern.compile("\\bThreadPoolExecutor\\b"),
+			Pattern.compile("\\bForkJoinPool\\b"),
+			Pattern.compile("\\b(?:Task|Async(?:Task)?)Executor\\b"),
+			Pattern.compile("\\bExecutors\\s*\\.\\s*new\\w+\\s*\\("),
+			Pattern.compile("\\bnew\\s+(java\\.lang\\.)?Thread\\s*\\("),
 			Pattern.compile("@\\s*(?:[\\w.]+\\.)?Recover\\b")),
 			List.of());
 
-	/** 3군 — 네트워크 클라이언트(예외 1: 수집 pull 어댑터). */
+	/**
+	 * 3군 — 네트워크 클라이언트(예외 1: 수집 pull 어댑터).
+	 *
+	 * <p><b>변이 실측</b>: {@code url.openStream()}은 통과했다 — {@code openConnection()}의 한 줄 축약형이고
+	 * 바깥으로 나가는 것은 똑같다.
+	 */
 	private static final Rule NETWORK_CLIENT = new Rule("네트워크 클라이언트", List.of(
 			Pattern.compile("\\bHttpClient\\b"),
 			Pattern.compile("\\bRestTemplate\\b"),
@@ -90,21 +117,39 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\bRestClient\\b"),
 			Pattern.compile("\\bnew\\s+(java\\.net\\.)?Socket\\s*\\("),
 			Pattern.compile("\\.\\s*openConnection\\s*\\("),
+			Pattern.compile("\\.\\s*openStream\\s*\\("),
+			Pattern.compile("\\bSocketChannel\\b"),
+			Pattern.compile("\\bDatagramSocket\\b"),
 			Pattern.compile("\\bURLConnection\\b"),
 			Pattern.compile("\\bHttpURLConnection\\b")),
 			List.of("HttpApiSourceFetcher.java"));
 
-	/** 4군 — 파일 쓰기(예외 1: 배부 스풀 라이터). */
+	/**
+	 * 4군 — 파일 쓰기(예외 1: 배부 스풀 라이터).
+	 *
+	 * <p><b>변이 실측</b>: {@code java.io}의 옛 표기가 통째로 비어 있었다 — {@code RandomAccessFile} ·
+	 * {@code PrintWriter} · {@code FileChannel.open(..., WRITE)} · {@code File.mkdirs()} ·
+	 * {@code createNewFile()} · {@code renameTo()}가 전부 통과했다. 배부 스풀이 바로 이 API들을 쓰고 싶어지는
+	 * 자리이므로({@code phases/72-spring-distribution}) 그 phase가 시작되기 전에 닫아 둔다.
+	 */
 	private static final Rule FILE_WRITE = new Rule("파일 쓰기", List.of(
 			Pattern.compile("\\bFiles\\s*\\.\\s*write(String)?\\s*\\("),
 			Pattern.compile("\\bFiles\\s*\\.\\s*newOutputStream\\s*\\("),
 			Pattern.compile("\\bFiles\\s*\\.\\s*newBufferedWriter\\s*\\("),
+			Pattern.compile("\\bFiles\\s*\\.\\s*newByteChannel\\s*\\("),
 			Pattern.compile("\\bFileOutputStream\\b"),
 			Pattern.compile("\\bFileWriter\\b"),
+			Pattern.compile("\\bPrintWriter\\b"),
+			Pattern.compile("\\bRandomAccessFile\\b"),
+			Pattern.compile("\\bFileChannel\\b"),
 			Pattern.compile("\\bFiles\\s*\\.\\s*createDirector(y|ies)\\s*\\("),
+			Pattern.compile("\\bFiles\\s*\\.\\s*create(File|Temp\\w*)\\s*\\("),
 			Pattern.compile("\\bFiles\\s*\\.\\s*move\\s*\\("),
 			Pattern.compile("\\bFiles\\s*\\.\\s*copy\\s*\\("),
-			Pattern.compile("\\bFiles\\s*\\.\\s*delete(IfExists)?\\s*\\(")),
+			Pattern.compile("\\bFiles\\s*\\.\\s*delete(IfExists)?\\s*\\("),
+			Pattern.compile("\\.\\s*mkdirs?\\s*\\("),
+			Pattern.compile("\\.\\s*createNewFile\\s*\\("),
+			Pattern.compile("\\.\\s*renameTo\\s*\\(")),
 			List.of("SpoolWriter.java"));
 
 	private static final List<Rule> RULES =
@@ -132,6 +177,11 @@ class Adr008DisciplineTest {
 			"var pool = Executors.newScheduledThreadPool(1);",
 			"Timer timer = new Timer(true);",
 			"Thread.sleep(500);",
+			// 2026-08-25 ④ 게이트 변이 실측에서 통과했던 형태들 — 이제 red다.
+			"private final ScheduledThreadPoolExecutor pool = new ScheduledThreadPoolExecutor(1);",
+			"TimeUnit.SECONDS.sleep(3);",
+			"pool.scheduleAtFixedRate(this::tick, 0, 60, TimeUnit.SECONDS);",
+			"pool.scheduleWithFixedDelay(this::tick, 0, 60, TimeUnit.SECONDS);",
 			"ScheduledFuture<?> handle = pool.schedule(task, 1, TimeUnit.SECONDS);");
 
 	private static final List<String> PLANTED_ASYNC = List.of(
@@ -147,6 +197,14 @@ class Adr008DisciplineTest {
 			"CompletableFuture.supplyAsync(() -> fetch(url));",
 			"CompletableFuture.runAsync(() -> spool(article));",
 			"private final ExecutorService workers;",
+			// 변이 실측에서 통과했던 형태들 — 요청 스레드 밖에서 도는 코드는 전부 이 축의 위반이다.
+			"private final ThreadPoolExecutor workers = null;",
+			"ForkJoinPool.commonPool().execute(task);",
+			"private final TaskExecutor taskExecutor;",
+			"private final AsyncTaskExecutor asyncTaskExecutor;",
+			"var workers = Executors.newFixedThreadPool(4);",
+			"new Thread(() -> spool(article)).start();",
+			"new java.lang.Thread(this::flush).start();",
 			"@Recover\nString fallback(Exception e) { return \"\"; }");
 
 	private static final List<String> PLANTED_NETWORK = List.of(
@@ -157,6 +215,10 @@ class Adr008DisciplineTest {
 			"private final RestClient restClient = RestClient.create();",
 			"Socket socket = new Socket(host, port);",
 			"var conn = url.openConnection();",
+			// 변이 실측에서 통과했던 형태 — openConnection의 한 줄 축약형이다.
+			"try (var in = url.openStream()) { return in.readAllBytes(); }",
+			"SocketChannel channel = null;",
+			"DatagramSocket socket = null;",
 			"URLConnection conn = null;",
 			"HttpURLConnection conn = null;");
 
@@ -173,7 +235,18 @@ class Adr008DisciplineTest {
 			"Files.move(tmp, target);",
 			"Files.copy(tmp, target);",
 			"Files.delete(tmp);",
-			"Files.deleteIfExists(tmp);");
+			"Files.deleteIfExists(tmp);",
+			// 변이 실측에서 통과했던 java.io 옛 표기 — 배부 스풀이 바로 여기로 손이 간다.
+			"try (var ch = Files.newByteChannel(target, StandardOpenOption.WRITE)) { ch.write(buf); }",
+			"try (var w = new PrintWriter(target.toFile())) { w.print(json); }",
+			"try (var raf = new RandomAccessFile(target.toFile(), \"rw\")) { raf.write(bytes); }",
+			"try (var ch = FileChannel.open(target, StandardOpenOption.WRITE)) { ch.write(buf); }",
+			"Files.createFile(target);",
+			"Files.createTempFile(spoolRoot, \"spool\", \".tmp\");",
+			"spoolRoot.toFile().mkdirs();",
+			"spoolRoot.toFile().mkdir();",
+			"target.toFile().createNewFile();",
+			"tmp.toFile().renameTo(target.toFile());");
 
 	private static List<List<String>> plantedByRule() {
 		return List.of(PLANTED_PERIODIC, PLANTED_ASYNC, PLANTED_NETWORK, PLANTED_FILE_WRITE);
@@ -351,6 +424,89 @@ class Adr008DisciplineTest {
 		}
 	}
 
+	/**
+	 * 자기 검사 ④ — <b>문자열 리터럴 뒤에 숨은 위반</b>도 잡는다.
+	 *
+	 * <p>2026-08-25 ④ 게이트 변이 실측: {@code String u = "http://example.test"; new java.util.Timer(true);}를
+	 * main 소스에 심었을 때 게이트가 <b>green이었다</b>(줄 주석 정규식이 리터럴 속 {@code //}를 주석 시작으로
+	 * 읽고 그 줄의 나머지를 지웠다). 이 도메인의 코드에는 {@code http://}가 실제로 들어 있으므로 우연이
+	 * 아니라 손 닿는 곳의 우회다. 리터럴 <b>내용</b>은 여전히 코드가 아니라는 것도 함께 못 박는다.
+	 */
+	@Test
+	void aViolationHidingBehindAUrlLiteralIsStillCaught() {
+		String hidden = "String endpoint = \"http://example.test/a\"; new java.util.Timer(true).cancel();";
+
+		assertTrue(matches(PERIODIC_EXECUTION, hidden),
+				"문자열 속 //를 줄 주석으로 읽어 그 줄의 위반을 통째로 놓친다: " + stripComments(hidden));
+		assertTrue(matches(FILE_WRITE, "String url = \"https://a//b\"; Files.write(target, bytes);"),
+				"URL 리터럴 뒤의 파일 쓰기를 놓친다");
+		assertTrue(matches(NETWORK_CLIENT, "log(\"skip // \" + name); var c = url.openConnection();"),
+				"문자열 속 //가 뒤따르는 네트워크 호출을 가린다");
+
+		// 반대 방향 — 리터럴 '내용'은 실행되는 토큰이 아니다(오탐을 만들면 규칙을 코드에 적을 수 없다).
+		assertFalse(matches(PERIODIC_EXECUTION, "String note = \"@Scheduled is forbidden\";"),
+				"문자열 상수 안의 규칙 이름이 위반으로 잡힌다");
+		assertFalse(matches(FILE_WRITE, "throw new IllegalStateException(\"Files.write is forbidden\");"),
+				"예외 메시지 안의 규칙 이름이 위반으로 잡힌다");
+	}
+
+	/**
+	 * 예외는 <b>파일 이름</b>으로 성립한다 — 그러면 같은 이름의 파일을 <b>다른 패키지에</b> 하나 더 두는
+	 * 것만으로 예외가 복제된다.
+	 *
+	 * <p>2026-08-25 ④ 게이트 변이 실측: {@code harness.news.zzprobe.SpoolWriter}에 {@code Files.write}를
+	 * 심었더니 게이트가 green이었다. 경로 비교로 바꾸면 아직 존재하지 않는 파일(배부 phase의
+	 * {@code SpoolWriter})의 패키지를 지금 확정해야 하므로, 대신 <b>같은 이름이 둘 이상 존재할 수 없다</b>는
+	 * 불변식을 건다 — 복제하는 순간 red이고, 정당한 한 개는 어디에 있든 통과한다.
+	 */
+	@Test
+	void anExemptFileNameNeverResolvesToMoreThanOneFile() throws IOException {
+		for (Rule rule : RULES) {
+			for (String exempt : rule.exemptFiles()) {
+				List<String> found = new ArrayList<>();
+				try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
+					for (Path file : files.filter(Files::isRegularFile).toList()) {
+						if (file.getFileName().toString().equals(exempt)) {
+							found.add(file.toString());
+						}
+					}
+				}
+				assertTrue(found.size() <= 1,
+						"ADR-008 예외 이름이 여러 파일에 붙어 있다 — 다른 패키지에 같은 이름을 두면 예외가 복제된다: "
+								+ exempt + " " + found);
+			}
+		}
+	}
+
+	/**
+	 * 이미 존재하는 예외 파일은 <b>제자리에 있어야 한다</b>. 이름만으로 예외가 성립하므로, 같은 이름을
+	 * 엉뚱한 패키지에 두면 그 파일이 예외를 가져간다(위 불변식은 <b>복제</b>만 막는다).
+	 *
+	 * <p>{@code SpoolWriter.java}는 <b>아직 없어서</b> 여기서 경로를 못 박지 않는다 — 그 파일의 패키지는
+	 * {@code phases/72-spring-distribution}의 결정이고, 지금 고정하면 아직 하지 않은 설계를 이 테스트가
+	 * 대신 정하는 셈이 된다. <b>그 phase는 여기에 자기 경로를 추가해야 한다</b>(예외의 자리가 diff에
+	 * 보인다는 규율의 연장).
+	 */
+	@Test
+	void theExemptFilesThatAlreadyExistSitWhereTheyBelong() throws IOException {
+		assertEquals(List.of(Path.of("src", "main", "java", "harness", "news", "service",
+				"HttpApiSourceFetcher.java").toString()), locate("HttpApiSourceFetcher.java"),
+				"수집 pull 어댑터가 service 패키지 밖에 있다 — 이름만 같은 파일이 네트워크 예외를 가져간다");
+		assertEquals(List.of(), locate("SpoolWriter.java"),
+				"배부 스풀 라이터가 생겼다면 이 테스트에 그 경로를 못 박아라(예외의 자리는 diff에 보여야 한다)");
+	}
+
+	/** main 소스에서 그 이름을 가진 파일의 경로 전부. */
+	private static List<String> locate(String fileName) throws IOException {
+		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
+			return files.filter(Files::isRegularFile)
+					.filter((file) -> file.getFileName().toString().equals(fileName))
+					.map(Path::toString)
+					.sorted()
+					.toList();
+		}
+	}
+
 	/** 한 규칙으로 main 소스 전체를 훑는다(예외 파일은 그 규칙에서만 건너뛴다). */
 	private static List<String> scan(Rule rule) throws IOException {
 		List<String> hits = new ArrayList<>();
@@ -384,10 +540,82 @@ class Adr008DisciplineTest {
 	}
 
 	/**
-	 * 블록·줄 주석을 지운다({@code ClockDisciplineTest}와 동일 구현). 문자열 리터럴 안의 {@code //}까지
-	 * 잘라내지만 그것은 <b>탐지를 줄이는</b> 방향이라 오탐(정상 코드 차단)을 만들지 않는다.
+	 * 주석과 리터럴을 지운다 — 남는 것은 <b>실행되는 토큰</b>뿐이다.
+	 *
+	 * <h2>왜 정규식 두 방을 쓰지 않는가(2026-08-25 ④ 게이트 변이 실측)</h2>
+	 * 첫 판은 {@code replaceAll("//[^\n]*", " ")}였다. 그러면 <b>문자열 리터럴 안의 {@code //}</b>가
+	 * 줄 주석의 시작으로 오인돼 <b>그 줄의 나머지가 통째로 사라진다</b>. 실제로
+	 * {@code String u = "http://example.test"; new java.util.Timer(true).cancel();} 한 줄을 main 소스에
+	 * 심었을 때 게이트는 <b>green이었다</b> — 이 도메인의 코드에는 {@code http://}가 실제로 들어 있어
+	 * (수집 endpoint · 배부 스풀 주소) 우연히 성립하는 것이 아니라 <b>손 닿는 곳에 있는</b> 우회다.
+	 * "탐지를 줄이는 방향이라 안전하다"는 판단은 그래서 틀렸다: 탐지를 줄이는 것이 곧 이 게이트의 실패다.
+	 *
+	 * <p>그래서 좌에서 우로 한 번 훑으며 주석·문자열·문자 리터럴·텍스트 블록을 <b>공백 하나</b>로
+	 * 바꾼다. 리터럴 <b>내용</b>도 함께 사라지는데 그것은 의도다 — 리터럴은 실행되는 토큰이 아니고
+	 * ({@code "@Scheduled"}라는 문자열은 타이머를 돌리지 않는다), 규칙을 설명하는 javadoc이 위반으로
+	 * 잡히면 안 되는 것과 같은 이유다.
+	 *
+	 * <p>여전히 <b>덮지 못하는 벡터</b>: 끊어 쓴 문자열·리플렉션으로 만든 호출(클래스 머리말 참조).
+	 * 그 축의 실질 방어선은 각 step의 행동 단언이다({@code CollectionPreservationTest}의 행 수 생존 등).
 	 */
 	private static String stripComments(String source) {
-		return source.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("//[^\\n]*", " ");
+		StringBuilder code = new StringBuilder(source.length());
+		int i = 0;
+		int end = source.length();
+		while (i < end) {
+			char c = source.charAt(i);
+			if (c == '/' && i + 1 < end && source.charAt(i + 1) == '*') {
+				int close = source.indexOf("*/", i + 2);
+				i = (close < 0) ? end : close + 2;
+				code.append(' ');
+			}
+			else if (c == '/' && i + 1 < end && source.charAt(i + 1) == '/') {
+				while (i < end && source.charAt(i) != '\n') {
+					i++;
+				}
+				code.append(' ');
+			}
+			else if (c == '"' && source.startsWith("\"\"\"", i)) {
+				int close = source.indexOf("\"\"\"", i + 3);
+				i = (close < 0) ? end : close + 3;
+				code.append(' ');
+			}
+			else if (c == '"' || c == '\'') {
+				i = skipLiteral(source, i, c);
+				code.append(' ');
+			}
+			else {
+				code.append(c);
+				i++;
+			}
+		}
+		return code.toString();
+	}
+
+	/**
+	 * 여는 따옴표 위치에서 시작해 <b>닫는 따옴표 다음</b> 인덱스를 돌려준다.
+	 *
+	 * <p>{@code \\}는 다음 한 글자를 건너뛴다({@code "\\\""}가 리터럴을 끝내지 않게). 줄바꿈을 만나면
+	 * 거기서 끝낸다 — 소스가 깨져 있어도 스캐너가 파일 끝까지 삼켜 <b>뒤의 위반을 통째로 감추는</b>
+	 * 일이 없어야 한다(닫히는 쪽으로 틀린다).
+	 */
+	private static int skipLiteral(String source, int open, char quote) {
+		int i = open + 1;
+		int end = source.length();
+		while (i < end) {
+			char c = source.charAt(i);
+			if (c == '\\') {
+				i += 2;
+				continue;
+			}
+			if (c == quote) {
+				return i + 1;
+			}
+			if (c == '\n') {
+				return i;
+			}
+			i++;
+		}
+		return end;
 	}
 }

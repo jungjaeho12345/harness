@@ -74,6 +74,73 @@ class CollectionMarkupTest {
 				"U+2028은 JSON 문자열에서 유효하므로 그대로 쓴다");
 	}
 
+	/**
+	 * 제어문자 escape 중 <b>Node와 같은</b> 부분 — 짧은 이스케이프 다섯과 16진수가 숫자뿐인 코드포인트.
+	 */
+	@Test
+	void theShortEscapesAndAllDigitHexEscapesMatchJsonStringify() {
+		assertEquals(doc(block("x\\u0000y")), CollectionMarkup.toMarkup("x" + ch(0x0000) + "y", ""),
+				"NUL도 \\u0000으로 쓴다(문자열이 끊기지 않는다)");
+		assertEquals(doc(block("x\\u0019y")), CollectionMarkup.toMarkup("x" + ch(0x0019) + "y", ""),
+				"16진수가 숫자뿐이면 표기가 하나뿐이라 갈릴 수 없다");
+		assertEquals(doc(block("a\\bb\\fc\\rd")), CollectionMarkup.toMarkup(
+				"a" + ch(0x0008) + "b" + ch(0x000C) + "c" + ch(0x000D) + "d", ""),
+				"백스페이스·폼피드·CR은 짧은 이스케이프다(\\u00XX가 아니다)");
+	}
+
+	/**
+	 * <b>발견된 divergence(2026-08-25 ④ 테스트 게이트)</b>: {@code \\u00XX}의 16진수 <b>letter 자리가
+	 * 대문자</b>다. Node {@code JSON.stringify}는 {@code x\\u001by}를, Jackson은 {@code x\\u001By}를 쓴다.
+	 *
+	 * <h2>왜 이 축이 지금까지 보이지 않았는가</h2>
+	 * 기존 케이스는 {@code U+0001} 하나뿐이었다 — {@code 0001}은 <b>숫자만이라 대소문자 표기가 같은
+	 * 문자열</b>이다. 하위 니블이 {@code a~f}인 코드포인트라야 갈린다: {@code U+000B}·{@code U+000E}·
+	 * {@code U+000F}·{@code U+001A}~{@code U+001F}의 <b>9자</b>({@code U+000A}·{@code U+000C}·{@code U+000D}는
+	 * 짧은 이스케이프라 해당 없음). 계약 3파일은 제어문자를 보내지 않으므로 <b>구조적으로 관측 불가</b>다.
+	 *
+	 * <h2>왜 중요한가</h2>
+	 * 이 문자열은 {@code Contents.markupVersion}으로 <b>영속</b>되고 단건 조회 응답에 <b>그 문자열 값
+	 * 그대로</b> 실린다. 즉 저장 바이트뿐 아니라 <b>API 응답의 값</b>도 갈린다(응답을 파싱하면
+	 * {@code ...\\u001B...}와 {@code ...\\u001b...}라는 서로 다른 문자열이 나온다 — 그 문자열을 한 번 더
+	 * {@code JSON.parse}해야 비로소 같은 본문이 된다). 계약 3파일이 제어문자를 보내지 않아 관측되지 않을
+	 * 뿐, 값 층위의 divergence다. 이력 비교·백필·재수집 중복 판정처럼 저장 문자열을 그대로 비교하는
+	 * 축에서 실체 없는 차이를 만든다.
+	 *
+	 * <p>원인은 이 클래스가 아니라 <b>Jackson 전역</b>이다({@code JsonHttp}도 같은 매퍼로 응답을 쓴다) —
+	 * 이 phase가 만든 결함이 아니라 포팅 전반에 걸린 항목이다.
+	 *
+	 * <p><b>이 테스트는 통과가 아니라 고정이다</b>: 현재 동작을 정확히 못 박아 두어 (a) 사실이 눈에 보이고
+	 * (b) 누군가 고치면 여기서 red가 나 결정이 diff에 남는다. 고치는 방법은 {@code toMarkup}에
+	 * {@code CharacterEscapes}를 다는 것이며 그 판단은 이 게이트의 권한 밖이다(⑤/후속).
+	 */
+	@Test
+	void theHexLettersOfControlEscapesAreUppercaseUnlikeJsonStringify() {
+		assertEquals(doc(block("x\\u001By")), CollectionMarkup.toMarkup("x" + ch(0x001B) + "y", ""),
+				"Node는 x\\u001by다 — 계약이 관측하지 않는 divergence(저장 바이트가 갈린다)");
+		assertEquals(doc(block("x\\u000By")), CollectionMarkup.toMarkup("x" + ch(0x000B) + "y", ""),
+				"Node는 x\\u000by다");
+		assertEquals(doc(block("x\\u000Ey")), CollectionMarkup.toMarkup("x" + ch(0x000E) + "y", ""),
+				"Node는 x\\u000ey다");
+		assertEquals(doc(block("x\\u001Fy")), CollectionMarkup.toMarkup("x" + ch(0x001F) + "y", ""),
+				"Node는 x\\u001fy다");
+	}
+
+	/**
+	 * 비-ASCII는 <b>그대로</b> 쓴다({@code \\uXXXX}로 escape하지 않는다) — 한글·이모지·U+2028까지.
+	 *
+	 * <p>Jackson에 {@code ESCAPE_NON_ASCII}가 켜지면 저장 바이트가 통째로 달라진다(Node는 켜지지 않는다).
+	 * 이모지는 대리 쌍이라 <b>escape 여부에 더해 쌍이 깨지는지</b>도 함께 본다.
+	 */
+	@Test
+	void nonAsciiIncludingSurrogatePairsIsWrittenVerbatim() {
+		String emoji = ch(0x1F600);
+
+		assertEquals(doc(block("한글 " + emoji), block("本文 " + ch(0x2028))),
+				CollectionMarkup.toMarkup("한글 " + emoji, "本文 " + ch(0x2028)),
+				"비ASCII를 escape하면 저장 바이트가 Node와 갈린다");
+		assertEquals(2, emoji.length(), "이 코드포인트는 대리 쌍이다(테스트 전제)");
+	}
+
 	// --- 헬퍼: 기대 문자열을 Node의 JSON.stringify와 같은 모양으로 조립한다 -------------------------
 
 	private static String doc(String... blocks) {

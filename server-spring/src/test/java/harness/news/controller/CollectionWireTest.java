@@ -94,6 +94,31 @@ class CollectionWireTest {
 				"401로 끊긴 요청이 기사를 등록했다");
 	}
 
+	/**
+	 * <b>가드가 본문 판독보다 앞이다</b> — 토큰이 틀리면 깨진 JSON도 <b>파싱하지 않고</b> 401이다.
+	 *
+	 * <p>Node는 {@code express.json()}이 라우트보다 먼저 돌아 같은 요청이 <b>500</b>({@code internal-error})이
+	 * 된다(전역 에러 핸들러 — {@code server/index.js} 1244행). 계약 3파일은 깨진 본문을 보내지 않아 이 축을
+	 * 관측하지 못한다. <b>안전 방향의 의도된 divergence</b>다: 신원이 확인되지 않은 요청의 바이트를 파서에
+	 * 먹이지 않는다. 이 테스트는 그 순서가 <b>우연이 아니라 계약</b>임을 못 박는다 — 판독을 가드 위로
+	 * 올리는 리팩터링이 들어오면 여기서 red가 난다.
+	 */
+	@Test
+	void aMalformedBodyIsRejectedByTheTokenGuardBeforeItIsEverParsed() {
+		for (String path : List.of("/api/collection/receive", "/api/collection/pull")) {
+			Wire.Response broken = Wire.json(this.port, "POST", path, Map.of(), "{\"sourceId\": ");
+
+			assertEquals(401, broken.status(), path + " 깨진 본문보다 토큰 가드가 앞이다(Node는 500)");
+			assertEquals("{\"ok\":false,\"reason\":\"unauthenticated\"}", broken.body());
+		}
+
+		// 토큰이 맞으면 그때 비로소 판독하고, 깨진 본문은 전역 핸들러가 500으로 만든다(Node와 같은 코드).
+		Wire.Response parsed = Wire.json(this.port, "POST", "/api/collection/receive",
+				Map.of(CollectionWireFixtures.HEADER, CollectionWireFixtures.TOKEN), "{\"sourceId\": ");
+
+		assertEquals(500, parsed.status(), "인증된 요청의 깨진 본문은 판독 실패로 500이다");
+	}
+
 	// --- 2. 서비스 판정(403/200) ------------------------------------------------------------------
 
 	@Test
@@ -385,6 +410,23 @@ class CollectionDisabledWireTest {
 		// (판정의 본체는 503 행동이다: 이 값이 맞아도 decide가 안 부르면 열린다.)
 		assertEquals("0.0.0.0", this.properties.host(),
 				"app.collection.host가 server.address에서 파생되지 않았다 — 출처가 둘이면 fail-closed가 열린 채 남는다");
+	}
+
+	/**
+	 * fail-closed 서버는 <b>본문을 파싱조차 하지 않는다</b> — 깨진 JSON도 503이다.
+	 *
+	 * <p>Node는 같은 요청에 <b>500</b>이다({@code express.json()}이 라우트 가드보다 먼저 돈다). 계약이
+	 * 관측하지 않는 축이며 안전 방향이다: 방어가 하나도 남지 않은 구성에서는 신뢰할 수 없는 바이트를
+	 * 파서에 먹이는 것 자체가 표면이다.
+	 */
+	@Test
+	void aMalformedBodyIsStill503BecauseTheClosedServerNeverParsesIt() {
+		for (String path : List.of("/api/collection/receive", "/api/collection/pull")) {
+			Wire.Response broken = Wire.json(this.port, "POST", path, Map.of(), "{\"sourceId\": ");
+
+			assertEquals(503, broken.status(), path + " 닫힌 서버는 본문을 읽지 않는다(Node는 500)");
+			assertEquals("{\"ok\":false,\"reason\":\"collection-disabled\"}", broken.body());
+		}
 	}
 
 	@Test
