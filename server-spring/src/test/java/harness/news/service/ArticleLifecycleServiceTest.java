@@ -12,6 +12,7 @@ import harness.news.db.RequiredSchema;
 import harness.news.model.ArticleAggregate;
 import harness.news.model.ArticleHistoryRepository;
 import harness.news.model.ArticleRepository;
+import harness.news.model.ContentsRow;
 import harness.news.testsupport.MutableClock;
 import harness.news.testsupport.TempNewsDb;
 import java.nio.file.Path;
@@ -478,6 +479,77 @@ class ArticleLifecycleServiceTest {
 				"DES 진입 상태는 RDS·DDH 둘뿐이다");
 	}
 
+	// --- 7-1. EmbargoPolicy와의 정합성 (phase 72 decisions (10)) ---------------------------------------
+
+	/**
+	 * <b>DES 진입 판정과 {@link EmbargoPolicy#requiredKinds}가 같은 것을 본다</b>는 등가성 잠금.
+	 *
+	 * <p>왜 필요한가: 이 서비스의 {@code embargoSet}과 {@code EmbargoPolicy.requiredKinds}는 <b>서로 다른
+	 * 두 벌의 코드</b>다(Node도 {@code articleService.js}에서 인라인 판정을 쓰므로 갈린 것이 정본이다).
+	 * 두 판정이 어긋나면 "송고는 {@code DPS}로 떨어졌는데 배부 모듈은 엠바고가 있다고 본다"(또는 그 반대)가
+	 * 되고, 앞쪽은 <b>엠바고 전량 즉시 누수</b>다. 외부로 나간 기사는 회수 수단이 없다.
+	 *
+	 * <p>왜 이 형태인가: {@code embargoSet}은 {@code private static}이라 같은 패키지 테스트도 부를 수 없고,
+	 * 가시성을 넓히는 것은 그 자체가 소스 변경이다. 그래서 <b>관측 가능한 경로</b>(송고 결과)로만 잠근다 —
+	 * 리플렉션도 쓰지 않는다.
+	 *
+	 * <p><b>CRITICAL — 반환 status로 단언하고 되읽은 status로 단언하지 않는다.</b> 배부 phase가 송고 훅을
+	 * 붙이면 {@code secondEmbargoAt}만 설정된 조합에서 송고 즉시 {@code press} 배부가 성공하고
+	 * {@code syncEmbargoStatus}가 <b>저장된</b> status를 {@code EPS}로 승격시킨다
+	 * ({@code src/services/embargoPolicy.js} 200~202행). 되읽기로 단언하면 그때 red가 되는데, 그 red의
+	 * 잘못된 복구는 "동치 단언을 완화"하는 것이다. {@code applyAction}의 반환값은 훅 실행 여부와 무관하게
+	 * 언제나 {@code finalStatus}이므로(phase 72 decisions (8)) 그 함정을 구조적으로 피한다.
+	 */
+	@Test
+	void desEntryAgreesWithEmbargoPolicyAcrossTheFourByFourColumnGrid() {
+		// Contents 시간 컬럼이 실제로 가질 수 있는 4형태. NULL은 "키 자체가 없다"로 만든다.
+		Map<String, Object> forms = new LinkedHashMap<>();
+		forms.put("설정", "2026-08-21T00:00:00.000Z");
+		forms.put("빈문자열", "");
+		forms.put("NULL", null);
+		forms.put("공백만", "   ");
+
+		int desCells = 0;
+		int dpsCells = 0;
+		for (Map.Entry<String, Object> first : forms.entrySet()) {
+			for (Map.Entry<String, Object> second : forms.entrySet()) {
+				String label = "embargoAt=" + first.getKey() + " secondEmbargoAt=" + second.getKey();
+				Map<String, Object> fields = row();
+				if (first.getValue() != null) {
+					fields.put("embargoAt", first.getValue());
+				}
+				if (second.getValue() != null) {
+					fields.put("secondEmbargoAt", second.getValue());
+				}
+
+				String articleId = place("RDS", fields);
+				ContentsRow stored = storedContents(articleId);
+				assertEquals(first.getValue(), stored.column("embargoAt"), label + ": 저장된 1차 값");
+				assertEquals(second.getValue(), stored.column("secondEmbargoAt"), label + ": 저장된 2차 값");
+				boolean embargoRequired = !EmbargoPolicy.requiredKinds(stored::column).isEmpty();
+
+				ArticleLifecycleService.ActionResult result =
+						service.applyAction(articleId, "D", "send", "u-embargo-grid");
+
+				assertTrue(result.ok(), label + ": 송고는 성공한다 — " + result.reason());
+				assertEquals(embargoRequired, "DES".equals(result.status()),
+						label + ": DES 진입 == requiredKinds가 비어 있지 않음(두 판정은 같은 것을 본다)");
+				assertEquals(embargoRequired ? "DES" : "DPS", result.status(), label + ": 최종 상태");
+				if (embargoRequired) {
+					desCells++;
+				}
+				else {
+					dpsCells++;
+				}
+			}
+		}
+
+		// 공허하지 않다는 증거 — 두 결과가 모두 관측된다. 미설정은 (빈문자열|NULL)² = 4칸뿐이다.
+		assertEquals(16, desCells + dpsCells, "4형태 × 2컬럼 = 16칸을 전수로 본다");
+		assertEquals(12, desCells, "공백만도 '설정'이다(Node falsy 의미론 — trim하지 않는다)");
+		assertEquals(4, dpsCells, "미설정 조합은 빈 문자열·NULL의 4칸뿐이다");
+	}
+
 	// --- 8. 이력 부수효과 ---------------------------------------------------------------------------
 
 	@Test
@@ -704,6 +776,14 @@ class ArticleLifecycleServiceTest {
 
 	private String statusOf(String articleId) {
 		return String.valueOf(contentsOf(articleId).get("status"));
+	}
+
+	/** 저장된 행 그대로 — {@code EmbargoPolicy}가 실제 판정에서 받는 것과 <b>같은 접근자</b>를 얻기 위해서다. */
+	private ContentsRow storedContents(String articleId) {
+		ArticleAggregate found = articles.findById(articleId);
+		assertNotNull(found, "기사가 없다: " + articleId);
+		assertNotNull(found.contents(), "Contents 행이 없다: " + articleId);
+		return found.contents();
 	}
 
 	/** 저장된 {@code Contents} 29컬럼 전부를 읽는다(투영 전 — 잠금 컬럼까지 확인하기 위해서다). */
