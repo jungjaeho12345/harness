@@ -32,7 +32,10 @@ import org.springframework.test.context.DynamicPropertySource;
  * <p>동시에 <b>넓히면 안 된다</b>: 표에 없는 경로는 그대로 통과시켜 컨테이너 404(비-JSON)로 흘려보내고,
  * {@code auth: "token"} 라우트(수집 2건)는 세션 요구 대상이 아니다.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// app.collection.token을 명시로 비운다 — 개발 머신의 COLLECTION_TOKEN 환경변수가 설정돼 있으면
+// 수집 프로브가 401(토큰 불일치)이 되어 "세션 게이트가 붙었다"로 오독된다(판정 입력을 환경에 맡기지 않는다).
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+		properties = "app.collection.token=")
 class PathPolicyWireTest {
 
 	private static final Path DATA_DIR = TempNewsDb.newDataDir("path-policy-wire");
@@ -158,14 +161,17 @@ class PathPolicyWireTest {
 	@Test
 	void tokenClassRoutesAreNotSessionGuarded() {
 		// auth: "token"(수집 2건)은 x-collection-token + loopback으로 인증한다 — 세션이 없는 것이 정상이다.
-		// 뭉뚱그려 세션을 요구하면 유효 토큰에도 401이 나고 그 오류가 수집 도메인 phase로 상속된다.
+		// 뭉뚱그려 세션을 요구하면 유효 토큰에도 401이 나고 수집 계약 3파일이 전부 red가 된다.
+		// phase 71 step5 전까지는 핸들러가 없어 404였다. 지금은 요청이 서비스까지 가서
+		// 403 unregistered가 된다 — 그 사실 자체가 "필터가 세션을 요구하지 않았다"는 증거다.
+		// (이 컨텍스트는 loopback 바인딩 + 토큰 미설정이라 수집 게이트가 열려 있다.)
 		Wire.Response receive = Wire.json(this.port, "POST", "/api/collection/receive", Map.of(), "{}");
 		Wire.Response pull = Wire.json(this.port, "POST", "/api/collection/pull", Map.of(), "{}");
 
 		assertNotEquals(401, receive.status(), "collection-receive는 세션 요구 대상이 아니다");
 		assertNotEquals(401, pull.status(), "collection-pull은 세션 요구 대상이 아니다");
-		assertEquals(404, receive.status(), "이 phase에 핸들러가 없으므로 404다");
-		assertEquals(404, pull.status());
+		assertEquals(403, receive.status(), "핸들러까지 도달해 서비스 판정(미등록 403)이 나온다");
+		assertEquals(403, pull.status());
 	}
 
 	@Test

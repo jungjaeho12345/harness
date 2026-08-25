@@ -42,7 +42,10 @@ const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
 const RUNNER = nodePath.join(REPO_ROOT, 'scripts', 'contract-run.mjs');
 const SPRING_TARGET_DIR = nodePath.join(REPO_ROOT, 'server-spring', 'target');
 const ROLES = ['R', 'D', 'Z'];
-const HOST = '127.0.0.1';
+// 접속 주소는 **언제나 127.0.0.1**이다 — 바인드 주소는 프로파일의 host 축이 정한다(failclosed는 0.0.0.0으로
+// 바인드하지만 접속은 여기로 한다. 러너 325행과 동형: 접속 주소가 갈리면 BASE_URL 기반 계약이 갈린다).
+const CONNECT_HOST = '127.0.0.1';
+const DEFAULT_BIND_HOST = '127.0.0.1';
 
 // Spring 인스턴스 포트 [15000, 20000) — 러너 [45000,49152)·verify-integration 서버 [20000,35000)·
 // CDP [35000,45000)와 서로소다(decisions (16)). --parity는 Node 서버를 동시에 띄우므로 겹치면 안 된다.
@@ -54,16 +57,28 @@ const BUILD_HINT = `cd server-spring && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q pac
 
 // scope 표(phase 68 소유 — 후속 phase는 행만 추가한다). 파일 목록은 **알파벳 정렬 순서 그대로**여야
 // 러너가 디렉토리 스캔으로 도는 순서와 같고, auth.contract.js의 공용 세션 복구 규약이 뒤 파일에 이어진다.
-// failclosed는 수집 fail-closed 구성 축이라 아직 이 표에 없다 — 부팅도 하지 않는다(phase 69 excluded (e)).
+//
+// 구성 축 host·spool·token(phase 71 step0) — 값은 scripts/contract-run.mjs의 PROFILES와 **반드시 일치**한다.
+// 갈리면 두 대상이 서로 다른 서버 구성을 측정하게 되고(예: Node만 COLLECTION_TOKEN이 설정된 상태),
+// 그 구성 차이가 "계약 차이"로 위장된다. 축의 의미:
+//   host  = 바인드 주소(접속은 언제나 127.0.0.1). 비-loopback이면 수집이 fail-closed로 잠긴다.
+//   spool = DIST_SPOOL_DIR(패스 임시 루트 아래 새 디렉토리)를 주는가.
+//   token = COLLECTION_TOKEN(러너 소스에서 읽은 고정 테스트 토큰)을 주는가.
+// SCOPE 이름이 러너 PROFILES에 있는지 · bootOnly가 아닌 행의 files가 비지 않았는지는 실행 초반에 검사한다.
 const SCOPE = [
   {
     name: 'default',
+    host: DEFAULT_BIND_HOST,
+    spool: true,
+    token: true,
     files: [
       // phase 69 step11 — 목록·검색·이력이 붙으면서 green이 됐다(읽기 5라우트 전수 관측).
       'contract/cases/default/articles-read.contract.js',
       // phase 69 step10 — 송고(action)가 붙으면서 green이 됐다(그 전에는 DPS 잠금 픽스처가 404였다).
       'contract/cases/default/articles-write.contract.js',
       'contract/cases/default/auth.contract.js',
+      // phase 71 step5 — 수집 인제스트 2라우트가 붙으면서 green이 됐다(토큰 401 → 서비스 403/400/200).
+      'contract/cases/default/collection.contract.js',
       'contract/cases/default/crosscutting.contract.js',
       // phase 70 step6 — 배부 대상 4라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 7키·soft delete·검증 5토큰).
       'contract/cases/default/distribution-targets.contract.js',
@@ -80,29 +95,63 @@ const SCOPE = [
     // 않는 것**이 프로파일의 정의다(스풀·수집 토큰 미설정 → Node에서 배부 결선 자체가 없어 송고 훅이
     // 발화하지 않는다 = 전이 관측이 결정적이다). Spring은 이 phase에서 배부를 구현하지 않으므로 그
     // 상태가 구조적으로 참이고 **추가 env가 필요 없다**(index.json decisions (2)).
-    // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 이 phase가 구현하지 않은
-    // 수집(collection-open)·배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
+    // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 아직 구현하지 않은
+    // 배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
     name: 'minimal',
-    files: ['contract/cases/minimal/transitions.contract.js'],
+    host: DEFAULT_BIND_HOST,
+    spool: false,
+    token: false,
+    files: [
+      // phase 71 step5 — 토큰 미설정 서버의 개방 계약(헤더를 아예 읽지 않는다)이 green이 됐다.
+      'contract/cases/minimal/collection-open.contract.js',
+      'contract/cases/minimal/transitions.contract.js',
+    ],
     extraEnv: {},
   },
   {
     name: 'auth-negative',
+    host: DEFAULT_BIND_HOST,
+    spool: true,
+    token: true,
     files: ['contract/cases/auth-negative/login-negative.contract.js'],
     extraEnv: {}, // 전용 인스턴스 = 잠금·레이트리밋 카운터 격리(구성은 default와 같다).
   },
   {
+    // phase 71 step0이 올린 5번째 프로파일 — 수집 fail-closed 구성 축(비-loopback 바인딩 + 토큰 미설정).
+    // step5에서 수집 2라우트가 붙어 케이스가 green이 됐고 그때 bootOnly 플래그를 제거했다(그전에는
+    // 케이스 디렉토리 스캔이 확정 red라 기동 전용이었다). 이 프로파일의 케이스 파일은 **하나뿐**이다 —
+    // 다른 도메인을 여기에 넣지 마라(비-loopback 바인딩은 환경(방화벽)에 영향을 받는다: 그 환경 문제로
+    // 무관한 계약이 함께 무너지면 안 된다 — 케이스 파일 머리말과 같은 규율).
+    name: 'failclosed',
+    host: '0.0.0.0',
+    spool: false,
+    token: false,
+    files: ['contract/cases/failclosed/collection-disabled.contract.js'],
+    extraEnv: {},
+  },
+  {
     name: 'prod-cookie',
+    host: DEFAULT_BIND_HOST,
+    spool: false,
+    token: false,
     files: ['contract/cases/prod-cookie/cookie-prod.contract.js'],
     extraEnv: { APP_ENV: 'production' }, // Node의 NODE_ENV는 Node 런타임 관용이라 Java에 재사용하지 않는다.
   },
 ];
 const SCOPE_NAMES = SCOPE.map((p) => p.name);
+// bootOnly 행은 --profile 미지정(다중 프로파일 실행)에서 제외된다 — 조용히 빠뜨리지 않고 skip을 한 줄 보고한다.
+const BOOT_ONLY_NAMES = SCOPE.filter((p) => p.bootOnly).map((p) => p.name);
+const MULTI_RUN_NAMES = SCOPE.filter((p) => !p.bootOnly).map((p) => p.name);
+
+// bootOnly 안내 — 표에서 파생한다(플래그를 지우면 이 줄도 함께 사라진다. phase 71 step5에서 실제로
+// 사라졌고, 새 구성 축을 케이스보다 먼저 세우는 후속 phase가 같은 방식으로 다시 쓴다).
+const BOOT_ONLY_USAGE = BOOT_ONLY_NAMES.length === 0 ? '' : `
+                     ${BOOT_ONLY_NAMES.join('|')}=bootOnly(기동 전용 — --profile <name> --boot-check로만 실행. 케이스는 아직 미편입).`;
 
 const USAGE = `사용법: node scripts/spring-contract.mjs [--profile <name>]... [--files <path>[,<path>]...]
                                       [--jar <path>] [--java-home <path>] [--out-dir <dir>]
                                       [--boot-check] [--parity] [--dual-run] [--keep] [--timeout <ms>]
-  --profile <name>   실행할 프로파일(반복 가능). 미지정=scope 표 전부(${SCOPE_NAMES.join('|')}).
+  --profile <name>   실행할 프로파일(반복 가능). 미지정=scope 표에서 bootOnly가 아닌 전부(${MULTI_RUN_NAMES.join('|')}).${BOOT_ONLY_USAGE}
   --files <p>[,<p>]  케이스 파일을 scope 표 대신 쓴다. **단일 프로파일 실행 전용**(케이스가 requireProfile로 죽는다).
   --jar <path>       Spring 실행 jar. 미지정=server-spring/target/*.jar 자동 탐색(자동 빌드는 하지 않는다).
   --java-home <path> JDK 홈. 미지정=SPRING_JAVA_HOME → JAVA_HOME 순으로 읽는다(시스템 java 폴백 금지).
@@ -144,6 +193,17 @@ function parseArgs(argv) {
   for (const p of opts.profiles) {
     if (!SCOPE_NAMES.includes(p)) usageDie(`--profile 값이 scope 표에 없다(${SCOPE_NAMES.join('|')}): ${p}`);
   }
+  // bootOnly 프로파일 명시 실행은 --boot-check일 때만 허용한다. 케이스 목록이 비어 있어 러너가
+  // contract/cases/<name>/를 디렉토리 스캔하고, 아직 구현되지 않은 라우트의 케이스가 확정 red가 되기 때문이다
+  // (설정 실수가 계약 실패로 위장되는 경로 — SCOPE의 failclosed 주석 참조).
+  for (const name of opts.profiles) {
+    const row = SCOPE.find((p) => p.name === name);
+    if (row && row.bootOnly && !opts.bootCheck) {
+      usageDie(`--profile ${name}은 bootOnly 프로파일이라 --boot-check 없이는 실행할 수 없다`
+        + `(케이스 목록이 비어 있어 러너가 contract/cases/${name}/를 디렉토리 스캔하고 그 결과가 확정 red다).`
+        + ` 사용: node scripts/spring-contract.mjs --profile ${name} --boot-check`);
+    }
+  }
   if (!Number.isInteger(opts.timeout) || opts.timeout < 1000) {
     usageDie(`--timeout 값이 유효하지 않다(ms, 1000 이상 정수): ${opts.timeout}`);
   }
@@ -151,6 +211,52 @@ function parseArgs(argv) {
   if (opts.dualRun && opts.bootCheck) usageDie('--dual-run은 --boot-check와 함께 쓸 수 없다 — 관측 0건끼리의 비교는 계약 판정이 아니다.');
   if (opts.parity && opts.bootCheck) usageDie('--parity는 --boot-check와 함께 쓸 수 없다 — 관측 0건끼리의 비교는 계약 판정이 아니다.');
   return opts;
+}
+
+// --- 러너 소스 파생(단일 출처) ---
+// 러너를 import하지 않는다: contract-run.mjs는 import 시점에 main()을 실행해 서버를 띄운다.
+// 하드코딩하지도 않는다: 값이 갈리면 수집 케이스가 전부 401이 되는데 그 원인이 "계약 실패"로 위장된다.
+function readRunnerSource() {
+  try {
+    return fs.readFileSync(RUNNER, 'utf8');
+  } catch (err) {
+    usageDie(`계약 러너 소스를 읽지 못했다: ${RUNNER} (${err && err.code})`);
+    return '';
+  }
+}
+
+// COLLECTION_TOKEN 값의 단일 출처 = 러너의 COLLECTION_TEST_TOKEN 리터럴. 실패하면 즉사한다
+// (조용히 빈 토큰으로 진행하면 default 프로파일의 수집 케이스가 401이 된다). **값은 메시지에 담지 않는다.**
+function readRunnerCollectionToken(src) {
+  const m = /const\s+COLLECTION_TEST_TOKEN\s*=\s*'([^']+)'/.exec(src);
+  if (!m) {
+    usageDie('계약 러너에서 COLLECTION_TEST_TOKEN 리터럴을 찾지 못했다'
+      + `(${RUNNER}) — 러너가 바뀌었으면 이 하네스의 추출 규칙을 함께 고쳐라(값은 이 메시지에 담지 않는다).`);
+  }
+  return m[1];
+}
+
+// 러너 PROFILES의 이름 목록 — SCOPE 이름이 러너에 없으면 러너가 프로파일을 못 찾아 죽는다(설정 실수).
+function readRunnerProfileNames(src) {
+  const block = /const\s+PROFILES\s*=\s*\[([\s\S]*?)\n\];/.exec(src);
+  if (!block) usageDie(`계약 러너에서 PROFILES 표를 찾지 못했다(${RUNNER}) — 추출 규칙을 함께 고쳐라.`);
+  const names = [...block[1].matchAll(/name:\s*'([^']+)'/g)].map((m) => m[1]);
+  if (names.length === 0) usageDie(`계약 러너 PROFILES에서 프로파일 이름을 하나도 읽지 못했다(${RUNNER}).`);
+  return names;
+}
+
+// --- 스크립트 자기 검사 --- scripts/**는 eslint ignore 대상이라 이 검사가 유일한 정적 안전망이다.
+function assertScopeSane(runnerProfileNames) {
+  for (const p of SCOPE) {
+    if (!runnerProfileNames.includes(p.name)) {
+      usageDie(`SCOPE 프로파일 '${p.name}'이 러너 PROFILES에 없다(${runnerProfileNames.join('|')})`
+        + ' — 두 대상이 서로 다른 프로파일 표를 쓰면 구성 차이가 계약 차이로 위장된다.');
+    }
+    if (!p.bootOnly && p.files.length === 0) {
+      usageDie(`SCOPE 프로파일 '${p.name}'의 files가 비어 있다 — 러너가 contract/cases/${p.name}/를 디렉토리 스캔해`
+        + ' 설정 실수가 계약 실패로 위장된다. 케이스를 명시하거나 bootOnly:true로 표시하라.');
+    }
+  }
 }
 
 // --- 환경 조립 ---
@@ -212,18 +318,19 @@ function collectOutput(child) {
   return buf;
 }
 
-// 빈 포트 확정 — 후보를 실제로 listen해 본다(추측 금지 — contract-run pickFreePort 동형).
-async function pickFreePort() {
+// 빈 포트 확정 — 후보를 **그 바인드 host로** 실제 listen해 본다(추측 금지 — contract-run pickFreePort 동형).
+// host를 고정하면 0.0.0.0 바인딩 프로파일에서 "127.0.0.1은 비었지만 다른 인터페이스가 점유" 경우를 놓친다.
+async function pickFreePort(host) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const candidate = PORT_BASE + Math.floor(Math.random() * PORT_SPAN);
     const free = await new Promise((resolve) => {
       const srv = net.createServer();
       srv.once('error', () => resolve(false));
-      srv.listen(candidate, HOST, () => srv.close(() => resolve(true)));
+      srv.listen(candidate, host, () => srv.close(() => resolve(true)));
     });
     if (free) return candidate;
   }
-  throw new Error(`빈 포트를 찾지 못했다(host=${HOST}, [${PORT_BASE}, ${PORT_BASE + PORT_SPAN}) 20회 시도) — 환경 이상`);
+  throw new Error(`빈 포트를 찾지 못했다(host=${host}, [${PORT_BASE}, ${PORT_BASE + PORT_SPAN}) 20회 시도) — 환경 이상`);
 }
 
 async function waitHealthy(baseUrl, timeoutMs, child) {
@@ -338,19 +445,34 @@ async function runSpringPass(profile, opts, ctx, label) {
     db.close();
 
     // 2. 빈 포트 확보(실제 listen) → 3. 명시 env로 기동. cwd도 임시 루트다(상대 경로 쓰기 격리).
-    const port = await pickFreePort();
+    const port = await pickFreePort(profile.host);
     const env = javaChildEnv();
     env.DATA_DIR = dataDir;
     env.PORT = String(port);
-    env.HOST = HOST;
+    env.HOST = profile.host;
+    // 구성 축 주입(러너 305~322행과 같은 값·같은 순서). 스풀은 **패스마다 새 디렉토리**다 —
+    // --dual-run의 두 패스가 같은 스풀을 공유하면 자기 결정성 판정이 오염된다. 리포 안에는 절대 만들지 않는다.
+    let spoolDir = null;
+    if (profile.spool) {
+      spoolDir = nodePath.join(root, 'spool');
+      fs.mkdirSync(spoolDir);
+      env.DIST_SPOOL_DIR = spoolDir;
+    }
+    if (profile.token) env.COLLECTION_TOKEN = ctx.collectionToken; // 값은 로그·리포트에 남기지 않는다.
     Object.assign(env, profile.extraEnv);
 
     javaChild = spawn(ctx.javaBin, ['-jar', ctx.jar], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     ctx.children.add(javaChild);
     javaBuf = collectOutput(javaChild);
-    const baseUrl = `http://${HOST}:${port}`;
-    // pid·dataDir을 남긴다 — --dual-run의 두 패스가 정말 다른 프로세스·다른 데이터로 도는지 눈으로 확인한다.
-    process.stdout.write(`  [${tag}] spring 기동 pid=${javaChild.pid ?? '-'} port=${port} dataDir=${dataDir}\n`);
+    // 접속은 언제나 127.0.0.1이다(바인드가 0.0.0.0이어도 — 금지사항: 0.0.0.0으로 접속하지 마라).
+    const baseUrl = `http://${CONNECT_HOST}:${port}`;
+    // pid·dataDir·구성 축을 남긴다 — --dual-run의 두 패스가 정말 다른 프로세스·다른 데이터·다른 스풀로
+    // 도는지 눈으로 확인한다. 토큰은 **불리언만** 남긴다(값 출력 금지).
+    process.stdout.write(
+      `  [${tag}] spring 기동 pid=${javaChild.pid ?? '-'} port=${port} host=${profile.host}`
+      + ` spool=${profile.spool ? 'yes' : 'no'} token=${profile.token ? 'yes' : 'no'} dataDir=${dataDir}`
+      + `${spoolDir ? ` spoolDir=${spoolDir}` : ''}\n`,
+    );
 
     // 4. health 왕복 대기 — 자식이 죽으면 즉시 실패하고 stdout/stderr를 진단에 첨부한다.
     const bootStart = Date.now();
@@ -450,7 +572,16 @@ function diffReports(labelA, fileA, labelB, fileB, failures) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
 
-  const selected = SCOPE.filter((p) => opts.profiles.length === 0 || opts.profiles.includes(p.name));
+  // 자기 검사 + 러너 파생값 — 어떤 실행이든 가장 먼저 한다(설정 실수를 계약 실패보다 먼저 드러낸다).
+  const runnerSrc = readRunnerSource();
+  assertScopeSane(readRunnerProfileNames(runnerSrc));
+  const collectionToken = SCOPE.some((p) => p.token) ? readRunnerCollectionToken(runnerSrc) : null;
+
+  // --profile 미지정(다중 프로파일 실행)에서는 bootOnly 행을 제외한다 — 케이스 목록이 비어 있어
+  // 러너 디렉토리 스캔이 확정 red가 되기 때문이다(SCOPE의 failclosed 주석 참조). 명시하면 실행한다.
+  const explicit = opts.profiles.length > 0;
+  const selected = SCOPE.filter((p) => (explicit ? opts.profiles.includes(p.name) : !p.bootOnly));
+  const skippedBootOnly = explicit ? [] : SCOPE.filter((p) => p.bootOnly).map((p) => p.name);
   if (selected.length === 0) usageDie('실행할 프로파일이 없다 — --profile 값을 확인하라.');
   // 여러 프로파일 + --files는 금지다: 케이스가 requireProfile로 로드 시점에 throw해
   // "설정 실수"가 "계약 실패"처럼 보인다(금지사항).
@@ -473,6 +604,7 @@ async function main() {
   const ctx = {
     jar,
     javaBin,
+    collectionToken,
     children: new Set(),
     secretFiles: new Set(),
     mkTmp(prefix) {
@@ -500,6 +632,10 @@ async function main() {
   });
 
   process.stdout.write(`spring-contract 시작 jar=${jar}\n  outDir=${ctx.outDir}\n`);
+  // 사라진 프로파일은 "통과"로 오독된다 — skip을 반드시 한 줄로 보고한다.
+  for (const name of skippedBootOnly) {
+    process.stdout.write(`[${name}] skipped — bootOnly(케이스 미편입. 단독 실행: --profile ${name} --boot-check)\n`);
+  }
 
   // 데이터 안전 — before 스냅샷(리포 news.db·uploads/)이 종료 후 무변 단언의 기준점이다.
   const repoBefore = repoDataSnapshot();
