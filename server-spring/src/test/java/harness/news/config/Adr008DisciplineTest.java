@@ -23,16 +23,21 @@ import org.junit.jupiter.api.Test;
  * 배부 phase는 그 유혹이 가장 큰 자리다 — 시점 배부에 {@code @Scheduled}, 배부 실패에 {@code @Retryable},
  * 송고 훅에 {@code @Async}, 수집 pull에 {@code RestTemplate}을 쓰고 싶어진다. 전부 ADR-008과 정면 충돌이다.
  *
- * <p><b>정당한 예외는 정확히 2개</b>이고 <b>파일 단위 명시 목록</b>이다({@code ClockDisciplineTest}의
+ * <p><b>정당한 예외는 정확히 2개</b>이고 <b>경로 단위 명시 목록</b>이다({@code ClockDisciplineTest}의
  * {@code CLOCK_FACTORY_FILES}와 같은 이유 — 예외가 늘어나면 그 사실이 diff에 보인다).
  * <ul>
- * <li><b>네트워크 클라이언트</b> — {@code HttpApiSourceFetcher.java}. ADR-008의 egress 금지는 <b>배부</b>
- * 축이고, 수집 pull은 {@code rcv.md}가 정의한 능동 수집이라 아웃바운드 호출이 기능 그 자체다.</li>
- * <li><b>파일 쓰기</b> — {@code SpoolWriter.java}. 배부는 파일 스풀 outbound가 전송 수단이다.</li>
+ * <li><b>네트워크 클라이언트</b> — {@code harness/news/service/HttpApiSourceFetcher.java}. ADR-008의
+ * egress 금지는 <b>배부</b> 축이고, 수집 pull은 {@code rcv.md}가 정의한 능동 수집이라 아웃바운드 호출이
+ * 기능 그 자체다.</li>
+ * <li><b>파일 쓰기</b> — {@code harness/news/service/SpoolWriter.java}. 배부는 파일 스풀 outbound가
+ * 전송 수단이다.</li>
  * </ul>
- * 두 파일은 <b>아직 없을 수 있다</b>(각각 이 phase step4 · {@code phases/72-spring-distribution} step3이
- * 만든다). 스캔은 파일이 없으면 아무 일도 하지 않으므로 이름을 미리 등재해도 무해하며, 그래야 그 파일을
- * 만드는 step의 diff가 "예외를 새로 늘렸다"가 아니라 "예약된 자리를 채웠다"가 된다.
+ * 예외 항목은 {@code src/main/java} 기준 <b>상대 경로</b>다(2026-08-25 ⑤ 코드리뷰 반려 폐색 — 파일
+ * <b>이름</b>으로 성립하면 같은 이름을 다른 패키지에 두는 것만으로 예외가 새로 생긴다).
+ * {@code SpoolWriter.java}는 <b>아직 없고</b> 위 경로는 <b>예약된 자리</b>다
+ * ({@code phases/72-spring-distribution} step3이 만든다) — 그 phase가 다른 패키지를 고른다면 이 목록의
+ * 경로를 고쳐야 하고, 그때 <b>결정이 diff에 남는다</b>(그것이 이 규율의 목적이다). 스캔은 파일이 없으면
+ * 아무 일도 하지 않으므로 자리를 미리 잡아 두는 것은 무해하다.
  * <b>주기 실행·비동기·재시도는 예외 0</b>이다.
  *
  * <p><b>덮는 벡터</b>: 리터럴로 쓴 애노테이션·타입·메서드 호출.
@@ -49,13 +54,25 @@ class Adr008DisciplineTest {
 
 	private static final Path MAIN_SOURCES = Path.of("src", "main", "java");
 
+	/** 3군 예외의 <b>자리</b> — {@code src/main/java} 기준 상대 경로다(이 파일은 이미 존재한다). */
+	private static final String NETWORK_CLIENT_FILE = "harness/news/service/HttpApiSourceFetcher.java";
+
 	/**
-	 * 금지 규칙 한 묶음 — 이름 · 패턴 목록 · <b>파일 단위 예외</b>.
+	 * 4군 예외의 <b>예약된 자리</b> — 아직 없는 파일이다({@code phases/72-spring-distribution} step3).
+	 * 그 phase가 다른 패키지를 고르면 <b>이 상수를 고쳐야</b> 하고 그때 결정이 diff에 남는다.
+	 */
+	private static final String SPOOL_WRITER_FILE = "harness/news/service/SpoolWriter.java";
+
+	/**
+	 * 금지 규칙 한 묶음 — 이름 · 패턴 목록 · <b>경로 단위 예외</b>.
 	 *
 	 * <p>예외를 규칙 안에 묶어 두는 이유: 예외가 <b>자기 군에만</b> 적용된다는 사실이 구조로 보장된다
 	 * (수집 어댑터가 타이머를 돌리거나 스풀 라이터가 네트워크를 여는 것은 여전히 red다).
+	 *
+	 * @param exemptPaths {@code src/main/java} 기준 상대 경로({@code /} 구분자). <b>이름이 아니라 경로</b>다
+	 * — 이름 매칭이면 같은 이름을 다른 패키지에 둔 파일이 예외를 가져간다.
 	 */
-	private record Rule(String name, List<Pattern> patterns, List<String> exemptFiles) {
+	private record Rule(String name, List<Pattern> patterns, List<String> exemptPaths) {
 	}
 
 	/**
@@ -122,7 +139,7 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\bDatagramSocket\\b"),
 			Pattern.compile("\\bURLConnection\\b"),
 			Pattern.compile("\\bHttpURLConnection\\b")),
-			List.of("HttpApiSourceFetcher.java"));
+			List.of(NETWORK_CLIENT_FILE));
 
 	/**
 	 * 4군 — 파일 쓰기(예외 1: 배부 스풀 라이터).
@@ -150,7 +167,7 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\.\\s*mkdirs?\\s*\\("),
 			Pattern.compile("\\.\\s*createNewFile\\s*\\("),
 			Pattern.compile("\\.\\s*renameTo\\s*\\(")),
-			List.of("SpoolWriter.java"));
+			List.of(SPOOL_WRITER_FILE));
 
 	private static final List<Rule> RULES =
 			List.of(PERIODIC_EXECUTION, ASYNC_AND_RETRY, NETWORK_CLIENT, FILE_WRITE);
@@ -296,7 +313,7 @@ class Adr008DisciplineTest {
 		List<String> hits = scan(NETWORK_CLIENT);
 
 		assertTrue(hits.isEmpty(),
-				"수집 pull 어댑터(" + NETWORK_CLIENT.exemptFiles() + ") 밖에서 네트워크 클라이언트를 쓴다"
+				"수집 pull 어댑터(" + NETWORK_CLIENT.exemptPaths() + ") 밖에서 네트워크 클라이언트를 쓴다"
 						+ "(ADR-008 (1) — 배부 축은 egress 0): " + hits);
 	}
 
@@ -309,7 +326,7 @@ class Adr008DisciplineTest {
 		List<String> hits = scan(FILE_WRITE);
 
 		assertTrue(hits.isEmpty(),
-				"배부 스풀 라이터(" + FILE_WRITE.exemptFiles() + ") 밖에서 파일을 쓴다"
+				"배부 스풀 라이터(" + FILE_WRITE.exemptPaths() + ") 밖에서 파일을 쓴다"
 						+ "(ADR-008 (1) — 스풀 쓰기는 한 지점): " + hits);
 	}
 
@@ -322,17 +339,22 @@ class Adr008DisciplineTest {
 	 */
 	@Test
 	void theExceptionListIsExactlyTwoFiles() {
-		List<String> allExemptions = RULES.stream().flatMap((rule) -> rule.exemptFiles().stream()).toList();
+		List<String> allExemptions = RULES.stream().flatMap((rule) -> rule.exemptPaths().stream()).toList();
 
-		assertEquals(List.of("HttpApiSourceFetcher.java", "SpoolWriter.java"), allExemptions,
-				"ADR-008 예외는 정확히 2파일이다(수집 pull 어댑터 · 배부 스풀 라이터)");
+		assertEquals(List.of("harness/news/service/HttpApiSourceFetcher.java",
+				"harness/news/service/SpoolWriter.java"), allExemptions,
+				"ADR-008 예외는 정확히 2파일이고 그 자리(경로)까지 고정이다(수집 pull 어댑터 · 배부 스풀 라이터)");
 		assertEquals(2, allExemptions.size(), "예외 목록 크기");
-		assertEquals(List.of(), PERIODIC_EXECUTION.exemptFiles(), "주기 실행은 예외 0이다");
-		assertEquals(List.of(), ASYNC_AND_RETRY.exemptFiles(), "비동기·재시도는 예외 0이다");
-		assertEquals(List.of("HttpApiSourceFetcher.java"), NETWORK_CLIENT.exemptFiles(),
+		assertEquals(List.of(), PERIODIC_EXECUTION.exemptPaths(), "주기 실행은 예외 0이다");
+		assertEquals(List.of(), ASYNC_AND_RETRY.exemptPaths(), "비동기·재시도는 예외 0이다");
+		assertEquals(List.of(NETWORK_CLIENT_FILE), NETWORK_CLIENT.exemptPaths(),
 				"네트워크 예외는 수집 pull 어댑터 하나뿐이다");
-		assertEquals(List.of("SpoolWriter.java"), FILE_WRITE.exemptFiles(),
+		assertEquals(List.of(SPOOL_WRITER_FILE), FILE_WRITE.exemptPaths(),
 				"파일 쓰기 예외는 배부 스풀 라이터 하나뿐이다");
+		for (String exempt : allExemptions) {
+			assertTrue(exempt.contains("/"),
+					"예외 항목이 경로가 아니라 이름이다 — 이름 매칭이면 다른 패키지의 동명 파일이 예외를 가져간다: " + exempt);
+		}
 	}
 
 	/**
@@ -345,23 +367,46 @@ class Adr008DisciplineTest {
 	 */
 	@Test
 	void theExemptionAppliesOnlyToItsOwnFileAndItsOwnGroup() {
-		assertTrue(violations(FILE_WRITE, "SpoolWriter.java", "Files.write(target, bytes);", "planted").isEmpty(),
+		assertTrue(violations(FILE_WRITE, SPOOL_WRITER_FILE, "Files.write(target, bytes);", "planted").isEmpty(),
 				"배부 스풀 라이터의 파일 쓰기는 허용이다(예외가 성립하지 않으면 그 phase가 시작부터 red다)");
-		assertFalse(
-				violations(FILE_WRITE, "ArticleWriteService.java", "Files.write(target, bytes);", "planted").isEmpty(),
-				"예외 파일이 아닌 곳의 파일 쓰기까지 허용하고 있다");
-		assertTrue(violations(NETWORK_CLIENT, "HttpApiSourceFetcher.java",
+		assertFalse(violations(FILE_WRITE, "harness/news/service/ArticleWriteService.java",
+				"Files.write(target, bytes);", "planted").isEmpty(), "예외 파일이 아닌 곳의 파일 쓰기까지 허용하고 있다");
+		assertTrue(violations(NETWORK_CLIENT, NETWORK_CLIENT_FILE,
 				"HttpClient http = HttpClient.newHttpClient();", "planted").isEmpty(),
 				"수집 pull 어댑터의 아웃바운드 호출은 허용이다(기능 그 자체다 — rcv.md 능동 수집)");
-		assertFalse(violations(NETWORK_CLIENT, "SpoolWriter.java",
+		assertFalse(violations(NETWORK_CLIENT, SPOOL_WRITER_FILE,
 				"HttpClient http = HttpClient.newHttpClient();", "planted").isEmpty(),
 				"파일 쓰기 예외가 네트워크 군까지 새어 나간다");
-		assertFalse(violations(PERIODIC_EXECUTION, "SpoolWriter.java",
+		assertFalse(violations(PERIODIC_EXECUTION, SPOOL_WRITER_FILE,
 				"@Scheduled(fixedDelay = 1000)\nvoid flush() { }", "planted").isEmpty(),
 				"예외 파일이라도 앱 내 타이머는 금지다(1군 예외 0)");
-		assertFalse(violations(ASYNC_AND_RETRY, "HttpApiSourceFetcher.java",
+		assertFalse(violations(ASYNC_AND_RETRY, NETWORK_CLIENT_FILE,
 				"@Retryable(maxAttempts = 3)\nString fetch() { return \"\"; }", "planted").isEmpty(),
 				"예외 파일이라도 재시도는 금지다(2군 예외 0 — ADR-008 (6))");
+	}
+
+	/**
+	 * <b>오배치한 동명 파일은 예외를 가져가지 못한다</b>(2026-08-25 ⑤ 코드리뷰 반려 폐색).
+	 *
+	 * <p>④ 게이트의 변이 실측이 남긴 잔여 구멍이다: {@code harness.news.zzprobe.SpoolWriter}에
+	 * {@code Files.write}를 심었을 때 게이트가 <b>green</b>이었다(예외가 파일 <b>이름</b>으로 성립했다).
+	 * 이제 예외는 경로로 성립하므로 같은 이름을 다른 패키지에 두어도 스캔이 그것을 위반으로 본다 —
+	 * {@code phases/72-spring-distribution}이 스풀 라이터를 엉뚱한 패키지에 두면 <b>조용히 통과하지 않고</b>
+	 * red가 난다.
+	 *
+	 * <p>판정 함수를 직접 부른다: 예외 파일 둘 중 하나(SpoolWriter)는 아직 <b>존재하지 않아</b> 실제
+	 * 스캔으로는 이 분기가 한 번도 실행되지 않기 때문이다.
+	 */
+	@Test
+	void aMisplacedFileWithAnExemptNameIsNotExempt() {
+		assertFalse(violations(FILE_WRITE, "harness/news/zzprobe/SpoolWriter.java", "Files.write(target, bytes);",
+				"planted").isEmpty(), "다른 패키지의 SpoolWriter.java가 파일 쓰기 예외를 가져간다");
+		assertFalse(violations(NETWORK_CLIENT, "harness/news/zzprobe/HttpApiSourceFetcher.java",
+				"HttpClient http = HttpClient.newHttpClient();", "planted").isEmpty(),
+				"다른 패키지의 HttpApiSourceFetcher.java가 네트워크 예외를 가져간다");
+		assertFalse(violations(NETWORK_CLIENT, "HttpApiSourceFetcher.java",
+				"HttpClient http = HttpClient.newHttpClient();", "planted").isEmpty(),
+				"패키지 없이 소스 루트에 둔 동명 파일이 예외를 가져간다(이름 매칭의 잔재)");
 	}
 
 	/**
@@ -451,57 +496,37 @@ class Adr008DisciplineTest {
 	}
 
 	/**
-	 * 예외는 <b>파일 이름</b>으로 성립한다 — 그러면 같은 이름의 파일을 <b>다른 패키지에</b> 하나 더 두는
-	 * 것만으로 예외가 복제된다.
+	 * 예외로 등재된 <b>이름</b>을 가진 파일은 리포에 <b>정확히 하나</b>이고, 그 하나는 <b>등재된 자리</b>에
+	 * 있다(아직 만들지 않은 파일은 <b>0개</b>여야 한다 — 어디에도 있으면 안 된다).
 	 *
-	 * <p>2026-08-25 ④ 게이트 변이 실측: {@code harness.news.zzprobe.SpoolWriter}에 {@code Files.write}를
-	 * 심었더니 게이트가 green이었다. 경로 비교로 바꾸면 아직 존재하지 않는 파일(배부 phase의
-	 * {@code SpoolWriter})의 패키지를 지금 확정해야 하므로, 대신 <b>같은 이름이 둘 이상 존재할 수 없다</b>는
-	 * 불변식을 건다 — 복제하는 순간 red이고, 정당한 한 개는 어디에 있든 통과한다.
+	 * <p>2026-08-25 ⑤ 코드리뷰 반려 폐색. 예외 판정은 이제 경로로 하지만({@link #violations}), 그것만으로는
+	 * "예외 이름을 가진 파일이 <b>여럿</b>"인 상태를 막지 못한다 — 오배치본은 위반으로 잡히더라도, 그 상태
+	 * 자체가 사람을 속인다(어느 것이 진짜 예외인지 이름만 보고는 모른다). 그래서 개수와 자리를 함께 못 박는다.
+	 *
+	 * <p>이 단언이 {@code SpoolWriter}에 대해서는 "0개"를 요구하므로, {@code phases/72-spring-distribution}은
+	 * 그 파일을 만들 때 <b>등재된 경로에</b> 두거나 {@link #SPOOL_WRITER_FILE}을 함께 고쳐야 한다.
 	 */
 	@Test
-	void anExemptFileNameNeverResolvesToMoreThanOneFile() throws IOException {
+	void everyExemptNameResolvesToExactlyOneFileAtItsDeclaredPath() throws IOException {
 		for (Rule rule : RULES) {
-			for (String exempt : rule.exemptFiles()) {
-				List<String> found = new ArrayList<>();
-				try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
-					for (Path file : files.filter(Files::isRegularFile).toList()) {
-						if (file.getFileName().toString().equals(exempt)) {
-							found.add(file.toString());
-						}
-					}
-				}
-				assertTrue(found.size() <= 1,
-						"ADR-008 예외 이름이 여러 파일에 붙어 있다 — 다른 패키지에 같은 이름을 두면 예외가 복제된다: "
+			for (String exempt : rule.exemptPaths()) {
+				String fileName = exempt.substring(exempt.lastIndexOf('/') + 1);
+				List<String> found = locate(fileName);
+				boolean declaredExists = Files.isRegularFile(MAIN_SOURCES.resolve(exempt));
+
+				assertEquals(declaredExists ? List.of(exempt) : List.of(), found,
+						"ADR-008 예외 이름이 붙은 파일은 등재된 자리에 정확히 하나여야 한다(0 또는 여럿·오배치는 red): "
 								+ exempt + " " + found);
 			}
 		}
 	}
 
-	/**
-	 * 이미 존재하는 예외 파일은 <b>제자리에 있어야 한다</b>. 이름만으로 예외가 성립하므로, 같은 이름을
-	 * 엉뚱한 패키지에 두면 그 파일이 예외를 가져간다(위 불변식은 <b>복제</b>만 막는다).
-	 *
-	 * <p>{@code SpoolWriter.java}는 <b>아직 없어서</b> 여기서 경로를 못 박지 않는다 — 그 파일의 패키지는
-	 * {@code phases/72-spring-distribution}의 결정이고, 지금 고정하면 아직 하지 않은 설계를 이 테스트가
-	 * 대신 정하는 셈이 된다. <b>그 phase는 여기에 자기 경로를 추가해야 한다</b>(예외의 자리가 diff에
-	 * 보인다는 규율의 연장).
-	 */
-	@Test
-	void theExemptFilesThatAlreadyExistSitWhereTheyBelong() throws IOException {
-		assertEquals(List.of(Path.of("src", "main", "java", "harness", "news", "service",
-				"HttpApiSourceFetcher.java").toString()), locate("HttpApiSourceFetcher.java"),
-				"수집 pull 어댑터가 service 패키지 밖에 있다 — 이름만 같은 파일이 네트워크 예외를 가져간다");
-		assertEquals(List.of(), locate("SpoolWriter.java"),
-				"배부 스풀 라이터가 생겼다면 이 테스트에 그 경로를 못 박아라(예외의 자리는 diff에 보여야 한다)");
-	}
-
-	/** main 소스에서 그 이름을 가진 파일의 경로 전부. */
+	/** main 소스에서 그 이름을 가진 파일의 상대 경로 전부. */
 	private static List<String> locate(String fileName) throws IOException {
 		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
 			return files.filter(Files::isRegularFile)
 					.filter((file) -> file.getFileName().toString().equals(fileName))
-					.map(Path::toString)
+					.map(Adr008DisciplineTest::relativePath)
 					.sorted()
 					.toList();
 		}
@@ -512,16 +537,29 @@ class Adr008DisciplineTest {
 		List<String> hits = new ArrayList<>();
 		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
 			for (Path file : files.filter(Files::isRegularFile).toList()) {
-				hits.addAll(violations(rule, file.getFileName().toString(),
-						Files.readString(file, StandardCharsets.UTF_8), file.toString()));
+				hits.addAll(violations(rule, relativePath(file), Files.readString(file, StandardCharsets.UTF_8),
+						file.toString()));
 			}
 		}
 		return hits;
 	}
 
-	/** 파일 하나에 규칙 하나를 적용한다 — 예외 판정도 여기 있다(아래 자기 검사가 그 분기를 직접 부른다). */
-	private static List<String> violations(Rule rule, String fileName, String source, String label) {
-		if (rule.exemptFiles().contains(fileName)) {
+	/**
+	 * {@code src/main/java} 기준 상대 경로를 {@code /} 구분자로 만든다 — 예외 판정의 키다(OS마다 구분자가
+	 * 달라 {@code Path.toString()}을 그대로 쓰면 리눅스와 윈도우에서 예외가 갈린다).
+	 */
+	private static String relativePath(Path file) {
+		return MAIN_SOURCES.relativize(file).toString().replace('\\', '/');
+	}
+
+	/**
+	 * 파일 하나에 규칙 하나를 적용한다 — 예외 판정도 여기 있다(아래 자기 검사가 그 분기를 직접 부른다).
+	 *
+	 * @param path {@code src/main/java} 기준 상대 경로. <b>이름이 아니다</b> — 이름으로 비교하면
+	 * {@code harness/news/zzprobe/HttpApiSourceFetcher.java}가 네트워크 예외를 가져간다(2026-08-25 ⑤ 반려).
+	 */
+	private static List<String> violations(Rule rule, String path, String source, String label) {
+		if (rule.exemptPaths().contains(path)) {
 			return List.of();
 		}
 		List<String> hits = new ArrayList<>();

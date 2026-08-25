@@ -8,9 +8,9 @@
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
 - 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD** + phase 71 **수집 인제스트**):
   라우트 **29개**. 계약 15파일(default 10 · minimal 2 · auth-negative 1 · **failclosed 1** · prod-cookie 1) = **5 프로파일**이 이 서버
-  대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다 (phase 71 마감 실측 2026-08-25: 관측 **236**(default 176 · minimal 48 ·
-  auth-negative 4 · failclosed 5 · prod-cookie 3) · diffs 0 · 자기 결정성 `--dual-run` 236관측 diffs 0 · Java **753 테스트 0 실패** ·
-  jar **35,662,714 B**). 배부 실행·미디어/업로드/사진·SSE·번역은 아직 없다(아래 라우트 표).
+  대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다 (phase 71 ⑤ 반려 폐색 후 실측 2026-08-25: 관측 **236**(default 176 ·
+  minimal 48 · auth-negative 4 · failclosed 5 · prod-cookie 3) · diffs 0 · Java **772 테스트 0 실패** · jar **35,664,982 B** ·
+  Node 축 `npm test` **1328/1328**). 배부 실행·미디어/업로드/사진·SSE·번역은 아직 없다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
@@ -48,7 +48,7 @@
 | `PUT /api/distribution-targets/:id` | admin(Z) | present-only · 없는/비수치 id는 **404 not-found**(500 아님) · `{active:"N"}`이 soft delete의 두 번째 진입점 |
 | `POST /api/distribution-targets/:id/deactivate` | admin(Z) | **soft delete** — 행을 지우지 않고 `active='N'` UPDATE(update와 같은 `applyPatch`로 수렴, updatedAt stamp). 제거 라우트는 없다 |
 | `POST /api/collection/receive` | token | 세션 라우트가 **아니다**(`x-collection-token` + 바인드 주소). 가드 순서 **503 `collection-disabled` → 401 `unauthenticated` → 403 `unregistered`/`inactive` → 200**. `attribute='자동기사'`·`status='RDS'`로 **신규 삽입만** · payload가 없어도 200 |
-| `POST /api/collection/pull` | token | 등록된 활성 API 소스를 **한 번** 호출(재시도 0 · 리다이렉트 미추종 · connect timeout 10초)하고 응답을 receive와 같은 경로로 등록한다. `no-active-api-source`·`fetch-failed`는 전역 표에 없고 **폴백 400**이 계약이다 |
+| `POST /api/collection/pull` | token | 등록된 활성 API 소스를 **한 번** 호출(재시도 0 · 리다이렉트 미추종 · connect 10초 · request 30초 · 본문 16 MiB 상한)하고 응답을 receive와 같은 경로로 등록한다. 타임아웃·상한 초과는 다른 실패와 **같은 사유**(`fetch-failed`)로 접힌다. `no-active-api-source`·`fetch-failed`는 전역 표에 없고 **폴백 400**이 계약이다 |
 
 **배부 대상에는 행 삭제 경로가 없다** — `DELETE /api/distribution-targets/:id`는 핸들러 미등록으로 **404**다
 (Express는 method+path를 함께 매칭해 미등록 메서드를 405가 아니라 404로 떨구므로, Spring도 메서드 불일치를
@@ -296,9 +296,16 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 - **수집 성공의 변경 신호(SSE)** — Node는 `receive`·`pull` 성공에서 `notifyChange('create')`를 부르지만 Spring에는 SSE 자체가
   없다(seam도 만들지 않았다). SSE 도메인 phase가 결선한다.
 - **수집 토큰의 회전·만료** — 그런 개념이 Node에도 없다(값 비교뿐). 토큰이 새면 재기동 전까지 막을 수단이 없다.
-- **의도된 divergence 2건**(고치지 않았고 안전 방향이다): 아웃바운드 `HttpClient`는 **리다이렉트를 따라가지 않는다**
-  (Node `fetch`는 따라간다 — 등록된 endpoint 밖으로 요청이 새지 않는 쪽으로 틀렸다) · **connect timeout 10초**(Node에는
-  타임아웃이 없다). **요청 단계 무한 대기는 Node와 동일하게 남는다** — 느린 등록 endpoint가 Tomcat 워커를 점유할 수 있다.
+- **의도된 divergence 3건**(고치지 않았고 안전 방향이다): ① 아웃바운드 `HttpClient`는 **리다이렉트를 따라가지 않는다**
+  (Node `fetch`는 따라간다 — 등록된 endpoint 밖으로 요청이 새지 않는 쪽으로 틀렸다) · ② **connect 10초 + request 30초**
+  (Node `fetch`에는 요청 타임아웃이 **없다**). 무한 대기의 대가가 두 서버에서 다르기 때문이다 — Node는 이벤트 루프라
+  기다리는 동안에도 다른 요청을 처리하지만 Spring은 **Tomcat 워커 하나**가 묶여 응답 없는 소스 하나 + 반복 pull이 29 라우트를
+  전부 굶긴다. 타임아웃은 단일 요청의 상한일 뿐 재시도가 아니다(ADR-008 (6) 유지). · ③ **응답 본문 16 MiB 상한**
+  (없으면 거대 응답의 `OutOfMemoryError`가 `catch` 밖에서 JVM을 죽인다 — Node는 V8 문자열 상한 `RangeError`가
+  `fetch-failed`로 접힌다). ②③ 모두 초과 시 **기존 실패 shape 그대로**(`ok=false` → `fetch-failed`)이며 새 사유 토큰은 없다.
+  **잔여 위험**: `HttpRequest.timeout`은 **응답 헤더까지만** 덮는다(JDK 21 실측 — 본문을 3초에 걸쳐 흘리는 서버는 상한
+  500ms에도 3,082ms를 기다렸다). 본문을 천천히 흘리는 소스는 여전히 워커를 점유한다(막으려면 타이머·별도 스레드가 필요하고
+  그것이 ADR-008 (3)(6) 위반이라 하지 않았다).
 - **정수값의 실수 표기** — payload JSON의 `2.0`이 Node 파서에서는 `"2"`, Jackson→Java에서는 `"2.0"`으로 문자열화된다.
   JS `Number::toString` 전체 규칙(1e21 임계·지수 표기)을 부분 재구현하면 더 위험해 고치지 않았고, 전용 테스트가 가시화한다.
 - **깨진 JSON 본문** — Node는 `express.json()`이 라우트보다 먼저 돌아 **가드 이전에 500**이 되고 Spring은 가드가 먼저라

@@ -3,6 +3,7 @@ package harness.news.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -14,9 +15,12 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,11 +64,17 @@ class HttpApiSourceFetcherTest {
 	/** 아무도 듣지 않는 loopback 포트 — 계약 케이스의 {@code DEAD_ENDPOINT}와 같은 값이다. */
 	private static final String DEAD_ENDPOINT = "http://127.0.0.1:1/";
 
+	/** 상한 경계 테스트가 쓰는 작은 본문 상한 — 프로덕션 값(16 MiB)을 기다리지 않으려고 주입한다. */
+	private static final long TEST_CAP = 1024;
+
 	private HttpServer server;
 
 	private String base;
 
 	private final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+
+	/** {@code /silent} 핸들러를 붙잡아 두는 빗장 — 테스트가 끝나면 풀어 준다(핸들러가 잠들지 않는다). */
+	private final CountDownLatch release = new CountDownLatch(1);
 
 	private HttpApiSourceFetcher fetcher;
 
@@ -87,6 +97,20 @@ class HttpApiSourceFetcherTest {
 			List<String> seen = exchange.getRequestHeaders().get("Authorization");
 			respond(exchange, 200, "text/plain", (seen == null) ? "none" : String.join("|", seen));
 		});
+		// 응답을 주지 않는 endpoint — 요청은 받아 두고 헤더를 보내지 않는다(빗장이 풀릴 때까지).
+		handle("/silent", (exchange) -> {
+			try {
+				this.release.await(30, TimeUnit.SECONDS);
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+			respond(exchange, 200, "text/plain", "late");
+		});
+		handle("/cap-exact", (exchange) -> respond(exchange, 200, "text/plain", "A".repeat((int) TEST_CAP)));
+		handle("/cap-over", (exchange) -> respond(exchange, 200, "text/plain", "A".repeat((int) TEST_CAP + 1)));
+		handle("/cap-over-404", (exchange) -> respond(exchange, 404, "text/plain", "A".repeat((int) TEST_CAP + 1)));
 
 		this.server.start();
 		this.base = "http://127.0.0.1:" + this.server.getAddress().getPort();
@@ -95,6 +119,7 @@ class HttpApiSourceFetcherTest {
 
 	@AfterEach
 	void stopServer() {
+		this.release.countDown(); // 붙잡아 둔 핸들러를 먼저 풀어 준다 — 잔존 스레드 0.
 		if (this.server != null) {
 			this.server.stop(0); // 잔존 포트·스레드 0.
 		}
@@ -252,6 +277,84 @@ class HttpApiSourceFetcherTest {
 		assertFalse(result.ok(), "302는 2xx가 아니므로 ok=false다");
 		assertEquals(1, hitCount("/redirect"));
 		assertEquals(0, hitCount("/target"), "리다이렉트 대상으로 요청이 새면 안 된다(Redirect.NEVER)");
+	}
+
+	// --- 요청 단계 상한 · 본문 바이트 상한(2026-08-25 ⑤ 코드리뷰 반려 폐색) ---
+
+	/**
+	 * <b>응답을 주지 않는 endpoint</b>는 요청 단계 타임아웃으로 접힌다 — 이것이 <b>의도된 divergence</b>다
+	 * (Node {@code fetch}에는 요청 타임아웃이 없어 영원히 기다린다).
+	 *
+	 * <p>왜 갈라야 하는가: Spring은 요청 하나가 Tomcat 워커 <b>하나</b>를 점유한다(기본 200). 응답을 주지
+	 * 않는 소스 하나 + 반복 pull이면 워커가 고갈돼 <b>29 라우트 전체</b>가 응답하지 못한다. Node는 단일
+	 * 이벤트 루프라 같은 상황에서도 다른 요청을 계속 처리한다 — 같은 코드가 다른 결과를 내는 자리다.
+	 *
+	 * <p>접히는 모양은 <b>기존 실패 경로와 같다</b>({@code ok=false} · 본문 없음). 서비스는 이것을
+	 * {@code fetch-failed}로 옮긴다 — 새 사유 토큰을 만들지 않는다(전역 사유 표를 넓히면 phase 70이
+	 * 동결한 400 계약이 깨진다).
+	 */
+	@Test
+	void anEndpointThatNeverAnswersIsFoldedIntoOkFalseInsteadOfHoldingTheWorker() {
+		HttpApiSourceFetcher impatient = new HttpApiSourceFetcher(Duration.ofMillis(300), TEST_CAP);
+		long startedAt = System.nanoTime();
+
+		FetchResult result = impatient.fetch(this.base + "/silent", null);
+
+		long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+		assertFalse(result.ok(), "응답 없는 endpoint는 ok=false다(예외가 새면 계약의 400이 500이 된다)");
+		assertNull(result.body(), "실패 shape은 연결 거부와 같다 — 본문 없음");
+		assertTrue(elapsedMs < 10_000, "요청 단계 상한이 없으면 빗장이 풀릴 때까지 붙잡힌다: " + elapsedMs + "ms");
+		assertEquals(1, hitCount("/silent"), "타임아웃 뒤에도 다시 시도하지 않는다(ADR-008 (6) — 재시도 0)");
+	}
+
+	/**
+	 * 상한을 넘는 본문은 <b>같은 shape</b>으로 접힌다 — 새 사유도, 잘린 본문도 아니다.
+	 *
+	 * <p>상한이 없으면 거대 응답이 힙을 통째로 먹어 {@code OutOfMemoryError}가 난다. 그것은
+	 * {@code IOException}도 {@code RuntimeException}도 아니라 어댑터의 {@code catch}가 <b>잡지 못하고</b>
+	 * JVM 전체가 죽는다(Node는 V8 문자열 상한 {@code RangeError}가 {@code fetch-failed}로 우아하게 접힌다 —
+	 * 이 상한은 그 동작을 되돌려 놓는 것이다).
+	 *
+	 * <p>잘라서 돌려주지 <b>않는</b> 이유: 잘린 JSON은 파서에서 다른 제목·본문이 되어 <b>조용히 틀린 기사</b>가
+	 * 등록된다. 실패가 낫다.
+	 */
+	@Test
+	void aBodyOverTheCapIsFoldedIntoTheSameFailureShape() {
+		HttpApiSourceFetcher capped = new HttpApiSourceFetcher(Duration.ofSeconds(30), TEST_CAP);
+
+		FetchResult over = capped.fetch(this.base + "/cap-over", null);
+		FetchResult overOnAnErrorStatus = capped.fetch(this.base + "/cap-over-404", null);
+
+		assertFalse(over.ok(), "상한 초과 본문은 ok=false다");
+		assertNull(over.body(), "잘린 본문을 돌려주면 파서가 조용히 다른 기사를 만든다");
+		assertFalse(overOnAnErrorStatus.ok(), "실패 상태코드의 거대 본문도 같은 자리에서 접힌다");
+		assertNull(overOnAnErrorStatus.body());
+		assertEquals(1, hitCount("/cap-over"), "상한 초과에도 재시도는 없다");
+	}
+
+	/** 상한 <b>이하</b>는 영향이 없다 — 경계값(정확히 상한)까지 그대로 읽힌다. */
+	@Test
+	void aBodyExactlyAtTheCapIsStillReadInFull() {
+		HttpApiSourceFetcher capped = new HttpApiSourceFetcher(Duration.ofSeconds(30), TEST_CAP);
+
+		FetchResult exact = capped.fetch(this.base + "/cap-exact", null);
+
+		assertTrue(exact.ok(), "상한과 같은 크기는 초과가 아니다");
+		assertEquals(TEST_CAP, exact.body().length(), "본문이 한 글자도 잘리지 않는다");
+	}
+
+	/**
+	 * <b>프로덕션 기본값은 정상 응답을 죽이지 않는다</b> — 기본 생성자로 만든 어댑터가 테스트 상한을
+	 * 훌쩍 넘는 본문(1 KiB 초과)과 한글 본문을 그대로 읽는다. 상한을 너무 낮게 잡는 변이가 여기서 red다.
+	 */
+	@Test
+	void theProductionDefaultsDoNotAffectNormalResponses() {
+		assertTrue(this.fetcher.fetch(this.base + "/cap-over", null).ok(),
+				"프로덕션 상한(16 MiB)은 1 KiB짜리 본문을 막지 않는다");
+		assertEquals(TEST_CAP + 1, this.fetcher.fetch(this.base + "/cap-over", null).body().length(),
+				"테스트 상한을 넘는 본문도 프로덕션에서는 한 글자도 잘리지 않는다");
+		assertEquals(KOREAN, this.fetcher.fetch(this.base + "/mislabeled", null).body(),
+				"멀티바이트 본문도 상한 도입 뒤에 그대로다(바이트 수와 글자 수를 혼동하면 여기서 갈린다)");
 	}
 
 	/** 같은 인스턴스를 반복해 써도 동작이 변하지 않는다(HttpClient는 필드 하나로 재사용한다). */

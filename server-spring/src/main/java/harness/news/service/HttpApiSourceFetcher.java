@@ -1,6 +1,8 @@
 package harness.news.service;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -27,9 +29,26 @@ import org.springframework.stereotype.Component;
  * <li><b>리다이렉트 미추종</b>({@link HttpClient.Redirect#NEVER}). Node {@code fetch}는 기본
  * {@code follow}라 <b>의도된 divergence</b>다: 계약이 관측하지 않는 축이고, 등록된 endpoint 밖으로
  * 요청이 새지 않는 <b>안전한 방향</b>으로 갈린다.</li>
- * <li><b>connect timeout 10초 · request timeout 없음.</b> Node {@code fetch}에는 타임아웃이 없어 완전
- * 동형은 '무한 대기'인데 그러면 Tomcat 워커가 고갈된다. 연결 단계만 막는다 — <b>느린 endpoint가 요청
- * 단계에서 워커를 점유하는 위험은 Node와 동일하게 남는다</b>(알려진 잔여 위험).</li>
+ * <li><b>connect timeout 10초 · request timeout 30초 — Node와의 의도적 divergence다</b>(2026-08-25 ⑤
+ * 코드리뷰 반려 폐색). Node {@code fetch}에는 요청 타임아웃이 <b>없다</b>. 완전 동형은 '무한 대기'인데
+ * 두 서버에서 그 대가가 다르다: Node는 단일 이벤트 루프라 기다리는 동안에도 다른 요청을 계속 처리하지만,
+ * Spring은 요청 하나가 <b>Tomcat 워커 하나</b>를 점유한다(기본 200). 응답을 주지 않는 endpoint 하나 +
+ * 반복 pull이면 워커가 고갈돼 <b>29 라우트 전체</b>가 응답하지 못한다. 그래서 <b>가용성 쪽으로</b>
+ * 갈렸다. 30초는 넉넉하다 — 계약 픽스처는 loopback 즉답이고 실제 수집 API도 초 단위다. 타임아웃은
+ * <b>단일 요청의 상한</b>일 뿐 재시도·백오프가 아니다(ADR-008 (6)은 그대로다 — 실패는 그 자리에서
+ * {@code ok=false}로 접히고 다시 가지 않는다).
+ * <p><b>실측(JDK 21.0.12, 리포 밖 스크래치패드)</b>: {@code HttpRequest.timeout}은 <b>응답 헤더</b>까지만
+ * 덮는다. 헤더를 늦게 보내는 서버에는 상한대로 {@code HttpTimeoutException}이 났지만(513ms/상한 500ms),
+ * 헤더를 즉시 보내고 <b>본문을 3초에 걸쳐 흘리는</b> 서버는 상한 500ms에도 3,082ms를 기다려 200을 받았다.
+ * 즉 <b>본문을 천천히 흘리는 소스가 워커를 점유하는 잔여 위험은 남는다</b>(정직한 공백 — 그것을 막으려면
+ * 타이머나 별도 스레드가 필요하고 그것은 ADR-008 (3)(6) 위반이다).</li>
+ * <li><b>응답 본문 상한 16 MiB — 역시 의도적 divergence다.</b> 상한이 없으면 거대 응답이
+ * {@code OutOfMemoryError}를 내는데 그것은 아래 {@code catch}가 <b>잡지 못해</b> JVM 전체가 죽는다
+ * (Node는 V8 문자열 상한 {@code RangeError}가 {@code fetch-failed}로 우아하게 접힌다 — 이 상한은 그
+ * 동작을 되돌려 놓는 쪽이다). 16 MiB는 기사 1건 payload(수십 KB)의 수백 배이고 JVM 힙에 비하면 작다 —
+ * 느린 정상 endpoint를 죽이지 않을 만큼 넉넉하되 힙을 지킬 만큼은 낮은 자리다. 초과는 <b>기존 실패
+ * 경로와 같은 shape</b>({@code ok=false} · 본문 없음 → 서비스가 {@code fetch-failed})으로 접는다.
+ * 새 사유 토큰은 만들지 않는다(전역 사유 표를 넓히면 phase 70이 동결한 400 계약이 깨진다).</li>
  * <li><b>본문은 언제나 UTF-8로 읽는다.</b> 기본 {@code ofString()}은 응답이 선언한 charset을 따라가는데,
  * Node {@code res.text()}는 그 선언을 <b>보지 않고</b> 언제나 UTF-8로 판독한다(실측). charset을 틀리게
  * 선언한 소스에서 두 서버의 기사 제목이 갈리는 것을 막는다.</li>
@@ -53,8 +72,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class HttpApiSourceFetcher implements ApiSourceFetcher {
 
-	/** 연결 단계 상한. 요청 단계는 열어 둔다(위 규율 3). */
+	/** 연결 단계 상한. */
 	private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+
+	/** 요청 단계 상한(위 규율 3). */
+	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
+	/** 응답 본문 바이트 상한(위 규율 4). */
+	private static final long MAX_BODY_BYTES = 16L * 1024 * 1024;
 
 	/**
 	 * 클라이언트는 <b>필드 하나로 재사용</b>한다. 호출마다 새로 만들면 커넥션과 셀렉터 스레드가 누적된다
@@ -62,7 +87,18 @@ public class HttpApiSourceFetcher implements ApiSourceFetcher {
 	 */
 	private final HttpClient http;
 
+	private final Duration requestTimeout;
+
+	private final long maxBodyBytes;
+
 	public HttpApiSourceFetcher() {
+		this(REQUEST_TIMEOUT, MAX_BODY_BYTES);
+	}
+
+	/** 테스트 전용 — 상한을 작게 주입해 실제 왕복으로 경계를 관측한다(프로덕션 배선은 기본 생성자다). */
+	HttpApiSourceFetcher(Duration requestTimeout, long maxBodyBytes) {
+		this.requestTimeout = requestTimeout;
+		this.maxBodyBytes = maxBodyBytes;
 		this.http = HttpClient.newBuilder()
 				.connectTimeout(CONNECT_TIMEOUT)
 				.followRedirects(HttpClient.Redirect.NEVER)
@@ -76,16 +112,21 @@ public class HttpApiSourceFetcher implements ApiSourceFetcher {
 			return failed();
 		}
 		try {
-			HttpRequest.Builder request = HttpRequest.newBuilder(uri).GET();
+			HttpRequest.Builder request = HttpRequest.newBuilder(uri).GET().timeout(this.requestTimeout);
 			if (apiKey != null && !apiKey.isEmpty()) {
 				// 헤더는 이것 하나뿐이다. 값에 CR/LF가 섞이면 빌더가 거부하고 요청은 나가지 않는다.
 				request.header("Authorization", "Bearer " + apiKey);
 			}
-			HttpResponse<String> response = this.http.send(request.build(),
-					HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+			HttpResponse<InputStream> response = this.http.send(request.build(),
+					HttpResponse.BodyHandlers.ofInputStream());
+			String body = readCapped(response.body());
+			if (body == null) {
+				// 상한 초과 — 연결 거부와 <b>같은</b> 실패 shape이다(새 사유 토큰을 만들지 않는다).
+				return failed();
+			}
 			int status = response.statusCode();
 			// res.ok === 2xx. 실패여도 본문은 담아 돌려준다(호출자가 쓰지 않아도 진단 여지를 남긴다).
-			return new FetchResult(status >= 200 && status < 300, response.body());
+			return new FetchResult(status >= 200 && status < 300, body);
 		}
 		catch (InterruptedException ex) {
 			// 인터럽트 상태를 복원하고 실패로 접는다 — 삼키면 상위가 취소 신호를 못 본다.
@@ -95,6 +136,38 @@ public class HttpApiSourceFetcher implements ApiSourceFetcher {
 		catch (IOException | RuntimeException ex) {
 			// 연결 거부·DNS 실패·헤더 값 거부 등. 사유를 담지 않는다(endpoint·키가 메시지에 섞여 있다).
 			return failed();
+		}
+	}
+
+	/**
+	 * 본문을 <b>상한까지만</b> 읽어 UTF-8로 판독한다. 상한을 넘으면 {@code null}을 돌려주고 호출자가 그것을
+	 * 기존 실패 shape으로 접는다.
+	 *
+	 * <p>왜 {@code ofString(UTF_8)}이 아니라 스트림인가: {@code ofString}은 <b>다 읽은 뒤에야</b> 크기를
+	 * 알 수 있어 상한을 걸 자리가 없다(그 사이 힙이 먼저 죽는다). 스트림은 읽는 도중에 끊을 수 있다.
+	 * 판독은 여전히 <b>언제나 UTF-8</b>이다(규율 5) — {@code new String(bytes, UTF_8)}도
+	 * {@code ofString(UTF_8)}과 같이 잘못된 바이트를 U+FFFD로 대체한다.
+	 *
+	 * <p>잘라서 돌려주지 않는다. 잘린 JSON은 파서에서 다른 제목·본문이 되어 <b>조용히 틀린 기사</b>가
+	 * 등록되기 때문이다 — 실패가 낫다.
+	 *
+	 * <p>try-with-resources로 닫는 것이 중요하다: 상한에서 빠져나갈 때 스트림을 닫아야 그 커넥션이
+	 * 취소된다(닫지 않으면 서버가 남은 본문을 계속 밀어 넣는다).
+	 */
+	private String readCapped(InputStream body) throws IOException {
+		try (InputStream stream = body) {
+			ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+			byte[] chunk = new byte[8192];
+			long total = 0;
+			int read;
+			while ((read = stream.read(chunk)) >= 0) {
+				total += read;
+				if (total > this.maxBodyBytes) {
+					return null;
+				}
+				buffer.write(chunk, 0, read);
+			}
+			return buffer.toString(StandardCharsets.UTF_8);
 		}
 	}
 

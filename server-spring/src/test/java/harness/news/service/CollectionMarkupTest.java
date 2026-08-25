@@ -20,6 +20,18 @@ class CollectionMarkupTest {
 
 	private static final String HEAD = "{\"format\":\"yh-editor\",\"version\":1,\"blocks\":[";
 
+	/**
+	 * {@code U+0000}~{@code U+001F}를 {@code JSON.stringify}가 쓰는 <b>그대로</b>의 표 — 2026-08-25 리포 밖
+	 * 스크래치패드에서 {@code node}로 뽑아 옮겼다(규칙 재구현이 아니라 <b>출력 전사</b>다).
+	 *
+	 * <p>{@code U+000A}는 이스케이프가 아니라 블록 경계라 자리를 {@code null}로 비워 둔다. 소스에 raw
+	 * 제어 바이트를 넣지 않으려고 원문 문자는 {@link #ch(int)}로만 만든다.
+	 */
+	private static final String[] NODE_ESCAPES = { "\\u0000", "\\u0001", "\\u0002", "\\u0003", "\\u0004", "\\u0005",
+			"\\u0006", "\\u0007", "\\b", "\\t", null, "\\u000b", "\\f", "\\r", "\\u000e", "\\u000f", "\\u0010",
+			"\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018", "\\u0019",
+			"\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f" };
+
 	@Test
 	void bothEmptyStillProducesExactlyOneEmptyBlock() {
 		// split('\n')의 결과가 ['']이라 블록이 0개가 아니라 1개다 — 계약이 이 수를 단언한다.
@@ -89,40 +101,67 @@ class CollectionMarkupTest {
 	}
 
 	/**
-	 * <b>발견된 divergence(2026-08-25 ④ 테스트 게이트)</b>: {@code \\u00XX}의 16진수 <b>letter 자리가
-	 * 대문자</b>다. Node {@code JSON.stringify}는 {@code x\\u001by}를, Jackson은 {@code x\\u001By}를 쓴다.
+	 * {@code U+0000}~{@code U+001F} <b>전부</b>가 {@code JSON.stringify}와 <b>같은 문자열</b>이 된다.
 	 *
-	 * <h2>왜 이 축이 지금까지 보이지 않았는가</h2>
-	 * 기존 케이스는 {@code U+0001} 하나뿐이었다 — {@code 0001}은 <b>숫자만이라 대소문자 표기가 같은
-	 * 문자열</b>이다. 하위 니블이 {@code a~f}인 코드포인트라야 갈린다: {@code U+000B}·{@code U+000E}·
-	 * {@code U+000F}·{@code U+001A}~{@code U+001F}의 <b>9자</b>({@code U+000A}·{@code U+000C}·{@code U+000D}는
-	 * 짧은 이스케이프라 해당 없음). 계약 3파일은 제어문자를 보내지 않으므로 <b>구조적으로 관측 불가</b>다.
+	 * <h2>이 테스트가 뒤집힌 경위(2026-08-25 ⑤ 코드리뷰 반려 폐색)</h2>
+	 * ④ 게이트가 발견한 divergence는 {@code \\u00XX}의 16진수 <b>letter 자리 대소문자</b>였다: Node는
+	 * {@code x\\u001by}, Jackson 기본값은 {@code x\\u001By}. 갈리는 것은 하위 니블이 {@code a~f}인
+	 * <b>9자</b>({@code U+000B}·{@code U+000E}·{@code U+000F}·{@code U+001A}~{@code U+001F})뿐이다 —
+	 * {@code U+000A}·{@code U+000C}·{@code U+000D}는 짧은 이스케이프이고 나머지는 16진수가 숫자뿐이라
+	 * 표기가 하나다. ④는 원인을 "Jackson 전역"으로 보아 고정만 했으나, {@link CollectionMarkup}은 전역
+	 * 매퍼가 아니라 <b>자기 전용 매퍼</b>를 쓴다 — {@code JsonHttp}의 와이어를 건드리지 않고 국소로
+	 * 고칠 수 있다는 뜻이다(⑤ 판정). 그래서 <b>Node 쪽으로 고쳤고</b> 이 테스트는 그 실측을 잠근다.
 	 *
 	 * <h2>왜 중요한가</h2>
-	 * 이 문자열은 {@code Contents.markupVersion}으로 <b>영속</b>되고 단건 조회 응답에 <b>그 문자열 값
-	 * 그대로</b> 실린다. 즉 저장 바이트뿐 아니라 <b>API 응답의 값</b>도 갈린다(응답을 파싱하면
-	 * {@code ...\\u001B...}와 {@code ...\\u001b...}라는 서로 다른 문자열이 나온다 — 그 문자열을 한 번 더
-	 * {@code JSON.parse}해야 비로소 같은 본문이 된다). 계약 3파일이 제어문자를 보내지 않아 관측되지 않을
-	 * 뿐, 값 층위의 divergence다. 이력 비교·백필·재수집 중복 판정처럼 저장 문자열을 그대로 비교하는
-	 * 축에서 실체 없는 차이를 만든다.
+	 * 이 문자열은 {@code Contents.markupVersion}으로 <b>영속</b>되고 단건 조회 응답에 그 문자열 값 그대로
+	 * 실린다. 계약 3파일이 제어문자를 보내지 않아 <b>구조적으로 관측 불가</b>일 뿐, 저장 바이트와 응답
+	 * 값이 함께 갈리는 축이다(이력 비교·백필·재수집 중복 판정처럼 저장 문자열을 그대로 비교하는 곳).
 	 *
-	 * <p>원인은 이 클래스가 아니라 <b>Jackson 전역</b>이다({@code JsonHttp}도 같은 매퍼로 응답을 쓴다) —
-	 * 이 phase가 만든 결함이 아니라 포팅 전반에 걸린 항목이다.
-	 *
-	 * <p><b>이 테스트는 통과가 아니라 고정이다</b>: 현재 동작을 정확히 못 박아 두어 (a) 사실이 눈에 보이고
-	 * (b) 누군가 고치면 여기서 red가 나 결정이 diff에 남는다. 고치는 방법은 {@code toMarkup}에
-	 * {@code CharacterEscapes}를 다는 것이며 그 판단은 이 게이트의 권한 밖이다(⑤/후속).
+	 * <p>기대값은 {@link #NODE_ESCAPES}이며 <b>Node {@code JSON.stringify} 출력을 그대로 옮긴 표</b>다
+	 * (규칙을 다시 구현하지 않는다 — 재구현하면 같은 버그를 양쪽에 쓰게 된다).
 	 */
 	@Test
-	void theHexLettersOfControlEscapesAreUppercaseUnlikeJsonStringify() {
-		assertEquals(doc(block("x\\u001By")), CollectionMarkup.toMarkup("x" + ch(0x001B) + "y", ""),
-				"Node는 x\\u001by다 — 계약이 관측하지 않는 divergence(저장 바이트가 갈린다)");
-		assertEquals(doc(block("x\\u000By")), CollectionMarkup.toMarkup("x" + ch(0x000B) + "y", ""),
-				"Node는 x\\u000by다");
-		assertEquals(doc(block("x\\u000Ey")), CollectionMarkup.toMarkup("x" + ch(0x000E) + "y", ""),
-				"Node는 x\\u000ey다");
-		assertEquals(doc(block("x\\u001Fy")), CollectionMarkup.toMarkup("x" + ch(0x001F) + "y", ""),
-				"Node는 x\\u001fy다");
+	void everyControlCharacterIsEscapedExactlyLikeJsonStringify() {
+		for (int cp = 0x00; cp <= 0x1F; cp++) {
+			if (cp == 0x0A) {
+				continue; // 개행은 이스케이프가 아니라 블록 경계다 — 아래에서 따로 본다.
+			}
+			assertEquals(doc(block("x" + NODE_ESCAPES[cp] + "y")), CollectionMarkup.toMarkup("x" + ch(cp) + "y", ""),
+					"U+" + String.format("%04X", cp) + "의 이스케이프가 Node JSON.stringify와 갈린다");
+		}
+
+		assertEquals(0x20, NODE_ESCAPES.length, "표가 제어문자 32자를 전부 덮는다(케이스가 조용히 줄지 않게)");
+
+		assertEquals(doc(block("x"), block("y")), CollectionMarkup.toMarkup("x" + ch(0x0A) + "y", ""),
+				"U+000A는 블록 경계다");
+	}
+
+	/**
+	 * 제어문자 32자를 <b>한 문자열에</b> 담은 Node 실측 출력과 바이트 단위로 같은가 — 위 루프가 코드포인트
+	 * 하나씩 보는 것과 달리 여기서는 <b>전체 출력 한 줄</b>을 통째로 대조한다(구분자·순서까지 함께 잠긴다).
+	 */
+	@Test
+	void theWholeControlRangeMatchesTheMeasuredNodeOutputVerbatim() {
+		StringBuilder all = new StringBuilder();
+		for (int cp = 0x00; cp <= 0x1F; cp++) {
+			all.append(ch(cp));
+		}
+
+		// Node 실측(2026-08-25): JSON.stringify가 U+000A에서 블록을 가르고 나머지를 위 표대로 쓴다.
+		assertEquals("{\"format\":\"yh-editor\",\"version\":1,\"blocks\":["
+				+ "{\"type\":\"text\",\"text\":\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\"},"
+				+ "{\"type\":\"text\",\"text\":\"\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014"
+				+ "\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"}]}",
+				CollectionMarkup.toMarkup(all.toString(), ""));
+	}
+
+	/**
+	 * {@code U+007F}(DEL)는 <b>이스케이프하지 않는다</b> — Node 실측이다(제어문자지만 JSON 문자열에서
+	 * 유효하다). 여기를 escape하는 설정({@code ESCAPE_NON_ASCII} 등)이 켜지면 저장 바이트가 갈린다.
+	 */
+	@Test
+	void theDeleteCharacterIsWrittenVerbatimJustLikeJsonStringify() {
+		assertEquals(doc(block("x" + ch(0x007F) + "y")), CollectionMarkup.toMarkup("x" + ch(0x007F) + "y", ""));
 	}
 
 	/**
