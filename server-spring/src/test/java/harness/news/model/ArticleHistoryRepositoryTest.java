@@ -24,6 +24,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.JdbcTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 이력 리포지토리 — 리포 루트 {@code src/models/articleHistoryModel.js}의 삽입·조회 3종과 1:1인 동작 계약.
@@ -54,6 +56,17 @@ class ArticleHistoryRepositoryTest {
 	/** 단건 스냅샷 항목의 고정 키 7개(전이 컬럼 없음, 본문 있음). */
 	private static final List<String> SNAPSHOT_ITEM_KEYS = List.of(
 			"action", "actorUserId", "articleId", "createdAt", "eventType", "id", "markupVersion");
+
+	/**
+	 * 배부 이벤트 행의 고정 키 8개 — 목록 9키와 <b>다르다</b>({@code targetId}·{@code reason}이 여기에만
+	 * 있고 전이 2컬럼·{@code hasSnapshot}은 없다). 정렬한 형태로 비교한다.
+	 */
+	private static final List<String> DISTRIBUTION_EVENT_KEYS = List.of(
+			"action", "actorUserId", "articleId", "createdAt", "eventType", "id", "reason", "targetId");
+
+	/** 컬럼 목록 순서 그대로의 키 8개 — 맵이 {@code LinkedHashMap}이라는 사실까지 잠근다. */
+	private static final List<String> DISTRIBUTION_EVENT_KEY_ORDER = List.of(
+			"id", "articleId", "eventType", "action", "targetId", "reason", "actorUserId", "createdAt");
 
 	@TempDir
 	Path tempDir;
@@ -321,7 +334,160 @@ class ArticleHistoryRepositoryTest {
 				() -> history.insert(row("articleId", "A1", "reason", Map.of("a", "b"))));
 	}
 
-	// --- 8. append-only: 갱신·삭제 표면이 없다 ---------------------------------------------------
+	// --- 8. 배부 이벤트 조회 2종 ----------------------------------------------------------------
+
+	@Test
+	void distributionEventsCarryOnlyTheTwoLedgerVocabularyRows() {
+		long failed = history.insert(row("articleId", "A1", "eventType", "distribute-failed",
+				"action", "press", "targetId", 3, "reason", "spool-write-failed",
+				"actorUserId", "z1", "createdAt", "c1"));
+		long retry = history.insert(row("articleId", "A1", "eventType", "distribute-retry",
+				"action", "press", "targetId", 3, "actorUserId", "z1", "createdAt", "c2"));
+		history.insert(row("articleId", "A1", "eventType", "distribute", "action", "press", "createdAt", "c3"));
+		history.insert(row("articleId", "A1", "eventType", "status", "action", "send", "toStatus", "DPS"));
+		history.insert(row("articleId", "A1", "eventType", "edit", "markupVersion", "본문"));
+		history.insert(row("articleId", "A1", "eventType", "create", "createdAt", "c4"));
+
+		assertEquals(List.of(retry, failed), ids(history.queryDistributionEvents("A1", null)),
+				"어휘는 distribute-failed·distribute-retry 둘뿐이다 — 배부 성공(distribute) 행도 아니다");
+	}
+
+	@Test
+	void distributionEventRowsAreExactlyEightKeysInColumnOrder() {
+		long id = history.insert(row("articleId", "A1", "eventType", "distribute-failed",
+				"action", "press", "fromStatus", "DPS", "toStatus", "DPS",
+				"targetId", 3, "reason", "spool-write-failed", "actorUserId", "z1",
+				"createdAt", "2026-08-25T00:00:00.000Z", "markupVersion", "본문", "snapshotTitle", "제목"));
+
+		Map<String, Object> only = history.queryDistributionEvents(null, null).get(0);
+
+		assertEquals(DISTRIBUTION_EVENT_KEYS, sortedKeys(only), "배부 이벤트 행은 8키 고정이다");
+		assertEquals(DISTRIBUTION_EVENT_KEY_ORDER, List.copyOf(only.keySet()), "키 순서는 컬럼 목록 순서다");
+		assertEquals(id, ((Number) only.get("id")).longValue());
+		assertFalse(only.containsKey("markupVersion"), "본문 blob은 이 경로로 나가지 않는다");
+		assertFalse(only.containsKey("snapshotTitle"));
+		assertFalse(only.containsKey("hasSnapshot"), "파생 플래그는 목록 조회 전용이다");
+		assertFalse(only.containsKey("fromStatus"), "전이 컬럼은 배부 이벤트 조회에 없다");
+		assertFalse(only.containsKey("toStatus"));
+		assertEquals(DISTRIBUTION_EVENT_KEY_ORDER,
+				List.copyOf(history.getDistributionEventById(id).keySet()),
+				"단건 조회도 같은 8키·같은 순서다");
+	}
+
+	@Test
+	void distributionEventsAreWindowedByIdDescendingWithNodesDefaultOf500() {
+		// Node 실측(2026-08-25): DISTRIBUTION_EVENTS_DEFAULT_LIMIT = 500이고 정수 ≥1이 아닌 값은 전부 그 기본값이다.
+		seedDistributionFailures(501);
+
+		List<Long> byDefault = ids(history.queryDistributionEvents(null, null));
+
+		assertEquals(500, byDefault.size(), "기본 창은 500이다");
+		assertEquals(501L, byDefault.get(0), "최신(id 최대)이 맨 위다 — ORDER BY id DESC");
+		assertEquals(2L, byDefault.get(499), "가장 오래된 1행이 창 밖으로 밀린다");
+		assertFalse(byDefault.contains(1L));
+
+		assertEquals(byDefault, ids(history.queryDistributionEvents(null, 0)), "0은 창이 아니라 기본값이다");
+		assertEquals(byDefault, ids(history.queryDistributionEvents(null, -1)), "음수도 기본값이다");
+		assertEquals(List.of(501L, 500L, 499L), ids(history.queryDistributionEvents(null, 3)),
+				"창은 최신부터 채운다");
+		assertEquals(1, history.queryDistributionEvents(null, 1).size());
+		assertEquals(501, history.queryDistributionEvents(null, 1000).size(),
+				"창이 행 수보다 크면 전부 나온다 — 모델은 서비스 클램프(1000)를 알지 못한다");
+	}
+
+	@Test
+	void distributionEventsAreScopedByArticleIdOnlyWhenOneIsGiven() {
+		long a1 = history.insert(row("articleId", "A1", "eventType", "distribute-failed", "createdAt", "c1"));
+		long a2 = history.insert(row("articleId", "A2", "eventType", "distribute-failed", "createdAt", "c2"));
+
+		assertEquals(List.of(a1), ids(history.queryDistributionEvents("A1", null)));
+		assertEquals(List.of(a2), ids(history.queryDistributionEvents("A2", null)));
+		assertEquals(List.of(a2, a1), ids(history.queryDistributionEvents(null, null)),
+				"스코프를 주지 않으면 전 기사다(Node의 articleId 미지정과 동형)");
+		assertEquals(List.of(), history.queryDistributionEvents("없는기사", null));
+	}
+
+	@Test
+	void distributionEventByIdIsFilteredByTheLedgerVocabulary() {
+		long failed = history.insert(row("articleId", "A1", "eventType", "distribute-failed",
+				"action", "press", "targetId", 3, "reason", "invalid-spool-dir", "createdAt", "c1"));
+		long status = history.insert(row("articleId", "A1", "eventType", "status", "action", "send",
+				"fromStatus", "RDS", "toStatus", "DPS", "createdAt", "c2"));
+		long snapshot = history.insert(row("articleId", "A1", "eventType", "edit", "markupVersion", "비밀본문"));
+
+		Map<String, Object> event = history.getDistributionEventById(failed);
+		assertNotNull(event);
+		assertEquals(DISTRIBUTION_EVENT_KEYS, sortedKeys(event));
+		assertEquals("invalid-spool-dir", event.get("reason"));
+
+		assertNull(history.getDistributionEventById(status),
+				"배부 이벤트가 아닌 id는 '없음'이다 — 재전송 게이트의 1차 방어");
+		assertNull(history.getDistributionEventById(snapshot),
+				"임의 id로 본문 스냅샷 행이 이 경로로 새면 안 된다");
+		assertNull(history.getDistributionEventById(2147483646L), "없는 id는 '없음'이다");
+	}
+
+	@Test
+	void distributionEventTargetIdRoundTripsComparableWithDistributionTargetIds() {
+		// 이 축은 계약이 절대 보지 못한다: targetId가 "3"이나 3.0으로 돌아오면 수신처 매칭이 조용히 깨진다.
+		DistributionTargetRepository targets = new DistributionTargetRepository(JdbcClient.create(dataSource),
+				new TransactionTemplate(new JdbcTransactionManager(dataSource)));
+		int targetId = targets.insert(Map.of("name", "조판", "kind", "press",
+				"spoolDir", "press-a", "active", "Y", "createdAt", "c0"));
+		long id = history.insert(row("articleId", "A1", "eventType", "distribute-failed",
+				"action", "press", "targetId", targetId, "reason", "spool-write-failed", "createdAt", "c1"));
+
+		Object stored = history.getDistributionEventById(id).get("targetId");
+		Object targetRowId = targets.query(Map.of()).get(0).get("id");
+
+		assertEquals(targetRowId, stored,
+				"수신처 행의 id와 같은 표현이어야 한다(문자열·실수면 equals가 그 자리에서 깨진다)");
+		assertEquals(Long.valueOf(targetId), stored, "정수(Long)로 돌아온다");
+		assertEquals(stored, history.queryDistributionEvents(null, null).get(0).get("targetId"),
+				"목록 조회와 단건 조회의 표현이 같다");
+	}
+
+	@Test
+	void distributionEventNullColumnsKeepTheirKeys() {
+		// kind 단위 실패는 targetId를 갖지 않고, 레거시·수기 행은 reason이 비어 있을 수 있다.
+		long id = history.insert(row("articleId", "A1", "eventType", "distribute-failed", "createdAt", "c1"));
+
+		Map<String, Object> only = history.queryDistributionEvents(null, null).get(0);
+
+		assertEquals(DISTRIBUTION_EVENT_KEYS, sortedKeys(only), "값이 NULL이어도 8키는 그대로다");
+		assertTrue(only.containsKey("targetId"));
+		assertNull(only.get("targetId"), "정수 컬럼의 NULL은 0이 아니라 null이다");
+		assertNull(only.get("reason"));
+		assertNull(only.get("action"));
+		assertNull(only.get("actorUserId"));
+		assertEquals(DISTRIBUTION_EVENT_KEYS, sortedKeys(history.getDistributionEventById(id)));
+		assertNull(history.getDistributionEventById(id).get("targetId"));
+	}
+
+	@Test
+	void nonAsciiReasonsSurviveTheRoundTrip() {
+		// 실제 사유는 고정 ASCII 토큰이지만 인코딩 경로를 함께 덮는다(방어적).
+		long id = history.insert(row("articleId", "기사-가", "eventType", "distribute-failed",
+				"reason", "실패 사유", "createdAt", "c1"));
+
+		assertEquals("실패 사유", history.getDistributionEventById(id).get("reason"));
+		assertEquals("기사-가", history.queryDistributionEvents("기사-가", null).get(0).get("articleId"));
+	}
+
+	@Test
+	void theOpenHistoryListStillCarriesNoDistributionColumns() {
+		// 회귀 잠금: 배부 조회가 생겼다고 해서 전 사용자에게 열린 이력보기 계약이 넓어지면 안 된다.
+		history.insert(row("articleId", "A1", "eventType", "distribute-failed", "action", "press",
+				"targetId", 3, "reason", "spool-write-failed", "createdAt", "c1"));
+
+		Map<String, Object> listed = history.queryByArticle("A1").get(0);
+
+		assertEquals(LIST_ROW_KEYS, sortedKeys(listed), "목록은 여전히 9키다");
+		assertFalse(listed.containsKey("targetId"));
+		assertFalse(listed.containsKey("reason"));
+	}
+
+	// --- 9. append-only: 갱신·삭제 표면이 없다 ---------------------------------------------------
 
 	@Test
 	void theRepositoryExposesInsertAndReadsOnly() {
@@ -334,7 +500,8 @@ class ArticleHistoryRepositoryTest {
 		operations.sort(String::compareTo);
 
 		assertEquals(
-				List.of("insert", "queryByArticle", "querySnapshotById", "querySnapshotTitlesByArticle"),
+				List.of("getDistributionEventById", "insert", "queryByArticle", "queryDistributionEvents",
+						"querySnapshotById", "querySnapshotTitlesByArticle"),
 				operations,
 				"append-only 원장이다 — 갱신·삭제 연산을 추가하면 이 단언이 먼저 깨진다");
 	}
@@ -352,6 +519,9 @@ class ArticleHistoryRepositoryTest {
 		// 모든 조회 경로를 한 번씩 지나고도 행 수는 그대로다.
 		history.querySnapshotById("A1", ids(history.queryByArticle("A1")).get(0));
 		history.querySnapshotTitlesByArticle("A1");
+		history.queryDistributionEvents(null, null);
+		history.queryDistributionEvents("A1", 1);
+		history.getDistributionEventById(1L);
 		assertEquals(6, totalRows());
 	}
 
@@ -362,6 +532,19 @@ class ArticleHistoryRepositoryTest {
 				.sql("SELECT count(*) FROM ArticleHistory")
 				.query(Integer.class)
 				.single();
+	}
+
+	/**
+	 * 배부 실패 행 {@code count}개를 <b>한 문장으로</b> 시드한다 — 기본 창(500) 경계를 넘기려면 행이
+	 * 501개 필요한데 한 건씩 넣으면 삽입마다 fsync가 걸린다. 리포지토리 삽입 경로는 다른 테스트가
+	 * 이미 덮으므로 여기서는 행이 존재하기만 하면 된다. id는 1..count로 순서대로 매겨진다.
+	 */
+	private void seedDistributionFailures(int count) {
+		JdbcClient.create(dataSource)
+				.sql("WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < " + count + ")"
+						+ " INSERT INTO ArticleHistory (articleId, eventType, action, createdAt)"
+						+ " SELECT 'A1', 'distribute-failed', 'press', 'c' || n FROM seq")
+				.update();
 	}
 
 	/** 삽입 뒤 값이 남아 있는 컬럼(id 제외) — 어떤 컬럼이 실제로 채워졌는지를 저장 결과로 확인한다. */
