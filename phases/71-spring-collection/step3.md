@@ -6,7 +6,7 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(4)(21)(26)** · excluded **(d)**
+- `phases/71-spring-collection/index.json` — decisions **(6)(7)(9)(11)(15)** · excluded **(e)**
 - `src/services/collectionService.js` — **이식 원본 전문**(69행): `receive`(unregistered → inactive → parse → create) · `pull`(unregistered → no-active-api-source → fetch → decodeBody → receive 재사용) · `decodeBody`
 - `src/services/articleService.js` 147~159행 — `create(dto, {role, action})`가 하는 일(articleId 발급 · `status=initialStatus(role,action)` · `createdAt` stamp · 파일 참조 정화 · 두 행 트랜잭션 삽입 · **반환 `{ok:true, articleId}`** · **이력 0행**)
 - `contract/cases/default/collection.contract.js` — 이 step이 만족시켜야 할 서비스 판정: `receive-unregistered`(403 `unregistered`) · `receive-inactive-source`(403 `inactive`) · `receive-text-payload`/`receive-object-payload`/`receive-missing-payload`(200 `{ok,articleId}` · `attribute='자동기사'` · `status='RDS'`) · `pull-unregistered` · `pull-ftp-source`(400 `no-active-api-source`) · `pull-fetch-failed`(400 `fetch-failed`) · `pull-self-health-source`(200 · 빈 제목 · 블록 1개)
@@ -37,7 +37,7 @@
 
 ## 작업
 
-### A. Node 실측 대조(decisions (25))
+### A. Node 실측 대조(decisions (14))
 
 ```
 node scripts/contract-run.mjs --profile default --files contract/cases/default/collection.contract.js --out <리포_밖_임시경로>/collection-node.json
@@ -84,8 +84,8 @@ cd d:/agents/harness && git status --porcelain
 ```
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가(실측 기록).
-- 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 215 불변.
-- 3번 증분 = `.../service/CollectionService.java` · `.../service/ApiSourceFetcher.java` · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 2번: exit 0 · **4 프로파일** diffs 0(+ `failclosed`는 `bootOnly` skip) · 관측 수 **215 불변**.
+- 3번 증분 = `.../service/CollectionService.java` · `.../service/ApiSourceFetcher.java` · 대응 테스트 · `phases/71-spring-collection/index.json`.
 
 ## 검증 절차
 

@@ -1,4 +1,4 @@
-# Step 13: tick-service
+# Step 7: tick-service
 
 엠바고 시점 배부 tick을 만든다 — `DistributionTickService.run(actorUserId)`(= `src/services/distributionTickService.js` 229행 이식). ADR-008 (3): 시점 배부는 **앱 내 타이머가 아니라 외부 운영 cron이 부르는 pull**이다. 이 모듈에는 주기 실행도 egress도 없다.
 
@@ -6,12 +6,12 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(2)(8)(12)(13)** · excluded **(l)(m)**
+- `phases/72-spring-distribution/index.json` — decisions **(2)(6)(13)(14)** · excluded **(l)(m)**
 - `src/services/distributionTickService.js` — **이식 원본 전문**. 특히 `projectFailure`(화이트리스트 4필드) · `distributedOf`(사이클 범위) · TOCTOU 재검증 · `touched` 판정 · self-heal · `running` 플래그
 - `docs/ADR.md` ADR-008 (3)
 - `contract/cases/default/distribution-tick.contract.js` — **이 step이 만족시켜야 할 관측 전부**: 6키 shape · `distributed` 원소 3키 · 도래 기사 배부 + `status:'DPS'` + `distributedAt` 채워짐 · **멱등**(재실행 시 재배부 없음) · `assertNoSpoolPath`
 - `contract/cases/minimal/distribution-disabled.contract.js` — 스풀 미설정에서 `spool-disabled`
-- 이 phase의 step7·step10·step11 산출물
+- 이 phase의 step1·step4·step5 산출물
 
 ## 배경 (동결된 사실)
 
@@ -76,7 +76,7 @@ runOnce:
 - **self-heal**: 이력은 있는데 승격이 누락된 기사(이력 insert 실패·과거 데이터)가 영원히 대기 상태로 남지 않게 한다. 바꿀 게 없으면 `embargoStatusFor`가 null을 주므로 **쓰기 0건**이다.
 - **`distributedAt`을 여기서 쓰지 마라** — `DistributionService`의 단일 책임이다.
 - **status도 직접 쓰지 마라** — `ArticleEmbargoService`에 전적으로 위임한다.
-- **throw 금지**(decisions (13)).
+- **throw 금지**(decisions (14)).
 - **single-flight**: `AtomicBoolean`(또는 등가). 다중 인스턴스 중복은 앱이 막지 않는다(ADR-008 (3) 운영 규율) — **분산 락을 넣지 마라**.
 - 후보 조회는 송고된 전 기사(DPS 전량)를 로드한 뒤 걸러낸다 — **의도적으로 수용한 비용**이고 규모는 `scanned`로 노출한다. 최적화를 위해 SQL에 엠바고 조건을 넣지 마라(레거시 DPS 엠바고 기사 픽업을 잃는다).
 
@@ -91,7 +91,7 @@ runOnce:
 - 생성자 주입: `ArticleRepository` · `ArticleHistoryRepository` · `DistributionService` · `ArticleEmbargoService` · `Clock` · 오류 통지 seam.
 - 시그니처(구현 재량): `Result run(String actorUserId)` → 응답 맵을 만드는 것은 컨트롤러가 아니라 **이 서비스**다(투영이 서비스 책임 — 컨트롤러는 shape 매핑만).
 - 반환 맵은 **`LinkedHashMap`으로 키 순서를 고정**하되, 계약은 정렬된 키 집합만 보므로 순서 자체는 자유다. 다만 `skipped`는 **재진입 경로에서만** 추가된다.
-- `EmbargoPolicy`에 넘기는 `contents` 접근자는 step7이 정한 형태를 쓴다.
+- `EmbargoPolicy`에 넘기는 `contents` 접근자는 step1이 정한 형태를 쓴다.
 
 ### C. 테스트 (먼저 쓴다 — `DistributionTickServiceTest`, 임시 DB + `@TempDir` 스풀 + `MutableClock`)
 
@@ -110,6 +110,12 @@ runOnce:
 13. **불변식(A)**: TOCTOU로 `DES → DPS`가 된 기사에서 `done`을 다시 세지 않으면 중복 배부가 나는 시나리오를 구성해, 다시 세는 구현에서 파일이 1개인지 단언.
 14. `scanned`가 **필터 후 후보 수**(엠바고 설정된 기사)인지, 전체 조회 수가 아닌지.
 15. **시계 1회 읽기**: `MutableClock`을 실행 중 전진시켜도 `at`과 모든 판정이 같은 값을 쓰는지(기사 2건 이상으로 실증).
+16. **전 수신처 쓰기 실패 → 거짓 완결 금지(`if (okKinds.length === 0) continue`의 유일한 잠금)**: 활성 수신처 **2곳이 모두 쓰기에 실패**하도록 만든 뒤 tick 1회 →
+    - `distributed`에 **그 기사가 없다**(승격 요약이 나가지 않는다)
+    - 기사 **status 불변**(DES면 DES 그대로 — `syncEmbargoStatus`가 불리지 않는다)
+    - `failed` **2건**이고 각 `reason`이 `spool-write-failed`
+    - `distributedAt` **미갱신**
+    이 테스트가 없으면 tick의 핵심 안전장치가 무테스트로 남는다(계약도 excluded (f)로 못 본다 — **Java가 유일 방어선**이다).
 
 ## Acceptance Criteria
 
@@ -121,7 +127,7 @@ cd d:/agents/harness && git status --porcelain
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가 · `Adr008DisciplineTest` green(**타이머·스케줄러 0**) · `ClockDisciplineTest` green.
 - 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 불변(아직 라우트가 없다).
-- 3번 증분 = `.../service/DistributionTickService.java` · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 3번 증분 = `.../service/DistributionTickService.java` · 대응 테스트 · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -129,16 +135,16 @@ cd d:/agents/harness && git status --porcelain
 2. **변이 (a) 원복**: `projectFailure`를 제거하고 실물 실패 항목을 그대로 담아 9번 red 확인 → 원복. (**경로 유출**이 이 테스트의 방어 대상이다.)
 3. **변이 (b) 원복**: TOCTOU 재조회 후 `done` 재계산을 빼고 13번 red 확인 → 원복.
 4. **변이 (c) 원복**: `no-active-target` 항목을 빼고 7번 red 확인 → 원복(무음 미배부).
-5. **변이 (d) 원복**: `okKinds` 비었을 때도 승격하도록 바꿔(거짓 완결) 그 시나리오 테스트 red 확인 → 원복.
+5. **변이 (d) 원복**: `if (okKinds.isEmpty()) continue` 가드를 제거해 전 수신처 실패에도 승격·`distributed` 등재가 일어나게 만들고 **16번 red** 확인 → 원복. (거짓 완결 = 배부되지 않은 기사가 완결 처리되고 다음 tick이 재시도하지 않는다.)
 6. **변이 (e) 원복**: `running` 해제를 `finally`에서 빼고 예외 경로 뒤 다음 호출이 영구 스킵되는지(10번 후반) red 확인 → 원복.
 7. **변이 (f) 원복**: 후보 조회 예외를 던지게 놔둬 11번 red 확인 → 원복.
 8. **변이 (g) 원복**: `at`을 기사마다 새로 읽게 바꿔 15번 red 확인 → 원복.
 9. AC 실행. 리포 안 스풀 파일 0 · 임시 디렉토리 정리 확인.
-10. index.json step13 상태 갱신.
+10. index.json step7 상태 갱신.
 
 ## 금지사항
 
-- `@Scheduled`·`TaskScheduler`·`Timer`·백그라운드 스레드를 쓰지 마라. 이유: ADR-008 (3) — 트리거는 외부 cron의 tick pull 하나뿐이다. step1 게이트가 red를 낸다.
+- `@Scheduled`·`TaskScheduler`·`Timer`·백그라운드 스레드를 쓰지 마라. 이유: ADR-008 (3) — 트리거는 외부 cron의 tick pull 하나뿐이다. phase 71-spring-collection step1 게이트가 red를 낸다.
 - 분산 락·다중 인스턴스 조정을 넣지 마라. 이유: 그 책임은 운영 규율(외부 cron 단일 트리거)이 진다 — 앱에 넣으면 검증되지 않은 새 표면이 생긴다.
 - 예외를 밖으로 던지지 마라. 이유: 라우트가 500으로 새면 운영 cron이 원인을 알 수 없다.
 - 실패 항목을 화이트리스트 없이 그대로 싣지 마라. 이유: `spoolDir`이 HTTP 응답으로 나간다(계약이 경로 구분자 부재까지 단언한다).

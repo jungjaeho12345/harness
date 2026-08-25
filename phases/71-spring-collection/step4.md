@@ -6,8 +6,8 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(2)** · open_questions **(e)**
-- `phases/71-spring-distribution/step1.md` — 정적 게이트의 예외 파일 목록과 그 근거
+- `phases/71-spring-collection/index.json` — decisions **(2)(8)** · open_questions **(c)**
+- `phases/71-spring-collection/step1.md` — 정적 게이트의 예외 파일 목록과 그 근거
 - `src/services/collectionService.js` 50~66행 — Node의 fetch 사용부: `init`은 `apiKey`가 있을 때만 `{headers:{Authorization:'Bearer …'}}` · `!res || !res.ok` → `fetch-failed` · `await res.text()` · `catch` → `fetch-failed`
 - `contract/cases/default/collection.contract.js` — `assertNoEgress`(등록 가능한 endpoint는 **대상 서버 자신** 또는 `127.x`뿐) · `DEAD_ENDPOINT = 'http://127.0.0.1:1/'`(연결 거부) · `pull-self-health-source`(자기 `/api/health`를 소스로 걸어 200 성공 경로를 결정적으로 만든다)
 - 이 phase의 step3 산출물: `.../service/ApiSourceFetcher.java`(인터페이스)
@@ -17,7 +17,7 @@
 
 - **`res.ok`는 2xx다**(`200 <= status < 300`). Node `fetch`의 정의 그대로다 — 3xx는 `ok=false`이지만 `HttpClient`는 기본적으로 리다이렉트를 따르지 않는다(`Redirect.NEVER`). **Node `fetch`는 기본 `redirect:'follow'`**라 여기서 divergence가 생긴다: 계약은 리다이렉트 소스를 등록하지 않아 관측되지 않으므로 **`NEVER`로 두고 forward_notes에 기록**한다(따라가게 만들면 SSRF 표면이 넓어진다 — 안전 방향으로 틀린다).
 - **재시도·백오프 금지**(ADR-008 (6)). `HttpClient` 기본은 재시도를 하지 않는다 — `jdk.httpclient.enableAllMethodRetry` 같은 옵션을 켜지 마라.
-- **connect timeout 10초**(open_questions (e) 기본 결정), request timeout은 두지 않는다. 근거: Node `fetch`에는 타임아웃이 없어 완전 동형은 '무한 대기'인데, 그러면 Tomcat 워커가 고갈될 수 있다. 연결 단계만 막고 그 divergence를 기록한다.
+- **connect timeout 10초**(decisions (8) · open_questions (c) 기본 결정), request timeout은 두지 않는다. 근거: Node `fetch`에는 타임아웃이 없어 완전 동형은 '무한 대기'인데, 그러면 Tomcat 워커가 고갈될 수 있다. 연결 단계만 막고 그 divergence를 기록한다.
 - **SSRF 방어(허용 목록)를 추가하지 마라.** Node에는 없고, 대상 endpoint는 Z가 등록한 값이다. 추가하면 계약 픽스처(loopback)가 막히거나, 막히지 않더라도 검증되지 않은 정책이 생긴다.
 - 응답 본문은 **문자열로** 돌려준다(`decodeBody`의 JSON 파싱은 step3 서비스 책임). 인코딩은 **UTF-8**로 읽는다(`BodyHandlers.ofString(StandardCharsets.UTF_8)`) — 기본 `ofString()`은 `Content-Type`의 charset을 따라가 서버에 따라 갈린다.
 - **예외를 밖으로 던지지 않는다**: `IOException`·`InterruptedException`·`IllegalArgumentException`(잘못된 URI)·`SecurityException` 전부 `ok=false`로 수렴시킨다. `InterruptedException`은 반드시 `Thread.currentThread().interrupt()`로 인터럽트 상태를 복원한 뒤 `ok=false`를 돌려준다.
@@ -34,9 +34,10 @@
   4. `ok = (status >= 200 && status < 300)`. `ok=false`여도 본문은 담아 돌려준다(호출자가 쓰지 않지만 로깅·진단 여지를 남긴다 — **단, 본문을 로그에 찍지 마라**).
 - **로깅 규율**: endpoint·apiKey·본문을 로그에 남기지 마라(자격증명·수집 본문 마스킹). 남긴다면 상태 코드와 실패 여부만.
 
-### B. step1 게이트의 예외 목록에 이 파일을 넣는다
+### B. step1 게이트의 예외 목록 — **확인만 한다(수정 금지)**
 
-- `Adr008DisciplineTest`의 네트워크 예외 목록이 `HttpApiSourceFetcher.java` **하나**여야 한다(이미 그렇게 써 두었다면 확인만 한다). `theExceptionListIsExactlyTwoFiles`가 여전히 green인지 확인한다.
+- step1이 네트워크 예외를 `HttpApiSourceFetcher.java` **하나**로 이미 확정해 두었다. 이 step은 **그 이름의 파일을 채울 뿐** 목록을 건드리지 않는다.
+- `mvnw -B verify`에서 `Adr008DisciplineTest`(특히 `onlyTheCollectionPullAdapterTalksToTheNetwork`·`theExceptionListIsExactlyTwoFiles`)가 green인지 확인한다. red라면 파일명이 목록과 어긋난 것이므로 **목록이 아니라 파일명을 맞춰라**.
 
 ### C. 테스트 (먼저 쓴다 — `HttpApiSourceFetcherTest`)
 
@@ -61,14 +62,14 @@ cd d:/agents/harness && git status --porcelain
 ```
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가 · **`Adr008DisciplineTest` green**(예외 파일이 정확히 2개, 그중 이 파일 1개).
-- 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 215 불변.
-- 3번 증분 = `.../service/HttpApiSourceFetcher.java` · `.../config/Adr008DisciplineTest.java`(예외 목록 확인/조정) · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 2번: exit 0 · 4 프로파일 diffs 0(+ `failclosed`는 `bootOnly` skip) · 관측 수 215 불변.
+- 3번 증분 = `.../service/HttpApiSourceFetcher.java` · 대응 테스트 · `phases/71-spring-collection/index.json`. **`Adr008DisciplineTest.java`는 증분에 없어야 한다** — step1이 예외 목록을 확정했으므로 정상 경로에서 그 파일은 변경 0이다. 변경이 필요하다고 느껴지면 그것은 **예외 목록 확대**이며 별도 근거와 리뷰가 필요하다(증분에 조용히 얹지 마라).
 
 ## 검증 절차
 
 1. **red 먼저**: 어댑터 테스트를 구현 전에 돌려 실패 실측.
 2. **인코딩 변이(원복)**: `ofString(UTF_8)` → `ofString()`으로 바꿔 2번(한글) 테스트 red 확인 → 원복.
-3. **게이트 변이(원복)**: 다른 main 파일(예: `CollectionService.java`)에 `HttpClient` 참조를 넣어 `Adr008DisciplineTest`가 red인지 확인 → 원복. (예외가 **파일 단위**로만 열려 있음을 실증.)
+3. **게이트 변이(원복)**: 다른 main 파일(예: `CollectionService.java`)에 `HttpClient` 참조를 넣어 `Adr008DisciplineTest`가 red인지 확인 → 원복. (예외가 **파일 단위**로만 열려 있음을 실증. 게이트 테스트 파일 자체는 건드리지 않는다.)
 4. **재시도 변이(원복)**: 실패 시 한 번 더 시도하는 코드를 넣어 9번 테스트 red 확인 → 원복.
 5. 테스트 실행 후 **잔존 프로세스·열린 포트 0** 확인(로컬 HttpServer가 반드시 닫혔는지).
 6. AC 실행. index.json step4 상태 갱신.

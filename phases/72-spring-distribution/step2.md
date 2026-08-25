@@ -1,4 +1,4 @@
-# Step 8: failure-ledger
+# Step 2: failure-ledger
 
 배부 실패 원장 파생을 **순수 모듈**로 이식한다 — `DistributionFailureLog`(= `src/services/distributionFailureLog.js` 106행 1:1). 답하는 질문은 둘뿐이다: (1) 이 이벤트 행들에서 **아직 해소되지 않은 수신처 단위 실패**는 무엇인가 (2) 이 `(articleId, targetId)` 쌍에 미해소 실패가 있는가.
 
@@ -6,12 +6,12 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(17)(19)**
+- `phases/72-spring-distribution/index.json` — decisions **(15)(18)**
 - `src/services/distributionFailureLog.js` — **이식 원본 전문**. 특히 서문의 *기각한 대안*("실패 행 이후 같은 kind의 distribute 행이 있으면 해소" 휴리스틱을 **왜 버렸는지**) — 과다 보고(안전 방향)를 택했다는 사실이 계약이다
 - `docs/ADR.md` ADR-008 (6) — 실패는 append-only로 영속하고 **해소 여부는 실패 행을 갱신하지 않고 이후 재전송 이력으로 파생**한다
 - `docs/SCHEMA.md`의 `ArticleHistory` 절 — `targetId`가 정수 컬럼인 이유
 - `server-spring/src/main/java/harness/news/web/NodeNumber.java` — `toNumber`(= JS `Number()`)의 **단일 출처**
-- 이 phase의 step6 산출물: `ArticleHistoryRepository.queryDistributionEvents`가 돌려주는 8키 행의 타입
+- 이 phase의 step0 산출물: `ArticleHistoryRepository.queryDistributionEvents`가 돌려주는 8키 행의 타입
 
 ## 배경 (동결된 사실 — 이 목록이 곧 테스트다)
 
@@ -40,7 +40,7 @@
   - `List<Failure> unresolvedFailures(List<Map<String,Object>> rows)`
   - `Failure findUnresolvedFailure(List<Map<String,Object>> rows, String articleId, Object targetId)` — 없으면 null
   - `boolean isRetryableFailureReason(Object reason)`
-  - `record Failure(long historyId, String articleId, double targetId, String kind, String reason, String failedAt)` — `targetId`의 표현은 구현 재량이되 **`DistributionTarget.id`와 직접 비교 가능**해야 한다(step6 실측을 근거로 정한다).
+  - `record Failure(long historyId, String articleId, double targetId, String kind, String reason, String failedAt)` — `targetId`의 표현은 구현 재량이되 **`DistributionTarget.id`와 직접 비교 가능**해야 한다(step0 실측을 근거로 정한다).
 - 그룹 키 조립: Node는 `` `${articleId}\u0000${targetId}\u0000${action}` ``로 NUL 구분자를 쓴다. Java에서도 **구분자가 값에 나타날 수 없는 키**를 쓴다(문자열 연결로 `a|b` 충돌을 만들지 마라 — `List.of(...)`를 키로 쓰는 편이 안전하다).
 - **`articleId`가 null인 행**도 그룹 키에 들어간다(Node는 `undefined`를 문자열로 붙인다) — 실측을 따르되, `findUnresolvedFailure`의 매칭은 `Objects.equals`로 한다.
 
@@ -69,7 +69,7 @@ cd d:/agents/harness && git status --porcelain
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가.
 - 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 불변.
-- 3번 증분 = `.../service/DistributionFailureLog.java` · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 3번 증분 = `.../service/DistributionFailureLog.java` · 대응 테스트 · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -79,7 +79,7 @@ cd d:/agents/harness && git status --porcelain
 4. **변이 (c) 원복**: `RETRYABLE_FAILURE_REASONS`에 `status-changed`를 추가해 11번 red 확인 → 원복.
 5. **변이 (d) 원복**: 해소 판정을 서문이 기각한 휴리스틱("실패 뒤 같은 kind의 distribute 행이 있으면 해소")으로 바꿔 3번 red 확인 → 원복.
 6. **변이 (e) 원복**: 반환에 `spoolDir`을 추가해 9번 red 확인 → 원복.
-7. AC 실행. index.json step8 상태 갱신.
+7. AC 실행. index.json step2 상태 갱신.
 
 ## 금지사항
 

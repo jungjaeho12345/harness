@@ -1,4 +1,4 @@
-# Step 14: retry-service
+# Step 8: retry-service
 
 배부 실패 조회·재전송 서비스를 만든다 — `DistributionRetryService.list(limit)`와 `retry(historyId, actorUserId)`(= `src/services/distributionRetryService.js` 259행 이식). ADR-008 MVP-4: **복구 트리거는 Z의 명시적 조작뿐**이고 앱에는 자동 재시도·백오프·큐가 없다.
 
@@ -6,12 +6,12 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(6)(17)(18)(19)(20)** · excluded **(f)(l)**
+- `phases/72-spring-distribution/index.json` — decisions **(4)(15)(16)(17)(18)(19)** · excluded **(f)(l)**
 - `src/services/distributionRetryService.js` — **이식 원본 전문**. 특히 상수 3개(`DEFAULT_LIST_LIMIT`·`MAX_LIST_LIMIT`·`RETRY_SCAN_LIMIT`)의 **서로 다른 목적**과 `retry`의 게이트 순서 주석
 - `docs/ADR.md` ADR-008 (6)
 - `contract/cases/default/distribution-tick.contract.js` — `FAILURE_ITEM_KEYS`(**정렬된 10키**) · `limit` 정규화 4프로브(`undefined`·`1`·`'abc'`·`-1` 전부 **200**) · retry 4프로브(전부 **404 `no-failure`**, `extra-fields-ignored` 포함)
 - `contract/cases/minimal/distribution-disabled.contract.js` — 스풀 미설정에서 retry는 **404보다 먼저** `spool-disabled`(DB 무접촉) · **failures는 200**
-- 이 phase의 step6·step7·step8·step9 산출물
+- 이 phase의 step0·step1·step2·step3 산출물
 - `server-spring/src/main/java/harness/news/model/DistributionTargetRepository.java` — `findById(double id)`
 - `server-spring/src/main/java/harness/news/model/ArticleRepository.java` — `findStatus(articleId)`(경량 status 조회) · `findById` · `update`
 - `server-spring/src/main/java/harness/news/web/NodeNumber.java` — `toNumber`
@@ -49,6 +49,7 @@
 - **게이트 거부는 이력을 남기지 않는다**(시도조차 하지 않았으므로 사실 기록이 아니다).
 - 재전송 **실패**는 새 `distribute-failed` 행으로 append(기록 조건은 `isRetryableFailureReason` 단일 술어) + 통지 + 그 사유 반환.
 - 재전송 **성공**은 새 `distribute-retry` 행 append + `distributedAt` **present-only** 갱신 + 반환 `{ok:true, articleId, targetId, kind, at}`. **`file`·`spoolDir`을 반환에 담지 마라.**
+- **[성공 경로의 이력 insert 실패 처분 — 기본 결정: Node 동형]** Node의 `record()`(`src/services/distributionRetryService.js` 64~75행)는 insert 실패를 **삼키고** `onHistoryError`로만 표면화하며, 그 뒤 250행에서 `distributedAt`을 갱신하고 **`{ok:true, ...}`를 반환**한다. **스풀 파일은 이미 나갔으므로 되돌릴 수 없다** — 그것이 삼키는 이유다. 따라서 Spring도 ① 이력 실패를 **예외로 전파하지 않는다** ② `distributedAt` 갱신과 `ok:true` 반환을 **그대로 수행**한다 ③ `onHistoryError` 통지 1회. **`TransactionTemplate`으로 두 문장을 묶는 것은 '두 문장 사이 커넥션 반납 방지' 목적에 한정**하며, 이력 실패가 `distributedAt` 갱신을 **롤백하게 만들지 마라** — 그러면 재전송 성공이 500이 되거나 조용히 되돌려져 Node와 갈리고, **계약이 못 보는 축이라 그 divergence가 영구히 남는다**(excluded (f)). 이 처분은 step4 test13(배부 이력 실패)·step5 test9(승격 이력 실패)와 **동형**이다.
 - **미해소 조회는 `articleId` 스코프 + 사실상 무제한**(`RETRY_SCAN_LIMIT`)이다. 표시용 창(`DEFAULT_LIST_LIMIT`)을 그대로 쓰면 오래돼 창 밖으로 밀린 실패가 `no-failure`로 오거부된다(복구 불가). **두 상수를 통일하지 마라.**
 - in-flight 키는 **수신처 단위**(`articleId` + `targetId`)다. 해제는 **`finally`**(거부·실패·예외 어느 경로에서도) — 아니면 그 수신처 재전송이 영구 봉쇄된다.
 - `stale-cycle` 경계가 **미확정(null)이면 거부하지 않는다**(기존 복구 경로 보존).
@@ -57,15 +58,15 @@
 
 ### A. Node 실측 대조
 
-`node -e`로 원본을 가짜 모델로 불러 표를 만든다: 세 상수의 실제 값 · `limit` 정규화 6종(`undefined`·`0`·`-1`·`1`·`1e9`·`'abc'`) · 게이트 9종 각각의 반환 · 성공 반환 키 · 실패 시 append되는 행 · 대상 행 부재 폴백(`targetActive:'N'`).
+`node -e`로 원본을 가짜 모델로 불러 표를 만든다: 세 상수의 실제 값 · `limit` 정규화 6종(`undefined`·`0`·`-1`·`1`·`1e9`·`'abc'`) · 게이트 9종 각각의 반환 · 성공 반환 키 · 실패 시 append되는 행 · 대상 행 부재 폴백(`targetActive:'N'`) · **성공 경로에서 이력 `insert`가 던지도록 가짜 모델을 만들었을 때의 (a) 반환값 (b) `distributedAt` 갱신 여부 (c) 예외 전파 여부**(위 배경의 기본 결정을 실측으로 확정한다 — 추정으로 구현하지 마라).
 
 ### B. `DistributionRetryService` (`harness.news.service`)
 
 - 생성자 주입: `ArticleHistoryRepository` · `ArticleHistoryRecorder` · `DistributionTargetRepository` · `ArticleRepository` · `SpoolWriter`(선택 — 없으면 `spool-disabled`) · `Clock`. 통지 seam 2개(`onFailure`/`onHistoryError` 어휘 분리).
 - 시그니처(구현 재량): `ListResult list(Object limit)` · `RetryResult retry(Object historyId, String actorUserId)`.
-- in-flight: `ConcurrentHashMap.newKeySet()`(step1 게이트의 오탐 목록에 포함돼 있다).
-- **숫자 판독은 `NodeNumber.toNumber` 단일 출처**(decisions (19)). `historyId`는 `typeof`가 number/string이 아니면 즉시 null, `''`도 null, 그 외 `toNumber` 후 `정수 && >= 1`.
-- 이력 insert + `distributedAt` update는 `TransactionTemplate`로 묶는다(decisions (20)).
+- in-flight: `ConcurrentHashMap.newKeySet()`(phase 71-spring-collection step1 게이트의 오탐 목록에 포함돼 있다).
+- **숫자 판독은 `NodeNumber.toNumber` 단일 출처**(decisions (18)). `historyId`는 `typeof`가 number/string이 아니면 즉시 null, `''`도 null, 그 외 `toNumber` 후 `정수 && >= 1`.
+- 이력 insert + `distributedAt` update는 `TransactionTemplate`로 묶는다(decisions (19)).
 
 ### C. 테스트 (먼저 쓴다 — `DistributionRetryServiceTest`, 임시 DB + `@TempDir` 스풀)
 
@@ -95,6 +96,12 @@
 19. **게이트 거부는 이력 0행**(8~16 각각에서 `ArticleHistory` 행 수 불변 단언 — 행동 그물).
 20. `RETRY_SCAN_LIMIT`이 표시용 창보다 넓다는 실증: 표시 창 밖으로 밀릴 만큼 실패 행을 쌓은 뒤 오래된 미해소 실패의 재전송이 **성공**하는지(창을 통일하면 red).
 21. **동시 삽입 id 귀속**: 여러 스레드가 재전송 실패 이력을 넣어도 각자 자기 id를 받는다.
+22. **성공 경로의 이력 insert 실패**(step4 test13·step5 test9와 동형): 스풀 쓰기는 성공하지만 `distribute-retry` 이력 insert가 **던지도록** 리포지토리를 스텁하고 재전송 →
+    - 반환은 **`ok:true` 5키** 그대로(500·거부 아님)
+    - **`distributedAt` 갱신이 유지된다**(롤백되지 않는다)
+    - `onHistoryError` 통지 **1회**
+    - **예외가 밖으로 나가지 않는다**
+    이 축은 계약이 절대 보지 못한다(excluded (f)) — 이 테스트가 유일 방어선이다.
 
 ## Acceptance Criteria
 
@@ -106,7 +113,7 @@ cd d:/agents/harness && git status --porcelain
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가 · 정적 게이트 3종 green(**자동 재시도 0**).
 - 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 불변.
-- 3번 증분 = `.../service/DistributionRetryService.java` · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 3번 증분 = `.../service/DistributionRetryService.java` · 대응 테스트 · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -119,7 +126,8 @@ cd d:/agents/harness && git status --porcelain
 7. **변이 (f) 원복**: `RETRY_SCAN_LIMIT`을 표시용 창 값으로 통일해 20번 red 확인 → 원복.
 8. **변이 (g) 원복**: in-flight 해제를 `finally` 밖으로 빼서 13번 후반 red 확인 → 원복.
 9. **변이 (h) 원복**: `kindDistributed`를 `distributedKinds`로 바꿔 3번 red 확인 → 원복.
-10. AC 실행. index.json step14 상태 갱신.
+10. **변이 (i) 원복**: 성공 경로의 이력 insert를 **예외 전파**로 바꾸거나 `distributedAt` 갱신과 함께 롤백되게 묶어 22번 red 확인 → 원복. (이 변이가 곧 '재전송 성공이 500이 되는' divergence다.)
+11. AC 실행. index.json step8 상태 갱신.
 
 ## 금지사항
 
@@ -127,7 +135,8 @@ cd d:/agents/harness && git status --porcelain
 - 재전송 입력에 `articleId`·`targetId`·`kind`를 받지 마라. 이유: 전부 실패 행에서만 도출한다(ADR-004) — 받는 순간 임의 수신처로 임의 기사를 내보내는 경로가 열린다.
 - 미해소 판정을 여기서 재구현하지 마라. 이유: `DistributionFailureLog` 단일 출처다 — 갈리면 목록에 없는 실패로 재전송이 통과한다.
 - 표시용 창과 게이트용 스캔 상한을 통일하지 마라. 이유: 오래된 실패가 `no-failure`로 오거부되어 **복구 불가**가 된다.
+- 성공 경로의 이력 insert 실패를 예외로 전파하거나 `distributedAt` 갱신과 함께 롤백하지 마라. 이유: **스풀 파일은 이미 나갔다** — 되돌릴 수 없는 일을 되돌린 척하면 재전송 성공이 500이 되고, 계약이 못 보는 축이라 그 divergence가 영구히 남는다(Node는 삼키고 `ok:true`를 반환한다).
 - `file`·`spoolDir`을 반환·통지·로그에 담지 마라. 이유: 서버 파일시스템 경로는 HTTP로 나가면 안 된다.
 - 게이트 거부에 이력을 남기지 마라. 이유: 시도하지 않은 일을 사실로 기록하면 원장이 오염되고 미해소 판정이 뒤집힌다.
-- `spool-write-failed`·`invalid-spool-dir`·`invalid-article-id`를 `ReasonStatus`에 넣지 마라. 이유: 라우트 재매핑(step15)이 그 셋만 500으로 올린다 — 전역화하면 phase 70의 `distribution-targets` 400 계약이 깨진다.
+- `spool-write-failed`·`invalid-spool-dir`·`invalid-article-id`를 `ReasonStatus`에 넣지 마라. 이유: 라우트 재매핑(step9)이 그 셋만 500으로 올린다 — 전역화하면 phase 70의 `distribution-targets` 400 계약이 깨진다.
 - 컨트롤러·라우트·scope 표를 건드리지 마라. 이유: 이 step은 service 계층 전용이다.

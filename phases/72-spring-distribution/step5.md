@@ -1,17 +1,17 @@
-# Step 11: embargo-status-service
+# Step 5: embargo-status-service
 
-배부 사실을 기사 상태에 반영하는 서비스를 만든다 — `ArticleEmbargoService.syncEmbargoStatus(articleId, extraKinds, actorUserId)`(= `src/services/articleService.js` 277~300행 이식). 호출자는 **송고 훅(step12)**과 **tick(step13)** 둘이다.
+배부 사실을 기사 상태에 반영하는 서비스를 만든다 — `ArticleEmbargoService.syncEmbargoStatus(articleId, extraKinds, actorUserId)`(= `src/services/articleService.js` 277~300행 이식). 호출자는 **송고 훅(step6)**과 **tick(step7)** 둘이다.
 
 이 step은 **service 계층만** 건드린다. 아직 아무도 이 서비스를 부르지 않으므로 계약 관측은 변하지 않는다.
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(8)(15)(16)(20)(26)**
+- `phases/72-spring-distribution/index.json` — decisions **(6)(9)(10)(19)(25)**
 - `src/services/articleService.js` 268~300행 — **이식 원본**(`syncEmbargoStatus`). 특히 주석: `transition()`을 거치지 않는 이유(role도 action도 없다 — 사람의 액션이 아니라 "이미 일어난 배부"의 반영) · `cycleDistributedKinds`와 `extraKinds`의 **합집합**을 쓰는 이유
 - `src/services/embargoPolicy.js` `embargoStatusFor` — 허용 범위를 좁히는 유일한 지점(DES/EPS에서만 계산)
 - `contract/cases/default/distribution-tick.contract.js` — `z-distribute-due` 케이스: 1차만 설정된 기사가 press 배부 후 **DPS**로 승격되고 되읽기에서 `distributedAt`이 채워진다
 - `contract/cases/minimal/transitions.contract.js` — 이 서비스가 **절대 건드리면 안 되는** 상태 전이 계약(스풀 미설정이라 이 서비스가 불리지 않는다는 전제)
-- 이 phase의 step7 산출물: `EmbargoPolicy.embargoStatusFor`·`cycleDistributedKinds`
+- 이 phase의 step1 산출물: `EmbargoPolicy.embargoStatusFor`·`cycleDistributedKinds`
 - `server-spring/src/main/java/harness/news/service/ArticleLifecycleService.java` — 이력 기록·상태 쓰기의 기존 관례(present-only update · `ArticleHistoryRecorder`)
 - `server-spring/src/main/java/harness/news/model/ArticleRepository.java` — `findById` · `update`
 
@@ -31,12 +31,12 @@ syncEmbargoStatus(articleId, extraKinds, actorUserId):
   return {ok:true, status: next}
 ```
 
-- **승격 판정은 `cycleDistributedKinds`(이번 사이클)다.** 전체 이력(`distributedKinds`)으로 판정하면 보류→엠바고 재설정→재송고로 DES에 재진입한 기사가 **거짓 완결(DPS)**로 승격되고, DPS는 `MUTABLE_STATUSES` 밖이라 상태 계산이 다시는 개입하지 못한다 → 도래 시각이 와도 **영원히 배부되지 않는다**(무음 미배부 + 거짓 완결). 송고 훅의 `distributedKinds`와는 **질문이 다르다 — 바꾸지 마라**(decisions (15)).
+- **승격 판정은 `cycleDistributedKinds`(이번 사이클)다.** 전체 이력(`distributedKinds`)으로 판정하면 보류→엠바고 재설정→재송고로 DES에 재진입한 기사가 **거짓 완결(DPS)**로 승격되고, DPS는 `MUTABLE_STATUSES` 밖이라 상태 계산이 다시는 개입하지 못한다 → 도래 시각이 와도 **영원히 배부되지 않는다**(무음 미배부 + 거짓 완결). 송고 훅의 `distributedKinds`와는 **질문이 다르다 — 바꾸지 마라**(decisions (9)).
 - **`extraKinds`가 필요한 이유**: `DistributionService`의 이력 기록은 실패를 삼키므로 이력만 읽으면 승격이 누락될 수 있다. 반대로 힌트만 보면 tick의 self-heal이 무력해진다 → **합집합**.
 - `action`은 **`'embargo'`** 고정이다(`send`가 아니다 — 사람의 액션이 아니다).
 - **present-only**: `status` 한 컬럼만 쓴다. `sentAt`·`sender`·본문·잠금·`distributedAt`을 함께 쓰지 마라(`distributedAt`은 `DistributionService`의 단일 책임이다).
 - `next == null`이면 **쓰기도 이력도 0건**이다(무의미한 쓰기 금지).
-- 상태 쓰기 + 이력 insert는 **같은 트랜잭션**으로 묶는다(decisions (20)).
+- 상태 쓰기 + 이력 insert는 **같은 트랜잭션**으로 묶는다(decisions (19)).
 - 이 서비스는 **role·인가를 모른다**. 게이트는 호출자(라우트/컨트롤러)가 이미 통과시켰다.
 
 ## 작업
@@ -49,8 +49,8 @@ syncEmbargoStatus(articleId, extraKinds, actorUserId):
 
 - 생성자 주입: `ArticleRepository` · `ArticleHistoryRepository`(조회) · `ArticleHistoryRecorder`(기록) · `TransactionTemplate`.
 - 시그니처(구현 재량): `Result syncEmbargoStatus(String articleId, List<String> extraKinds, String actorUserId)` → `record Result(boolean ok, String status, String reason)`.
-- `EmbargoPolicy`에 넘기는 `contents` 접근자는 step7이 정한 형태(`Function<String,Object>` 등)를 그대로 쓴다.
-- **`ArticleLifecycleService`를 고치지 마라**(그 결선은 step12).
+- `EmbargoPolicy`에 넘기는 `contents` 접근자는 step1이 정한 형태(`Function<String,Object>` 등)를 그대로 쓴다.
+- **`ArticleLifecycleService`를 고치지 마라**(그 결선은 step6).
 
 ### C. 테스트 (먼저 쓴다 — `ArticleEmbargoServiceTest`, 임시 DB)
 
@@ -74,7 +74,7 @@ cd d:/agents/harness && git status --porcelain
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가 · 정적 게이트 3종 green.
 - 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 불변(아직 호출자가 없다).
-- 3번 증분 = `.../service/ArticleEmbargoService.java` · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 3번 증분 = `.../service/ArticleEmbargoService.java` · 대응 테스트 · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -83,7 +83,7 @@ cd d:/agents/harness && git status --porcelain
 3. **변이 (b) 원복**: `action`을 `'send'`로 바꿔 5번 red 확인 → 원복. (이력 어휘가 갈리면 사이클 경계(`latestSendId`)가 오염된다 — **`action='embargo'` 행이 `send`로 기록되면 그 자체가 새 사이클 경계가 되어 배부 판정이 무너진다**. 이 변이의 파급을 요약에 적는다.)
 4. **변이 (c) 원복**: 업데이트에 `distributedAt`을 함께 써서 4번 red 확인 → 원복.
 5. **변이 (d) 원복**: `next == null`에도 이력을 남기게 해 6번 red 확인 → 원복.
-6. AC 실행. index.json step11 상태 갱신.
+6. AC 실행. index.json step5 상태 갱신.
 
 ## 금지사항
 
@@ -92,4 +92,4 @@ cd d:/agents/harness && git status --porcelain
 - `distributedKinds`(전체 이력)로 승격을 판정하지 마라. 이유: 재엠바고 기사가 거짓 완결되어 **영원히 배부되지 않는다**.
 - `distributedAt`을 여기서 쓰지 마라. 이유: 배부 시각 갱신은 `DistributionService`의 단일 책임이다.
 - 인가·세션을 끌어들이지 마라. 이유: 게이트는 호출자가 통과시켰고, 이 서비스는 tick(시스템 실행)에서도 불린다.
-- `ArticleLifecycleService`를 고치지 마라. 이유: 송고 훅 결선은 step12다 — 이 step에서 손대면 실패 원인이 두 축으로 갈린다.
+- `ArticleLifecycleService`를 고치지 마라. 이유: 송고 훅 결선은 step6다 — 이 step에서 손대면 실패 원인이 두 축으로 갈린다.

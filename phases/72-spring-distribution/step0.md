@@ -1,4 +1,4 @@
-# Step 6: history-distribution-queries
+# Step 0: history-distribution-queries
 
 배부 이벤트 원장을 읽는 **조회 2개**를 `ArticleHistoryRepository`에 더한다 — `queryDistributionEvents({articleId?, limit})`와 `getDistributionEventById(id)`. 배부 실패 목록(Z 전용)과 재전송 대상 확인의 **유일한 조회 경로**다.
 
@@ -6,7 +6,7 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(17)(19)(20)(26)**
+- `phases/72-spring-distribution/index.json` — decisions **(15)(18)(19)(25)**
 - `src/models/articleHistoryModel.js` 81~106행 — **이식 원본**: `queryDistributionEvents`(8컬럼 · `eventType IN ('distribute-failed','distribute-retry')` · `articleId` 선택 조건 · `ORDER BY id DESC LIMIT ?`) · `getDistributionEventById`(같은 8컬럼 · `id = ? AND eventType IN (?,?)`)
 - `src/models/articleHistoryModel.js` 상단의 `DISTRIBUTION_EVENTS_DEFAULT_LIMIT` 값을 **실측으로 확인**한다(계획서 수치를 믿지 마라)
 - `server-spring/src/main/java/harness/news/model/ArticleHistoryRepository.java` — `LIST_COLUMNS`(8) · `SNAPSHOT_COLUMNS`(7) · `insert` · `mapListRow` 관례. **`targetId`가 어떤 기존 조회에도 실리지 않는다**는 주석(75행)을 확인하고, 이 step이 그 사실을 바꾼다는 것을 주석으로 갱신한다
@@ -19,7 +19,7 @@
 - **결과 컬럼 8개**: `id, articleId, eventType, action, targetId, reason, actorUserId, createdAt`. 기존 `queryByArticle`의 9키(8컬럼 + `hasSnapshot`)와 **다르다** — 그 조회에 `targetId`/`reason`을 싣지 않는 이유는 그 응답이 **전 사용자에게 열린 이력보기 계약**이기 때문이다(모델 주석). **두 조회를 합치지 마라.**
 - `eventType` 필터는 **두 조회 모두에** 있다. `getDistributionEventById`에서 필터를 빼면 임의 id로 본문 스냅샷 행이 그 경로로 새어 나온다(재전송 게이트의 1차 방어).
 - `id`는 정수, `targetId`도 **정수 컬럼**이다. `id`는 정수로 읽고(`rs.getInt`/`getLong`), `targetId`는 **NULL일 수 있다**(kind 단위 실패 항목은 저장되지 않지만 레거시·수기 데이터 방어) — NULL이면 키를 남기되 값은 null이다.
-- **`limit` 정규화는 모델 책임이 아니다**: Node 모델은 `Number.isInteger(limit) && limit >= 1`이면 그 값, 아니면 기본값을 쓴다. 서비스가 클램프(최대 1000)를 한다 — **두 곳의 역할을 섞지 마라**(step14가 클램프를 갖는다).
+- **`limit` 정규화는 모델 책임이 아니다**: Node 모델은 `Number.isInteger(limit) && limit >= 1`이면 그 값, 아니면 기본값을 쓴다. 서비스가 클램프(최대 1000)를 한다 — **두 곳의 역할을 섞지 마라**(step8가 클램프를 갖는다).
 - **`LIMIT`은 반드시 파라미터 바인딩**으로 넣는다(문자열 연결 금지 — SQL 조립 규율).
 - 이 조회는 **읽기 전용**이다. `UPDATE`·`DELETE`를 추가하면 `NoSchemaSqlInMainSourcesTest`의 `LEDGER_MUTATIONS` 스캔이 red다(그것이 정상이다 — 원장은 append-only).
 
@@ -57,8 +57,8 @@ cd d:/agents/harness && git status --porcelain
 ```
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가 · `NoSchemaSqlInMainSourcesTest` green(원장 변경 SQL 0).
-- 2번: exit 0 · 5 프로파일 diffs 0 · **관측 수 불변**(step5 종료 시점 값 — HTTP 변경 없음).
-- 3번 증분 = `.../model/ArticleHistoryRepository.java` · `.../model/ArticleHistoryRepositoryTest.java` · `phases/71-spring-distribution/index.json`.
+- 2번: exit 0 · 5 프로파일 diffs 0 · **관측 수 불변**(`phases/71-spring-collection` 마감 실측 값 = 이 phase baseline — HTTP 변경 없음).
+- 3번 증분 = `.../model/ArticleHistoryRepository.java` · `.../model/ArticleHistoryRepositoryTest.java` · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -66,7 +66,7 @@ cd d:/agents/harness && git status --porcelain
 2. **어휘 필터 변이(원복)**: `getDistributionEventById`에서 `eventType IN` 조건을 빼고 4번 테스트가 red인지 확인 → 원복. (이 게이트가 재전송의 1차 방어다.)
 3. **컬럼 누출 변이(원복)**: `queryByArticle`에 `targetId`를 추가해 7번 테스트가 red인지 확인 → 원복.
 4. **정렬 변이(원복)**: `ORDER BY id ASC`로 바꿔 2번이 red인지 확인 → 원복.
-5. AC 실행. index.json step6 상태 갱신.
+5. AC 실행. index.json step0 상태 갱신.
 
 ## 금지사항
 

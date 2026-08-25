@@ -6,7 +6,7 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(19)(21)**
+- `phases/71-spring-collection/index.json` — decisions **(7)(9)(11)**
 - `src/parsers/defaultParser.js` — **이식 원본 전문**(29행, `str`·`splitFirstLine`·`parse`)
 - `src/parsers/parser.js` — 진입점(현재 기본 포맷 하나로 위임)
 - `src/services/collectionService.js` 12~26행 — `AUTO_ATTRIBUTE`·`decodeBody`·`toMarkup`(**`toMarkup`은 이 step, 나머지는 step3**)
@@ -34,7 +34,7 @@ Node 파서의 의미론을 **문자 그대로** 옮긴다. 아래가 곧 테스
 
 ## 작업
 
-### A. Node 실측 대조(decisions (25))
+### A. Node 실측 대조(decisions (14))
 
 `node -e`로 원본 파서를 직접 호출해 경계 입력의 실제 반환을 뽑아 요약에 적는다(최소): `''` · `'제목'` · `'제목\n'` · `'\n\n제목\n본문'` · `'제목\r\n본문\r\n둘'` · `'  제목  \n본문'` · `null` · `undefined` · `123` · `true` · `{}` · `{title:'  T  '}` · `{content:'C1\nC2'}` · `{body:'B'}` · `{title:'', content:'첫\n둘'}` · `{content:null, body:'B'}` · `{content:'', body:'B'}` · `[]` · `[{title:'x'}]`. 그리고 `toMarkup` 결과 JSON 문자열도 같은 방식으로.
 
@@ -73,8 +73,8 @@ cd d:/agents/harness && git status --porcelain
 ```
 
 - 1번: exit 0 · failures/errors 0 · 테스트 수 증가(실측치 기록).
-- 2번: exit 0 · 5 프로파일 diffs 0 · 관측 수 215 불변(HTTP 없음).
-- 3번 증분 = `server-spring/src/main/java/harness/news/service/CollectionParser.java` · `.../CollectionMarkup.java` · 대응 테스트 2개 · `phases/71-spring-distribution/index.json`.
+- 2번: exit 0 · **4 프로파일** diffs 0(+ `failclosed`는 `bootOnly` skip) · 관측 수 **215 불변**(HTTP 없음).
+- 3번 증분 = `server-spring/src/main/java/harness/news/service/CollectionParser.java` · `.../CollectionMarkup.java` · 대응 테스트 2개 · `phases/71-spring-collection/index.json`.
 
 ## 검증 절차
 

@@ -1,13 +1,16 @@
-# Step 16: parity-closeout
+# Step 10: parity-closeout
 
-phase 71을 닫는다 — **전건 재측정(연속 2회)** · 데이터 안전 단언 · 문서 갱신(`server-spring/README.md` · ADR-013 ④ 실측 1문장) · `index.json`의 `forward_notes` 작성.
+phase 72-spring-distribution을 닫는다 — **전건 재측정(연속 2회)** · 데이터 안전 단언 · 문서 갱신(`server-spring/README.md` · **ADR-013 ④ 실측 1문장**) · `index.json`의 `forward_notes` 작성.
+
+**ADR-013 ④의 문장은 이 step이 유일하게 쓴다.** `phases/71-spring-collection`은 ADR을 고치지 않았으므로(그 phase decisions (1)), 이 한 문장이 **수집·배부 두 phase의 실측을 함께** 기록한다 — 71a 마감 실측과 이 phase 실측을 같은 문장에 담아라.
 
 이 step은 **새 기능을 만들지 않는다**. 코드 변경이 필요하다고 판단되면 그것은 이 step의 산출물이 아니라 **발견**이며, 고칠지 이월할지를 근거와 함께 기록한다.
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — 전문(scope · baseline · order · decisions · excluded · open_questions)
-- `phases/71-spring-distribution/step0.md` ~ `step15.md` — 각 step이 남긴 실측·변이·미검증 항목
+- `phases/72-spring-distribution/index.json` — 전문(scope · baseline · order · decisions · excluded · open_questions)
+- `phases/72-spring-distribution/step0.md` ~ `step9.md` — 각 step이 남긴 실측·변이·미검증 항목
+- **`phases/71-spring-collection/index.json`의 `forward_notes`** — 이 phase의 baseline이 그 수치로 갱신됐어야 한다. 그 phase가 남긴 divergence(리다이렉트·connect timeout·중복 헤더)와 미검증 목록을 **이 phase의 forward_notes가 다시 쓰지 말고 참조만** 하라(중복 기술 금지)
 - `phases/70-spring-admin-crud/index.json` · `phases/69-spring-articles/index.json` · `phases/68-spring-auth/index.json` — `forward_notes`의 형식과 누적 항목(인코딩 divergence·잠금 사용자 미대조·`UserRepository` 바인딩 등은 **이 phase가 새 결함으로 보고하지 않고 누적만** 한다)
 - `server-spring/README.md` — 라우트 표·프로파일 설명·env 표
 - `docs/ADR.md` ADR-013 ④ — phase 68·69·70의 실측 문장(그 문장들은 **무수정**)
@@ -59,17 +62,16 @@ cd d:/agents/harness && npm run test:contract -- --require-full-coverage
 ### D. 문서 갱신 (범위 밖으로 넘어가지 마라)
 
 1. `server-spring/README.md`
-   - 라우트 표 27 → **32**(5행 추가) · 미구현 **7** 목록.
-   - 계약 프로파일 **5**와 `failclosed`의 의미(비-loopback 바인딩 + 토큰 미설정 = 수집 fail-closed).
-   - env 표에 `HOST` · `COLLECTION_TOKEN` · `DIST_SPOOL_DIR` 추가(**미설정 시 동작**을 각각 한 줄로: 바인드 기본 loopback · 토큰 미설정이면 헤더 미판독 · 스풀 미설정이면 배부 전면 비활성).
-   - **ADR-008 정적 게이트**(`Adr008DisciplineTest`)와 예외 2파일(`HttpApiSourceFetcher.java`·`SpoolWriter.java`)의 존재와 근거.
-   - 미검증 목록(아래 F ③)을 간결히.
-2. `docs/ADR.md` ADR-013 ④에 **phase 71 실측 1문장** 추가. 결정·이유·트레이드오프 본문과 phase 68·69·70 문장은 **무수정**.
+   - 라우트 표 29 → **32**(3행 추가) · 미구현 **7** 목록. (27 → 29는 71a가 이미 했다.)
+   - `app.distribution.spool-dir`(= `DIST_SPOOL_DIR`) 항목과 **미설정 시 동작**(배부 전면 비활성: tick·retry 503 · failures는 200 · 송고 훅 결선 없음). 71a가 env 표에 넣어 둔 줄이 있으면 그 줄을 정확히 하는 데 그친다.
+   - **ADR-008 정적 게이트**(`Adr008DisciplineTest`)의 예외 2파일이 **모두 채워졌다**는 사실(`HttpApiSourceFetcher.java` = 71a · `SpoolWriter.java` = 이 phase)과 그 근거.
+   - 미검증 목록(아래 F ⑦)을 간결히.
+2. `docs/ADR.md` ADR-013 ④에 **실측 1문장** 추가 — **71a와 이 phase를 함께** 담는다(71a는 ADR을 고치지 않았다). 결정·이유·트레이드오프 본문과 phase 68·69·70 문장은 **무수정**.
 
 ### E. `index.json` 마감
 
 - `steps`의 전 항목 상태를 확인한다(타임스탬프·`summary`는 실행 엔진·실행 세션이 기록한다 — 손으로 넣지 마라).
-- `open_questions` 각 항목에 **마감 결과**를 덧붙인다((a) 묶음 크기 · (b) 송고 훅 포함 여부 · (c) 0.0.0.0 바인딩 · (d) 문서 범위 · (e) 타임아웃 · (f) GET 404/405 — 각각 무엇으로 결정됐고 무엇으로 실증했는지).
+- `open_questions` 각 항목에 **마감 결과**를 덧붙인다((a) 송고 훅 · (b) GET 404 · (c) 문서 범위 · (d) 이력 실패 처분 · (e) 같은 밀리초 재기록 — 각각 무엇으로 결정됐고 무엇으로 실증했는지).
 
 ### F. `forward_notes` 작성 (다음 phase의 **최우선 입력**이다)
 
@@ -77,13 +79,14 @@ cd d:/agents/harness && npm run test:contract -- --require-full-coverage
 
 1. **다음 도메인 묶음 권장 순서와 남은 7 라우트** — media·upload·photos(4, `media-upload.contract.js`) → SSE·logs-stream(2, `docs/api-contract/sse.md`·`sse-stream.contract.js`) → translate(1). **각 phase는 계획 단계에서 자기 계약 파일이 부르는 픽스처 라우트가 이미 구현돼 있는지 먼저 확인하라**(phase 69 forward_notes (2) 승계).
 2. **SSE 신호 발행 지점 3곳**(decisions (23)의 인계) — 정확한 조건과 함께: ① `POST /api/distribution/tick` 성공 **AND `distributed`가 1건 이상**일 때 `'status'` ② `POST /api/distribution/retry` **성공에만** `'status'`(거부·실패에는 보내지 않는다) ③ `POST /api/collection/receive`·`/pull` 성공에 `'create'`. 그리고 phase 69 forward_notes (15)①이 남긴 기사 도메인 신호 지점도 함께 상기시킨다.
-3. **`Date.parse` 이식 범위와 divergence**(decisions (9)) — 무엇을 덮고 무엇을 null로 떨어뜨리는지, 그 방향이 안전측인 이유, 그리고 그 사실이 tick 응답 `invalid` 배열로 표면화된다는 점.
-4. **`HttpClient` divergence** — 리다이렉트 미추종(Node `fetch`는 follow) · connect timeout 10초(Node는 없음) · 두 항목 모두 계약 미관측이며 안전 방향.
+3. **`Date.parse` 이식 범위와 divergence**(decisions (7)) — 무엇을 덮고 무엇을 null로 떨어뜨리는지, 그 방향이 안전측인 이유, 그리고 그 사실이 tick 응답 `invalid` 배열로 표면화된다는 점.
+4. **수집 축 divergence는 71a가 소유한다 — 참조만 하고 다시 쓰지 마라**(리다이렉트 미추종 · connect timeout 10초 · 중복 `x-collection-token` 헤더). 다만 잔여 위험 한 줄은 여기서도 상기시킨다: **요청 단계 무한 대기는 Node와 동일하게 남는다 — 느린 등록 endpoint가 Tomcat 워커를 점유할 수 있다.**
 5. **ADR-008 정적 게이트의 예외 목록 규율** — 새 phase가 파일을 예외에 넣으려 하면 그 자체가 아키텍처 결정이다. `theExceptionListIsExactlyTwoFiles`가 그 사실을 diff에 드러낸다.
 6. **정적 게이트가 덮지 못하는 벡터와 실질 그물** — 문자열 분해·리플렉션은 통과한다. 실질 방어는 **행동 단언**(스풀 파일 개수·이력 행 수·응답 키 집합·DB 행 수 감소 0)이다(phase 70 gap_found 계열).
-7. **미검증(정직한 공백)** — 최소: ① 실패 원장이 있는 상태의 **계약(HTTP) 관측**은 여전히 없다(excluded (f) — Java 와이어 테스트가 소유) ② tick의 **재진입 스킵 7키 응답**은 계약이 관측하지 못한다(직렬 실행) ③ 다중 인스턴스 중복 tick(운영 규율 소유) ④ 스풀 파일을 **외부 전송기가 실제로 집어가는** 경로 전체 ⑤ 원자 이동의 원자성 자체(단위 테스트로 증명 불가 — 구현 형태만 관찰) ⑥ 엠바고 **과거 시각·파싱 불가**의 계약 관측(픽스처가 전부 미래 시각 — phase 69 forward_notes (4)⑨ 승계) ⑦ 두 서버가 같은 `news.db`를 동시에 여는 상황 ⑧ 비-loopback 바인딩의 **실제 원격 접근**(테스트는 127.0.0.1로만 접속한다).
+7. **미검증(정직한 공백)** — 최소: ① 실패 원장이 있는 상태의 **계약(HTTP) 관측**은 여전히 없다(excluded (f) — Java 와이어 테스트가 소유) ② tick의 **재진입 스킵 7키 응답**은 계약이 관측하지 못한다(직렬 실행) ③ 다중 인스턴스 중복 tick(운영 규율 소유) ④ 스풀 파일을 **외부 전송기가 실제로 집어가는** 경로 전체 ⑤ 원자 이동의 **원자성 자체**(단위 테스트로 증명 불가 — 구현 형태만 관찰한다: step3 test13이 `SpoolFs` seam으로 `.tmp write → ATOMIC_MOVE` **호출 순서**를 잠근다. **step3에서 seam을 두지 못했다면 '구현 형태조차 무테스트'라고 여기에 명시하라** — 강등 사실을 숨기지 마라) ⑥ 엠바고 **과거 시각·파싱 불가**의 계약 관측(픽스처가 전부 미래 시각 — phase 69 forward_notes (4)⑨ 승계) ⑦ 두 서버가 같은 `news.db`를 동시에 여는 상황 ⑧ 비-loopback 바인딩의 **실제 원격 접근**(테스트는 127.0.0.1로만 접속한다).
 8. **누적 이월**(새 결함으로 보고하지 말 것) — 인코딩·경로 파라미터 divergence(69 (8)) · 잠금 획득의 사용자 미대조(69 (12)) · `UserRepository` 바인딩 문자열화(69 (5)(b)) · `CsrfOriginFilter` 공백 Origin(68 (22)(c)) · Boot `/error`의 405·415 shape(68 (13)) · 로그 링 버퍼 내용 차이와 **이력 실패 경고 문구 차이**(69 (16)(g) — 다이제스트 본문을 동결하는 phase가 소유) · `RateLimit-*` 헤더 범위(68 (15)).
-9. **마감 실측 전문**(A의 수치) — "이 수치가 phase 72+의 기준선이다. 추정치를 섞지 말 것."
+9. **스캔 상한 3종의 구분**(decisions (16)) — 표시용 창 / 재전송 게이트 / 중복 억제. 통일하면 각각 '복구 불가'와 '억제 무의미'로 끝난다는 사실과, 그 구분을 지키는 테스트 이름을 적는다.
+10. **마감 실측 전문**(A의 수치) — "이 수치가 다음 phase의 기준선이다. 추정치를 섞지 말 것." **71a 마감 실측 + 이 phase 증분**을 함께 적어 P1 남은 phase가 한 곳만 보면 되게 한다.
 
 ## Acceptance Criteria
 
@@ -101,7 +104,8 @@ cd d:/agents/harness && git status --porcelain
 cd d:/agents/harness && git diff feat-0-mvp...HEAD --name-only
 ```
 
-- 두 번째 커맨드의 전수 목록에 **`server/**`·`src/**`·`test/**`·`web/**`·`client/**`·`contract/**`·`docs/api-contract/**`·`scripts/contract-run.mjs`·`scripts/contract-diff.mjs`·`package.json`이 없어야 한다**(새 npm 의존성 0 · 새 Maven 의존성 0도 함께 확인).
+- 두 번째 커맨드의 전수 목록에 **`server/**`·`src/**`·`test/**`·`web/**`·`client/**`·`contract/**`·`docs/api-contract/**`·`scripts/contract-run.mjs`·`scripts/contract-diff.mjs`·`package.json`이 없어야 한다**(새 npm 의존성 0 · 새 Maven 의존성 0도 함께 확인). **`docs/ADR.md`는 이 목록에 있어야 한다**(ADR-013 ④ 1문장 — 이 phase가 소유한다).
+- **71a가 이미 머지돼 있어야 한다**: `git diff feat-0-mvp...HEAD`에 수집 라우트·`CollectionProperties`·`Adr008DisciplineTest` 신설이 **보이지 않아야** 정상이다(보인다면 리베이스 대신 스택으로 쌓은 것이다 — baseline 규율 위반).
 
 ## 검증 절차
 
@@ -111,7 +115,7 @@ cd d:/agents/harness && git diff feat-0-mvp...HEAD --name-only
 4. **게이트 비공허성 재확인**: `Adr008DisciplineTest`에 변이 1종(`@Scheduled` 주입)을 넣어 red를 확인하고 원복한다. 마감 시점에도 게이트가 살아 있음을 실증한다.
 5. D의 문서 수치가 A의 실측과 **정확히 같은지** 대조한다(문서에 추정치를 적지 마라 — phase 70 remaining_gaps ④가 그 실수를 잡았다).
 6. E·F를 작성한 뒤 `index.json`이 유효한 JSON인지 확인한다(`node -e`로 파싱).
-7. `phases/index.json`의 71 항목 note를 마감 내용으로 갱신한다.
+7. `phases/index.json`의 `72-spring-distribution` 항목 note를 마감 내용으로 갱신한다(71a 항목은 그 phase가 이미 갱신했다 — 덮어쓰지 마라).
 8. **커밋하지 마라** — 커밋·머지는 오케스트레이터의 판단이다.
 
 ## 금지사항

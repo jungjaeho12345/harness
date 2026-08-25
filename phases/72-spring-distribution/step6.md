@@ -1,4 +1,4 @@
-# Step 12: send-distribution-hook
+# Step 6: send-distribution-hook
 
 송고 직후 즉시 배부(ADR-008 (4))를 결선한다 — 순수 판정 `SendDistribution.kindsForSend(status, contents, alreadyDistributed)`(= `src/services/articleService.js` 86~94행)와, `ArticleLifecycleService.applyAction`이 송고 성공 뒤 그 판정으로 `DistributionService`를 부르는 **훅 한 자리**.
 
@@ -6,14 +6,14 @@
 
 ## 읽어야 할 파일
 
-- `phases/71-spring-distribution/index.json` — decisions **(14)(15)(16)** · open_questions **(b)**
+- `phases/72-spring-distribution/index.json` — decisions **(8)(9)(10)** · open_questions **(a)**
 - `src/services/articleService.js` 70~94행(`distributionKindsForSend`의 표와 주석) · 205~270행(`applyAction`의 송고 훅 — **fire-and-forget이라 반환 status가 배부 전 값**이라는 사실)
 - `docs/ADR.md` ADR-008 (4)(5)
 - `contract/cases/default/articles-write.contract.js` — 송고 경로를 관측하는 계약(**이 step이 깨뜨리면 안 되는 것**)
 - `contract/cases/minimal/transitions.contract.js` — 스풀 미설정 프로파일의 전이 결정성(훅이 결선되지 않는다는 전제 — phase 69 decisions (2))
 - `contract/cases/default/distribution-tick.contract.js` — `sent.json.status === 'DES'` 단언(엠바고 기사가 송고 즉시 완결로 가면 red)
 - `server-spring/src/main/java/harness/news/service/ArticleLifecycleService.java` 116~157행 — `applyAction`의 현재 흐름(전이 → end marker → `embargoAware` → present-only update → 이력 → 반환)
-- 이 phase의 step7·step10·step11 산출물
+- 이 phase의 step1·step4·step5 산출물
 
 ## 배경 (동결된 사실)
 
@@ -27,13 +27,13 @@
 | 그 외(R의 RDS 유지 등) | — | `[]` |
 
 - 엠바고 설정 판정은 **`EmbargoPolicy.requiredKinds`**가 단일 출처다(`!!contents.embargoAt` 식 재구현 금지). 단, `DES` 행의 조건은 **두 컬럼을 직접 본다**(Node 그대로).
-- `already`는 **`EmbargoPolicy.distributedKinds`(전체 이력)**다 — "역사상 어디로 나갔나". **`cycleDistributedKinds`를 쓰지 마라**(decisions (15)).
+- `already`는 **`EmbargoPolicy.distributedKinds`(전체 이력)**다 — "역사상 어디로 나갔나". **`cycleDistributedKinds`를 쓰지 마라**(decisions (9)).
 - **여기서 시각 비교를 하지 마라.** "지금이 엠바고 시각인가"는 tick의 책임이다.
 
-### 훅 결선 규율 (decisions (14))
+### 훅 결선 규율 (decisions (8))
 
 - **응답 status는 훅 실행 여부와 무관하게 `finalStatus`**(전이 + 엠바고 후처리 결과)다. 훅이 승격을 일으켜도 그 값을 반환에 반영하지 마라 — Node가 fire-and-forget이라 항상 배부 전 값을 돌려주기 때문이다. **이 한 줄이 이 step 최대의 계약 위험이다.**
-- 훅은 **동기 실행**한다(`@Async` 금지 — step1 게이트 + `--dual-run` 결정성).
+- 훅은 **동기 실행**한다(`@Async` 금지 — phase 71-spring-collection step1 게이트 + `--dual-run` 결정성).
 - **배부 실패가 송고를 되돌리지 않는다**: 훅 전체를 예외 격리한다(동기 throw·비동기 rejection 등가 전부).
 - 이력 조회 실패·미주입은 `already = []`로 폴백한다 → 엠바고가 설정된 DPS 재송고에서는 곧바로 `kinds=[]`(안전 기본값)가 되고, 엠바고 미설정 기사는 `already`를 참조하지 않으므로 조회 장애가 일반 배부를 막지 않는다.
 - 훅 실행 순서: 전이 → present-only update → **이력 기록** → 훅. 이력이 훅보다 **먼저**여야 사이클 경계(`latestSendId`)가 이번 배부보다 앞에 놓인다(`embargoPolicy.latestSendId` 주석의 불변식).
@@ -63,14 +63,16 @@
   6. 블록 전체를 `try/catch`로 감싼다(로그만 남기고 삼킨다).
 - **반환문은 손대지 마라**: `return new ActionResult(true, finalStatus, null)` 그대로.
 - 이 파일의 다른 부분(전이·end marker·`embargoAware`·update·이력)을 **한 줄도 바꾸지 마라**.
+- **[step1 D-11과의 충돌 방지 — 필수]** `ArticleLifecycleService`의 유일한 생성 지점은 `ArticleLifecycleServiceTest.java` **164행 `setUp()` 한 곳**이다. 그 **공용 픽스처에 활성 수신처를 갖춘 배부 서비스를 물리지 마라** — 그러면 step1이 세운 D-11(엠바고 4×4 등가 단언)의 `secondEmbargoAt만 설정` 조합에서 저장 status가 EPS로 승격되어, D-11을 되읽기로 구현했다면 red가 나고 **"동치 단언을 완화"하는 잘못된 복구**가 유도된다. 규율 둘: ① 공용 `setUp()`은 **배부 서비스 미주입(또는 활성 수신처 0)**을 유지한다 ② 훅 테스트는 **자기 테스트 안에서만** 배부 서비스·활성 수신처를 주입한 별도 인스턴스를 만든다. (D-11 자체는 `applyAction` **반환 status**로 단언하므로 훅과 무관하게 불변이다 — 그 사실도 함께 확인한다.)
 
 ### D. 테스트 (먼저 쓴다)
 
 - `SendDistributionTest`(순수): 표 전건 + `already`가 null·비배열·미지 값 + `DES`인데 `embargoAt`도 있는 경우(`[]`).
-- `ArticleLifecycleServiceTest` 확장(임시 DB + 실제/가짜 배부 서비스):
+- **step1의 D-11(엠바고 4×4 등가 단언)이 이 step 이후에도 green인지 반드시 확인한다.** red가 나면 원인은 공용 픽스처 오염이다 — **단언을 고치지 말고 픽스처를 고쳐라**.
+- `ArticleLifecycleServiceTest` 확장(임시 DB + 실제/가짜 배부 서비스, **자기 테스트 전용 인스턴스**):
   1. **엠바고 미설정 기사 송고** → press·nonpress 파일 2개(수신처 2곳) · `distributedAt` 갱신 · **응답 status `DPS`**.
   2. **1차 엠바고 기사 송고** → 파일 0개 · `distributedAt` NULL 유지 · **응답 status `DES`**.
-  3. **2차만 설정된 기사 송고** → press 파일 1개 · `syncEmbargoStatus`로 DB status가 **EPS**가 되지만 **응답 status는 `DES`**(decisions (14)의 핵심 단언 — 이 테스트가 없으면 계약이 그 자리에서 갈린다).
+  3. **2차만 설정된 기사 송고** → press 파일 1개 · `syncEmbargoStatus`로 DB status가 **EPS**가 되지만 **응답 status는 `DES`**(decisions (8)의 핵심 단언 — 이 테스트가 없으면 계약이 그 자리에서 갈린다).
   4. **DPS 재송고 + 엠바고 설정 + 배부 이력 없음** → `kinds=[]` → 파일 0개(안전 기본값).
   5. **DPS 재송고 + 엠바고 설정 + press 배부 이력 있음** → press에만 정정본(파일 1개).
   6. **전 수신처 쓰기 실패** → 승격 없음(status 불변) · 송고 자체는 **성공**(`ok=true`) · `distribute-failed` 이력 영속.
@@ -91,7 +93,7 @@ cd d:/agents/harness && git status --porcelain
 - 1번: exit 0 · failures/errors 0 · **기존 `ArticleLifecycleWireTest`·`ArticleCrudWireTest` red 0**.
 - 2번(**1순위**): exit 0 · 5 프로파일 **diffs 0** · **관측 수 불변**. default 프로파일이 이제 '배부가 결선된 Node vs 배부가 결선된 Spring'을 비교한다 — 여기서 diff가 나면 훅의 의미론이 갈린 것이다.
 - 3번: exit 0 · 5 프로파일 diffs 0. **자기 결정성이 이 step의 진짜 위험 축이다**(동기 실행이므로 통과해야 정상 — 실패하면 어딘가에 시간·순서 의존이 들어왔다).
-- 4번 증분 = `.../service/SendDistribution.java` · `.../service/ArticleLifecycleService.java`(훅 블록 + 생성자) · 대응 테스트 · `phases/71-spring-distribution/index.json`.
+- 4번 증분 = `.../service/SendDistribution.java` · `.../service/ArticleLifecycleService.java`(훅 블록 + 생성자) · 대응 테스트 · `phases/72-spring-distribution/index.json`.
 
 ## 검증 절차
 
@@ -103,14 +105,16 @@ cd d:/agents/harness && git status --porcelain
 6. **변이 (d) 원복**: 훅을 이력 기록 **앞으로** 옮겨 D-9 red 확인 → 원복.
 7. **변이 (e) 원복**: 훅의 try/catch를 제거하고 배부 서비스가 던지게 해 D-7 red 확인 → 원복.
 8. AC 실행. `--parity` 연속 2회 green(비고정 flake 0) 확인.
-9. index.json step12 상태 갱신.
+9. index.json step6 상태 갱신.
 
 ## 금지사항
 
 - `applyAction`의 반환 status를 배부 후 값으로 바꾸지 마라. 이유: Node는 fire-and-forget이라 항상 배부 전 값을 돌려준다 — 바꾸는 순간 2차 엠바고 기사의 송고 응답이 갈린다.
-- `@Async`·별도 스레드·`CompletableFuture`로 훅을 비동기화하지 마라. 이유: step1 게이트가 red를 내고, `--dual-run` 자기 결정성이 깨진다.
+- `@Async`·별도 스레드·`CompletableFuture`로 훅을 비동기화하지 마라. 이유: phase 71-spring-collection step1 게이트가 red를 내고, `--dual-run` 자기 결정성이 깨진다.
 - 훅에서 예외가 새게 하지 마라. 이유: 스풀 쓰기 실패로 기사가 송고 불가 상태에 묶이면 복구 수단이 없다.
 - 훅을 이력 기록보다 앞에 두지 마라. 이유: 사이클 경계(`latestSendId`)가 이번 배부보다 뒤에 놓여 `stale-cycle` 판정과 중복 억제가 무너진다.
 - `already`에 `cycleDistributedKinds`를 쓰지 마라. 이유: 정정본 판정은 "역사상 어디로 나갔나"다 — 사이클로 좁히면 정정본이 나가지 않는다.
 - 시각 비교(`embargoAt <= now`)를 훅에 넣지 마라. 이유: 시점 판정은 tick의 책임이며, 넣으면 두 곳의 판정이 발산한다.
 - `ArticleLifecycleService`의 전이·`embargoAware`·update·이력 부분을 리팩터링하지 마라. 이유: 계약이 가장 촘촘한 파일이다 — 이 step의 diff는 **훅 블록 + 생성자**로 한정한다.
+- `ArticleLifecycleServiceTest`의 **공용 `setUp()`(164행)에 활성 수신처를 갖춘 배부 서비스를 물리지 마라.** 이유: step1 D-11의 `secondEmbargoAt만 설정` 조합이 배부→승격으로 EPS가 되어, 엠바고 누수 방어의 유일한 잠금인 그 동치 단언을 완화하도록 유도한다.
+- step1의 D-11 동치 단언을 완화·삭제·조건부화하지 마라. 이유: red의 원인은 단언이 아니라 픽스처다 — 단언을 손대면 엠바고 누수가 무테스트로 열린다.
