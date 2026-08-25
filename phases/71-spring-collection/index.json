@@ -63,7 +63,7 @@
   ],
 
   "steps": [
-    { "step": 0, "name": "contract-harness-profiles", "status": "pending" },
+    { "step": 0, "name": "contract-harness-profiles", "status": "completed", "summary": "scripts/spring-contract.mjs 한 파일만 변경(Java 무접촉): SCOPE에 host·spool·token 축 추가(러너 PROFILES와 동값) + 5번째 프로파일 failclosed를 bootOnly:true로 신설(다중 실행에서 skip 1줄 보고 · --profile failclosed는 --boot-check 없으면 usageDie). runSpringPass가 HOST=profile.host·패스별 임시 DIST_SPOOL_DIR·COLLECTION_TOKEN을 주입하고(접속은 언제나 127.0.0.1, 토큰은 불리언만 로그) pickFreePort(host)가 바인드 host로 실제 listen한다. 토큰 값은 러너 소스 텍스트에서 COLLECTION_TEST_TOKEN 리터럴을 추출(import·하드코딩 금지, 실패 시 즉사)하고 자기 검사 3종(러너 PROFILES 이름 대조·토큰 추출·bootOnly 아닌 행의 files 비어있음 금지)을 실행 초반에 건다. 실측: --profile failclosed --boot-check exit 0(host=0.0.0.0 health ok 5569ms · sessions ok R,D,Z — 방화벽 리스크 미발현) · --parity exit 0 profiles=4 diffs=0 215관측(163/45/4/3 불변) · --dual-run exit 0 diffs=0(패스별 pid·port·dataDir·spoolDir 상이) · 리포 news.db·uploads 무변." },
     { "step": 1, "name": "adr008-discipline", "status": "pending" },
     { "step": 2, "name": "collection-parser", "status": "pending" },
     { "step": 3, "name": "collection-service", "status": "pending" },
