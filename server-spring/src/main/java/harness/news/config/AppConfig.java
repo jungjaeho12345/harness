@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 
 /** 앱 전역 빈 배선 — 설정 바인딩 활성화 + 시계 주입 seam. */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({ AppProperties.class, CollectionProperties.class })
+@EnableConfigurationProperties({ AppProperties.class, CollectionProperties.class, SpoolProperties.class })
 public class AppConfig {
 
 	/**
