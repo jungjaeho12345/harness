@@ -77,6 +77,8 @@ const SCOPE = [
       // phase 69 step10 — 송고(action)가 붙으면서 green이 됐다(그 전에는 DPS 잠금 픽스처가 404였다).
       'contract/cases/default/articles-write.contract.js',
       'contract/cases/default/auth.contract.js',
+      // phase 71 step5 — 수집 인제스트 2라우트가 붙으면서 green이 됐다(토큰 401 → 서비스 403/400/200).
+      'contract/cases/default/collection.contract.js',
       'contract/cases/default/crosscutting.contract.js',
       // phase 70 step6 — 배부 대상 4라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 7키·soft delete·검증 5토큰).
       'contract/cases/default/distribution-targets.contract.js',
@@ -93,13 +95,17 @@ const SCOPE = [
     // 않는 것**이 프로파일의 정의다(스풀·수집 토큰 미설정 → Node에서 배부 결선 자체가 없어 송고 훅이
     // 발화하지 않는다 = 전이 관측이 결정적이다). Spring은 이 phase에서 배부를 구현하지 않으므로 그
     // 상태가 구조적으로 참이고 **추가 env가 필요 없다**(index.json decisions (2)).
-    // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 이 phase가 구현하지 않은
-    // 수집(collection-open)·배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
+    // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 아직 구현하지 않은
+    // 배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
     name: 'minimal',
     host: DEFAULT_BIND_HOST,
     spool: false,
     token: false,
-    files: ['contract/cases/minimal/transitions.contract.js'],
+    files: [
+      // phase 71 step5 — 토큰 미설정 서버의 개방 계약(헤더를 아예 읽지 않는다)이 green이 됐다.
+      'contract/cases/minimal/collection-open.contract.js',
+      'contract/cases/minimal/transitions.contract.js',
+    ],
     extraEnv: {},
   },
   {
@@ -112,17 +118,15 @@ const SCOPE = [
   },
   {
     // phase 71 step0이 올린 5번째 프로파일 — 수집 fail-closed 구성 축(비-loopback 바인딩 + 토큰 미설정).
-    // 지금은 **기동 전용**이다: 수집 2라우트가 아직 없어 contract/cases/failclosed/의 케이스는 확정 red다.
-    // files가 비어 있는 것과 bootOnly는 **짝**이다 — files만 비우고 플래그를 빼면 러너가 --files 부재를
-    // "디렉토리 전건"으로 해석해(contract-run.mjs resolveCaseFiles) collection-disabled.contract.js를 돌리고,
-    // 그 red가 "설정 실수"가 아니라 "계약 실패"로 보고된다(--parity가 확정 red).
-    // 케이스 편입과 bootOnly 제거는 **step5**(수집 HTTP 경계가 붙어 3파일이 동시에 green이 되는 지점)다.
+    // step5에서 수집 2라우트가 붙어 케이스가 green이 됐고 그때 bootOnly 플래그를 제거했다(그전에는
+    // 케이스 디렉토리 스캔이 확정 red라 기동 전용이었다). 이 프로파일의 케이스 파일은 **하나뿐**이다 —
+    // 다른 도메인을 여기에 넣지 마라(비-loopback 바인딩은 환경(방화벽)에 영향을 받는다: 그 환경 문제로
+    // 무관한 계약이 함께 무너지면 안 된다 — 케이스 파일 머리말과 같은 규율).
     name: 'failclosed',
     host: '0.0.0.0',
     spool: false,
     token: false,
-    files: [],
-    bootOnly: true,
+    files: ['contract/cases/failclosed/collection-disabled.contract.js'],
     extraEnv: {},
   },
   {
@@ -139,9 +143,10 @@ const SCOPE_NAMES = SCOPE.map((p) => p.name);
 const BOOT_ONLY_NAMES = SCOPE.filter((p) => p.bootOnly).map((p) => p.name);
 const MULTI_RUN_NAMES = SCOPE.filter((p) => !p.bootOnly).map((p) => p.name);
 
-// bootOnly 안내 — 표에서 파생한다(step5가 플래그를 지우면 이 줄도 함께 사라진다).
+// bootOnly 안내 — 표에서 파생한다(플래그를 지우면 이 줄도 함께 사라진다. phase 71 step5에서 실제로
+// 사라졌고, 새 구성 축을 케이스보다 먼저 세우는 후속 phase가 같은 방식으로 다시 쓴다).
 const BOOT_ONLY_USAGE = BOOT_ONLY_NAMES.length === 0 ? '' : `
-                     ${BOOT_ONLY_NAMES.join('|')}=bootOnly(기동 전용 — --profile <name> --boot-check로만 실행. 케이스 편입은 step5).`;
+                     ${BOOT_ONLY_NAMES.join('|')}=bootOnly(기동 전용 — --profile <name> --boot-check로만 실행. 케이스는 아직 미편입).`;
 
 const USAGE = `사용법: node scripts/spring-contract.mjs [--profile <name>]... [--files <path>[,<path>]...]
                                       [--jar <path>] [--java-home <path>] [--out-dir <dir>]
@@ -629,7 +634,7 @@ async function main() {
   process.stdout.write(`spring-contract 시작 jar=${jar}\n  outDir=${ctx.outDir}\n`);
   // 사라진 프로파일은 "통과"로 오독된다 — skip을 반드시 한 줄로 보고한다.
   for (const name of skippedBootOnly) {
-    process.stdout.write(`[${name}] skipped — bootOnly(케이스 편입은 step5. 단독 실행: --profile ${name} --boot-check)\n`);
+    process.stdout.write(`[${name}] skipped — bootOnly(케이스 미편입. 단독 실행: --profile ${name} --boot-check)\n`);
   }
 
   // 데이터 안전 — before 스냅샷(리포 news.db·uploads/)이 종료 후 무변 단언의 기준점이다.

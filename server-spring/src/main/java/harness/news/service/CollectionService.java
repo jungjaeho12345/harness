@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -31,7 +32,13 @@ import tools.jackson.databind.json.JsonMapper;
  * <h2>검증이 없다</h2>
  * payload를 검증하지 않는다: 없어도 200이고 빈 제목·빈 본문의 기사가 등록된다
  * ({@code receive-missing-payload}). 재시도·백오프·큐도 없다(ADR-008 (6)).
+ *
+ * <h2>빈 등록은 step5(HTTP 경계)가 함께 올린다</h2>
+ * step3에서는 {@code ApiSourceFetcher} 구현 빈이 아직 없어 {@code @Service}를 붙이면 전
+ * {@code @SpringBootTest} 컨텍스트가 로딩에서 죽었다. step4가 {@link HttpApiSourceFetcher}를 올리고
+ * step5가 {@link harness.news.controller.CollectionController}를 붙이면서 이 배선이 완결된다.
  */
+@Service
 public class CollectionService {
 
 	/** rcv.md 규칙 — 수집 기사는 반드시 {@code Contents.attribute}에 이 값을 갖는다. */

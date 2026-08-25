@@ -40,6 +40,10 @@ public final class ReasonStatus {
 			// 현행 HTTP 도달 경로 없음). 그래도 전역 표(server/index.js 328행)에 있는 행이라 표의 패리티로
 			// 옮긴다 — 통과 처리가 깨졌을 때 폴백 400이 아니라 정본과 같은 403으로 드러나야 한다.
 			Map.entry("not-dps", 403),
+			// 수집 인제스트(phase 71 step5) — 등록되지 않은 sourceId. 전역 표에 <b>이 토큰만</b> 늘린다:
+			// collection-disabled는 Node도 라우트에서 직접 503을 쓰고(전역 표에 없다),
+			// no-active-api-source·fetch-failed는 계약이 폴백 400을 동결했으므로 넣으면 그 계약이 깨진다.
+			Map.entry("unregistered", 403),
 			Map.entry("not-found", 404),
 			// 생애주기 2라우트(phase 69 step10)가 내는 4토큰. action 라우트는 **폴백이 409**라
 			// (정본 fail(res, r, 409)) 아래 forbidden-transition이 없어도 409가 나가지만, 표에 두는 것이
