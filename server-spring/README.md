@@ -6,15 +6,16 @@
 
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
-- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD**): 라우트 **27개**. 계약 12파일(default 9 ·
-  minimal 1 · auth-negative 1 · prod-cookie 1) = **4 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
-  (phase 70 리뷰 반영 후 최종 실측 2026-08-24: 관측 **215**(default 163 · minimal 45 · auth-negative 4 · prod-cookie 3) ·
-  diffs 0 · 자기 결정성 `--dual-run` 215관측 diffs 0 · Java **670 테스트 0 실패**). 수집·배부 실행·미디어·SSE·번역은 아직 없다(아래 라우트 표).
+- 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD** + phase 71 **수집 인제스트**):
+  라우트 **29개**. 계약 15파일(default 10 · minimal 2 · auth-negative 1 · **failclosed 1** · prod-cookie 1) = **5 프로파일**이 이 서버
+  대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다 (phase 71 마감 실측 2026-08-25: 관측 **236**(default 176 · minimal 48 ·
+  auth-negative 4 · failclosed 5 · prod-cookie 3) · diffs 0 · 자기 결정성 `--dual-run` 236관측 diffs 0 · Java **753 테스트 0 실패** ·
+  jar **35,662,714 B**). 배부 실행·미디어/업로드/사진·SSE·번역은 아직 없다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 27개**다
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 29개**다
 (`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
 
 | 라우트 | 인증 | 비고 |
@@ -46,17 +47,23 @@
 | `POST /api/distribution-targets` | admin(Z) | 검증 순서 name→kind→spoolDir→active · 거부 5토큰(invalid-name·-kind·-spool-dir·duplicate-spool-dir·invalid-active) 전부 폴백 **400** |
 | `PUT /api/distribution-targets/:id` | admin(Z) | present-only · 없는/비수치 id는 **404 not-found**(500 아님) · `{active:"N"}`이 soft delete의 두 번째 진입점 |
 | `POST /api/distribution-targets/:id/deactivate` | admin(Z) | **soft delete** — 행을 지우지 않고 `active='N'` UPDATE(update와 같은 `applyPatch`로 수렴, updatedAt stamp). 제거 라우트는 없다 |
+| `POST /api/collection/receive` | token | 세션 라우트가 **아니다**(`x-collection-token` + 바인드 주소). 가드 순서 **503 `collection-disabled` → 401 `unauthenticated` → 403 `unregistered`/`inactive` → 200**. `attribute='자동기사'`·`status='RDS'`로 **신규 삽입만** · payload가 없어도 200 |
+| `POST /api/collection/pull` | token | 등록된 활성 API 소스를 **한 번** 호출(재시도 0 · 리다이렉트 미추종 · connect timeout 10초)하고 응답을 receive와 같은 경로로 등록한다. `no-active-api-source`·`fetch-failed`는 전역 표에 없고 **폴백 400**이 계약이다 |
 
 **배부 대상에는 행 삭제 경로가 없다** — `DELETE /api/distribution-targets/:id`는 핸들러 미등록으로 **404**다
 (Express는 method+path를 함께 매칭해 미등록 메서드를 405가 아니라 404로 떨구므로, Spring도 메서드 불일치를
 `GlobalErrorHandler`에서 404로 수렴시킨다 — phase 70 `distribution-targets.contract.js`가 이 동형을 계약으로 관측한다).
 
-**나머지 12 라우트에는 스텁을 만들지 않았다.** 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+**나머지 10 라우트에는 스텁을 만들지 않았다** — 배부 실행 3(`POST /api/distribution/tick` · `GET /api/distribution/failures` ·
+`POST /api/distribution/retry`) · 미디어/업로드/사진 4(`GET /api/media/search` · `POST /api/upload` · `POST /api/photos` ·
+`GET /api/photos/search`) · SSE 2(`GET /api/stream` · `GET /api/logs/stream`) · 번역 1(`POST /api/articles/:id/translate`).
+대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
   (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
 - **인증된 요청은 통과시켜 404**가 되게 한다 — 구현 여부가 정직하게 드러나는 것이 의도다(스텁 금지),
-- `auth: "token"` 2건(수집)은 세션 요구 대상이 **아니다**(`x-collection-token` + loopback 인증 — 수집 도메인 phase 소유).
+- `auth: "token"` 2건(수집)은 세션 요구 대상이 **아니다**(`x-collection-token` + 바인드 주소가 유일한 방어다).
+  phase 71에서 구현됐고, 그래서 그 2건은 미인증이어도 401이 아니라 **컨트롤러의 가드 순서**(503 → 401 → 403)를 만난다.
 
 경로 판정은 후행 슬래시(`/api/articles/`) · **경로 파라미터**(`/api/articles;a=b`) · **퍼센트 인코딩을 한 번 디코딩한 형태**
 (`/api/artic%6Ces`)까지 본다 — Spring 디스패처는 세그먼트에서 `;name=value`를 떼어내고 퍼센트 인코딩을 디코딩해 라우팅하므로,
@@ -77,11 +84,14 @@ Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계�
 deactivate로 회수**하고(활성인 채로 남기지 않는다) (b) 러너가 파일을 순차(`--test-concurrency=1`) 실행하며 알파벳 순서상 그
 파일이 송고하는 `articles-write.contract.js`보다 뒤에 오므로 — **활성 대상이 송고와 공존하는 창이 없다**. 그래서 `distributedAt`
 갱신·`distribute` 이력·DES→EPS 승격 어느 것도 생기지 않는다(`distributedAt`은 기사 27키 투영의 컬럼명으로만 나타나고 값은
-null이다). 추정이 아니라 두 파일이 함께 든 `default` 프로파일 **215관측 diffs 0**으로 확인한 사실이며, 배부 실행 phase가 송고
-훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다.
+null이다). 추정이 아니라 두 파일이 함께 든 `default` 프로파일 **176관측**을 포함한 **236관측 diffs 0**으로 확인한 사실이며
+(phase 71 마감 재측정 2026-08-25), 배부 실행 phase가 송고 훅을 붙일 때는 반드시 "명시 설정이 없으면 결선 없음"
+(Node `src/controllers/index.js` 동형)이어야 이 전제가 유지된다. **`default` 인스턴스에는 이미 `DIST_SPOOL_DIR`이 주입돼 있다**
+(하네스 `spool:true`) — 스풀을 처음 쓰는 것이 배부 phase이므로 그 전제는 그때 다시 조여야 한다.
 
 그래서 계약 스위트는 **담당 도메인 파일만**(`--files`·scope 표) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만
-쓸 수 있다(지금 쓰면 남은 12 라우트 때문에 영구 red이며, 그 red가 정상이다).
+쓸 수 있다(지금 쓰면 남은 10 라우트 때문에 영구 red이며, 그 red가 정상이다 — Spring 대상 커버리지는 프로파일별로
+`default` 23/39 · `minimal` 2/39 · `prod-cookie` 1/39이고, **Node 대상 전 프로파일 합산에서만 39/39**가 된다).
 
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
@@ -123,14 +133,21 @@ curl -i http://127.0.0.1:15731/api/health   # 200 {"ok":true}
 대해 갖는 소유 경계와 동형). 이 하네스가 이후 phase의 진행률 측정 수단이다 — 각 step의 합격 기준이
 "이 커맨드로 계약 파일 N개가 green"이다.
 
-scope 표에는 지금 **4 프로파일**이 올라 있다(`default` 7파일 · `minimal` 1 · `auth-negative` 1 · `prod-cookie` 1 = 계약 10파일).
+scope 표에는 지금 **5 프로파일**이 올라 있다(`default` 10파일 · `minimal` 2 · `auth-negative` 1 · `failclosed` 1 ·
+`prod-cookie` 1 = 계약 15파일). 프로파일마다 **구성 축 3개**(`host` 바인드 주소 · `spool`=`DIST_SPOOL_DIR` 주입 여부 ·
+`token`=`COLLECTION_TOKEN` 주입 여부)를 갖고 그 값은 러너(`scripts/contract-run.mjs`)의 `PROFILES`와 **반드시 같다** —
+갈리면 두 대상이 서로 다른 서버 구성을 측정하게 되고 그 구성 차이가 "계약 차이"로 위장된다(하네스가 실행 초반에 대조한다).
 
-- `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users가 여기 있다.
+- `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users·수집이 여기 있다.
 - **`minimal`** — 러너 프리셋이 `spool:false, token:false`이고 **env를 주지 않는 것**이 프로파일의 정의다. 스풀·수집 토큰이
   없으면 Node에서 배부 결선 자체가 없어 송고 훅(비동기 배부 → `syncEmbargoStatus` 승격 DES→EPS→DPS)이 발화하지 않는다
   = **전이 관측이 결정적**이다. 그래서 상태 기계 계약(`transitions.contract.js`)이 이 프로파일에 있다. Spring은 배부 구현이
   없어 그 상태가 구조적으로 참이고 추가 env가 필요 없다(`extraEnv: {}`).
 - `auth-negative` — 로그인 실패·잠금·레이트리밋 전용 인스턴스(카운터 격리).
+- **`failclosed`** — phase 71이 올린 다섯 번째 프로파일. **비-loopback 바인딩(`0.0.0.0`) + 수집 토큰 미설정** = 수집이
+  **fail-closed**로 잠긴 서버다(두 라우트가 503 `collection-disabled`). 구성이 곧 계약인 축이라 케이스 파일은 **하나뿐**이며
+  다른 도메인을 여기에 넣지 마라 — 비-loopback 바인딩은 환경(방화벽)에 영향을 받고, 그 환경 문제로 무관한 계약이 함께
+  무너지면 진단이 무너진다. 접속은 언제나 `127.0.0.1`로 하고 바인드 주소만 바꾼다.
 - `prod-cookie` — `APP_ENV=production`(쿠키 Secure·SameSite=None).
 
 ```bash
@@ -190,13 +207,41 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 | `app.env` | `APP_ENV` | `development` | `production`이면 프로덕션 분기(쿠키 Secure·SameSite=None, CSRF allowlist 엄격). Node의 `NODE_ENV`를 읽지 않는다. |
 | `app.allowed-origins` | `ALLOWED_ORIGINS` | 빈 목록 | CORS allowlist(콤마 구분). |
 | `server.port` | `PORT` | `15000` | 계약 하네스는 **[15000, 20000)**에서 빈 포트를 프로브해 주입한다(러너·verify 구간과 서로소). |
-| `server.address` | `HOST` | `127.0.0.1` | 기본 loopback — `HOST` 명시 설정 시에만 LAN에 열린다(Node 서버와 동일 규율). |
+| `server.address` | `HOST` | `127.0.0.1` | **미설정이면 loopback 바인드** — `HOST` 명시 설정 시에만 LAN에 열린다(Node 서버와 동일 규율). 수집 fail-closed 판정의 입력이기도 하다(바로 아래). |
+| `app.collection.token` | `COLLECTION_TOKEN` | 빈 값(미설정) | 수집 토큰. **미설정이면 `x-collection-token` 헤더를 아예 읽지 않는다**(어떤 값이 와도 무시 — loopback 바인드에서 개방). 설정돼 있으면 불일치·부재가 401이다. 빈 문자열이 '미설정'이고 **공백 1칸은 '설정됨'**이다(Node truthy 판정 그대로 — 다듬지 않는다). |
+| *(미배선)* | `DIST_SPOOL_DIR` | — | 배부 스풀 디렉토리. **미설정이면 배부가 전면 비활성**이다(Node 규율). 이 서버는 배부 실행을 아직 구현하지 않아 **이 변수를 읽는 코드가 없다** — 계약 하네스가 `default`·`auth-negative` 인스턴스에 이미 주입하고 있으므로 표에 둔다(배부 phase가 `app.distribution.spool-dir`로 배선한다). |
+
+**`app.collection.host`는 `server.address`에서 파생한다**(`app.collection.host=${server.address:127.0.0.1}`) — `${HOST:127.0.0.1}`를
+한 벌 더 쓰면 **출처가 둘**이 되어, `SERVER_ADDRESS`만 설정된 배포에서 Tomcat은 전 인터페이스에 열리는데 fail-closed 판정만
+`127.0.0.1`로 남는다(= 수집 2라우트가 **무토큰으로 개방**되는, fail-closed가 막으려던 바로 그 상태). 그래서 판정의 입력은
+**실제 바인드 주소 하나**여야 하고, `@SpringBootTest(properties = "server.address=0.0.0.0")`에서 수집 라우트가 **503**임을
+단언하는 와이어 테스트가 그 파생을 **행동으로** 잠근다(문자열 비교가 아니다). loopback 판정은 Node `isLoopbackHost`를 문자
+그대로 옮겼다(`localhost`·`::1`·`[::1]`·`^127(\.\d{1,3}){3}$` — 호스트명 `127.example.com`은 loopback이 **아니다**).
 
 ## 시계
 
 세션 만료·계정 잠금·로그 다이제스트 창은 전부 주입된 `java.time.Clock` 빈을 쓴다
 (`System.currentTimeMillis()` 직접 호출 금지 — 테스트 결정성의 전제). 프로덕션 빈은 `Clock.systemUTC()`이고,
 테스트는 `@TestConfiguration` + `@Primary`로 고정 시계를 끼운다(`ClockBeanTest` 참조).
+
+## ADR-008 규율은 정적 게이트가 지킨다
+
+이 서버는 **앱 안에서 스스로 무언가를 하지 않는다**(ADR-008: 주기 실행·비동기/재시도·아웃바운드 네트워크·파일 쓰기 금지).
+문서로만 두면 지켜지지 않으므로 `Adr008DisciplineTest`가 `src/main/java` **전체를 스캔**해 금지 패턴 4군을 red로 만든다:
+① 주기 실행(`@Scheduled`·`@EnableScheduling`·`TaskScheduler`·`Thread.sleep(` 등) ② 비동기·재시도(`@Async`·`@Retryable`·
+`CompletableFuture.*Async` 등) ③ 네트워크 클라이언트(`HttpClient`·`RestTemplate`·`WebClient`·`new Socket(` 등)
+④ 파일 쓰기(`Files.write`·`FileOutputStream`·`Files.createDirectories` 등). 판정은 주석을 제거한 뒤 하고,
+애노테이션은 **한정 이름**(`@org.springframework.scheduling.annotation.Scheduled`)까지 잡는다.
+
+**예외는 파일 단위로 정확히 2개**이며 ①②는 **예외 0**이다:
+
+- `service/HttpApiSourceFetcher.java` — ③의 유일한 예외. 수집 `pull`의 아웃바운드 어댑터다(능동 수집은 아웃바운드 호출이
+  **기능 그 자체**다 — ADR-008의 egress 금지는 배부 축이다). 재시도 0 · 리다이렉트 미추종 · connect timeout 10초 · 본문은 UTF-8 고정.
+- `service/SpoolWriter.java` — ④의 유일한 예외이고 **아직 파일이 없다**(배부 실행 phase가 채운다 — 이름만 선등재).
+
+예외를 파일 단위로 두는 이유는 `ClockDisciplineTest.CLOCK_FACTORY_FILES`와 같다: **예외가 늘어나면 그 사실이 diff에 보인다.**
+동시에 한계를 알고 쓴다 — 문자열을 끊어 쓰거나 리플렉션으로 만든 호출은 정적 스캔을 통과한다. 실질 방어선은 각 도메인의
+**행동 단언**(요청 횟수·파일 개수·응답 키 집합)이다.
 
 ## 테스트 규율
 
@@ -238,3 +283,23 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 - **인코딩·경로 파라미터가 붙은 인증 요청**의 도달 여부(위 divergence) — 계약 밖이며 **고치지 않았다**.
 - **부트 백필 미이식** — Node 부팅은 `snapshotTitle` 빈 컬럼을 채우지만(쓰기) Spring은 하지 않고 조회 폴백으로 같은 표시 값을
   만든다. 레거시 이력 행이 있는 실 DB를 두 서버가 번갈아 여는 P3 전환기에는 **동작이 다르다**.
+
+수집 인제스트(phase 71)가 남긴 공백 — 각 항목의 **유일한 방어선**을 함께 적는다:
+
+- **비-loopback 바인딩의 실제 원격 접근** — `failclosed` 프로파일은 `0.0.0.0`으로 **바인드**하지만 접속은 언제나
+  `127.0.0.1`이다. "다른 호스트에서 실제로 닿는가"는 이 환경에서 검증된 적이 없다(fail-closed 503 판정 자체는 계약 5관측과
+  `CollectionDisabledWireTest`가 덮는다).
+- **FTP 스풀 수집 경로 전체**(`RCV_SPOOL_DIR`·watcher) — HTTP 라우트가 아니라 계약이 관측하지 않고 **이식하지 않았다**.
+  Node 부트 경고도 그 사실을 말한다("FTP spool ingest is unaffected").
+- **부트 진단 경고**(Node `logHostDiagnostics`)를 이식하지 않았다 — 비-loopback + 토큰 미설정 서버가 뜰 때 Node가 남기는
+  경고 문구가 Spring에는 없다(계약은 로그 본문을 관측하지 않는다). fail-closed **동작**은 같다.
+- **수집 성공의 변경 신호(SSE)** — Node는 `receive`·`pull` 성공에서 `notifyChange('create')`를 부르지만 Spring에는 SSE 자체가
+  없다(seam도 만들지 않았다). SSE 도메인 phase가 결선한다.
+- **수집 토큰의 회전·만료** — 그런 개념이 Node에도 없다(값 비교뿐). 토큰이 새면 재기동 전까지 막을 수단이 없다.
+- **의도된 divergence 2건**(고치지 않았고 안전 방향이다): 아웃바운드 `HttpClient`는 **리다이렉트를 따라가지 않는다**
+  (Node `fetch`는 따라간다 — 등록된 endpoint 밖으로 요청이 새지 않는 쪽으로 틀렸다) · **connect timeout 10초**(Node에는
+  타임아웃이 없다). **요청 단계 무한 대기는 Node와 동일하게 남는다** — 느린 등록 endpoint가 Tomcat 워커를 점유할 수 있다.
+- **정수값의 실수 표기** — payload JSON의 `2.0`이 Node 파서에서는 `"2"`, Jackson→Java에서는 `"2.0"`으로 문자열화된다.
+  JS `Number::toString` 전체 규칙(1e21 임계·지수 표기)을 부분 재구현하면 더 위험해 고치지 않았고, 전용 테스트가 가시화한다.
+- **깨진 JSON 본문** — Node는 `express.json()`이 라우트보다 먼저 돌아 **가드 이전에 500**이 되고 Spring은 가드가 먼저라
+  503·401이 된다(계약 미관측 — 경로 정책 필터 401과 같은 계열).
