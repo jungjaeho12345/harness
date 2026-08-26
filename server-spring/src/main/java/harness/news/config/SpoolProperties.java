@@ -1,8 +1,11 @@
 package harness.news.config;
 
 import harness.news.service.NodeString;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -39,6 +42,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("app.distribution")
 public record SpoolProperties(String spoolDir) {
 
+	private static final Logger logger = LoggerFactory.getLogger(SpoolProperties.class);
+
 	public SpoolProperties {
 		// 다듬기는 NodeString 단일 출처다 — String.trim()/strip()은 JS 공백 집합과 갈린다.
 		spoolDir = (spoolDir == null) ? "" : NodeString.trim(spoolDir);
@@ -47,13 +52,37 @@ public record SpoolProperties(String spoolDir) {
 	/**
 	 * 스풀 루트 경로 — <b>배부 활성 판정의 단일 출처</b>다. 값이 없으면 {@link Optional#empty()}이고, 그때
 	 * 스풀 writer도 배부 서비스도 만들어지지 않는다.
+	 *
+	 * <p><b>절대 던지지 않는다</b>(2026-08-26 ⑤ 코드리뷰 반려 폐색). {@link Path#of}는 파일시스템이 파싱조차
+	 * 못 하는 문자열에 {@link InvalidPathException}(unchecked)을 던진다 — JDK21/Windows 실측으로
+	 * {@code "C:\spool"}(따옴표 포함) · {@code C:\spool?} · {@code C:\sp*ool}이 전부 그렇다. 이 메서드는
+	 * {@code DistributionConfig}의 {@code @Bean} 안에서 불리므로 그 예외가 새면 <b>컨텍스트 기동이 실패</b>하고
+	 * 구현된 라우트가 전멸한다: {@code .env}에 따옴표 한 쌍이 들어간 배포가 <b>로그인부터</b> 죽는다.
+	 * Node는 경로를 파싱하지 않아 같은 값에서 서버가 정상 기동하고 배부만 실패하므로, 여기서도 미설정으로
+	 * 수렴시켜 <b>배부만</b> 비활성({@code spool-disabled})으로 만든다.
+	 *
+	 * <p>경고는 남기되 <b>경로 문자열은 싣지 않는다</b> — 이 로그는 {@code GET /api/logs/digest}로 나가는
+	 * 버퍼와 같은 규율 아래 있다(ADR-007 · 사유 토큰만).
 	 */
 	public Optional<Path> rootPath() {
-		return this.spoolDir.isEmpty() ? Optional.empty() : Optional.of(Path.of(this.spoolDir));
+		if (this.spoolDir.isEmpty()) {
+			return Optional.empty();
+		}
+		try {
+			return Optional.of(Path.of(this.spoolDir));
+		}
+		catch (InvalidPathException ex) {
+			// 예외 메시지에는 문제의 경로 원문이 그대로 담긴다 — ex.toString()을 찍지 마라.
+			logger.warn("distribution spool root is not a valid path: distribution disabled");
+			return Optional.empty();
+		}
 	}
 
-	/** 배부 활성 여부(= 스풀 루트가 설정돼 있는가). */
+	/**
+	 * 배부 활성 여부 — <b>{@link #rootPath()}에서 파생</b>한다. 별도 술어로 쓰면 파싱 불가 경로에서 두
+	 * 판정이 갈린다(판정 지점은 하나다).
+	 */
 	public boolean enabled() {
-		return !this.spoolDir.isEmpty();
+		return rootPath().isPresent();
 	}
 }

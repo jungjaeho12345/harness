@@ -1031,4 +1031,50 @@ class DistributionRetryServiceTest {
 		assertEquals(DISTRIBUTE_RETRY, this.historyErrors.get(0).eventType());
 	}
 
+	/**
+	 * <b>타입 게이트는 여기서도 살아 있다</b>(2026-08-26 ⑤ 코드리뷰 반려 폐색). {@link SpoolDir}의 1단계는
+	 * "String이 아니면 거부"이고 그 주석이 이유를 적어 뒀다 — {@code '123'}·{@code 'true'}는 슬러그
+	 * 화이트리스트를 <b>통과</b>하므로 호출부가 {@code String.valueOf}로 강제변환하는 순간 검증기가
+	 * 무력화된다.
+	 *
+	 * <p>오늘 {@code DistributionTargetRepository}는 {@code rs.getString}이라 비문자열이 올라오지 않는다 —
+	 * 도달 불가한 방어를 잠그는 테스트다(리포지토리 판독이 바뀌면 여기가 먼저 red를 낸다). 판정은
+	 * {@code DistributionService.spoolDirOf} <b>한 벌</b>이고 tick 경로와 재전송 경로가 그것을 공유한다.
+	 */
+	@Test
+	void aNonStringSpoolDirIsRejectedInsteadOfBeingCoercedIntoASlug() {
+		seedArticle(ARTICLE_ID, "DPS");
+		long target = seedTarget("언론사1", PRESS, "press-a", "Y");
+		long failureId = seedFailure(ARTICLE_ID, PRESS, target, SPOOL_WRITE_FAILED);
+		// 전제 — 강제변환된 문자열은 슬러그 화이트리스트를 통과한다(그래서 타입 게이트가 필요하다).
+		assertEquals("123", SpoolDir.sanitizeSpoolDir("123"), "전제 확인");
+
+		Map<String, Object> result = service(realWriter(),
+				this.history, new IntegerSpoolDirTargets(this.jdbc, this.transactions), this.articles)
+						.retry(Long.valueOf(failureId), ACTOR);
+
+		assertEquals(Boolean.FALSE, result.get("ok"), "비문자열 spoolDir로 재전송이 성공했다: " + result);
+		assertEquals(INVALID_SPOOL_DIR, result.get(REASON));
+		assertEquals(0, spoolFiles().size(), "강제변환된 폴더명으로 파일이 나갔다");
+		assertFalse(Files.exists(this.spoolRoot.resolve("123")), "강제변환된 폴더가 만들어졌다");
+	}
+
+	/** {@code spoolDir}만 비문자열로 바꿔 돌려주는 수신처 리포지토리(리포지토리 판독 변경의 대역). */
+	private static final class IntegerSpoolDirTargets extends DistributionTargetRepository {
+
+		IntegerSpoolDirTargets(JdbcClient jdbc, TransactionTemplate transactions) {
+			super(jdbc, transactions);
+		}
+
+		@Override
+		public Optional<Map<String, Object>> findById(double id) {
+			return super.findById(id).map((found) -> {
+				Map<String, Object> poisoned = new LinkedHashMap<>(found);
+				poisoned.put("spoolDir", Integer.valueOf(123));
+				return poisoned;
+			});
+		}
+
+	}
+
 }

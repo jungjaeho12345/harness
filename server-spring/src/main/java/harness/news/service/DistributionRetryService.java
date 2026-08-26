@@ -120,8 +120,6 @@ public class DistributionRetryService {
 
 	private static final String NAME = "name";
 
-	private static final String SPOOL_DIR = "spoolDir";
-
 	private static final String STATUS = "status";
 
 	private static final String DISTRIBUTED_AT = "distributedAt";
@@ -388,9 +386,11 @@ public class DistributionRetryService {
 		}
 
 		// (h) 스풀 재기록 — writer는 throw하지 않는 계약이지만 방어적으로 감싼다(예외 원문 비노출).
+		// 폴더명 판독은 DistributionService.spoolDirOf 한 벌이다(배부와 재전송이 갈리면 한쪽만 방어가
+		// 뚫린다): 비문자열은 강제변환하지 않고 null이다 — SpoolDir의 타입 게이트를 무력화하지 않는다.
 		SpoolWriter.WriteResult result;
 		try {
-			result = this.spoolWriter.write(asText(target.get(SPOOL_DIR)), articleId, row.article(),
+			result = this.spoolWriter.write(DistributionService.spoolDirOf(target), articleId, row.article(),
 					row.contents());
 		}
 		catch (RuntimeException ex) {

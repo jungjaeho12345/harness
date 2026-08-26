@@ -423,9 +423,21 @@ public class DistributionService {
 		return (id instanceof Number number) ? Long.valueOf(number.longValue()) : null;
 	}
 
-	private static String spoolDirOf(Map<String, Object> target) {
+	/**
+	 * 수신처 행에서 스풀 하위 폴더명을 꺼낸다 — <b>배부와 재전송이 공유하는 단일 헬퍼</b>다
+	 * ({@link DistributionRetryService}가 재전송 경로에서 같은 것을 쓴다. 두 곳이 갈리면 한쪽만 방어가
+	 * 뚫린다).
+	 *
+	 * <p><b>String이 아니면 {@code null}이다 — 강제변환하지 않는다.</b>
+	 * {@link SpoolDir#sanitizeSpoolDir}의 1단계가 타입 게이트인 이유가 여기 있다: {@code String.valueOf}로
+	 * 바꾸면 {@code 123}·{@code true} 같은 값이 {@code "123"}·{@code "true"}가 되어 슬러그 화이트리스트를
+	 * <b>통과</b>하고, 그 문자열이 그대로 스풀 루트 아래 폴더명으로 합성된다(검증기 무력화).
+	 * 오늘 {@code DistributionTargetRepository}는 {@code rs.getString}이라 비문자열이 올라오지 않지만,
+	 * 그 판독이 바뀔 때 방어가 조용히 사라지는 자리를 남기지 않는다.
+	 */
+	static String spoolDirOf(Map<String, Object> target) {
 		Object dir = (target == null) ? null : target.get(SPOOL_DIR);
-		return (dir == null) ? null : String.valueOf(dir);
+		return (dir instanceof String text) ? text : null;
 	}
 
 	/** 억제 판정 입력 한 벌 — 사이클 경계와 그 시점의 미해소 실패 목록. */

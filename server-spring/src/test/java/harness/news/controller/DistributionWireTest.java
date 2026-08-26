@@ -413,6 +413,36 @@ class DistributionWireTest {
 		assertTrue(ledgerAfter.size() > ledgerBefore.size(), "배부 사실이 원장에 남지 않았다");
 	}
 
+	// --- 9. 송고 응답의 status는 배부 <b>이전</b> 값이다(와이어) -------------------------------------
+
+	/**
+	 * 송고 훅이 행을 승격시켜도 <b>응답 status는 {@code finalStatus}</b>다 — 계약이 못 보는 축이라
+	 * (forward_notes (8)⑨) 여기 <b>와이어 한 줄</b>을 더해 방어를 한 겹 늘린다(2026-08-26 ⑤ 코드리뷰 권고).
+	 *
+	 * <p>Node의 훅은 fire-and-forget이라 응답이 배부 이전 값으로 나간다. Spring은 훅을 동기로 실행하므로
+	 * 반환을 승격 후 값으로 바꾸면 그 자리에서 계약이 갈린다 — 그래도 계약 리포트는 diff 0이다(그 픽스처가
+	 * 배부를 일으키지 않는다). 단위 그물은 {@code ArticleLifecycleServiceTest}가 소유하고 여기서는
+	 * <b>실제 HTTP 바이트</b>로 같은 축을 본다.
+	 */
+	@Test
+	void theSendResponseCarriesTheStatusFromBeforeTheHookPromotedTheRow() {
+		String slug = unique("hook");
+		seedTarget(unique("t"), PRESS, slug, "Y");
+		String articleId = seedSecondEmbargoArticle();
+
+		Wire.Response sent = Wire.json(this.port, "POST", "/api/articles/" + articleId + "/action",
+				Map.of("x-session-id", dToken()), "{\"action\":\"send\"}");
+
+		assertEquals(200, sent.status(), sent.body());
+		assertEquals("{\"ok\":true,\"status\":\"DES\"}", sent.body(),
+				"응답 status는 훅이 승격시키기 전 값(finalStatus)이다");
+		assertNoServerPath(sent.body());
+		// 아래 둘이 없으면 위 단언이 공허하다 — 훅이 실제로 배부하고 행을 승격시켰다는 증거다.
+		assertEquals(1L, spoolFilesFor(slug, articleId), "훅이 스풀을 쓰지 않았다 — 그물이 공허해진다");
+		assertEquals("EPS", this.articles.findById(articleId).contents().column("status"),
+				"저장된 행은 승격된다(반환만 배부 이전 값이다)");
+	}
+
 	// --- 픽스처 -------------------------------------------------------------------------------------
 
 	/** 그 수신처 디렉토리에 <b>그 기사</b>로 나간 스풀 파일 수(파일명이 {@code articleId_}로 시작한다). */
@@ -494,6 +524,18 @@ class DistributionWireTest {
 		return articleId;
 	}
 
+	/**
+	 * 2차 엠바고만 설정된 데스크 대기 기사 — 데스크가 송고하면 {@code DES}가 되고, 훅이 <b>즉시</b>
+	 * 언론사로 내보낸 뒤 행을 {@code EPS}로 승격시킨다(1차는 없으므로 press는 지금 나간다).
+	 */
+	private String seedSecondEmbargoArticle() {
+		String articleId = "AKR2026" + Long.toHexString(System.nanoTime());
+		this.articles.insert(row("articleId", articleId, "title", "제목", "markupVersion", "<p>본문(끝)</p>"),
+				row("articleId", articleId, "title", "제목", "status", "RDS", "createdAt", STAMP,
+						"secondEmbargoAt", futureIso()));
+		return articleId;
+	}
+
 	private long seedTarget(String name, String kind, String spoolDir, String active) {
 		return this.targets.insert(row("name", name, "kind", kind, "spoolDir", spoolDir, "active", active,
 				"createdAt", STAMP, "updatedAt", STAMP));
@@ -551,15 +593,21 @@ class DistributionWireTest {
 	}
 
 	private String zToken() {
-		ensureUser();
+		ensureUser("dw-z", "Z");
 		return this.sessions.createSession("dw-z");
 	}
 
-	private void ensureUser() {
+	/** 송고 훅을 지나는 유일한 자리 — action 라우트는 배부 3라우트와 달리 데스크 권한이다. */
+	private String dToken() {
+		ensureUser("dw-d", "D");
+		return this.sessions.createSession("dw-d");
+	}
+
+	private void ensureUser(String userId, String role) {
 		Map<String, Object> dto = new LinkedHashMap<>();
-		dto.put("userId", "dw-z");
-		dto.put("name", "dw-z");
-		dto.put("role", "Z");
+		dto.put("userId", userId);
+		dto.put("name", userId);
+		dto.put("role", role);
 		dto.put("password", "dw-wire-pw");
 		try {
 			this.users.create(dto);
@@ -658,6 +706,11 @@ class DistributionWireTest {
 	/** 이미 도래한 엠바고 시각(1시간 전) — {@code Z} 표기 · 밀리초 절단. */
 	private static String pastIso() {
 		return Instant.now().minus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS).toString();
+	}
+
+	/** 아직 오지 않은 엠바고 시각(1시간 뒤) — 같은 표기. */
+	private static String futureIso() {
+		return Instant.now().plus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS).toString();
 	}
 
 	private static String unique(String prefix) {

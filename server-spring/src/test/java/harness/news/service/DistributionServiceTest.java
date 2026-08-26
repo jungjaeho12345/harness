@@ -508,6 +508,55 @@ class DistributionServiceTest {
 		assertEquals(SpoolWriter.INVALID_SPOOL_DIR, ledger.get(0).get("reason"));
 	}
 
+	/**
+	 * <b>타입 게이트를 강제변환으로 무력화하지 않는다</b>(2026-08-26 ⑤ 코드리뷰 반려 폐색).
+	 * {@link SpoolDir#sanitizeSpoolDir}의 1단계는 "String이 아니면 거부"이고, {@code '123'}·{@code 'true'}는
+	 * 슬러그 화이트리스트를 <b>통과</b>하므로 호출부가 {@code String.valueOf}로 바꾸는 순간 그 방어가
+	 * 사라진다.
+	 *
+	 * <p>오늘 {@code DistributionTargetRepository}는 {@code rs.getString}이라 도달 불가한 방어다 — 리포지토리
+	 * 판독이 바뀌면 여기가 먼저 red를 낸다. 판정은 {@code spoolDirOf} <b>한 벌</b>이고 재전송 경로
+	 * ({@code DistributionRetryServiceTest.aNonStringSpoolDirIsRejectedInsteadOfBeingCoercedIntoASlug})가
+	 * 같은 헬퍼를 쓴다.
+	 */
+	@Test
+	void aNonStringSpoolDirIsRejectedInsteadOfBeingCoercedIntoASlug() {
+		seedArticle("DES");
+		long target = seedTarget("언론사1", PRESS, "press-1", "Y");
+		// 전제 — 강제변환된 문자열은 슬러그 화이트리스트를 통과한다(그래서 타입 게이트가 필요하다).
+		assertEquals("123", SpoolDir.sanitizeSpoolDir("123"), "전제 확인");
+		this.targets = new IntegerSpoolDirTargets(this.jdbc, this.transactions);
+
+		Result result = service(realWriter()).distribute(ARTICLE_ID, List.of(PRESS), ACTOR);
+
+		assertEquals(List.of(), result.distributed(), "비문자열 spoolDir로 파일이 나갔다: " + result);
+		assertEquals(1, result.failed().size());
+		assertEquals(SpoolWriter.INVALID_SPOOL_DIR, result.failed().get(0).reason());
+		assertEquals(Long.valueOf(target), result.failed().get(0).targetId());
+		assertEquals(List.of(), filesUnder(this.spoolRoot), "강제변환된 폴더명으로 파일이 나갔다");
+		assertFalse(Files.exists(this.spoolRoot.resolve("123")), "강제변환된 폴더가 만들어졌다");
+	}
+
+	/** {@code spoolDir}만 비문자열로 바꿔 돌려주는 수신처 리포지토리(리포지토리 판독 변경의 대역). */
+	private static final class IntegerSpoolDirTargets extends DistributionTargetRepository {
+
+		IntegerSpoolDirTargets(JdbcClient jdbc, TransactionTemplate transactions) {
+			super(jdbc, transactions);
+		}
+
+		@Override
+		public List<Map<String, Object>> query(Map<String, ?> filters) {
+			List<Map<String, Object>> poisoned = new ArrayList<>();
+			for (Map<String, Object> found : super.query(filters)) {
+				Map<String, Object> row = new LinkedHashMap<>(found);
+				row.put("spoolDir", Integer.valueOf(123));
+				poisoned.add(row);
+			}
+			return poisoned;
+		}
+
+	}
+
 	// --- 9. 같은 사이클 중복 억제 ------------------------------------------------------------------
 
 	/** Node 실측 7번: 같은 (기사,수신처,kind,사유)로 두 번 실패하면 원장 행은 <b>1행</b>이다. */
