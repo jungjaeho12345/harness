@@ -1,13 +1,18 @@
 package harness.news.service;
 
 import harness.news.model.ArticleAggregate;
+import harness.news.model.ArticleHistoryRepository;
 import harness.news.model.ArticleRepository;
 import harness.news.model.ContentsRow;
 import java.time.Clock;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
@@ -34,12 +39,16 @@ import org.springframework.stereotype.Service;
  * 엠바고가 새어 나간다(외부로 나간 기사는 회수 수단이 없다). 판정 입력은 <b>DB에 저장된 값</b>뿐이다
  * (클라이언트 값 불신 — 애초에 이 시그니처로는 엠바고를 넘길 수 없다).
  *
+ * <h2>송고 훅은 잇기만 한다</h2>
+ * 송고가 성공하면 {@link SendDistribution}의 판정으로 배부 서비스를 부르고, 실제로 나간 kind가 있으면
+ * 엠바고 상태 반영을 부른다(ADR-008 (4)). <b>판정도 스풀 쓰기도 승격도 이 서비스의 코드가 아니다</b> —
+ * 순서와 격리만 여기 있다. 배부 서비스가 없으면({@code DIST_SPOOL_DIR} 미설정) 훅 자체가 없고, 훅이
+ * 무엇을 했든 <b>반환 status는 배부 이전 값</b>이다. 앱 안에 타이머·직접 전송·재시도 큐는 여전히 없다.
+ *
  * <h2>이 서비스가 하지 않는 것</h2>
  * <ul>
- *   <li><b>배부</b> — 송고 훅(스풀 쓰기)도 승격({@code DES}→{@code EPS}→{@code DPS})도 없다. ADR-008
- *       아키텍처(파일 스풀 outbound · tick pull)를 따르는 배부 phase의 소유이며, 앱 안에 타이머나 직접
- *       네트워크 전송을 두지 않는다. 지금 쓰지 않는 설정 키·결선 지점도 만들지 않는다(dead config는
- *       검증되지 않은 표면이다).</li>
+ *   <li><b>배부 시점 판정</b> — "지금이 엠바고 시각인가"는 tick pull의 질문이다(ADR-008 (3)). 훅은
+ *       시각을 비교하지 않는다.</li>
  *   <li><b>행 삭제</b> — {@code approveDelete}는 {@code DPD}로 가는 <b>상태 전이</b>이고 두 행은 그대로
  *       남는다(최상위 규칙 · 계약이 삭제 승인 뒤 조회를 단언한다).</li>
  *   <li><b>존재·인가 판단 밖의 게이트</b>(세션·역할 집합·잠금) — 컨트롤러가 자기 문맥으로 한다.</li>
@@ -83,6 +92,8 @@ public class ArticleLifecycleService {
 
 	private static final DeriveResult DERIVE_NOT_FOUND = new DeriveResult(false, null, "not-found");
 
+	private static final Logger logger = LoggerFactory.getLogger(ArticleLifecycleService.class);
+
 	private final ArticleRepository articles;
 
 	private final ArticleWriteService writeService;
@@ -91,12 +102,28 @@ public class ArticleLifecycleService {
 
 	private final Clock clock;
 
+	private final ArticleHistoryRepository history;
+
+	private final ObjectProvider<DistributionService> distribution;
+
+	private final ObjectProvider<ArticleEmbargoService> embargo;
+
+	/**
+	 * @param history 훅의 "이미 배부된 kind" 조회 경로다(이력 <b>기록</b>은 {@code recorder}가 한다)
+	 * @param distribution 배부 실행 서비스. {@code DIST_SPOOL_DIR} 미설정이면 <b>빈이 없고</b>, 그러면
+	 *     송고 훅도 없다(선택 의존)
+	 * @param embargo 배부 사실의 상태 반영. 배부가 성공한 뒤에만 불린다(선택 의존)
+	 */
 	public ArticleLifecycleService(ArticleRepository articles, ArticleWriteService writeService,
-			ArticleHistoryRecorder recorder, Clock clock) {
+			ArticleHistoryRecorder recorder, Clock clock, ArticleHistoryRepository history,
+			ObjectProvider<DistributionService> distribution, ObjectProvider<ArticleEmbargoService> embargo) {
 		this.articles = articles;
 		this.writeService = writeService;
 		this.recorder = recorder;
 		this.clock = clock;
+		this.history = history;
+		this.distribution = distribution;
+		this.embargo = embargo;
 	}
 
 	/**
@@ -152,7 +179,89 @@ public class ArticleLifecycleService {
 		entry.put("actorUserId", actorUserId);
 		this.recorder.record(entry);
 
+		// 송고 성공 직후 즉시 배부(ADR-008 (4)) — 이력 기록 **뒤**다(위 주석의 사이클 경계 불변식).
+		if (SEND.equals(action)) {
+			distributeAfterSend(articleId, finalStatus, contents, actorUserId);
+		}
+
+		// 반환 status는 훅이 무엇을 했든 finalStatus다 — 배부 이후 승격 값을 담지 않는다(decisions (8)).
 		return new ActionResult(true, finalStatus, null);
+	}
+
+	/**
+	 * 송고 훅 — 판정은 {@link SendDistribution#kindsForSend}가, 실행은 배부 서비스가, 상태 반영은 엠바고
+	 * 서비스가 한다. 이 메서드가 하는 일은 <b>그 셋을 순서대로 잇는 것</b>뿐이다.
+	 *
+	 * <h2>동기로 실행하되 반환에는 영향을 주지 않는다</h2>
+	 * Node는 fire-and-forget이라 {@code applyAction}이 <b>배부 이전</b> status를 즉시 돌려준다. Spring은
+	 * 별도 스레드를 두지 않으므로(ADR-008 (6): 워커·타이머·재시도 큐 없음 · 비동기는 계약 하네스의 자기
+	 * 결정성도 깨뜨린다) 여기서 동기로 실행하고, <b>반환값은 호출부에서 {@code finalStatus} 그대로</b>
+	 * 둔다. 2차 엠바고만 설정된 기사는 이 훅이 끝난 뒤 저장된 행이 {@code EPS}지만 응답은 {@code DES}다.
+	 *
+	 * <h2>배부 실패가 송고를 되돌리지 않는다</h2>
+	 * 전이는 이미 커밋됐고 나간 파일은 회수할 수 없다 — 훅에서 예외가 새면 스풀 쓰기 실패 하나로 기사가
+	 * 송고 불가 상태에 묶인다(복구 수단 없음). 그래서 <b>블록 전체</b>를 격리하고 로그만 남긴다.
+	 *
+	 * @param contents <b>전이 전에 읽은 스냅샷</b>이다(Node {@code row.contents} 동형). 판정 입력은 DB에
+	 *     저장된 값뿐이며 클라이언트가 준 값은 애초에 여기까지 오지 못한다(ADR-004)
+	 */
+	private void distributeAfterSend(String articleId, String finalStatus, ContentsRow contents,
+			String actorUserId) {
+		try {
+			DistributionService service = (this.distribution == null) ? null : this.distribution.getIfAvailable();
+			if (service == null) {
+				return; // 스풀 미설정 = 배부 전면 비활성. 송고는 훅이 없던 때와 완전히 같이 동작한다.
+			}
+
+			List<String> kinds = SendDistribution.kindsForSend(finalStatus, contents::column,
+					alreadyDistributedKinds(articleId));
+			if (kinds.isEmpty()) {
+				return; // 지금 나갈 것이 없다(미도래분은 tick의 몫이다).
+			}
+
+			DistributionService.Result result = service.distribute(articleId, kinds, actorUserId);
+			// 승격의 근거는 **실제로 나간 목록**뿐이다. ok만 보면 {ok:true, distributed:[], failed:[...]}
+			// (전 수신처 쓰기 실패)에도 승격이 일어나 배부되지 않은 기사가 완결 처리된다.
+			if (result == null || !result.ok() || result.distributed().isEmpty()) {
+				return;
+			}
+			ArticleEmbargoService embargoService = (this.embargo == null) ? null : this.embargo.getIfAvailable();
+			if (embargoService != null) {
+				embargoService.syncEmbargoStatus(articleId, doneKinds(result), actorUserId);
+			}
+		}
+		catch (RuntimeException ex) {
+			// 삼키되 남긴다 — 무음 미배부는 운영이 알 방법이 없다(payload는 담지 않는다).
+			logger.warn("send distribution hook failed articleId={} {}", articleId, ex.toString());
+		}
+	}
+
+	/**
+	 * 이 기사에서 <b>이미 배부된 kind</b>(전체 이력 — "역사상 어디로 나갔나"). 조회 실패·미주입은
+	 * <b>"아는 배부 이력 없음"</b>으로 폴백한다: 엠바고가 설정된 재송고는 곧바로 배부 없음(안전 기본값)이
+	 * 되고, 엠바고 미설정 기사는 이 값을 참조하지 않으므로 조회 장애가 일반 배부를 막지 않는다.
+	 */
+	private List<String> alreadyDistributedKinds(String articleId) {
+		if (this.history == null) {
+			return List.of();
+		}
+		try {
+			return EmbargoPolicy.distributedKinds(this.history.queryByArticle(articleId));
+		}
+		catch (RuntimeException ex) {
+			return List.of();
+		}
+	}
+
+	/** 실제로 나간 kind(중복 제거 · 빈 값 제외) — JS {@code [...new Set(...filter(Boolean))]} 동형. */
+	private static List<String> doneKinds(DistributionService.Result result) {
+		Set<String> kinds = new LinkedHashSet<>();
+		for (DistributionService.Distributed item : result.distributed()) {
+			if (item != null && item.kind() != null && !item.kind().isEmpty()) {
+				kinds.add(item.kind());
+			}
+		}
+		return List.copyOf(kinds);
 	}
 
 	/**
