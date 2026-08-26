@@ -44,6 +44,22 @@ public final class ReasonStatus {
 			// collection-disabled는 Node도 라우트에서 직접 503을 쓰고(전역 표에 없다),
 			// no-active-api-source·fetch-failed는 계약이 폴백 400을 동결했으므로 넣으면 그 계약이 깨진다.
 			Map.entry("unregistered", 403),
+			// 배부 실행 3라우트(phase 72 step9). 전부 이 phase에서 HTTP로 도달한다 —
+			// spool-disabled·tick-failed는 tick이, no-failure와 409 4종은 retry가 낸다.
+			// 스풀 루트 미설정 = 배부 전면 비활성(설정 문제이지 요청 문제가 아니다).
+			Map.entry("spool-disabled", 503),
+			// 후보 조회 실패는 서버측 장애다 — 운영 cron이 4xx로 오독하면 원인 추적이 끊긴다.
+			Map.entry("tick-failed", 500),
+			Map.entry("no-failure", 404),
+			// 재전송 거부 4종 — 전부 "지금 이 요청은 다시 보낼 수 없는 상태"라는 충돌이다.
+			Map.entry("status-changed", 409),
+			Map.entry("kind-changed", 409),
+			Map.entry("stale-cycle", 409),
+			Map.entry("retry-in-flight", 409),
+			// spool-write-failed·invalid-spool-dir·invalid-article-id는 <b>여기 없다</b>:
+			// POST /api/distribution/retry에서만 500이고(라우트 로컬 재매핑 — Node server/index.js 775~782행),
+			// invalid-spool-dir는 배부 대상 CRUD의 입력 검증 거부(400)와 같은 토큰이라 전역화하면
+			// distribution-targets.contract.js가 그 자리에서 red다(로그인 locked 423과 같은 구조).
 			Map.entry("not-found", 404),
 			// 생애주기 2라우트(phase 69 step10)가 내는 4토큰. action 라우트는 **폴백이 409**라
 			// (정본 fail(res, r, 409)) 아래 forbidden-transition이 없어도 409가 나가지만, 표에 두는 것이
