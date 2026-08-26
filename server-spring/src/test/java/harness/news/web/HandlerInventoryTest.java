@@ -46,7 +46,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 29 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
+	 * 구현된 32 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
@@ -58,7 +58,9 @@ class HandlerInventoryTest {
 	 * phase 70 step6의 배부 대상 4개({@code GET /api/distribution-targets} ·
 	 * {@code POST /api/distribution-targets} · {@code PUT /api/distribution-targets/{id}} ·
 	 * {@code POST /api/distribution-targets/{id}/deactivate}) + <b>phase 71 step5의 수집 인제스트 2개</b>
-	 * ({@code POST /api/collection/receive} · {@code POST /api/collection/pull})다.
+	 * ({@code POST /api/collection/receive} · {@code POST /api/collection/pull}) +
+	 * <b>phase 72 step9의 배부 실행 3개</b>({@code POST /api/distribution/tick} ·
+	 * {@code GET /api/distribution/failures} · {@code POST /api/distribution/retry})다.
 	 * {@code server-spring/README.md}·index.json forward_notes (2)와 같은 목록이며 표기는 Spring 매핑
 	 * 원문({@code {userId}})이다. 행을 늘릴 때는 아래 테스트 메서드 이름과 실패 메시지의 <b>라우트 수</b>도
 	 * 같이 고쳐라 — 수치가 목록과 어긋나면 이 테스트가 주장하는 문장이 거짓이 된다(같은 커밋에서 이동).
@@ -75,6 +77,7 @@ class HandlerInventoryTest {
 			"GET /api/articles/{id}/history",
 			"GET /api/articles/{id}/history/{historyId}",
 			"GET /api/distribution-targets",
+			"GET /api/distribution/failures",
 			"GET /api/health",
 			"GET /api/logs/digest",
 			"GET /api/receiver-config",
@@ -90,6 +93,8 @@ class HandlerInventoryTest {
 			"POST /api/collection/receive",
 			"POST /api/distribution-targets",
 			"POST /api/distribution-targets/{id}/deactivate",
+			"POST /api/distribution/retry",
+			"POST /api/distribution/tick",
 			"POST /api/login",
 			"POST /api/logout",
 			"POST /api/receiver-config",
@@ -136,12 +141,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheTwentyNineImplementedRoutesHaveHandlers() {
+	void exactlyTheThirtyTwoImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 29 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 32 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 

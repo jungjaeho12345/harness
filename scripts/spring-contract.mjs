@@ -82,6 +82,8 @@ const SCOPE = [
       'contract/cases/default/crosscutting.contract.js',
       // phase 70 step6 — 배부 대상 4라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 7키·soft delete·검증 5토큰).
       'contract/cases/default/distribution-targets.contract.js',
+      // phase 72 step9 — 배부 실행 3라우트가 붙으면서 green이 됐다(Z 게이트·6키 요약·body 미판독·실배부·멱등).
+      'contract/cases/default/distribution-tick.contract.js',
       'contract/cases/default/health.contract.js',
       // phase 70 step3 — 수집 수신 설정 3라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 10키·유일 행 삭제).
       'contract/cases/default/receiver-config.contract.js',
@@ -92,9 +94,10 @@ const SCOPE = [
   },
   {
     // phase 69 step11이 올린 4번째 프로파일. 러너 프리셋은 `spool:false, token:false`이고 **env를 주지
-    // 않는 것**이 프로파일의 정의다(스풀·수집 토큰 미설정 → Node에서 배부 결선 자체가 없어 송고 훅이
-    // 발화하지 않는다 = 전이 관측이 결정적이다). Spring은 이 phase에서 배부를 구현하지 않으므로 그
-    // 상태가 구조적으로 참이고 **추가 env가 필요 없다**(index.json decisions (2)).
+    // 않는 것**이 프로파일의 정의다(스풀·수집 토큰 미설정 → 배부 결선 자체가 없어 송고 훅이
+    // 발화하지 않는다 = 전이 관측이 결정적이다). phase 72 step9가 배부를 구현한 뒤에도 **추가 env가
+    // 필요 없다**: 두 서버 모두 스풀 루트가 없으면 배부가 전면 비활성이고(실행 계열 503), 그 상태를
+    // distribution-disabled 케이스가 직접 관측한다(index.json decisions (2)·72 decisions (3)).
     // files는 **반드시 명시**한다 — 비우면 러너가 디렉토리를 스캔해 아직 구현하지 않은
     // 배부(distribution-disabled) 케이스까지 돌린다(설정 실수가 계약 실패로 위장된다).
     name: 'minimal',
@@ -104,6 +107,8 @@ const SCOPE = [
     files: [
       // phase 71 step5 — 토큰 미설정 서버의 개방 계약(헤더를 아예 읽지 않는다)이 green이 됐다.
       'contract/cases/minimal/collection-open.contract.js',
+      // phase 72 step9 — 스풀 미설정 서버의 배부 계약이 green이 됐다(실행 503 · 인가가 설정보다 먼저 · 조회 200).
+      'contract/cases/minimal/distribution-disabled.contract.js',
       'contract/cases/minimal/transitions.contract.js',
     ],
     extraEnv: {},

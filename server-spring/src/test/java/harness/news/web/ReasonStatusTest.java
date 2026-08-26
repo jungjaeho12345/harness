@@ -24,6 +24,37 @@ class ReasonStatusTest {
 		assertEquals(403, ReasonStatus.of("forbidden"));
 	}
 
+	/**
+	 * phase 72 step9가 더한 7행 — 전부 배부 실행 3라우트로 <b>HTTP 도달</b>한다(도달 테스트 없이 표만
+	 * 늘리는 것은 검증되지 않은 매핑을 쌓는 일이다 — 도달은 {@code DistributionWireTest}·
+	 * {@code DistributionDisabledWireTest}·{@code DistributionSeamWireTest}가 관측한다).
+	 */
+	@Test
+	void distributionExecutionRoutesReachTheSevenTokensOfThisPhase() {
+		assertEquals(503, ReasonStatus.of("spool-disabled"), "스풀 루트 미설정 = 배부 전면 비활성");
+		assertEquals(500, ReasonStatus.of("tick-failed"), "후보 조회 실패는 서버측 장애다");
+		assertEquals(404, ReasonStatus.of("no-failure"));
+		assertEquals(409, ReasonStatus.of("status-changed"));
+		assertEquals(409, ReasonStatus.of("kind-changed"));
+		assertEquals(409, ReasonStatus.of("stale-cycle"));
+		assertEquals(409, ReasonStatus.of("retry-in-flight"));
+	}
+
+	/**
+	 * 재전송의 서버측 장애 3토큰은 <b>전역 표에 없다</b> — 500 재매핑은 {@code POST /api/distribution/retry}
+	 * 라우트 안에서만 일어난다.
+	 *
+	 * <p>{@code invalid-spool-dir}는 배부 대상 CRUD의 <b>입력 검증 거부(400)</b>와 같은 토큰이라, 전역화하는
+	 * 순간 {@code distribution-targets.contract.js}가 그 자리에서 red다(로그인 {@code locked} 423과 같은
+	 * 구조의 라우트 로컬 매핑이다). 이 단언은 그 결정을 <b>표 층에서</b> 잠근다.
+	 */
+	@Test
+	void theRetryServerFaultTokensAreNotInTheGlobalTable() {
+		assertEquals(400, ReasonStatus.of("spool-write-failed"));
+		assertEquals(400, ReasonStatus.of("invalid-spool-dir"), "배부 대상 생성 거부가 400이어야 한다");
+		assertEquals(400, ReasonStatus.of("invalid-article-id"));
+	}
+
 	@Test
 	void articleRoutesReachNotFoundAndNotHolder() {
 		// step7의 기사 단건 3라우트가 실제로 내는 두 토큰이다(그 전에는 표에 없었다).

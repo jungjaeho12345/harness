@@ -12,21 +12,28 @@ import harness.news.db.RequiredSchema;
 import harness.news.model.ArticleAggregate;
 import harness.news.model.ArticleHistoryRepository;
 import harness.news.model.ArticleRepository;
+import harness.news.model.ContentsRow;
+import harness.news.model.DistributionTargetRepository;
 import harness.news.testsupport.MutableClock;
 import harness.news.testsupport.TempNewsDb;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,8 +52,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li><b>거부 경로는 아무것도 남기지 않는다</b> — 상태도 이력도. 이력은 감사 기록이자 판정 입력이다.</li>
  *   <li><b>DB 비파괴</b> — 삭제 승인은 상태 전이라 행이 남고, 상태 저장은 present-only라 본문·잠금·
  *       {@code distributedAt}을 함께 쓰지 않으며, 파생은 원본을 한 글자도 바꾸지 않는다.</li>
- *   <li><b>배부 훅의 의도된 부재</b> — 송고가 {@code distributedAt}을 채우지 않고 {@code distribute}
- *       이력도 남기지 않는다(excluded (c) — 배부 phase 소유).</li>
+ *   <li><b>송고 즉시 배부 훅</b>(ADR-008 (4)) — 배부 서비스가 <b>없으면</b>(스풀 미설정) 송고는
+ *       {@code distributedAt}도 {@code distribute} 이력도 남기지 않고, <b>있으면</b> 판정표대로 배부하되
+ *       <b>반환 status는 배부 이전 값</b>이다(decisions (8) — 계약이 못 보는 축이라 여기가 유일한
+ *       방어선이다).</li>
  * </ol>
  *
  * <p>기대값의 출처는 계획서가 아니라 <b>Node 정본 실측</b>이다(리포 밖 임시 DB에 스키마를 세우고
@@ -72,6 +81,14 @@ class ArticleLifecycleServiceTest {
 	private static final String MISSING_ID = "AKR00000000000000000";
 
 	private static final Instant T0 = Instant.parse("2026-08-20T12:34:56.789Z");
+
+	/** 도래하지 않은 엠바고 시각 — 훅은 시각을 비교하지 않으므로 값 자체는 판정에 쓰이지 않는다. */
+	private static final String FUTURE = "2999-01-01T00:00:00.000Z";
+
+	/** 활성 수신처의 스풀 폴더명(슬러그 규칙을 통과하는 값). */
+	private static final String PRESS_DIR = "press-a";
+
+	private static final String NONPRESS_DIR = "nonpress-a";
 
 	/**
 	 * 전이표의 <b>허용 칸 15</b> — 데스크 12 + 기자 3. {@code role}은 그 칸이 속한 표의 대표값이다
@@ -136,6 +153,10 @@ class ArticleLifecycleServiceTest {
 	@TempDir
 	Path tempDir;
 
+	/** 훅 테스트 전용 스풀 루트 — 리포 밖이다. 공용 픽스처는 여기에 한 바이트도 쓰지 않는다. */
+	@TempDir
+	Path spoolRoot;
+
 	private HikariDataSource dataSource;
 
 	private JdbcClient client;
@@ -146,10 +167,20 @@ class ArticleLifecycleServiceTest {
 
 	private ArticleHistoryRepository history;
 
+	private DistributionTargetRepository targets;
+
 	private ArticleWriteService writeService;
 
 	private ArticleLifecycleService service;
 
+	/**
+	 * 공용 픽스처 — <b>배부 서비스를 물리지 않는다</b>(스풀 미설정 환경과 같은 구성이다).
+	 *
+	 * <p>CRITICAL: 여기에 활성 수신처를 갖춘 배부 서비스를 물리면 {@code secondEmbargoAt}만 설정된
+	 * 조합이 송고 → press 배부 → 승격으로 <b>EPS</b>가 되어, 엠바고 누수 방어의 유일한 잠금인 4×4
+	 * 등가 단언({@link #desEntryAgreesWithEmbargoPolicyAcrossTheFourByFourColumnGrid})이 흔들린다.
+	 * 훅을 쓰는 테스트는 <b>자기 테스트 안에서</b> 별도 인스턴스를 만든다({@link #hooked}).
+	 */
 	@BeforeEach
 	void setUp() {
 		TempNewsDb.seed(tempDir);
@@ -158,10 +189,12 @@ class ArticleLifecycleServiceTest {
 		clock = new MutableClock(T0.toEpochMilli());
 		articles = new ArticleRepository(client, transactions(), clock);
 		history = new ArticleHistoryRepository(client);
+		targets = new DistributionTargetRepository(client, transactions());
 		ArticleHistoryRecorder recorder = new ArticleHistoryRecorder(history, clock, error -> {
 		});
 		writeService = new ArticleWriteService(articles, recorder, clock);
-		service = new ArticleLifecycleService(articles, writeService, recorder, clock);
+		service = new ArticleLifecycleService(articles, writeService, recorder, clock, history,
+				provider(null), provider(null));
 	}
 
 	@AfterEach
@@ -478,6 +511,77 @@ class ArticleLifecycleServiceTest {
 				"DES 진입 상태는 RDS·DDH 둘뿐이다");
 	}
 
+	// --- 7-1. EmbargoPolicy와의 정합성 (phase 72 decisions (10)) ---------------------------------------
+
+	/**
+	 * <b>DES 진입 판정과 {@link EmbargoPolicy#requiredKinds}가 같은 것을 본다</b>는 등가성 잠금.
+	 *
+	 * <p>왜 필요한가: 이 서비스의 {@code embargoSet}과 {@code EmbargoPolicy.requiredKinds}는 <b>서로 다른
+	 * 두 벌의 코드</b>다(Node도 {@code articleService.js}에서 인라인 판정을 쓰므로 갈린 것이 정본이다).
+	 * 두 판정이 어긋나면 "송고는 {@code DPS}로 떨어졌는데 배부 모듈은 엠바고가 있다고 본다"(또는 그 반대)가
+	 * 되고, 앞쪽은 <b>엠바고 전량 즉시 누수</b>다. 외부로 나간 기사는 회수 수단이 없다.
+	 *
+	 * <p>왜 이 형태인가: {@code embargoSet}은 {@code private static}이라 같은 패키지 테스트도 부를 수 없고,
+	 * 가시성을 넓히는 것은 그 자체가 소스 변경이다. 그래서 <b>관측 가능한 경로</b>(송고 결과)로만 잠근다 —
+	 * 리플렉션도 쓰지 않는다.
+	 *
+	 * <p><b>CRITICAL — 반환 status로 단언하고 되읽은 status로 단언하지 않는다.</b> 배부 phase가 송고 훅을
+	 * 붙이면 {@code secondEmbargoAt}만 설정된 조합에서 송고 즉시 {@code press} 배부가 성공하고
+	 * {@code syncEmbargoStatus}가 <b>저장된</b> status를 {@code EPS}로 승격시킨다
+	 * ({@code src/services/embargoPolicy.js} 200~202행). 되읽기로 단언하면 그때 red가 되는데, 그 red의
+	 * 잘못된 복구는 "동치 단언을 완화"하는 것이다. {@code applyAction}의 반환값은 훅 실행 여부와 무관하게
+	 * 언제나 {@code finalStatus}이므로(phase 72 decisions (8)) 그 함정을 구조적으로 피한다.
+	 */
+	@Test
+	void desEntryAgreesWithEmbargoPolicyAcrossTheFourByFourColumnGrid() {
+		// Contents 시간 컬럼이 실제로 가질 수 있는 4형태. NULL은 "키 자체가 없다"로 만든다.
+		Map<String, Object> forms = new LinkedHashMap<>();
+		forms.put("설정", "2026-08-21T00:00:00.000Z");
+		forms.put("빈문자열", "");
+		forms.put("NULL", null);
+		forms.put("공백만", "   ");
+
+		int desCells = 0;
+		int dpsCells = 0;
+		for (Map.Entry<String, Object> first : forms.entrySet()) {
+			for (Map.Entry<String, Object> second : forms.entrySet()) {
+				String label = "embargoAt=" + first.getKey() + " secondEmbargoAt=" + second.getKey();
+				Map<String, Object> fields = row();
+				if (first.getValue() != null) {
+					fields.put("embargoAt", first.getValue());
+				}
+				if (second.getValue() != null) {
+					fields.put("secondEmbargoAt", second.getValue());
+				}
+
+				String articleId = place("RDS", fields);
+				ContentsRow stored = storedContents(articleId);
+				assertEquals(first.getValue(), stored.column("embargoAt"), label + ": 저장된 1차 값");
+				assertEquals(second.getValue(), stored.column("secondEmbargoAt"), label + ": 저장된 2차 값");
+				boolean embargoRequired = !EmbargoPolicy.requiredKinds(stored::column).isEmpty();
+
+				ArticleLifecycleService.ActionResult result =
+						service.applyAction(articleId, "D", "send", "u-embargo-grid");
+
+				assertTrue(result.ok(), label + ": 송고는 성공한다 — " + result.reason());
+				assertEquals(embargoRequired, "DES".equals(result.status()),
+						label + ": DES 진입 == requiredKinds가 비어 있지 않음(두 판정은 같은 것을 본다)");
+				assertEquals(embargoRequired ? "DES" : "DPS", result.status(), label + ": 최종 상태");
+				if (embargoRequired) {
+					desCells++;
+				}
+				else {
+					dpsCells++;
+				}
+			}
+		}
+
+		// 공허하지 않다는 증거 — 두 결과가 모두 관측된다. 미설정은 (빈문자열|NULL)² = 4칸뿐이다.
+		assertEquals(16, desCells + dpsCells, "4형태 × 2컬럼 = 16칸을 전수로 본다");
+		assertEquals(12, desCells, "공백만도 '설정'이다(Node falsy 의미론 — trim하지 않는다)");
+		assertEquals(4, dpsCells, "미설정 조합은 빈 문자열·NULL의 4칸뿐이다");
+	}
+
 	// --- 8. 이력 부수효과 ---------------------------------------------------------------------------
 
 	@Test
@@ -534,7 +638,7 @@ class ArticleLifecycleServiceTest {
 		assertEquals("DPD", statusOf(articleId));
 	}
 
-	// --- 10. 배부 훅의 의도된 부재 ---------------------------------------------------------------------
+	// --- 10. 배부 서비스 미주입(= 스풀 미설정)이면 훅이 없다 -----------------------------------------
 
 	@Test
 	void nothingInThisServiceDistributes() {
@@ -543,7 +647,7 @@ class ArticleLifecycleServiceTest {
 		assertEquals("DES", service.applyAction(articleId, "D", "send", "u1").status());
 
 		assertNull(contentsOf(articleId).get("distributedAt"),
-				"배부 훅은 이 phase 범위 밖이다(excluded (c)) — 송고가 distributedAt을 채우지 않는다");
+				"배부 서비스가 없으면(스풀 미설정) 송고가 distributedAt을 채우지 않는다");
 		List<String> eventTypes = new ArrayList<>();
 		for (Map<String, Object> row : historyRowsOf(articleId)) {
 			eventTypes.add(String.valueOf(row.get("eventType")));
@@ -659,6 +763,232 @@ class ArticleLifecycleServiceTest {
 		assertEquals("not-found", service.derive("AKR20260820222222222", "continue", "d1").reason());
 	}
 
+	// --- 12. 송고 즉시 배부 훅(ADR-008 (4)) -----------------------------------------------------------
+	//
+	// 여기서만 배부 서비스를 물린다 — 공용 setUp()의 service는 끝까지 미주입이다(D-11 픽스처 보호).
+
+	@Test
+	void sendingAnArticleWithoutAnEmbargoDistributesToEveryActiveTarget() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("RDS");
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		assertTrue(result.ok(), "송고는 성공한다");
+		assertEquals("DPS", result.status(), "엠바고 없는 송고는 DPS다");
+		assertEquals("DPS", statusOf(articleId), "저장된 상태도 DPS다(승격 대상이 아니다)");
+		assertEquals(1, filesIn(PRESS_DIR).size(), "언론사 수신처에 1건");
+		assertEquals(1, filesIn(NONPRESS_DIR).size(), "비언론사 수신처에 1건");
+		assertEquals("2026-08-20T12:34:56.789Z", contentsOf(articleId).get("distributedAt"),
+				"배부가 성공하면 distributedAt이 채워진다");
+		assertEquals(List.of("press", "nonpress"), distributeActions(articleId), "kind마다 이력 1행");
+	}
+
+	@Test
+	void sendingAnArticleWithTheFirstEmbargoDistributesNothing() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("RDS", row("embargoAt", FUTURE));
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DES", result.status());
+		assertEquals("DES", statusOf(articleId), "1차 엠바고는 시각이 와야 나간다(tick의 몫)");
+		assertEquals(List.of(), filesIn(PRESS_DIR), "송고 즉시 나가는 것은 없다");
+		assertEquals(List.of(), filesIn(NONPRESS_DIR));
+		assertNull(contentsOf(articleId).get("distributedAt"), "distributedAt은 NULL 그대로다");
+		assertEquals(List.of(), distributeActions(articleId));
+	}
+
+	/**
+	 * decisions (8)의 핵심 단언 — <b>계약이 못 보는 유일한 축</b>이다.
+	 *
+	 * <p>Node의 훅은 fire-and-forget이라 {@code applyAction}이 <b>배부 이전</b> status를 즉시 돌려준다.
+	 * Spring은 훅을 동기로 실행하므로(비동기는 정적 게이트·자기 결정성에 걸린다) 반환값을 승격 후 값으로
+	 * 바꾸면 그 자리에서 계약이 갈린다. 저장된 행은 승격되고 <b>반환만</b> 배부 이전 값이다.
+	 */
+	@Test
+	void theResponseStatusIsTheOneBeforeDistributionEvenWhenTheHookPromotesTheRow() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("RDS", row("secondEmbargoAt", FUTURE));
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DES", result.status(), "반환은 언제나 finalStatus다(훅이 무엇을 했든 바뀌지 않는다)");
+		assertEquals("EPS", statusOf(articleId), "press가 실제로 나갔으므로 저장된 행은 EPS로 승격된다");
+		assertEquals(1, filesIn(PRESS_DIR).size(), "2차만 설정된 기사는 송고 즉시 언론사로 나간다");
+		assertEquals(List.of(), filesIn(NONPRESS_DIR), "비언론사는 2차 시각에 나간다(tick)");
+	}
+
+	@Test
+	void resendingAnEmbargoArticleWithNoDistributionHistoryDistributesNothing() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("DPS", row("embargoAt", FUTURE));
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DPS", result.status(), "DPS 재송고는 DES로 되돌아가지 않는다");
+		assertEquals(List.of(), filesIn(PRESS_DIR), "나간 적 없는 kind로는 정정본도 나가지 않는다(안전 기본값)");
+		assertEquals(List.of(), filesIn(NONPRESS_DIR));
+		assertNull(contentsOf(articleId).get("distributedAt"));
+	}
+
+	@Test
+	void resendingAnEmbargoArticleSendsTheCorrectionOnlyWhereItAlreadyWent() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("DPS", row("embargoAt", FUTURE));
+		// 지난 사이클의 배부 이력이다(이번 송고 행보다 id가 작다) — 정정본 판정은 "역사상 어디로 나갔나"라
+		// 사이클로 좁히면 여기서 아무것도 나가지 않는다(decisions (9)).
+		seedDistributeHistory(articleId, "press");
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DPS", result.status());
+		assertEquals(1, filesIn(PRESS_DIR).size(), "이미 나갔던 언론사에는 정정본이 나간다");
+		assertEquals(List.of(), filesIn(NONPRESS_DIR), "나간 적 없는 비언론사에는 나가지 않는다");
+	}
+
+	@Test
+	void aFailingHistoryLookupFallsBackToNoKnownDistribution() {
+		seedTarget("press", PRESS_DIR);
+		String articleId = place("DPS", row("embargoAt", FUTURE));
+		seedDistributeHistory(articleId, "press");
+
+		ArticleLifecycleService.ActionResult result =
+				hooked(distribution(spoolWriter()), failingHistory()).applyAction(articleId, "D", "send", "u-hook");
+
+		assertTrue(result.ok(), "이력 조회 장애가 송고를 막지 않는다");
+		assertEquals("DPS", result.status());
+		assertEquals(List.of(), filesIn(PRESS_DIR), "'아는 배부 이력 없음'으로 폴백한다 — 엠바고 기사는 안 나간다");
+	}
+
+	@Test
+	void aFailingHistoryLookupStillDistributesArticlesWithoutAnEmbargo() {
+		seedTarget("press", PRESS_DIR);
+		String articleId = place("RDS");
+
+		ArticleLifecycleService.ActionResult result =
+				hooked(distribution(spoolWriter()), failingHistory()).applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DPS", result.status());
+		assertEquals(1, filesIn(PRESS_DIR).size(), "엠바고 미설정 기사는 already를 보지 않으므로 조회 장애와 무관하다");
+	}
+
+	@Test
+	void whenEveryTargetFailsToWriteTheSendStillSucceedsAndNothingIsPromoted() {
+		seedTarget("press", PRESS_DIR);
+		String articleId = place("RDS", row("secondEmbargoAt", FUTURE));
+
+		ArticleLifecycleService.ActionResult result = hooked(distribution(failingWriter()), history)
+				.applyAction(articleId, "D", "send", "u-hook");
+
+		assertTrue(result.ok(), "배부 실패가 송고를 되돌리지 않는다");
+		assertEquals("DES", result.status());
+		assertEquals("DES", statusOf(articleId), "나간 게 없으면 승격도 없다");
+		assertEquals(List.of(), filesIn(PRESS_DIR));
+		assertEquals(List.of(), distributeActions(articleId), "거짓 배부 이력을 남기지 않는다");
+		assertEquals(1, distributionEvents(articleId).size(), "수신처 단위 미발송은 원장에 남는다");
+		assertEquals("distribute-failed", distributionEvents(articleId).get(0).get("eventType"));
+	}
+
+	/**
+	 * 승격의 근거는 <b>실제로 나간 목록</b>({@code distributed})이지 {@code ok} 플래그가 아니다.
+	 *
+	 * <p>{@code {ok:true, distributed:[], failed:[...]}}에도 승격이 일어나면 <b>배부되지 않은 기사가
+	 * 완결 처리</b>된다. 그 갈림을 관측하려면 이번 사이클에 {@code distribute} 이력은 있는데 나간 것은
+	 * 없는 상태가 필요하다 — 실물 서비스는 그 조합을 만들지 않으므로 대역으로 만든다(이력과 반환이 언제나
+	 * 함께 움직인다는 가정에 승격 판정을 기대지 않게 하는 잠금이다).
+	 */
+	@Test
+	void promotionNeedsAnActualDistributionNotJustAnOkResult() {
+		String articleId = place("RDS", row("secondEmbargoAt", FUTURE));
+
+		ArticleLifecycleService.ActionResult result =
+				hooked(recordsButSendsNothing(), history).applyAction(articleId, "D", "send", "u-hook");
+
+		assertEquals("DES", result.status());
+		assertEquals(List.of("press"), distributeActions(articleId),
+				"이번 사이클의 distribute 이력은 있다 — 승격 조건이 ok였다면 여기서 EPS가 된다");
+		assertEquals("DES", statusOf(articleId), "그래도 승격하지 않는다(근거는 distributed다)");
+	}
+
+	@Test
+	void anExceptionFromTheDistributionServiceDoesNotUndoTheSend() {
+		seedTarget("press", PRESS_DIR);
+		String articleId = place("RDS");
+
+		ArticleLifecycleService.ActionResult result =
+				hooked(throwingDistribution(), history).applyAction(articleId, "D", "send", "u-hook");
+
+		assertTrue(result.ok(), "훅의 예외는 송고를 깨뜨리지 않는다");
+		assertEquals("DPS", result.status());
+		assertEquals("DPS", statusOf(articleId), "상태는 남는다");
+		assertEquals(List.of(), filesIn(PRESS_DIR));
+		assertNull(contentsOf(articleId).get("distributedAt"));
+		assertEquals(1, historyRowsOf(articleId).size(), "송고 이력 1행은 그대로 남는다");
+		assertEquals("send", historyRowsOf(articleId).get(0).get("action"));
+	}
+
+	@Test
+	void theSendHistoryRowIsOlderThanTheDistributionItTriggered() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("RDS");
+
+		hooked().applyAction(articleId, "D", "send", "u-hook");
+
+		long sendId = -1;
+		long firstDistributeId = Long.MAX_VALUE;
+		for (Map<String, Object> row : historyRowsOf(articleId)) {
+			long id = ((Number) row.get("id")).longValue();
+			if ("status".equals(row.get("eventType")) && "send".equals(row.get("action"))) {
+				sendId = id;
+			}
+			if ("distribute".equals(row.get("eventType"))) {
+				firstDistributeId = Math.min(firstDistributeId, id);
+			}
+		}
+
+		assertTrue(sendId > 0, "송고 이력 행이 있다");
+		assertTrue(firstDistributeId < Long.MAX_VALUE, "배부 이력 행이 있다");
+		assertTrue(sendId < firstDistributeId,
+				"사이클 경계(latestSendId)는 이번 배부보다 앞에 놓여야 한다 — 훅이 이력 기록 뒤라는 증거다");
+	}
+
+	@Test
+	void theReportersSendDistributesNothing() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		String articleId = place("RDS");
+
+		ArticleLifecycleService.ActionResult result = hooked().applyAction(articleId, "R", "send", "u-reporter");
+
+		assertEquals("RDS", result.status(), "R의 송고는 RDS 유지다");
+		assertEquals(List.of(), filesIn(PRESS_DIR), "전이 결과가 DPS가 아니면 배부도 없다");
+		assertEquals(List.of(), filesIn(NONPRESS_DIR));
+		assertNull(contentsOf(articleId).get("distributedAt"));
+	}
+
+	@Test
+	void actionsOtherThanSendNeverRunTheHook() {
+		seedTarget("press", PRESS_DIR);
+		seedTarget("nonpress", NONPRESS_DIR);
+		ArticleLifecycleService hooked = hooked();
+
+		for (Cell cell : List.of(new Cell("RDS", "D", "hold", "DDH"), new Cell("RDS", "D", "kill", "DDK"),
+				new Cell("DPS", "D", "approveDelete", "DPD"))) {
+			String articleId = place(cell.from());
+
+			assertEquals(cell.to(), hooked.applyAction(articleId, cell.role(), cell.action(), "u-hook").status());
+			assertNull(contentsOf(articleId).get("distributedAt"), cell + ": 송고가 아닌 액션은 배부하지 않는다");
+		}
+		assertEquals(List.of(), filesUnder(spoolRoot), "스풀에 파일이 하나도 없다");
+	}
+
 	// --- 헬퍼 -----------------------------------------------------------------------------------------
 
 	/** 전이표의 한 칸. {@code to}가 {@code null}이면 거부 칸이다. */
@@ -706,6 +1036,14 @@ class ArticleLifecycleServiceTest {
 		return String.valueOf(contentsOf(articleId).get("status"));
 	}
 
+	/** 저장된 행 그대로 — {@code EmbargoPolicy}가 실제 판정에서 받는 것과 <b>같은 접근자</b>를 얻기 위해서다. */
+	private ContentsRow storedContents(String articleId) {
+		ArticleAggregate found = articles.findById(articleId);
+		assertNotNull(found, "기사가 없다: " + articleId);
+		assertNotNull(found.contents(), "Contents 행이 없다: " + articleId);
+		return found.contents();
+	}
+
 	/** 저장된 {@code Contents} 29컬럼 전부를 읽는다(투영 전 — 잠금 컬럼까지 확인하기 위해서다). */
 	private Map<String, Object> contentsOf(String articleId) {
 		ArticleAggregate found = articles.findById(articleId);
@@ -737,6 +1075,143 @@ class ArticleLifecycleServiceTest {
 
 	private int countRows(String table) {
 		return client.sql("SELECT COUNT(*) FROM " + table).query(Integer.class).single();
+	}
+
+	// --- 훅 전용 헬퍼 ---------------------------------------------------------------------------------
+
+	/**
+	 * 선택 의존 주입용 최소 {@link ObjectProvider} — "빈이 없다"를 {@code null}로 표현한다. 공용
+	 * 픽스처는 두 자리 모두 {@code null}이다(스풀 미설정 환경과 같다).
+	 */
+	private static <T> ObjectProvider<T> provider(T value) {
+		return new ObjectProvider<T>() {
+			@Override
+			public T getIfAvailable() {
+				return value;
+			}
+		};
+	}
+
+	/** 실제 스풀 writer를 물린 훅 인스턴스 — <b>이 테스트 안에서만</b> 만든다. */
+	private ArticleLifecycleService hooked() {
+		return hooked(distribution(spoolWriter()), history);
+	}
+
+	/**
+	 * @param lookup 훅의 "이미 배부된 kind" 조회에 쓰는 리포지토리(조회 장애를 심기 위한 자리다).
+	 *     기록·승격 경로는 언제나 진짜 리포지토리를 쓴다.
+	 */
+	private ArticleLifecycleService hooked(DistributionService distribution, ArticleHistoryRepository lookup) {
+		ArticleHistoryRecorder recorder = recorder();
+		ArticleEmbargoService embargo = new ArticleEmbargoService(articles, history, recorder, transactions());
+		return new ArticleLifecycleService(articles, writeService, recorder, clock, lookup,
+				provider(distribution), provider(embargo));
+	}
+
+	private ArticleHistoryRecorder recorder() {
+		return new ArticleHistoryRecorder(history, clock, error -> {
+		});
+	}
+
+	private DistributionService distribution(SpoolWriter writer) {
+		return new DistributionService(targets, articles, history, recorder(), writer, clock, null);
+	}
+
+	private SpoolWriter spoolWriter() {
+		return new SpoolWriter(spoolRoot, clock);
+	}
+
+	/** 어떤 수신처에도 쓰지 못하는 writer — 전 수신처 실패를 결정적으로 만든다. */
+	private SpoolWriter failingWriter() {
+		return new SpoolWriter(spoolRoot, clock, new SpoolWriter.SpoolFs() {
+			@Override
+			public void createDirectories(Path dir) throws IOException {
+				throw new IOException("planted failure");
+			}
+
+			@Override
+			public void write(Path file, byte[] bytes) throws IOException {
+				throw new IOException("planted failure");
+			}
+
+			@Override
+			public void moveAtomically(Path source, Path target) throws IOException {
+				throw new IOException("planted failure");
+			}
+		});
+	}
+
+	/** 배부 지시가 동기 예외를 던지는 대역. */
+	private DistributionService throwingDistribution() {
+		return new DistributionService(targets, articles, history, recorder(), spoolWriter(), clock, null) {
+			@Override
+			public DistributionService.Result distribute(String articleId, List<String> kinds, String actorUserId) {
+				throw new IllegalStateException("planted failure");
+			}
+		};
+	}
+
+	/** 이력만 남기고 아무것도 내보내지 않는 대역 — 승격의 근거가 {@code distributed}임을 관측하기 위한 자리다. */
+	private DistributionService recordsButSendsNothing() {
+		ArticleHistoryRecorder recorder = recorder();
+		return new DistributionService(targets, articles, history, recorder, spoolWriter(), clock, null) {
+			@Override
+			public DistributionService.Result distribute(String articleId, List<String> kinds, String actorUserId) {
+				seedDistributeHistory(articleId, "press");
+				return new DistributionService.Result(true, null, List.of(), List.of(
+						new DistributionService.Failed(articleId, 1L, "press", PRESS_DIR, "spool-write-failed")));
+			}
+		};
+	}
+
+	/** 훅의 이력 조회만 실패하는 리포지토리(다른 경로는 쓰이지 않는다). */
+	private ArticleHistoryRepository failingHistory() {
+		return new ArticleHistoryRepository(client) {
+			@Override
+			public List<Map<String, Object>> queryByArticle(String articleId) {
+				throw new IllegalStateException("planted failure");
+			}
+		};
+	}
+
+	private int seedTarget(String kind, String spoolDir) {
+		return targets.insert(row("name", "수신처-" + spoolDir, "kind", kind, "spoolDir", spoolDir,
+				"active", "Y", "createdAt", "2026-08-19T00:00:00.000Z", "updatedAt", "2026-08-19T00:00:00.000Z"));
+	}
+
+	/** 지난 사이클의 배부 사실 — 이번 송고 이력보다 id가 작다. */
+	private long seedDistributeHistory(String articleId, String kind) {
+		return history.insert(row("articleId", articleId, "eventType", "distribute", "action", kind,
+				"actorUserId", "u-past", "createdAt", "2026-08-19T00:00:00.000Z"));
+	}
+
+	/** {@code distribute} 이력의 kind를 기록 순서대로. */
+	private List<String> distributeActions(String articleId) {
+		List<String> actions = new ArrayList<>();
+		for (Map<String, Object> row : historyRowsOf(articleId)) {
+			if ("distribute".equals(row.get("eventType"))) {
+				actions.add(String.valueOf(row.get("action")));
+			}
+		}
+		return actions;
+	}
+
+	private List<Map<String, Object>> distributionEvents(String articleId) {
+		return history.queryDistributionEvents(articleId, null);
+	}
+
+	private List<Path> filesIn(String spoolDir) {
+		Path dir = spoolRoot.resolve(spoolDir);
+		return Files.isDirectory(dir) ? filesUnder(dir) : List.of();
+	}
+
+	private static List<Path> filesUnder(Path root) {
+		try (Stream<Path> walk = Files.walk(root)) {
+			return walk.filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).toList();
+		}
+		catch (IOException ex) {
+			throw new IllegalStateException(ex);
+		}
 	}
 
 }

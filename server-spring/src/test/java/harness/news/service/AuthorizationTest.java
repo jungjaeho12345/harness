@@ -88,6 +88,12 @@ class AuthorizationTest {
 		// Z를 넣으면 권한 모델이 갈라진다(news.md 권한 규칙 · src/services/authorization.js).
 		assertEquals(List.of("D"), Authorization.CAPABILITIES.get(Authorization.EDIT_DPS),
 				"DPS 편집 진입은 D 전용이다(Z도 포함하지 않는다)");
+		// phase 72 step9가 추가한 두 행 — 배부 실행 3라우트의 게이트다(ADR-008).
+		// 외부 운영 cron도 **Z 세션**으로 호출한다(API 키·공유 시크릿 없음).
+		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.RUN_DISTRIBUTION_TICK),
+				"시점 배부 실행은 Z 전용이다(src/services/authorization.js runDistributionTick)");
+		assertEquals(List.of("Z"), Authorization.CAPABILITIES.get(Authorization.MANAGE_DISTRIBUTION_FAILURE),
+				"배부 실패 조회·재전송은 Z 전용이다 — 재전송은 외부로 파일을 내보내는 행위다");
 	}
 
 	// --- DPS 편집 진입 게이트(editDps) -------------------------------------------------------------

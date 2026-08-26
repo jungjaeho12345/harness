@@ -1,0 +1,135 @@
+package harness.news.service;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
+/**
+ * 엠바고 시각 파싱 — Node {@code Date.parse}의 <b>부분 이식</b>이며 그 경계가 곧 계약이다
+ * (phase 72 decisions (7)).
+ *
+ * <p>덮는 범위는 <b>3가지뿐</b>이다: ① {@code Z} 표기 ② 오프셋 표기 ③ {@code YYYY-MM-DD} 날짜만
+ * (= UTC 자정, JS와 같은 값). 그 밖은 전부 {@code null}이다.
+ *
+ * <p><b>왜 전부 이식하지 않는가.</b> 2026-08-25 Node 실측(호스트 TZ = UTC+09:00):
+ * <pre>
+ *   Date.parse('2026-01-01T09:00')    =&gt; 1767225600000   // = 2026-01-01T00:00:00Z — 로컬 시간 해석
+ *   Date.parse('2026-01-01T00:00:00') =&gt; 1767193200000   // = 2025-12-31T15:00:00Z
+ *   Date.parse('Jan 1, 2026')         =&gt; 1767193200000
+ * </pre>
+ * 즉 <b>오프셋 없는 날짜-시각과 레거시 문자열의 값은 서버 시간대에 따라 달라진다</b>. 그것을 이식하면
+ * 배부 도래 판정이 배포 환경마다 갈리고({@code --dual-run} 자기 결정성이 깨진다) 시간대가 바뀌는 것만으로
+ * 엠바고가 앞당겨 나갈 수 있다 — 외부로 나간 기사는 회수 수단이 없다.
+ *
+ * <p><b>틀리는 방향이 안전측이다.</b> 여기서 {@code null}이면 그 필드는 "미도래"로 취급되어 배부되지
+ * 않고, {@code EmbargoPolicy.unparsableEmbargoFields}가 그 사실을 표면화한다(tick 응답의 {@code invalid}).
+ * 무음 삼킴이 아니다.
+ *
+ * <p>이 시스템이 실제로 쓰는 값은 전부 완전한 ISO-8601 UTC 문자열이다
+ * ({@code web/src/view/WriterPage.jsx}의 {@code localInputToIso}가 유일한 입력 경로) — 관측되는 자리가
+ * 없다는 뜻이며, 그래서 이 경계는 이 테스트가 유일한 방어선이다.
+ */
+class NodeInstantsTest {
+
+	private static final long UTC_MIDNIGHT_2026_01_01 = Instant.parse("2026-01-01T00:00:00Z").toEpochMilli();
+
+	// --- 범위 ① Z 표기 -------------------------------------------------------------------------------
+
+	@Test
+	void zNotationParsesWithAndWithoutMillis() {
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2026-01-01T00:00:00Z"));
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2026-01-01T00:00:00.000Z"));
+	}
+
+	@Test
+	void subMillisecondPrecisionIsTruncatedNotRounded() {
+		// Node 실측: Date.parse('2026-01-01T00:00:00.123456Z') => ...600123 (절단).
+		assertEquals(UTC_MIDNIGHT_2026_01_01 + 123, NodeInstants.parseIsoMillis("2026-01-01T00:00:00.123456Z"));
+		assertEquals(UTC_MIDNIGHT_2026_01_01 + 999, NodeInstants.parseIsoMillis("2026-01-01T00:00:00.999999Z"));
+	}
+
+	// --- 범위 ② 오프셋 표기 --------------------------------------------------------------------------
+
+	@Test
+	void offsetNotationParsesToTheSameInstantAsItsUtcForm() {
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2026-01-01T09:00:00+09:00"));
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2025-12-31T19:00:00-05:00"));
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2026-01-01T00:00:00+00:00"));
+	}
+
+	// --- 범위 ③ 날짜만 -------------------------------------------------------------------------------
+
+	@Test
+	void dateOnlyIsUtcMidnightJustLikeDateParse() {
+		// Node 실측: Date.parse('2026-01-01') => 1767225600000 (UTC 자정 — 날짜만 표기는 JS도 UTC다).
+		assertEquals(UTC_MIDNIGHT_2026_01_01, NodeInstants.parseIsoMillis("2026-01-01"));
+		assertEquals(Instant.parse("1970-01-01T00:00:00Z").toEpochMilli(), NodeInstants.parseIsoMillis("1970-01-01"));
+	}
+
+	@Test
+	void malformedDateOnlyValuesAreNull() {
+		for (String value : List.of("2026-1-1", "20260101", "2026-02-30", "2026-13-01", "2026-01-01 ")) {
+			assertNull(NodeInstants.parseIsoMillis(value), value + ": 날짜만 표기는 정확히 YYYY-MM-DD다");
+		}
+	}
+
+	// --- 범위 밖: 전부 null --------------------------------------------------------------------------
+
+	/**
+	 * <b>이 테스트가 이 클래스의 존재 이유다.</b> 오프셋 없는 날짜-시각은 JS가 <b>로컬 시간</b>으로 읽지만
+	 * 여기서는 {@code null}이다 — 시스템 기본 시간대({@code ZoneId.systemDefault()})를 폴백으로 끼워
+	 * 넣으면 서버 TZ가 배부 판정에 들어오고, 그 순간 이 단언이 red가 된다.
+	 */
+	@Test
+	void dateTimeWithoutAnOffsetIsNullBecauseTheServerTimeZoneMustNotEnterTheDecision() {
+		for (String value : List.of(
+				"2026-01-01T09:00",
+				"2026-01-01T00:00:00",
+				"2026-01-01T00:00:00.000",
+				"2026-01-01T09:00:00.123")) {
+			assertNull(NodeInstants.parseIsoMillis(value),
+					value + ": 오프셋이 없으면 시각이 확정되지 않는다 — 미도래(null)로 수렴시킨다");
+		}
+	}
+
+	@Test
+	void legacyAndFreeTextValuesAreNull() {
+		// 'Jan 1, 2026'은 Node에서는 파싱되지만(로컬 시간) 여기서는 null이다 — 안전측 divergence다.
+		for (String value : List.of("Jan 1, 2026", "2026/01/01", "not-a-date", "언젠가", "Z", "T")) {
+			assertNull(NodeInstants.parseIsoMillis(value), value + ": 자유 텍스트는 파싱하지 않는다");
+		}
+	}
+
+	@Test
+	void emptyAndNonStringInputsAreNull() {
+		for (Object value : Arrays.asList(null, "", " ", "   ", 1767225600000L, 1767225600000.0, 42, true,
+				Instant.parse("2026-01-01T00:00:00Z"), List.of("2026-01-01T00:00:00Z"))) {
+			assertNull(NodeInstants.parseIsoMillis(value),
+					String.valueOf(value) + ": 문자열이 아닌 값과 빈 값은 null이다");
+		}
+	}
+
+	@Test
+	void itNeverThrows() {
+		for (Object value : Arrays.asList(null, "", "\0", "+999999999-12-31T23:59:59Z",
+				"-999999999-01-01T00:00:00Z", "9999999999999999999-01-01", "2026-01-01T00:00:00+99:00",
+				new Object())) {
+			assertDoesNotThrow(() -> NodeInstants.parseIsoMillis(value),
+					String.valueOf(value) + ": 판정 모듈은 호출자를 깨뜨리지 않는다");
+		}
+	}
+
+	/** 반환 타입이 {@code Long}이라는 사실 자체가 계약이다(원시 long이면 "모름"을 표현할 수 없다). */
+	@Test
+	void theReturnTypeCarriesTheUnknownCase() {
+		Long parsed = NodeInstants.parseIsoMillis("2026-01-01T00:00:00Z");
+		assertNotNull(parsed);
+		assertNull(NodeInstants.parseIsoMillis("2026-01-01T00:00"));
+	}
+}

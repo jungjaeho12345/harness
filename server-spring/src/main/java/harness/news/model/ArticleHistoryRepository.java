@@ -16,8 +16,8 @@ import org.springframework.stereotype.Repository;
 /**
  * 기사 이력 데이터 접근 계층 — 직접 SQL(ORM 없음, ADR-002). 비즈니스 규칙은 없다.
  *
- * <p>리포 루트 {@code src/models/articleHistoryModel.js}와 1:1이다(이 phase가 이식하는 것은 삽입 1개와
- * 조회 3개이며, 배부 이벤트 조회 2종은 배부 도메인 phase 소유다 — 지금 만들면 검증 없는 표면이다).
+ * <p>리포 루트 {@code src/models/articleHistoryModel.js}와 1:1이다(삽입 1개와 조회 5개 — 배부 이벤트
+ * 조회 2종은 배부 실행 phase가 소비자와 함께 채웠다).
  *
  * <p><b>이 원장은 append-only다.</b> 여기 있는 연산은 삽입과 조회뿐이고 행을 고치거나 지우는 연산은
  * 없다. 이력 행은 감사 기록만이 아니라 <b>판정 입력</b>이기도 해서(사이클 경계·배부 멱등) 한 번
@@ -32,7 +32,8 @@ import org.springframework.stereotype.Repository;
  *   <li><b>목록 조회는 본문(blob)을 읽지 않는다.</b> 존재 여부만 {@code hasSnapshot} <b>정수 1/0</b>으로
  *       파생한다 — 이 응답은 전 사용자에게 열린 경량 이력보기 계약이다.</li>
  *   <li><b>목록에 배부 컬럼({@code targetId}·{@code reason})을 싣지 않는다.</b> 수신처 id와 실패 사유는
- *       Z 전용 표면이다. 삽입 화이트리스트에는 남긴다(배부 phase가 쓴다).</li>
+ *       Z 전용 표면이라 {@link #queryDistributionEvents}·{@link #getDistributionEventById}로만 나간다.
+ *       <b>두 조회를 합치지 마라</b> — 합치는 순간 이력보기 응답이 그만큼 넓어진다.</li>
  *   <li><b>단건 스냅샷은 언제나 {@code articleId}로 스코프한다.</b> 스코프를 빼면 id 하나로 다른 기사의
  *       본문을 읽는 권한 우회가 된다.</li>
  * </ol>
@@ -71,8 +72,37 @@ public class ArticleHistoryRepository {
 	 */
 	private static final List<String> TITLE_INPUT_COLUMNS = List.of("id", "snapshotTitle", "markupVersion");
 
-	/** 정수로 읽는 컬럼 — 나머지는 전부 문자열이다. {@code targetId}는 어떤 조회에도 실리지 않는다. */
+	/**
+	 * 배부 이벤트 조회 2종이 싣는 8컬럼. 목록 조회의 9키와 <b>다르다</b>: 전이 2컬럼·{@code hasSnapshot}이
+	 * 없고 대신 {@code targetId}·{@code reason}이 있다. 순서가 곧 응답 키 순서다.
+	 */
+	private static final List<String> DISTRIBUTION_EVENT_COLUMNS = List.of(
+			"id", "articleId", "eventType", "action", "targetId", "reason", "actorUserId", "createdAt");
+
+	/**
+	 * 배부 이벤트 어휘 2개. 모델은 도메인에 의존하지 않으므로 문자열만 둔다(Node 모델과 같은 규율 —
+	 * 어휘의 출처는 배부 도메인이다). <b>두 조회 모두</b> 이 필터를 건다: 단건 조회에서 빼면 임의 id로
+	 * 본문 스냅샷 행이 재전송 경로로 새어 나간다.
+	 */
+	private static final List<String> DISTRIBUTION_EVENT_TYPES = List.of("distribute-failed", "distribute-retry");
+
+	/**
+	 * 배부 이벤트 조회의 기본 창 — Node {@code DISTRIBUTION_EVENTS_DEFAULT_LIMIT} 실측값(2026-08-25).
+	 * 보조 인덱스 없이 id DESC 스캔 + LIMIT이라 창은 비용 인식의 결과다(SCHEMA.md).
+	 *
+	 * <p>이것은 <b>모델의 기본값</b>일 뿐 서비스의 클램프가 아니다. 표시용 목록 창과 게이트용 스캔은
+	 * 상한이 서로 다르며, 그 판단을 여기로 끌어오면 게이트가 조용히 좁아진다.
+	 */
+	static final int DISTRIBUTION_EVENTS_DEFAULT_LIMIT = 500;
+
+	/** 정수로 읽는 컬럼 — 나머지는 전부 문자열이다. */
 	private static final String ID = "id";
+
+	/**
+	 * 정수 또는 NULL로 읽는 컬럼({@code INTEGER} affinity) — 배부 이벤트 조회에만 실린다.
+	 * 문자열이나 실수로 읽으면 {@code DistributionTarget.id}와의 매칭이 조용히 깨진다.
+	 */
+	private static final String TARGET_ID = "targetId";
 
 	/**
 	 * 본문 스냅샷 보유 판정. {@code length(markupVersion) > 0}과 동치다(NULL→NULL, ''→0).
@@ -171,6 +201,65 @@ public class ArticleHistoryRepository {
 				.list();
 	}
 
+	/**
+	 * 배부 실패/재전송 이벤트만 <b>최신순(id 내림차순)</b>으로 돌려준다 — 배부 실패 목록(Z 전용)과
+	 * 재전송 대상 확인의 유일한 조회 경로다. 행은 8키({@link #DISTRIBUTION_EVENT_COLUMNS} 순서)다.
+	 *
+	 * @param articleId 스코프. {@code null}이면 조건을 걸지 않는다(전 기사 — Node의 인자 미지정 동형)
+	 * @param limit 창. <b>정수 ≥1이 아니면</b>({@code null}·0·음수) {@link #DISTRIBUTION_EVENTS_DEFAULT_LIMIT}.
+	 *     정규화는 여기까지이고 서비스 클램프는 이 계층의 책임이 아니다
+	 */
+	public List<Map<String, Object>> queryDistributionEvents(String articleId, Integer limit) {
+		int window = (limit != null && limit >= 1) ? limit : DISTRIBUTION_EVENTS_DEFAULT_LIMIT;
+		StringBuilder where = new StringBuilder("eventType IN (")
+				.append(placeholders(DISTRIBUTION_EVENT_TYPES.size()))
+				.append(")");
+		List<Object> params = new ArrayList<>(eventTypeParams());
+		if (articleId != null) {
+			where.append(" AND articleId = ?");
+			params.add(ColumnValues.bind(articleId));
+		}
+		// LIMIT도 바인딩 파라미터다 — 값을 SQL 문자열에 잇지 않는다(조립 규율).
+		params.add(window);
+		return this.jdbcClient.sql("SELECT " + String.join(", ", DISTRIBUTION_EVENT_COLUMNS)
+						+ " FROM " + RequiredSchema.HISTORY_TABLE
+						+ " WHERE " + where + " ORDER BY id DESC LIMIT ?")
+				.params(params)
+				.query(ArticleHistoryRepository::mapDistributionEventRow)
+				.list();
+	}
+
+	/**
+	 * 배부 이벤트 단건 조회 — 재전송 식별자({@code historyId})에서 기사·수신처를 도출하는 유일한 경로.
+	 *
+	 * <p><b>어휘 필터를 여기서도 건다</b>(재전송 게이트의 1차 방어): 빼면 임의 id로 편집 스냅샷 같은
+	 * 다른 이벤트 행이 이 경로로 새고, 그 자체가 인가 우회다.
+	 *
+	 * @return 없거나 배부 이벤트가 아니면 {@code null}
+	 */
+	public Map<String, Object> getDistributionEventById(long id) {
+		List<Object> params = new ArrayList<>();
+		// id는 조회 조건일 뿐이라 저장 표현 정책(ColumnValues)을 태우지 않는다 — 정수 컬럼에 정수를 준다.
+		params.add(id);
+		params.addAll(eventTypeParams());
+		return this.jdbcClient.sql("SELECT " + String.join(", ", DISTRIBUTION_EVENT_COLUMNS)
+						+ " FROM " + RequiredSchema.HISTORY_TABLE + " WHERE id = ? AND eventType IN ("
+						+ placeholders(DISTRIBUTION_EVENT_TYPES.size()) + ")")
+				.params(params)
+				.query(ArticleHistoryRepository::mapDistributionEventRow)
+				.optional()
+				.orElse(null);
+	}
+
+	/** 어휘 목록을 바인딩 파라미터로 편다 — 목록이 늘면 자리표시자와 값이 함께 늘어난다. */
+	private static List<Object> eventTypeParams() {
+		List<Object> params = new ArrayList<>();
+		for (String eventType : DISTRIBUTION_EVENT_TYPES) {
+			params.add(ColumnValues.bind(eventType));
+		}
+		return params;
+	}
+
 	private static Map<String, Object> mapListRow(ResultSet rs, int rowNum) throws SQLException {
 		Map<String, Object> row = readRow(rs, LIST_COLUMNS);
 		// 정수여야 한다 — 불리언으로 매핑하면 JSON이 true/false가 되어 계약이 그 자리에서 깨진다.
@@ -186,14 +275,29 @@ public class ArticleHistoryRepository {
 		return readRow(rs, TITLE_INPUT_COLUMNS);
 	}
 
+	private static Map<String, Object> mapDistributionEventRow(ResultSet rs, int rowNum) throws SQLException {
+		return readRow(rs, DISTRIBUTION_EVENT_COLUMNS);
+	}
+
 	/**
-	 * 컬럼 목록 순서의 맵. 값이 SQL NULL이어도 <b>키는 남긴다</b>. {@code id}만 정수로 읽고 나머지는
-	 * 문자열이다(TEXT affinity라 저장도 조회도 문자열 — Node 동형).
+	 * 컬럼 목록 순서의 맵. 값이 SQL NULL이어도 <b>키는 남긴다</b>. 정수로 읽는 것은 {@code id}(항상 값이
+	 * 있다)와 {@code targetId}(NULL이면 null — 0이 아니다)뿐이고 나머지는 문자열이다(TEXT affinity라
+	 * 저장도 조회도 문자열 — Node 동형).
 	 */
 	private static Map<String, Object> readRow(ResultSet rs, List<String> columns) throws SQLException {
 		Map<String, Object> row = new LinkedHashMap<>();
 		for (String column : columns) {
-			row.put(column, column.equals(ID) ? rs.getLong(column) : rs.getString(column));
+			if (column.equals(ID)) {
+				row.put(column, rs.getLong(column));
+			}
+			else if (column.equals(TARGET_ID)) {
+				long targetId = rs.getLong(column);
+				// wasNull 없이 그대로 담으면 '수신처 없음'이 수신처 0번으로 둔갑한다.
+				row.put(column, rs.wasNull() ? null : Long.valueOf(targetId));
+			}
+			else {
+				row.put(column, rs.getString(column));
+			}
 		}
 		return row;
 	}

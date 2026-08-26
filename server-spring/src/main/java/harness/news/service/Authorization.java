@@ -66,13 +66,31 @@ public class Authorization {
 	 */
 	public static final String MANAGE_DISTRIBUTION_TARGET = "manageDistributionTarget";
 
+	/**
+	 * 엠바고 시점 배부 tick 실행 — Z 전용({@code src/services/authorization.js}
+	 * {@code runDistributionTick: ['Z']}, ADR-008 (3)). phase 72가 배부 실행 라우트를 구현하며 추가한 행이다.
+	 *
+	 * <p>외부 운영 cron은 <b>새 인증 수단이 아니라 Z 세션</b>으로 호출한다 — API 키·공유 시크릿을 만들지
+	 * 않는다(인증 표면이 하나 늘면 그 표면의 회수·감사 경로도 따로 만들어야 한다).
+	 */
+	public static final String RUN_DISTRIBUTION_TICK = "runDistributionTick";
+
+	/**
+	 * 배부 실패 조회·재전송 — Z 전용({@code src/services/authorization.js}
+	 * {@code manageDistributionFailure: ['Z']}, ADR-008 MVP-4). R도 D도 안 된다: 재전송은 외부 수신처로
+	 * 파일을 내보내는 행위다.
+	 */
+	public static final String MANAGE_DISTRIBUTION_FAILURE = "manageDistributionFailure";
+
 	/** capability → 허용 역할. 표에 없는 capability는 거부다(기본값이 허용이면 오타 한 번이 게이트를 연다). */
 	static final Map<String, List<String>> CAPABILITIES = Map.of(
 			MANAGE_USERS, List.of("Z"),
 			VIEW_LOGS, List.of("Z"),
 			EDIT_DPS, List.of("D"),
 			MANAGE_RECEIVER_CONFIG, List.of("Z"),
-			MANAGE_DISTRIBUTION_TARGET, List.of("Z"));
+			MANAGE_DISTRIBUTION_TARGET, List.of("Z"),
+			RUN_DISTRIBUTION_TICK, List.of("Z"),
+			MANAGE_DISTRIBUTION_FAILURE, List.of("Z"));
 
 	/** 고침/포털고침으로 인정하는 액션(Node {@code REVISE_ACTIONS}). 그 밖의 값은 어휘 밖이다. */
 	private static final Set<String> REVISE_ACTIONS = Set.of("revise", "portalRevise");
