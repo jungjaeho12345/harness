@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import harness.news.db.RequiredSchema;
 import harness.news.model.ArticleAggregate;
 import harness.news.model.ArticleHistoryRepository;
 import harness.news.model.ArticleRepository;
@@ -28,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -356,7 +358,122 @@ class DistributionWireTest {
 		}
 	}
 
+	/**
+	 * <b>컬럼 단위 그물</b> — 세 라우트가 {@code Contents}에 쓰는 컬럼은 {@code distributedAt}과
+	 * {@code status} <b>둘뿐</b>이고, 이미 있던 원장 행은 <b>한 글자도 다시 쓰이지 않는다</b>.
+	 *
+	 * <p>{@link #noneOfTheThreeRoutesEverRemovesARow}의 행 수 단언({@code count >= before})으로는 모자란
+	 * 자리다: 삭제 1 + 삽입 1은 합계가 그대로라 통과하고, 본문·잠금·{@code sentAt}을 함께 덮어쓰는 갱신은
+	 * 행 수를 아예 바꾸지 않는다(phase 70 ④의 교훈 — 계약 163관측·정적 스캔이 전부 green인 채 테이블이
+	 * 비었다). 그래서 여기서는 <b>전 컬럼 스냅샷</b>을 뜬다.
+	 *
+	 * <p>두 경로를 함께 태운다: tick의 배부(승격까지 = {@code status} + {@code distributedAt}) ·
+	 * 재전송의 해소({@code distributedAt}만). 잠금·송고 stamp·본문이 함께 쓰이면 그 자리에서 red다.
+	 */
+	@Test
+	void theRoutesWriteOnlyDistributedAtAndStatusAndNeverRewriteAnExistingLedgerRow() {
+		String tickSlug = unique("cola");
+		seedTarget(unique("t"), PRESS, tickSlug, "Y");
+		String ticked = seedFullyPopulatedArticle("DES", pastIso());
+
+		String retrySlug = unique("colb");
+		long retryTarget = seedTarget(unique("t"), PRESS, retrySlug, "Y");
+		String retried = seedFullyPopulatedArticle("DPS", null);
+		long failureId = seedFailure(retried, PRESS, retryTarget, SPOOL_WRITE_FAILED);
+
+		Map<String, Object> tickedBefore = contentsSnapshot(ticked);
+		Map<String, Object> retriedBefore = contentsSnapshot(retried);
+		Map<String, Object> articleBefore = this.articles.findById(ticked).article();
+		Map<Long, Map<String, Object>> ledgerBefore = ledgerSnapshot();
+
+		Wire.Response tickResponse = tick(zToken(), null);
+		assertEquals(200, tickResponse.status(), tickResponse.body());
+		Wire.Response listResponse = failures(zToken(), "limit=50");
+		assertEquals(200, listResponse.status(), listResponse.body());
+		Wire.Response retryResponse = retry(zToken(), historyIdBody(failureId));
+		assertEquals(200, retryResponse.status(), retryResponse.body());
+
+		// 배부가 실제로 일어났는지부터 확인한다 — 아무 일도 안 했으면 아래 단언은 공허하다.
+		// 수신처는 kind별 전량 배부라 tick은 활성 press 대상 <b>전부</b>에 쓴다 — 기사 단위로 센다.
+		assertEquals(1L, spoolFilesFor(tickSlug, ticked), "tick이 스풀을 쓰지 않았다 — 그물이 공허해진다");
+		assertEquals(1L, spoolFilesFor(retrySlug, retried), "재전송이 스풀을 쓰지 않았다 — 그물이 공허해진다");
+
+		assertEquals(List.of("distributedAt", "status"), changedColumns(tickedBefore, ticked),
+				"tick이 배부 2컬럼 밖을 함께 썼다");
+		assertEquals(List.of("distributedAt"), changedColumns(retriedBefore, retried),
+				"재전송이 distributedAt 밖을 함께 썼다");
+		assertEquals(articleBefore, this.articles.findById(ticked).article(),
+				"본문 테이블(Article)은 배부가 건드리지 않는다");
+
+		Map<Long, Map<String, Object>> ledgerAfter = ledgerSnapshot();
+		for (Map.Entry<Long, Map<String, Object>> before : ledgerBefore.entrySet()) {
+			assertEquals(before.getValue(), ledgerAfter.get(before.getKey()),
+					"이력 " + before.getKey() + " 행이 사라졌거나 다시 쓰였다 — 원장은 append-only다");
+		}
+		assertTrue(ledgerAfter.size() > ledgerBefore.size(), "배부 사실이 원장에 남지 않았다");
+	}
+
 	// --- 픽스처 -------------------------------------------------------------------------------------
+
+	/** 그 수신처 디렉토리에 <b>그 기사</b>로 나간 스풀 파일 수(파일명이 {@code articleId_}로 시작한다). */
+	private static long spoolFilesFor(String slug, String articleId) {
+		return spoolFilesIn(slug).stream()
+				.filter((file) -> file.getFileName().toString().startsWith(articleId + "_"))
+				.count();
+	}
+
+	/** {@code Contents} 27컬럼을 <b>전부</b> 채운 기사 — 함께 쓰인 컬럼이 있으면 스냅샷 비교로 드러난다. */
+	private String seedFullyPopulatedArticle(String status, String embargoAt) {
+		String articleId = "AKR2026" + Long.toHexString(System.nanoTime());
+		this.articles.insert(
+				row("articleId", articleId, "title", "제목", "markupVersion", "<p>본문(끝)</p>"),
+				row("articleId", articleId, "title", "제목", "content", "본문", "author", "reporter1",
+						"modifier", "desk1", "sender", "desk1", "department", "정치부",
+						"departmentCode", "P01", "createdAt", STAMP, "editedAt", STAMP, "sentAt", STAMP,
+						"distributedAt", null, "embargoAt", embargoAt, "secondEmbargoAt", null,
+						"status", status, "lockYN", "Y", "lockerUserId", "desk1",
+						"lockerSessionId", "SESSION-TOKEN", "lockerClientId", "cid-1", "lockedAt", STAMP,
+						"coAuthor", "공동", "category", "정치", "region", "서울", "attribute", "속보",
+						"keyword", "키워드", "internalComment", "내부메모", "externalComment", "외부메모",
+						"attachmentFile", "a.jpg", "referenceFile", "r.pdf"));
+		return articleId;
+	}
+
+	/** {@code Contents} 전 컬럼 스냅샷 — present-only 판정의 입력이다. */
+	private Map<String, Object> contentsSnapshot(String articleId) {
+		ArticleAggregate found = this.articles.findById(articleId);
+		assertNotNull(found, "기사가 없다: " + articleId);
+		Map<String, Object> columns = new LinkedHashMap<>();
+		for (String column : RequiredSchema.CONTENTS_COLUMNS) {
+			columns.put(column, found.contents().column(column));
+		}
+		return columns;
+	}
+
+	/** 스냅샷 이후 값이 달라진 컬럼(정렬) — 기대 목록과 그대로 비교한다. */
+	private List<String> changedColumns(Map<String, Object> before, String articleId) {
+		Map<String, Object> after = contentsSnapshot(articleId);
+		List<String> changed = new ArrayList<>();
+		for (String column : RequiredSchema.CONTENTS_COLUMNS) {
+			if (!Objects.equals(before.get(column), after.get(column))) {
+				changed.add(column);
+			}
+		}
+		changed.sort(Comparator.naturalOrder());
+		return changed;
+	}
+
+	/** 원장 <b>전 행 · 전 컬럼</b> 스냅샷(id → 컬럼 맵) — 재기록·삭제를 둘 다 잡는다. */
+	private Map<Long, Map<String, Object>> ledgerSnapshot() {
+		Map<Long, Map<String, Object>> rows = new LinkedHashMap<>();
+		for (Map<String, Object> row : this.jdbc
+				.sql("SELECT " + String.join(", ", RequiredSchema.HISTORY_COLUMNS) + " FROM "
+						+ RequiredSchema.HISTORY_TABLE + " ORDER BY id")
+				.query().listOfRows()) {
+			rows.put(Long.valueOf(((Number) row.get("id")).longValue()), new LinkedHashMap<>(row));
+		}
+		return rows;
+	}
 
 	private static Map<String, Object> row(Object... pairs) {
 		Map<String, Object> map = new LinkedHashMap<>();

@@ -95,7 +95,12 @@ class Adr008DisciplineTest {
 			// TimeUnit.SECONDS.sleep(...)·MILLISECONDS.sleep(...) — Thread.sleep의 다른 철자다.
 			Pattern.compile("\\bTimeUnit\\s*\\.\\s*\\w+\\s*\\.\\s*sleep\\s*\\("),
 			Pattern.compile("\\.\\s*schedule(AtFixedRate|WithFixedDelay)?\\s*\\("),
-			Pattern.compile("\\bScheduledFuture\\b")),
+			Pattern.compile("\\bScheduledFuture\\b"),
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 '다른 철자의 sleep' — 요청 스레드를 재우는 것은
+			// 표기가 무엇이든 앱 내 타이밍이다(백오프가 손대는 첫 자리다 · ADR-008 (6)).
+			Pattern.compile("\\bLockSupport\\b"),
+			Pattern.compile("\\.\\s*park(Nanos|Until)?\\s*\\("),
+			Pattern.compile("\\.\\s*await\\s*\\(")),
 			List.of());
 
 	/**
@@ -118,7 +123,12 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\b(?:Task|Async(?:Task)?)Executor\\b"),
 			Pattern.compile("\\bExecutors\\s*\\.\\s*new\\w+\\s*\\("),
 			Pattern.compile("\\bnew\\s+(java\\.lang\\.)?Thread\\s*\\("),
-			Pattern.compile("@\\s*(?:[\\w.]+\\.)?Recover\\b")),
+			Pattern.compile("@\\s*(?:[\\w.]+\\.)?Recover\\b"),
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 JDK21 표기 — new Thread(도 Executors.도 거치지
+			// 않고 요청 스레드 밖에서 코드를 돌리는 가장 짧은 철자다(가장 손이 먼저 가는 형태이기도 하다).
+			Pattern.compile("\\bThread\\s*\\.\\s*startVirtualThread\\s*\\("),
+			Pattern.compile("\\bThread\\s*\\.\\s*of(Virtual|Platform)\\s*\\("),
+			Pattern.compile("\\bCountDownLatch\\b")),
 			List.of());
 
 	/**
@@ -138,7 +148,12 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\bSocketChannel\\b"),
 			Pattern.compile("\\bDatagramSocket\\b"),
 			Pattern.compile("\\bURLConnection\\b"),
-			Pattern.compile("\\bHttpURLConnection\\b")),
+			Pattern.compile("\\bHttpURLConnection\\b"),
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들. AsynchronousSocketChannel은 \bSocketChannel\b이
+			// 낱말 경계 때문에 잡지 못하고(앞 글자가 단어 문자다), URL.getContent()는 openStream()을 감춘
+			// 한 줄 축약형이다 — 둘 다 밖으로 나간다.
+			Pattern.compile("\\bAsynchronous(Server)?SocketChannel\\b"),
+			Pattern.compile("\\.\\s*getContent\\s*\\(")),
 			List.of(NETWORK_CLIENT_FILE));
 
 	/**
@@ -166,7 +181,13 @@ class Adr008DisciplineTest {
 			Pattern.compile("\\bFiles\\s*\\.\\s*delete(IfExists)?\\s*\\("),
 			Pattern.compile("\\.\\s*mkdirs?\\s*\\("),
 			Pattern.compile("\\.\\s*createNewFile\\s*\\("),
-			Pattern.compile("\\.\\s*renameTo\\s*\\(")),
+			Pattern.compile("\\.\\s*renameTo\\s*\\("),
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들.
+			// AsynchronousFileChannel: \bFileChannel\b이 낱말 경계 때문에 잡지 못한다(앞 글자가 단어 문자다).
+			// File.delete()/deleteOnExit(): Files.delete만 막고 있어 java.io 표기의 **파일 삭제**가 어느
+			// main 소스에서든 통과했다 — 쓰기보다 위험한 파괴 연산이 4군의 구멍이었다(DB 비파괴와 같은 축).
+			Pattern.compile("\\bAsynchronousFileChannel\\b"),
+			Pattern.compile("\\.\\s*delete(OnExit)?\\s*\\(\\s*\\)")),
 			List.of(SPOOL_WRITER_FILE));
 
 	private static final List<Rule> RULES =
@@ -199,7 +220,11 @@ class Adr008DisciplineTest {
 			"TimeUnit.SECONDS.sleep(3);",
 			"pool.scheduleAtFixedRate(this::tick, 0, 60, TimeUnit.SECONDS);",
 			"pool.scheduleWithFixedDelay(this::tick, 0, 60, TimeUnit.SECONDS);",
-			"ScheduledFuture<?> handle = pool.schedule(task, 1, TimeUnit.SECONDS);");
+			"ScheduledFuture<?> handle = pool.schedule(task, 1, TimeUnit.SECONDS);",
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들 — 이제 red다.
+			"LockSupport.parkNanos(1_000_000_000L);",
+			"java.util.concurrent.locks.LockSupport.parkUntil(deadline);",
+			"latch.await(3, TimeUnit.SECONDS);");
 
 	private static final List<String> PLANTED_ASYNC = List.of(
 			"@Async\nvoid publish() { }",
@@ -222,7 +247,12 @@ class Adr008DisciplineTest {
 			"var workers = Executors.newFixedThreadPool(4);",
 			"new Thread(() -> spool(article)).start();",
 			"new java.lang.Thread(this::flush).start();",
-			"@Recover\nString fallback(Exception e) { return \"\"; }");
+			"@Recover\nString fallback(Exception e) { return \"\"; }",
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 JDK21 표기 — 이제 red다.
+			"Thread.startVirtualThread(() -> spool(article));",
+			"Thread.ofVirtual().start(task);",
+			"Thread.ofPlatform().start(task);",
+			"private final CountDownLatch done = new CountDownLatch(1);");
 
 	private static final List<String> PLANTED_NETWORK = List.of(
 			"private final HttpClient http = HttpClient.newHttpClient();",
@@ -237,7 +267,11 @@ class Adr008DisciplineTest {
 			"SocketChannel channel = null;",
 			"DatagramSocket socket = null;",
 			"URLConnection conn = null;",
-			"HttpURLConnection conn = null;");
+			"HttpURLConnection conn = null;",
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들 — 이제 red다.
+			"AsynchronousSocketChannel channel = AsynchronousSocketChannel.open();",
+			"AsynchronousServerSocketChannel listener = null;",
+			"return URI.create(endpoint).toURL().getContent();");
 
 	private static final List<String> PLANTED_FILE_WRITE = List.of(
 			"Files.write(target, bytes);",
@@ -263,7 +297,11 @@ class Adr008DisciplineTest {
 			"spoolRoot.toFile().mkdirs();",
 			"spoolRoot.toFile().mkdir();",
 			"target.toFile().createNewFile();",
-			"tmp.toFile().renameTo(target.toFile());");
+			"tmp.toFile().renameTo(target.toFile());",
+			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들 — 이제 red다.
+			"try (var ch = AsynchronousFileChannel.open(target, StandardOpenOption.WRITE)) { ch.write(buf, 0L); }",
+			"target.toFile().delete();",
+			"stale.deleteOnExit();");
 
 	private static List<List<String>> plantedByRule() {
 		return List.of(PLANTED_PERIODIC, PLANTED_ASYNC, PLANTED_NETWORK, PLANTED_FILE_WRITE);
