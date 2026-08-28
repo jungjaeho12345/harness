@@ -7,16 +7,18 @@
 - 좌표: groupId `harness` · artifactId `server-spring` · base package `harness.news` · Java 21 · Spring Boot 4.1.0
 - 계층: `controller → service → repository → db` (컨트롤러는 shape 매핑만, 서비스는 서블릿 타입 비의존, **생성자 주입만**)
 - 현재 구현 범위(phase 68 **인증/세션 축** + phase 69 **기사 도메인** + phase 70 **관리자 CRUD** + phase 71 **수집 인제스트**
-  + phase 72 **배부 실행**): 라우트 **32개**. 계약 17파일(default 11 · minimal 3 · auth-negative 1 · **failclosed 1** ·
-  prod-cookie 1) = **5 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비 **패리티 diff 0**이다
-  (phase 72 마감 실측 2026-08-26 — 연속 2회 동일: 관측 **265**(default 198 · minimal 55 · auth-negative 4 · failclosed 5 ·
-  prod-cookie 3) · diffs 0 · 자기 결정성(`--dual-run`) 265관측 diffs 0 · Java **1022 테스트 0 실패** · jar **35,738,248 B** ·
-  Node 축 `npm test` **1328/1328**). 미디어/업로드/사진·SSE·번역은 아직 없다(아래 라우트 표).
+  + phase 72 **배부 실행** + phase 73 **미디어·업로드·사진·번역**): 라우트 **37개**. 계약 18파일(default 12 · minimal 3 ·
+  auth-negative 1 · **failclosed 1** · prod-cookie 1) = **5 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비
+  **패리티 diff 0**이다 (phase 73 마감 실측 2026-08-28 — 연속 2회 동일: 관측 **296**(default 229 · minimal 55 ·
+  auth-negative 4 · failclosed 5 · prod-cookie 3) · diffs 0 · 자기 결정성(`--dual-run`) 296관측 diffs 0 ·
+  Java **1229 테스트 0 실패** · jar **35,778,253 B**(clean 빌드 기준 — 증분 빌드는 수십~수백 바이트 다르다) ·
+  Node 축 `npm test` **1328/1328**(2회 실행 중 1회는 `test/distribution-failure-api.test.js`가 `bad port` fetch flake로
+  1건 실패했고 **재실행 2회 green** — Spring 축과 공유 자원이 없는 하네스 flake다)). **남은 것은 SSE 2개뿐**이다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 32개**다
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 37개**다
 (`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
 
 | 라우트 | 인증 | 비고 |
@@ -53,6 +55,11 @@
 | `POST /api/distribution/tick` | admin(Z) | 외부 cron이 당기는 **엠바고 시점 배부**(앱 내 타이머 0 — ADR-008). **body를 읽지 않는다**(핸들러에 `@RequestBody` 파라미터가 0개임을 리플렉션 테스트가 잠근다 — 시각·대상·역할 주입 경로 차단) · 응답은 화이트리스트 **6키**(`ok,at,scanned,distributed,failed,invalid`)이고 스풀 경로·파일명이 한 글자도 실리지 않는다 · 프로세스 내 single-flight(재진입은 스캔 없이 `skipped:'in-progress'` 7키) · 스풀 미설정이면 **인가 통과 후** 503 `spool-disabled` |
 | `GET /api/distribution/failures` | admin(Z) | 미해소 실패 목록 — `(articleId,targetId,action)` 그룹의 **최대 id 행**이 `distribute-failed`면 미해소(`distribute-retry`면 해소). 항목 **10키**(경로성 필드 0) · `limit`은 Node `Number()` 동형(기본 200 · 상한 1000 · 반복 키는 NaN → 기본값 200) · **스풀 설정과 무관하게 항상 200**이다 |
 | `POST /api/distribution/retry` | admin(Z) | 입력은 **`historyId` 하나**뿐이고 articleId·targetId·kind는 그 실패 행에서만 도출한다(ADR-004). 게이트 순서가 계약이고 **어떤 거부 경로에서도 스풀 쓰기·이력 기록이 없다** · 409 4종(`status-changed`·`kind-changed`·`stale-cycle`·`retry-in-flight`) · 서버측 장애 3토큰(`spool-write-failed`·`invalid-spool-dir`·`invalid-article-id`)은 **이 라우트에서만** 500으로 재매핑한다(전역 표에 넣으면 배부 대상 CRUD의 400이 깨진다) · 성공은 append-only `distribute-retry` 이력 + `distributedAt` 갱신 |
+| `GET /api/media/search` | session | 서버 보유 키 프록시(ADR-014) — **키가 없으면 외부 호출을 아예 하지 않고** 결정적 데모 폴백(이미지 6 · 영상 4) + `error:false`로 **graceful degrade**한다(4xx/5xx가 아니다 · 응답은 `{ok,items,error}` 3키 재조립). `type`은 `"image"` **엄격 비교**라 `?type[]=image`도 video이고, `q`는 반복 키를 콤마로 잇는 Node 규칙(`NodeString.queryText`) · 외부 URL의 값은 `NodeUri.encodeURIComponent` 이식본으로 만든다 · 호출은 **1회**뿐이다 |
+| `POST /api/upload` | session | **multipart가 아니라 base64 JSON**(`{filename, contentBase64}`)이다. 게이트 순서 **타입 → 확장자 → 크기**이고 확장자는 Node `path.win32.extname` 이식본 + 화이트리스트 **14종**(`invalid-file` 400), 상한은 **디코드된 5 MiB 초과**(`too-large` 400). 디코드는 Node의 **관대한 base64**(`NodeBase64` — 알파벳 밖 문자를 버리지 않고 UTF-16 코드유닛의 하위 1바이트로 절단해 표를 찾는다. 엄격 디코더로 바꾸면 200이어야 할 요청이 500이 된다). 저장명은 **서버가 발급하는 32-hex**이고 `CREATE_NEW`로만 만든다(클라 파일명은 경로에 닿지 않는다) · uploads 루트는 **첫 저장 직전 lazy mkdir** · 응답은 `{ok,path,filename}` |
+| `POST /api/photos` | session | **append-only**(수정·삭제 라우트 없음) · `registeredBy`는 **세션에서 재도출한 사용자**이고 body의 같은 이름 필드는 **읽지 않는다**(ADR-004) · `src` 없으면 `invalid-src` 400 |
+| `GET /api/photos/search` | session | `q`로 `caption` 부분일치(`LIKE '%q%'` · **`ESCAPE` 없음** — 정본이 `%q%`를 그대로 바인딩한다) · **id DESC** · 빈 질의는 400이 아니라 전체 · 반복 키는 콤마 결합(Node `String(array)` 동형) · 투영은 `SELECT *`가 아니라 **6컬럼 명시**다(`id,src,caption,sourceArticleId,registeredBy,createdAt` — 컬럼이 늘어도 응답이 저절로 넓어지지 않는다) |
+| `POST /api/articles/:id/translate` | session | 서버 보유 키 프록시(ADR-014) — 키가 없으면 **200 + `{ok:false, reason:'no-key'}` + 원문 폴백**이다(`no-key`·`error`는 `ReasonStatus`에 넣지 않았다 — 200 본문의 필드다). 번역할 본문은 **서버가 기사에서 도출**하고 요청 body의 `text`는 **쓰지 않는다**(ADR-004) · 외부 URL 인코딩은 `encodeURIComponent`가 아니라 **`URLSearchParams`**(공백이 `+`) · 빈 본문은 **호출 0회 · 2키** 응답 · 어떤 실패도 `{ok:false,reason:'error',translatedText:원문}`로 접힌다 |
 
 **배부 대상에는 행 삭제 경로가 없다** — `DELETE /api/distribution-targets/:id`는 핸들러 미등록으로 **404**다
 (Express는 method+path를 함께 매칭해 미등록 메서드를 405가 아니라 404로 떨구므로, Spring도 메서드 불일치를
@@ -60,8 +67,9 @@
 같은 매핑이 **`GET /api/distribution/tick`도 404 `text/html`**로 떨군다(POST만 붙였고 그 경로에 GET 특수처리를 새로 만들지
 않았다 — phase 72 실측 확인, `distribution-tick.contract.js`의 `x-distribution-tick-get` 관측).
 
-**나머지 7 라우트에는 스텁을 만들지 않았다** — 미디어/업로드/사진 4(`GET /api/media/search` · `POST /api/upload` · `POST /api/photos` ·
-`GET /api/photos/search`) · SSE 2(`GET /api/stream` · `GET /api/logs/stream`) · 번역 1(`POST /api/articles/:id/translate`).
+**나머지 2 라우트에는 스텁을 만들지 않았다** — SSE 2(`GET /api/stream` · `GET /api/logs/stream`)뿐이다.
+`PathPolicyWireTest`의 **스텁 금지 프로브는 이제 `GET /api/stream`을 가리킨다**(phase 73 step9 재조준 — 이전에는
+`GET /api/media/search`였고 그 라우트가 구현되면서 옮겼다. 단언은 그대로 **인증된 요청이 404 `text/html; charset=utf-8`**이다).
 대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
@@ -81,7 +89,29 @@
 **200 JSON**이고, `GET /api/articles/<id>;v=2`는 Node 404 `{ok:false,reason:"not-found"}`(express는 `;v=2`를 id에 붙인다) ·
 Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계약이 관측하는 축인 **미인증이면 401**은 양쪽 동형이며 그것은 경로 정책
 필터가 잠근다. 고치지 않은 이유: 매칭 정책을 바꾸면 39 라우트 전부의 판정이 함께 움직이므로 도메인 phase가 개별로 판단할 것이
-아니라 **경로 정규화 정책을 한 번에 다루는 별도 판단**이 필요하다. **라우트를 늘리는 phase마다 같은 divergence가 새로 생긴다.**
+아니라 **경로 정규화 정책을 한 번에 다루는 별도 판단**이 필요하다. **라우트를 늘리는 phase마다 같은 divergence가 새로 생긴다** —
+phase 73이 5 라우트를 붙이면서 그 표면은 다시 **37 라우트**로 넓어졌다(마지막으로 남은 SSE 2가 붙으면 39가 된다).
+
+## `/uploads` 정적 서빙은 39 라우트 인벤토리 밖이다
+
+`POST /api/upload`가 저장한 파일은 `GET /uploads/<32hex>.<ext>`로 나간다(Node `server/index.js`의
+`app.use('/uploads', express.static(uploadDir))`와 같은 자리). 이것은 **컨트롤러 매핑이 아니라 리소스 핸들러**로 붙였다
+(`WebConfig`의 `WebMvcConfigurer` 빈 1개 · `/uploads/**` → `file:<app.data-dir>/uploads/` · `@EnableWebMvc` 없음).
+이유는 정직성이다: `@RequestMapping`을 붙이면 그 핸들러가 `RequestMappingHandlerMapping`에 나타나 **`HandlerInventoryTest`가
+즉시 red**가 된다(인벤토리 39 라우트에 없는 매핑이기 때문). 리소스 핸들러는 그 목록에 나타나지 않으므로 **인벤토리 밖에**
+그대로 둔다 — 계약은 이 경로를 `x-uploads-static` 유사 라우트 **1관측**으로만 본다.
+
+- **세션을 요구하지 않는다**(미인증 200). 발행된 HTML에 재임베드된 이미지가 로드돼야 하고 Node도 그렇다 —
+  URL 자체가 **capability**(32-hex 서버 발급명)다. `RoutePolicy`에 `/uploads` 행을 넣으면 계약 관측이 401로 red다(변이로 실증).
+- 루트 도출은 **`AppProperties.uploadsDirPath()` 한 지점**이다(저장측 `UploadStore`와 공유). 두 곳에서 도출하면
+  업로드는 200인데 서빙은 404가 되는 조용한 divergence가 생긴다. 부팅 시점에 디렉토리가 **없어도** 된다(lazy mkdir과 정합).
+- `Content-Type: image/png`(**charset 없음**)를 와이어 실측으로 확인했다 — `JsonHttp`·`RawContentType`은 한 줄도 넓히지 않았다.
+- **경로 탈출 9종**(`../` · `..%2f` · `%2e%2e/` · `%2e%2e%2f` · `....//` · `..%5c` · `%252e%252e/` · `..%c0%af` · 원문 `..\`)이
+  전부 비-200이고 어느 응답에도 `SQLite format 3` 바이트가 없다(데이터 디렉토리에 실제 `news.db`를 둔 배치로 관측).
+  형제 파일·디렉토리 목록도 노출되지 않고 응답 어디에도 서버 절대경로가 없다.
+- **헤더 divergence는 고치지 않았다**: express.static은 `Cache-Control: public, max-age=0`과 약한 `ETag`를 싣지만 Spring은
+  **둘 다 없다**(계약 리포트가 싣지 않는 헤더이고, 조건부 요청 304 경로를 새로 여는 것은 표면만 넓힌다).
+  `.txt`의 `Content-Type`도 Node `text/plain; charset=UTF-8` 대 Spring `text/plain`(charset 없음)이다.
 
 **배부 실행은 phase 72에서 결선됐다**(ADR-008 이식 — 파일 스풀 outbound · 외부 cron tick pull · 앱 내 타이머 0 · 배부 축
 네트워크 egress 0 · 자동 재시도·백오프·큐 0). 결선 여부를 정하는 **판정 지점은 `SpoolProperties.rootPath()` 하나**다:
@@ -92,13 +122,13 @@ Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계�
 일어난다** — `distribution-tick.contract.js`가 활성 대상을 만들고 tick이 임시 스풀 디렉토리에 파일을 게시하며
 (`.tmp` 쓰기 → `ATOMIC_MOVE`), `distributedAt` 갱신·`distribute` 이력·엠바고 승격(`promotedStatus: DPS`)이 관측된다.
 그 파일도 `after`에서 대상을 **deactivate로 회수**하므로 활성 대상이 다른 파일과 공존하지 않는다. 추정이 아니라
-`default` **198관측**을 포함한 **265관측 diffs 0**(연속 2회 · phase 72 마감 재측정 2026-08-26)으로 확인한 사실이다.
+`default` **229관측**을 포함한 **296관측 diffs 0**(연속 2회 · phase 73 마감 재측정 2026-08-28)으로 확인한 사실이다.
 tick 응답에는 **스풀 절대경로도 스풀 파일명도 실리지 않는다**(5개 리포트 전문 문자열 검색에서 드라이브 문자로 시작하는
 절대경로 0건 · `<articleId>_<stamp>.json` 패턴 0건 — 실패 사유는 예외 메시지가 아니라 **고정 토큰만** 쓴다).
 
 그래서 계약 스위트는 **담당 도메인 파일만**(`--files`·scope 표) 돌린다. `--require-full-coverage`는 P1 도메인 phase가 전부 끝난 뒤에만
-쓸 수 있다(지금 쓰면 남은 7 라우트 때문에 영구 red이며, 그 red가 정상이다 — Spring 대상 커버리지는 프로파일별로
-`default` 24/39 · `minimal` 2/39 · `prod-cookie` 1/39이고, **Node 대상 전 프로파일 합산에서만 39/39**가 된다).
+쓸 수 있다(지금 쓰면 남은 **SSE 2 라우트** 때문에 영구 red이며, 그 red가 정상이다 — Spring 대상 커버리지는 프로파일별로
+`default` 29/39 · `minimal` 2/39 · `prod-cookie` 1/39이고, **Node 대상 전 프로파일 합산에서만 39/39**가 된다).
 
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
@@ -140,12 +170,17 @@ curl -i http://127.0.0.1:15731/api/health   # 200 {"ok":true}
 대해 갖는 소유 경계와 동형). 이 하네스가 이후 phase의 진행률 측정 수단이다 — 각 step의 합격 기준이
 "이 커맨드로 계약 파일 N개가 green"이다.
 
-scope 표에는 지금 **5 프로파일**이 올라 있다(`default` 11파일 · `minimal` 3 · `auth-negative` 1 · `failclosed` 1 ·
-`prod-cookie` 1 = 계약 17파일). 프로파일마다 **구성 축 3개**(`host` 바인드 주소 · `spool`=`DIST_SPOOL_DIR` 주입 여부 ·
+scope 표에는 지금 **5 프로파일**이 올라 있다(`default` 12파일 · `minimal` 3 · `auth-negative` 1 · `failclosed` 1 ·
+`prod-cookie` 1 = 계약 18파일). 프로파일마다 **구성 축 3개**(`host` 바인드 주소 · `spool`=`DIST_SPOOL_DIR` 주입 여부 ·
 `token`=`COLLECTION_TOKEN` 주입 여부)를 갖고 그 값은 러너(`scripts/contract-run.mjs`)의 `PROFILES`와 **반드시 같다** —
 갈리면 두 대상이 서로 다른 서버 구성을 측정하게 되고 그 구성 차이가 "계약 차이"로 위장된다(하네스가 실행 초반에 대조한다).
 
-- `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users·수집이 여기 있다.
+- `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users·수집·배부와
+  **미디어/업로드/사진/번역**(`media-upload.contract.js` — phase 73이 올린 12번째 파일)이 여기 있다.
+  **외부 API 키는 계약 env에 애초에 존재하지 않는다** — Node 자식은 러너 `cleanEnv()`가 `GOOGLE_API_KEY`·`GOOGLE_CSE_ID`·
+  `YOUTUBE_API_KEY`·`GOOGLE_TRANSLATE_API_KEY` 4종을 지우고, java 자식은 `javaChildEnv()`가 **OS 허용 목록만** 통과시킨다.
+  그래서 계약이 관측하는 것은 언제나 **키 없는 폴백 경로**이고, 키가 설정된 경로와 키 비유출은 계약이 아니라
+  Java 단위 테스트(`HttpExternalProxyClientTest`·`MediaSearchServiceTest`·`TranslationServiceTest`)가 소유한다.
 - **`minimal`** — 러너 프리셋이 `spool:false, token:false`이고 **env를 주지 않는 것**이 프로파일의 정의다. 스풀·수집 토큰이
   없으면 Node에서 배부 결선 자체가 없어 송고 훅(비동기 배부 → `syncEmbargoStatus` 승격 DES→EPS→DPS)이 발화하지 않는다
   = **전이 관측이 결정적**이다. 그래서 상태 기계 계약(`transitions.contract.js`)이 이 프로파일에 있다. phase 72가 배부를
@@ -218,6 +253,22 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 | `server.address` | `HOST` | `127.0.0.1` | **미설정이면 loopback 바인드** — `HOST` 명시 설정 시에만 LAN에 열린다(Node 서버와 동일 규율). 수집 fail-closed 판정의 입력이기도 하다(바로 아래). |
 | `app.collection.token` | `COLLECTION_TOKEN` | 빈 값(미설정) | 수집 토큰. **미설정이면 `x-collection-token` 헤더를 아예 읽지 않는다**(어떤 값이 와도 무시 — loopback 바인드에서 개방). 설정돼 있으면 불일치·부재가 401이다. 빈 문자열이 '미설정'이고 **공백 1칸은 '설정됨'**이다(Node truthy 판정 그대로 — 다듬지 않는다). |
 | `app.distribution.spool-dir` | `DIST_SPOOL_DIR` | 빈 값(미설정) | 배부 스풀 루트(phase 72 배선 · `AppProperties`가 아니라 별도 `SpoolProperties` record로 분리했다 — `CollectionProperties` 선례). **미설정이면 배부가 전면 비활성**이다: `POST /api/distribution/tick`·`POST /api/distribution/retry`는 **인가를 통과한 뒤** 503 `spool-disabled`, `GET /api/distribution/failures`는 **200**(스풀과 무관), 송고 즉시 배부 훅은 **결선되지 않는다**. **기본값을 하드코딩하지 않는다**(cwd·`DATA_DIR` 하위 추정 금지 — 모르면 배부하지 않는다). 값은 `NodeString.trim`으로 다듬으며 **공백만 있는 값은 '미설정'으로 수렴한다**(Node truthy 판정과 갈리는 지점 · 계약 미관측 · 방향은 안전측). |
+| `app.media.google-api-key` | `GOOGLE_API_KEY` | 빈 값(미설정) | 미디어 검색 이미지(Google CSE)용 서버 보유 키(ADR-014 · `MediaProperties`). **이미지는 키와 엔진 id가 둘 다 있어야** 외부 호출이 열린다. |
+| `app.media.google-cse-id` | `GOOGLE_CSE_ID` | 빈 값(미설정) | 위와 짝이 되는 CSE 엔진 id. |
+| `app.media.youtube-api-key` | `YOUTUBE_API_KEY` | 빈 값(미설정) | 미디어 검색 영상(YouTube Data v3)용 서버 보유 키. **영상은 키 하나면** 열린다. |
+| `app.translate.google-api-key` | `GOOGLE_TRANSLATE_API_KEY` | 빈 값(미설정) | 번역(Google Translate v2)용 서버 보유 키(ADR-014 · `TranslateProperties` — `MediaProperties`를 4키로 넓히지 않고 분리했다). 미설정이면 `POST /api/articles/:id/translate`가 **200 + `{ok:false, reason:'no-key'}` + 원문 폴백**이다. |
+
+미디어·번역 키 4종의 공통 규율(ADR-014): 값은 **OS 환경변수에서만** 오고 `application.properties`에 실제 키를 적지 않는다 ·
+**미설정이면 외부 호출을 아예 하지 않는다**(미디어는 결정적 데모 폴백 + `error:false`) · 키 문자열은 응답·`LogService` 링 버퍼·
+예외 메시지·원인 체인 어디에도 실리지 않는다(센티넬 키로 3면 단언) · **공백뿐인 값은 '미설정'으로 수렴한다**
+(JS truthy는 공백 1칸을 '설정됨'으로 보므로 이것은 **의도된 divergence**이고 `app.collection.token`과 반대 선택이다 —
+`.env` 오타가 조용한 egress로 번지지 않게 하는 쪽으로 틀렸다. 미설정 판정에만 다듬기를 쓰고 **설정된 키 값 자체는 원문 그대로** 쓴다).
+
+**업로드 루트에는 전용 환경변수가 없다** — `POST /api/upload`의 저장 위치와 `/uploads/**` 정적 서빙 위치는 둘 다
+`app.data-dir` 하위의 `uploads/`이고, 그 경로를 도출하는 **유일한 지점이 `AppProperties.uploadsDirPath()`**다
+(Node `resolveRuntimePaths.uploadDir`와 같은 자리). 별도 키를 만들지 않은 이유는 저장측과 서빙측이 갈리는 것을 막기 위해서다 ·
+디렉토리는 부팅이 아니라 **첫 저장 직전 lazy mkdir** 한 자리에서만 만든다 · Node `createApp`의 기본값 `'uploads'`(cwd 상대)는
+**이식하지 않았다**(그것을 이식하면 설정 누락이 프로세스 cwd에 파일을 쓴다).
 
 **`app.collection.host`는 `server.address`에서 파생한다**(`app.collection.host=${server.address:127.0.0.1}`) — `${HOST:127.0.0.1}`를
 한 벌 더 쓰면 **출처가 둘**이 되어, `SERVER_ADDRESS`만 설정된 배포에서 Tomcat은 전 인터페이스에 열리는데 fail-closed 판정만
@@ -241,24 +292,45 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 ④ 파일 쓰기(`Files.write`·`FileOutputStream`·`Files.createDirectories` 등). 판정은 주석을 제거한 뒤 하고,
 애노테이션은 **한정 이름**(`@org.springframework.scheduling.annotation.Scheduled`)까지 잡는다.
 
-**예외는 파일 단위로 정확히 2개**이며 ①②는 **예외 0**이다:
+**예외는 파일 단위로 정확히 4개**이며(phase 73에서 2 → 4로 늘었다) ①②는 여전히 **예외 0**이다.
+네 자리는 **군마다 근거가 다르고** `theExceptionListIsExactlyFourFiles`가 목록의 크기·구성·자리(경로)를 통째로 단언한다:
 
-- `service/HttpApiSourceFetcher.java` — ③의 유일한 예외. 수집 `pull`의 아웃바운드 어댑터다(능동 수집은 아웃바운드 호출이
-  **기능 그 자체**다 — ADR-008의 egress 금지는 배부 축이다). 재시도 0 · 리다이렉트 미추종 · connect timeout 10초 · 본문은 UTF-8 고정.
-- `service/SpoolWriter.java` — ④의 유일한 예외. phase 72가 **선등재돼 있던 그 자리를 정확히 채웠다**(예외 목록은 여전히
-  정확히 2개이고 이 phase는 `Adr008DisciplineTest`를 **0줄** 고쳤다 — 목록을 넓히는 것은 그 자체가 아키텍처 결정이며
-  `theExceptionListIsExactlyTwoFiles`가 그 사실을 diff에 드러낸다). 배부 스풀 outbound 어댑터이고 파일 쓰기가 **기능 그
-  자체**다(ADR-008 (2)의 "전송은 파일 게시로만"). 같은 디렉토리의 `.tmp`에 쓰고 `ATOMIC_MOVE`로 게시 · 일반 move 폴백 없음
+- `service/HttpApiSourceFetcher.java` — ③의 예외 ①. 수집 `pull`의 아웃바운드 어댑터다(능동 수집은 아웃바운드 호출이
+  **기능 그 자체**다 — `rcv.md`). 재시도 0 · 리다이렉트 미추종 · connect timeout 10초 · 본문은 UTF-8 고정.
+- `service/HttpExternalProxyClient.java` — ③의 예외 ②(**phase 73 신설 · 근거는 `ADR-014`**). 미디어 검색·번역의 외부 호출을
+  서버 보유 키로 대행하는 어댑터다. 71a의 안전 파라미터를 **명문 승계**한다: 재사용 필드 · connect **10초** · request **30초** ·
+  본문 **16 MiB** · `Redirect.NEVER` · **`sendAsync` 금지**(블로킹 `send`에 요청 타임아웃이 없으면 Tomcat 워커를 잠식해
+  전 라우트가 죽는다) · 실패는 예외가 아니라 값(`ok=false`).
+- `service/SpoolWriter.java` — ④의 예외 ①. 배부 스풀 outbound 어댑터이고 파일 쓰기가 **기능 그 자체**다
+  (ADR-008 (2)의 "전송은 파일 게시로만"). 같은 디렉토리의 `.tmp`에 쓰고 `ATOMIC_MOVE`로 게시 · 일반 move 폴백 없음
   · UTF-8 명시 · **throw 0**(모든 실패는 `{ok:false, reason}` 고정 토큰).
+- `service/UploadStore.java` — ④의 예외 ②(**phase 73 신설**). `POST /api/upload`의 저장 어댑터다. **경로를 밖에서 받지 않는다** —
+  루트는 `AppProperties.uploadsDirPath()`에서 스스로 도출하고 파일명은 서버 발급 32-hex이며 `CREATE_NEW`로만 만든다
+  (문자열을 경로에 이어 붙이는 API를 노출하지 않는다는 것을 `UploadStoreTest`가 단언한다).
 
-**두 예외 자리가 모두 찼다** — 다음 phase가 파일을 하나 더 넣으려 하면 그것은 예외 확대이며 별도 근거·리뷰가 필요하다.
-게이트가 마감 시점에도 살아 있음은 변이로 실증했다(2026-08-26: `DistributionTickService.java`에 한정 이름
-`@org.springframework.scheduling.annotation.Scheduled`를 심자 `mainSourcesRunNoTimersOrRetries`가 파일명·패턴을 짚어 red —
-원복 후 byte-identical 확인).
+**군 교차는 새지 않는다** — 예외는 자기 파일의 **자기 군에만** 열린다(`UploadStore`의 `HttpClient`는 네트워크 군 위반,
+`HttpExternalProxyClient`의 `Files.write`는 파일 쓰기 군 위반이다). 게이트가 마감 시점에도 살아 있음은
+**군 × 파일 6종 교차 변이**로 실증했다(2026-08-28 · **6/6 red** · 각각 원복 후 pristine 사본과 byte-identical 확인):
+
+| 심은 곳 | 심은 코드 | 실제 red를 낸 테스트 |
+|---|---|---|
+| `HttpApiSourceFetcher.java` | 한정 이름 `@…Scheduled(fixedDelay = 1000)` | `mainSourcesRunNoTimersOrRetries` |
+| `HttpExternalProxyClient.java` | `Files.write(p, b)` | `onlyTheDeclaredWritersWriteFiles` |
+| `SpoolWriter.java` | `HttpClient.newHttpClient()` | `onlyTheDeclaredOutboundAdaptersTalkToTheNetwork` |
+| `UploadStore.java` | `CompletableFuture.runAsync(() -> { })` | `mainSourcesRunNoTimersOrRetries` |
+| `UploadService.java`(비-예외) | `Files.write(p, b)` | `onlyTheDeclaredWritersWriteFiles` |
+| `MediaSearchService.java`(비-예외) | `HttpClient.newHttpClient()` | `onlyTheDeclaredOutboundAdaptersTalkToTheNetwork` |
+
+**네 자리가 모두 찼다** — 다음 phase가 파일을 하나 더 넣으려 하면 그것은 예외 확대이며 별도 근거·리뷰가 필요하다.
+예외가 둘에서 넷이 되면서 **스캔 사각도 두 배**가 됐다는 사실을 함께 기억한다(ADR-014 트레이드오프).
 
 예외를 파일 단위로 두는 이유는 `ClockDisciplineTest.CLOCK_FACTORY_FILES`와 같다: **예외가 늘어나면 그 사실이 diff에 보인다.**
 동시에 한계를 알고 쓴다 — 문자열을 끊어 쓰거나 리플렉션으로 만든 호출은 정적 스캔을 통과한다. 실질 방어선은 각 도메인의
-**행동 단언**(요청 횟수·파일 개수·응답 키 집합)이다.
+**행동 단언**(요청 횟수·파일 개수·응답 키 집합)이다. 알려진 사각 하나를 명시해 둔다: **②군 패턴에 `sendAsync` 철자가 없어**
+`HttpClient.sendAsync(...)`는 정적으로 잡히지 않는다(패턴이 보는 것은 `CompletableFuture.*Async(`다). 그래서 phase 73은
+`HttpExternalProxyClient`가 **`sendAsync`를 한 번도 쓰지 않는다는 것을 소스 스캔 테스트로 따로 잠갔다**
+(`HttpExternalProxyClientTest.theAdapterSourceHasNoAsyncSendAndNoLogSink`) —
+게이트를 넓히는 대신 그 파일의 행동을 잠근 것이고, 게이트에 넣는다면 후보는 `\.\s*sendAsync\s*\(` · `\bCompletableFuture\b`다.
 
 ## 테스트 규율
 
@@ -316,8 +388,8 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 - **의도된 divergence 3건**(고치지 않았고 안전 방향이다): ① 아웃바운드 `HttpClient`는 **리다이렉트를 따라가지 않는다**
   (Node `fetch`는 따라간다 — 등록된 endpoint 밖으로 요청이 새지 않는 쪽으로 틀렸다) · ② **connect 10초 + request 30초**
   (Node `fetch`에는 요청 타임아웃이 **없다**). 무한 대기의 대가가 두 서버에서 다르기 때문이다 — Node는 이벤트 루프라
-  기다리는 동안에도 다른 요청을 처리하지만 Spring은 **Tomcat 워커 하나**가 묶여 응답 없는 소스 하나 + 반복 pull이 32 라우트를
-  전부 굶긴다. 타임아웃은 단일 요청의 상한일 뿐 재시도가 아니다(ADR-008 (6) 유지). · ③ **응답 본문 16 MiB 상한**
+  기다리는 동안에도 다른 요청을 처리하지만 Spring은 **Tomcat 워커 하나**가 묶여 응답 없는 소스 하나 + 반복 pull이 37 라우트를
+  전부 굶긴다(phase 73에서 그 표면이 미디어·번역까지 넓어졌다 — 아래 참조). 타임아웃은 단일 요청의 상한일 뿐 재시도가 아니다(ADR-008 (6) 유지). · ③ **응답 본문 16 MiB 상한**
   (없으면 거대 응답의 `OutOfMemoryError`가 `catch` 밖에서 JVM을 죽인다 — Node는 V8 문자열 상한 `RangeError`가
   `fetch-failed`로 접힌다). ②③ 모두 초과 시 **기존 실패 shape 그대로**(`ok=false` → `fetch-failed`)이며 새 사유 토큰은 없다.
   **잔여 위험**: `HttpRequest.timeout`은 **응답 헤더까지만** 덮는다(JDK 21 실측 — 본문을 3초에 걸쳐 흘리는 서버는 상한
@@ -355,3 +427,29 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
   구현으로 지켜야 한다. **계약이 못 보는 축**이다(phase 72 step6에서 반환 status를 승격 후 값으로 바꾸는 변이를 심었더니
   당시 236관측 `--parity`가 그대로 diffs 0으로 통과했고 Java 테스트 1건만 red였다).
   `ArticleLifecycleServiceTest`의 해당 단언 1건이 유일한 방어선이다.
+
+미디어·업로드·사진·번역(phase 73)이 남긴 공백 — 각 항목의 **유일한 방어선**을 함께 적는다:
+
+- **키가 설정된 서버의 실제 미디어/번역 응답** — 계약 하네스가 API 키를 자식 env에서 지우므로(위 `default` 절)
+  **계약 env에는 키 문자열이 애초에 존재하지 않는다**. 따라서 "계약 리포트에 키가 없다"는 사실은 아무것도 증명하지 못한다
+  (리포트 위생 검사에 키 항목을 넣어도 **공허**하다). 이 축의 유일한 방어선은 `HttpExternalProxyClientTest` ·
+  `MediaSearchServiceTest` · `TranslationServiceTest`의 **센티넬 키 비유출 3면 단언**(반환 맵 직렬화 전문 ·
+  `LogService` 링 버퍼 전 줄 · 예외 메시지와 **원인 체인**)이다. 링 버퍼는 `GET /api/logs/digest`로 **밖으로 나간다**(ADR-007) —
+  거기 들어간 한 조각은 곧 응답이다.
+- **업로드 5 MiB 정확 경계** · **32-hex 저장명 충돌의 500 경로** · **동시 업로드의 디렉토리 생성 경쟁** — 계약은 관측하지 않는다
+  (`UploadServiceTest`·`UploadStoreTest`가 유일한 관측점).
+- **정적 서빙의 대용량 파일·`Range` 요청** · **`/uploads` 파일의 수명·정리 정책** — 앱은 업로드 파일을 지우지 않는다(**운영 소유**).
+- **비-ASCII 파일명의 응답 왕복 인코딩** — 계약 픽스처는 ASCII뿐이다(확장자 도출 자체는 `UploadNamesTest`의 골든 벡터가 덮는다).
+- **요청 본문 크기 상한이 Spring에는 없다** — Node는 전역 100kb + 기사 쓰기/업로드 2라우트만 10mb다.
+  전역 상한 도입은 37 라우트 전부에 파급되므로 이 phase에서 하지 않았다(양쪽 다 계약 미관측).
+- **`path.extname`을 win32 알고리즘으로 이식했다**(의도된 선택) — POSIX 호스트의 Node와 갈리는 입력이 실재한다
+  (`C:.png`는 win32 400/posix 200 · `a.png\`는 win32 200/posix 400 — 계획서의 "영향 없음"은 실측으로 반증됐다).
+  Node 서버가 도는 곳이 win32라 win32를 골랐고, 그 선택이 상태코드를 가른다는 사실을 `UploadNamesTest`가 잠근다.
+- **번역·미디어의 잔여 divergence 3건**(기록만): `targetLang`이 객체·실수면 문자열화가 갈린다(둘 다 쓰레기 값이라
+  provider가 거부해 `reason:'error'`로 수렴) · provider 응답의 `translations`가 배열이 아니라 객체 맵이면 JS는 찾아내고 Java는
+  `error`다(Google v2는 배열만 준다) · 짝 없는 서러게이트 처분이 두 인코더에서 반대다
+  (`encodeURIComponent`는 던지고 `URLSearchParams`는 U+FFFD로 치환 — 이식본도 그대로 따랐다).
+- **`HttpRequest.timeout`의 잔여 위험이 미디어·번역까지 넓어졌다** — 71a가 실측한 것과 동일하게 **응답 헤더까지만** 덮으므로
+  본문을 천천히 흘리는 외부 API는 Tomcat 워커를 계속 점유한다. 막으려면 타이머·별도 스레드가 필요하고 그것이 ADR-008 위반이다.
+- **`Redirect.NEVER`는 의도된 divergence**다 — Node `fetch`는 302를 따라가지만 그 URL에는 **서버 보유 키가 들어 있다**.
+  등록된 endpoint 밖으로 키가 새지 않는 쪽으로 틀렸다.
