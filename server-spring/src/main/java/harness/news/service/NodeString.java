@@ -1,5 +1,7 @@
 package harness.news.service;
 
+import java.util.List;
+
 /**
  * 문자열 다듬기의 <b>Node 의미론</b> — {@code String.prototype.trim}.
  *
@@ -45,6 +47,43 @@ public final class NodeString {
 			end--;
 		}
 		return raw.substring(start, end);
+	}
+
+	/**
+	 * 쿼리 파라미터 값 하나를 <b>Node가 보는 문자열</b>로 접는다 — JS {@code String(value)}다.
+	 *
+	 * <p>express는 반복 키({@code ?q=a&q=b})를 <b>배열</b>로 파싱하고, 그 배열이 문자열 문맥에 들어가면
+	 * {@code Array#toString} = <b>콤마 결합</b>이 된다({@code 'a,b'}). Java {@code List#toString}의
+	 * {@code ", "}(공백 포함)와도, 서블릿 {@code getParameter}의 <b>첫 값</b>과도 다르다 — 둘 중 아무거나
+	 * 쓰면 같은 질의에 두 서버가 다른 결과를 준다. 원소가 없는 자리는 빈 문자열이다({@code Array#join}은
+	 * {@code null}·{@code undefined}를 빈 문자열로 쓴다).
+	 *
+	 * <p>호출부가 셋이라 여기에 둔다(phase 73 step4 {@code PhotoService.search}의 {@code q} · step6
+	 * {@code MediaSearchService}의 데모 시드와 외부 URL {@code q}). {@link #trim}·{@code NodeBase64}와 같은
+	 * 지위의 <b>단일 출처</b>이며, 지점마다 다시 구현하면 한쪽만 맞는 상태가 된다(phase 70 실측: 숫자
+	 * 판정을 로컬 재구현해 {@code DELETE /api/receiver-config/5d}가 Node는 지우지 않는 행을 지웠다).
+	 *
+	 * @param value 쿼리 값. {@code null}(미전달)은 라우트의 {@code ?? ''}와 같게 빈 문자열이고,
+	 * {@link List}면 콤마로 결합한다
+	 */
+	public static String queryText(Object value) {
+		if (value == null) {
+			return "";
+		}
+		if (value instanceof List<?> values) {
+			StringBuilder joined = new StringBuilder();
+			for (int i = 0; i < values.size(); i++) {
+				if (i > 0) {
+					joined.append(',');
+				}
+				Object element = values.get(i);
+				if (element != null) {
+					joined.append(element);
+				}
+			}
+			return joined.toString();
+		}
+		return String.valueOf(value);
 	}
 
 	/** ECMAScript {@code WhiteSpace} ∪ {@code LineTerminator}. */

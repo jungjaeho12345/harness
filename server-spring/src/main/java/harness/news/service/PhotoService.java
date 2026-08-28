@@ -88,43 +88,12 @@ public class PhotoService {
 	 * 캡션 부분일치 검색 — 얇은 위임이다(도메인 규칙 없음). 행은 스키마 순서의 6컬럼 그대로 나간다.
 	 *
 	 * @param q 질의. 라우트의 {@code req.query.q ?? ''} 뒤의 값이라 {@code null}(생략)은 빈 문자열과 같고,
-	 * <b>키가 반복되면 리스트</b>다 — {@link #queryText(Object)}가 Node {@code String(...)} 의미론으로 접는다
+	 * <b>키가 반복되면 리스트</b>다 — {@link NodeString#queryText(Object)}가 Node {@code String(...)}
+	 * 의미론으로 접는다({@code LIKE '%a,b%'}). 첫 값만 취하면({@code getParameter}의 기본 동작) 같은 질의에
+	 * 두 서버가 다른 행 집합을 준다 — 계약이 관측하지 않는 축이라 {@code PhotoServiceTest}가 방어선이다
 	 */
 	public List<Map<String, Object>> search(Object q) {
-		return this.photos.searchByCaption(queryText(q));
-	}
-
-	/**
-	 * 쿼리 값 하나를 <b>Node가 보는 문자열</b>로 접는다.
-	 *
-	 * <p>express는 반복 키({@code ?q=a&q=b})를 배열로 파싱하고, 그 배열이 {@code `%${q}%`} 템플릿에 들어가면
-	 * {@code Array#toString} = <b>콤마 결합</b>이 된다({@code LIKE '%a,b%'}). 첫 값만 취하면
-	 * ({@code getParameter}의 기본 동작) 같은 질의에 두 서버가 다른 행 집합을 준다 — 계약이 관측하지 않는
-	 * 축이라 {@code PhotoServiceTest}가 유일 방어선이다. 원소가 없는 자리는 빈 문자열이다
-	 * ({@code Array#join}은 {@code null}·{@code undefined}를 빈 문자열로 쓴다).
-	 *
-	 * <p>같은 접기가 필요한 자리가 이 phase에 두 곳 더 있다(미디어 검색의 {@code q}·{@code type}) —
-	 * 그 두 번째 호출부가 생기는 순간 이 메서드를 Node 의미론 헬퍼로 <b>끌어내 단일 출처</b>로 만들어라
-	 * ({@code NodeString}·{@code NodeBase64}와 같은 지위). 지금 호출부는 하나뿐이라 여기 둔다.
-	 */
-	private static String queryText(Object value) {
-		if (value == null) {
-			return ""; // 라우트의 ?? '' — 생략과 빈 문자열은 같다
-		}
-		if (value instanceof List<?> values) {
-			StringBuilder joined = new StringBuilder();
-			for (int i = 0; i < values.size(); i++) {
-				if (i > 0) {
-					joined.append(',');
-				}
-				Object element = values.get(i);
-				if (element != null) {
-					joined.append(element);
-				}
-			}
-			return joined.toString();
-		}
-		return String.valueOf(value);
+		return this.photos.searchByCaption(NodeString.queryText(q));
 	}
 
 }
