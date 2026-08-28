@@ -93,7 +93,20 @@ class NoSchemaSqlInMainSourcesTest {
 			"CONTENTS_TABLE", RequiredSchema.CONTENTS_TABLE,
 			"HISTORY_TABLE", RequiredSchema.HISTORY_TABLE,
 			"RECEIVER_CONFIG_TABLE", RequiredSchema.RECEIVER_CONFIG_TABLE,
-			"DISTRIBUTION_TARGET_TABLE", RequiredSchema.DISTRIBUTION_TARGET_TABLE);
+			"DISTRIBUTION_TARGET_TABLE", RequiredSchema.DISTRIBUTION_TARGET_TABLE,
+			"PHOTO_TABLE", RequiredSchema.PHOTO_TABLE);
+
+	/**
+	 * 사진DB 전용 금지 패턴 — {@link #LEDGER_MUTATIONS}의 {@code Photo} 판본이다.
+	 *
+	 * <p>{@code Photo}도 <b>append-only</b>다(등록·검색뿐 — 수정·삭제 API가 아예 없다). 전역 목록은
+	 * {@code delete from}·DDL만 막으므로 이 테이블을 <b>고치는</b> 문장은 여기서 따로 막는다.
+	 * {@code insert or replace}·{@code replace into}는 테이블 이름을 가리지 않는 {@link #LEDGER_MUTATIONS}
+	 * 항목이 이미 전역으로 막고 있어 여기 두 번 적지 않는다(두 벌이 되면 한쪽만 늘어난다).
+	 */
+	private static final List<Pattern> PHOTO_MUTATIONS = List.of(
+			Pattern.compile("(?i)\\bupdate\\s+Photo\\b"),
+			Pattern.compile("(?i)\\bdelete\\s+.{0,40}Photo\\b"));
 
 	@Test
 	void mainSourcesContainNoSchemaMutatingSql() throws IOException {
@@ -173,7 +186,9 @@ class NoSchemaSqlInMainSourcesTest {
 				"sql(\"DELETE FROM DistributionTarget WHERE id = ?\")",
 				"sql(\"delete from\" + \" Article WHERE articleId IS NOT NULL\")",
 				"sql(\"DELETE FROM \" + RequiredSchema.DISTRIBUTION_TARGET_TABLE + \" WHERE id = ?\")",
-				"sql(\"DELETE FROM \" + RequiredSchema.HISTORY_TABLE + \" WHERE articleId = ?\")")) {
+				"sql(\"DELETE FROM \" + RequiredSchema.HISTORY_TABLE + \" WHERE articleId = ?\")",
+				"sql(\"DELETE FROM Photo WHERE id = ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.PHOTO_TABLE + \" WHERE id = ?\")")) {
 			assertTrue(deletesAnotherTable(planted), "다른 테이블의 행 삭제를 놓친다 — 스캐너가 공허하다: " + planted);
 		}
 
@@ -263,6 +278,64 @@ class NoSchemaSqlInMainSourcesTest {
 
 		assertTrue(LEDGER_MUTATIONS.stream().noneMatch((pattern) -> pattern.matcher(allowed).find()),
 				"원장이 아닌 테이블의 갱신까지 막고 있다: " + allowed);
+	}
+
+	/**
+	 * 사진DB도 <b>append-only</b>다 — 등록과 검색뿐이고 그 행을 고치거나 지우는 문장이 없다.
+	 *
+	 * <p>{@code Photo} 행은 재임베드로 발행 HTML까지 흐르는 참조({@code src})의 대장이고 수정·삭제 API가
+	 * 애초에 없다(openapi.yaml {@code /api/photos}). 최상위 규칙(DB에 있는 내용은 절대 삭제하지 않는다)이
+	 * 여기에도 그대로 걸린다. 원문과 <b>상수를 편 형태</b>를 둘 다 본다 — 이 리포지토리도 테이블 이름을
+	 * {@code RequiredSchema.PHOTO_TABLE}로 조립하므로 원문만 보면 그 형태를 통째로 놓친다(이력 원장에서
+	 * 실측된 우회다).
+	 */
+	@Test
+	void mainSourcesNeverRewriteThePhotoTable() throws IOException {
+		List<String> hits = new ArrayList<>();
+		try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
+			for (Path file : files.filter(Files::isRegularFile).toList()) {
+				String raw = Files.readString(file, StandardCharsets.UTF_8);
+				String inlined = inlineTableConstants(raw);
+				for (Pattern pattern : PHOTO_MUTATIONS) {
+					if (pattern.matcher(raw).find() || pattern.matcher(inlined).find()) {
+						hits.add(file + " ~ " + pattern.pattern());
+					}
+				}
+			}
+		}
+
+		assertTrue(hits.isEmpty(), "사진DB(append-only)를 고치거나 지우는 SQL이 main 소스에 있다: " + hits);
+	}
+
+	/**
+	 * 위 스캐너가 <b>공허하지 않다</b>는 증거 — 원문과 상수 조립 형태를 모두 심어 잡히는지 확인한다.
+	 * (이 자기 검사가 없으면 패턴이 망가져도 테스트는 조용히 green이다.)
+	 */
+	@Test
+	void thePhotoScannerDetectsPlantedMutations() {
+		for (String planted : List.of(
+				"sql(\"UPDATE Photo SET caption = ? WHERE id = ?\")",
+				"sql(\"UPDATE \" + RequiredSchema.PHOTO_TABLE + \" SET src = '' WHERE id < ?\")",
+				"sql(\"DELETE FROM \" + RequiredSchema.PHOTO_TABLE + \" WHERE id = ?\")")) {
+			String inlined = inlineTableConstants(planted);
+			assertTrue(
+					PHOTO_MUTATIONS.stream()
+							.anyMatch((pattern) -> pattern.matcher(planted).find() || pattern.matcher(inlined).find()),
+					"사진DB 변조 SQL을 놓친다 — 스캐너가 공허하다: " + planted);
+		}
+	}
+
+	/**
+	 * 사진DB가 아닌 테이블의 갱신은 <b>계속 허용</b>임을 못 박는다 — 이 단언이 없으면 위 스캔이 넓어져
+	 * 정상 코드를 막는 쪽으로 드리프트해도 아무도 모른다.
+	 */
+	@Test
+	void thePhotoScannerStillAllowsUpdatesToOtherTables() {
+		String allowed = inlineTableConstants(
+				"sql(\"UPDATE \" + RequiredSchema.CONTENTS_TABLE + \" SET status = ? WHERE articleId = ?\")");
+
+		assertTrue(PHOTO_MUTATIONS.stream().noneMatch((pattern) -> pattern.matcher(allowed).find()),
+				"사진DB가 아닌 테이블의 갱신까지 막고 있다: " + allowed);
 	}
 
 	/**

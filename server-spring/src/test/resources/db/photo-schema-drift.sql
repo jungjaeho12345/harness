@@ -1,12 +1,12 @@
--- 테스트 전용 드리프트 픽스처(배부 대상 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
+-- 테스트 전용 드리프트 픽스처(사진DB 축). 정본은 리포 루트의 `src/db/schema.js`이며 main 소스에는
 -- 스키마 정의 SQL이 없다.
 --
--- User·Article·Contents·ArticleHistory·ReceiverConfig는 정본과 같고 **DistributionTarget에서 2컬럼만
--- 빠져 있다**(spoolDir · updatedAt). 결함이 정확히 그 둘뿐이라, 부팅 검증이 "무엇이 없는지"를 다른
--- 결함에 가려지지 않은 채 지목하는지 실증할 수 있다.
+-- User·Article·Contents·ArticleHistory·ReceiverConfig·DistributionTarget은 정본과 같고 **Photo에서
+-- 2컬럼만 빠져 있다**(registeredBy · createdAt). 결함이 정확히 그 둘뿐이라, 부팅 검증이 "무엇이 없는지"를
+-- 다른 결함에 가려지지 않은 채 지목하는지 실증할 수 있다.
 --
--- 왜 이 축을 따로 두는가: spoolDir 컬럼이 없는 DB로 뜨면 배부 대상 저장이 런타임에 조용히 깨진다 —
--- 부팅에서 잡혀야 한다.
+-- 왜 이 축을 따로 두는가: registeredBy 컬럼이 없는 DB로 뜨면 사진 등록의 신원 stamp(ADR-004)가
+-- 런타임에 조용히 깨진다 — 부팅에서 잡혀야 한다.
 CREATE TABLE IF NOT EXISTS User (
   userId TEXT PRIMARY KEY,
   name TEXT,
@@ -90,22 +90,20 @@ CREATE TABLE IF NOT EXISTS ReceiverConfig (
   createdAt VARCHAR
 );
 
--- spoolDir·updatedAt 2컬럼이 빠진 DistributionTarget(부팅 검증이 지목해야 하는 컬럼 단위 결함).
 CREATE TABLE IF NOT EXISTS DistributionTarget (
   id INTEGER PRIMARY KEY,
   name VARCHAR,
   kind VARCHAR,
+  spoolDir VARCHAR,
   active VARCHAR DEFAULT 'Y',
-  createdAt VARCHAR
+  createdAt VARCHAR,
+  updatedAt VARCHAR
 );
 
--- Photo 6컬럼 — 사진DB. append-only(등록·검색만, 수정·삭제 없음). id만 INTEGER, 나머지는 VARCHAR.
--- `src`는 /uploads 상대경로 또는 https:// URL만(sanitizeFileRef), `registeredBy`는 세션 stamp다.
+-- registeredBy·createdAt 2컬럼이 빠진 Photo(부팅 검증이 지목해야 하는 컬럼 단위 결함).
 CREATE TABLE IF NOT EXISTS Photo (
   id INTEGER PRIMARY KEY,
   src VARCHAR,
   caption VARCHAR,
-  sourceArticleId VARCHAR,
-  registeredBy VARCHAR,
-  createdAt VARCHAR
+  sourceArticleId VARCHAR
 );

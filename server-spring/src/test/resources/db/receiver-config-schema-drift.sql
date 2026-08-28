@@ -98,3 +98,14 @@ CREATE TABLE IF NOT EXISTS DistributionTarget (
   createdAt VARCHAR,
   updatedAt VARCHAR
 );
+
+-- Photo 6컬럼 — 사진DB. append-only(등록·검색만, 수정·삭제 없음). id만 INTEGER, 나머지는 VARCHAR.
+-- `src`는 /uploads 상대경로 또는 https:// URL만(sanitizeFileRef), `registeredBy`는 세션 stamp다.
+CREATE TABLE IF NOT EXISTS Photo (
+  id INTEGER PRIMARY KEY,
+  src VARCHAR,
+  caption VARCHAR,
+  sourceArticleId VARCHAR,
+  registeredBy VARCHAR,
+  createdAt VARCHAR
+);

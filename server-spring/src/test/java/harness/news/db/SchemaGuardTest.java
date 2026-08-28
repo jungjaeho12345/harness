@@ -90,12 +90,76 @@ class SchemaGuardTest {
 	}
 
 	@Test
+	void requiredPhotoColumnsMatchNodeSchema() {
+		// 리포 루트 `src/db/schema.js`의 SCHEMA.Photo와 순서까지 1:1이다(id 포함 — SELECT 나열의 단일 출처).
+		// 이 6키가 곧 사진 검색 응답의 원소 키다(투영·마스킹 없음 — openapi.yaml /api/photos/search).
+		assertEquals(
+				List.of("id", "src", "caption", "sourceArticleId", "registeredBy", "createdAt"),
+				RequiredSchema.PHOTO_COLUMNS);
+		assertEquals(6, RequiredSchema.PHOTO_COLUMNS.size(), "Photo는 6컬럼이다");
+	}
+
+	@Test
 	void bootVerifiesEveryTableThisPhaseReadsOrWrites() {
 		// 부팅 검증 대상은 요구 목록 전체다 — 여기서 테이블이 빠지면 그 테이블의 드리프트가 런타임까지 산다.
-		// phase 70이 ReceiverConfig·DistributionTarget를 additive로 넣어 4→6테이블이 됐다.
+		// phase 70이 ReceiverConfig·DistributionTarget를 additive로 넣어 4→6테이블이 됐고,
+		// phase 73이 Photo를 넣어 6→7이 됐다.
 		assertEquals(
-				Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig", "DistributionTarget"),
+				Set.of("User", "Article", "Contents", "ArticleHistory", "ReceiverConfig", "DistributionTarget",
+						"Photo"),
 				RequiredSchema.TABLES.keySet());
+	}
+
+	@Test
+	void missingPhotoColumnsAreNamedInTheFailure() {
+		// 다른 6테이블은 정본과 같고 Photo만 2컬럼(registeredBy·createdAt)이 빠진 DB — 결함이 그 둘뿐이라
+		// 컬럼 단위 지목이 다른 문제에 가려지지 않는다. registeredBy가 없으면 신원 stamp(ADR-004)가 조용히 깨진다.
+		TempNewsDb.seed(tempDir, TempNewsDb.PHOTO_DRIFT_FIXTURE);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			String message = thrown.getMessage();
+			assertTrue(message.contains("Photo"), "어느 테이블인지 지목해야 한다: " + message);
+			assertTrue(message.contains("registeredBy"), "빠진 컬럼을 지목해야 한다: " + message);
+			assertTrue(message.contains("createdAt"), "빠진 컬럼을 전부 지목해야 한다: " + message);
+			assertFalse(message.contains("테이블 없음"), "이 DB에 없는 테이블은 없다(지목이 정확해야 한다): " + message);
+		}
+	}
+
+	@Test
+	void missingPhotoTableIsNamedInTheFailure() {
+		// 정본 픽스처에서 Photo 문장만 빼고 시드한다 — 나머지 6테이블은 정본과 같으므로 "테이블 없음 = Photo"
+		// 하나만 남는다. 별도 픽스처 파일을 두지 않는 이유: 이 DB의 정의가 "정본 − Photo"라 정본을 그대로
+		// 읽는 편이 두 파일이 어긋날 여지를 없앤다.
+		seedCanonicalWithoutPhoto();
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+
+			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+			assertEquals("테이블 없음 = Photo", onlyProblem(thrown.getMessage()),
+					"없는 테이블은 Photo 하나이고 그것을 지목해야 한다: " + thrown.getMessage());
+		}
+	}
+
+	/** 정본 픽스처의 CREATE 문장 중 Photo만 빼고 임시 DB를 세운다(테이블 자체가 없는 상황 재현). */
+	private void seedCanonicalWithoutPhoto() {
+		for (String statement : TempNewsDb.statements(TempNewsDb.CANONICAL_FIXTURE)) {
+			if (!statement.contains(RequiredSchema.PHOTO_TABLE)) {
+				TempNewsDb.exec(TempNewsDb.dbFile(tempDir), statement);
+			}
+		}
+	}
+
+	/** 실패 메시지에서 문제 목록만 떼어 낸다(앞의 경로·뒤의 안내 문장 제거). */
+	private static String onlyProblem(String message) {
+		int start = message.indexOf("): ");
+		int end = message.lastIndexOf(". 이 서버는");
+		return (start < 0 || end < 0) ? message : message.substring(start + 3, end);
 	}
 
 	@Test

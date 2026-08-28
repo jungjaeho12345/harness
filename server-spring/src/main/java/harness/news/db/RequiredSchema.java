@@ -106,6 +106,23 @@ public final class RequiredSchema {
 	public static final List<String> DISTRIBUTION_TARGET_COLUMNS = List.of(
 			"id", "name", "kind", "spoolDir", "active", "createdAt", "updatedAt");
 
+	/** 사진DB 테이블 이름. <b>append-only</b>(등록과 검색뿐 — 수정·삭제 API가 없다). */
+	public static final String PHOTO_TABLE = "Photo";
+
+	/**
+	 * Photo 컬럼 6개 — {@code src/db/schema.js}의 {@code SCHEMA.Photo}와 순서까지 같다.
+	 *
+	 * <p>{@code id}는 자동 증가 정수(ROWID 별칭)라 삽입 대상이 아니고 나머지는 VARCHAR다. 검색 응답이
+	 * 이 행을 <b>투영·마스킹 없이 그대로</b> 싣는다 — 즉 <b>이 목록이 곧 응답 원소 6키</b>이고 순서
+	 * 드리프트도 계약 위반이다({@code SELECT *} 금지: Node 스키마에 컬럼이 늘어도 응답이 따라 넓어지지
+	 * 않는 안전측을 택한다).
+	 *
+	 * <p>{@code registeredBy}는 <b>검증된 세션에서만</b> stamp되는 신원이다(ADR-004). 이 컬럼이 없는 DB로
+	 * 뜨면 그 계약이 런타임에 조용히 깨지므로 부팅 검증이 컬럼 단위로 지목한다.
+	 */
+	public static final List<String> PHOTO_COLUMNS = List.of(
+			"id", "src", "caption", "sourceArticleId", "registeredBy", "createdAt");
+
 	/**
 	 * 부팅 시 존재를 확인하는 테이블 → 컬럼 목록.
 	 *
@@ -119,7 +136,8 @@ public final class RequiredSchema {
 			CONTENTS_TABLE, CONTENTS_COLUMNS,
 			HISTORY_TABLE, HISTORY_COLUMNS,
 			RECEIVER_CONFIG_TABLE, RECEIVER_CONFIG_COLUMNS,
-			DISTRIBUTION_TARGET_TABLE, DISTRIBUTION_TARGET_COLUMNS);
+			DISTRIBUTION_TARGET_TABLE, DISTRIBUTION_TARGET_COLUMNS,
+			PHOTO_TABLE, PHOTO_COLUMNS);
 
 	private RequiredSchema() {
 	}
