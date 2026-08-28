@@ -26,8 +26,8 @@ import org.springframework.stereotype.Component;
  * 정적 스캔은 "무엇을 부르는가"만 보고 <b>"어디에 쓰는가"는 보지 못한다</b> — 예외 파일 안에서 경로 합성이
  * 틀리면 게이트는 green이다. 그래서 이 클래스는 스스로를 좁힌다.
  * <ol>
- * <li><b>경로를 밖에서 받지 않는다.</b> uploads 루트는 {@link AppProperties#dataDirPath()}{@code .resolve}
- * <b>한 지점</b>에서만 도출한다 — cwd 상대 경로·기본값 추정은 없다({@code app.data-dir}은 필수 설정이라
+ * <li><b>경로를 밖에서 받지 않는다.</b> uploads 루트는 {@link AppProperties#uploadsDirPath()}
+ * <b>한 지점</b>에서만 도출한다(정적 서빙 {@code /uploads/**}도 같은 지점에서 읽는다) — cwd 상대 경로·기본값 추정은 없다({@code app.data-dir}은 필수 설정이라
  * 추정 경로가 존재할 수 없다). Node {@code createApp}의 기본값 {@code 'uploads'}(cwd 상대)는 테스트 잔재이며
  * 이식 대상이 아니다 — 그것을 이식하면 프로세스 cwd(=리포)에 업로드 파일을 떨군다.</li>
  * <li><b>호출자가 준 문자열을 경로에 이어 붙이는 API를 노출하지 않는다.</b> 파일명은 언제나 자기가 발급한
@@ -54,9 +54,6 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public final class UploadStore {
-
-	/** 데이터 디렉토리 아래 업로드 루트 이름 — Node {@code resolveRuntimePaths}의 {@code uploadDir}와 같다. */
-	private static final String UPLOADS_DIR = "uploads";
 
 	/** 응답·DB에 실리는 상대 경로의 접두사({@code Contents.attachmentFile}/{@code referenceFile}에 저장된다). */
 	private static final String PATH_PREFIX = "/uploads/";
@@ -108,8 +105,9 @@ public final class UploadStore {
 	 * 테스트가 우회하면 cwd 상대 경로로 바꾸는 변이를 아무도 잡지 못한다.
 	 */
 	UploadStore(AppProperties properties, NameSource names) {
-		// 도출은 여기 한 지점뿐이다. 생성자는 파일시스템을 만지지 않는다(lazy mkdir).
-		this.uploadsRoot = properties.dataDirPath().resolve(UPLOADS_DIR);
+		// 도출은 AppProperties 한 지점뿐이다(정적 서빙 /uploads/** 도 같은 지점에서 읽는다 — 두 곳이
+		// 갈리면 업로드는 성공하는데 서빙은 404다). 생성자는 파일시스템을 만지지 않는다(lazy mkdir).
+		this.uploadsRoot = properties.uploadsDirPath();
 		this.names = names;
 	}
 
