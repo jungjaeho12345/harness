@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -141,6 +142,126 @@ class NodeUriTest {
 		assertThrows(IllegalArgumentException.class, () -> NodeUri.encodeURIComponent("a\uDC00b"));
 		assertThrows(IllegalArgumentException.class, () -> NodeUri.encodeURIComponent("\uD83D"));
 		assertEquals("%3F", NodeUri.encodeURIComponent("?"), "치환 결과와 혼동하지 않도록 진짜 '?'의 값도 남긴다");
+	}
+
+	// --- URLSearchParams 직렬화(번역 URL의 인코더) -------------------------------------------
+
+	/**
+	 * Node {@code new URLSearchParams({...}).toString()} 실측표 — <b>{@code encodeURIComponent}가
+	 * 아니다</b>(2026-08-28 리포 밖 스크립트, Node v24.16.0).
+	 *
+	 * <p>계획서(step7.md)는 번역 URL의 값 인코딩을 "{@code encodeURIComponent} 규칙"이라고 적었지만
+	 * 정본 {@code src/services/translate.js} 16~22행은 {@link java.net.URLEncoder}와 같은
+	 * {@code application/x-www-form-urlencoded} 직렬화기인 {@code URLSearchParams}를 쓴다. 실측 결과
+	 * 0..255에서 <b>정확히 6코드</b>가 갈린다(아래 대조 테스트) — 그중 <b>공백</b>은 번역 본문에 반드시
+	 * 들어 있으므로 {@code encodeURIComponent}로 조립하면 <b>모든 번역 요청의 URL이 정본과 다르다</b>.
+	 */
+	private static final Map<String, String> NODE_FORM_TABLE = new LinkedHashMap<>();
+
+	static {
+		NODE_FORM_TABLE.put("", "");
+		NODE_FORM_TABLE.put("a b", "a+b");
+		NODE_FORM_TABLE.put("a+b", "a%2Bb");
+		NODE_FORM_TABLE.put("a,b", "a%2Cb");
+		NODE_FORM_TABLE.put("!'()~*", "%21%27%28%29%7E*"); // * 만 리터럴로 남는다
+		NODE_FORM_TABLE.put("-_.", "-_.");
+		NODE_FORM_TABLE.put("A*Z", "A*Z");
+		NODE_FORM_TABLE.put("a/b?c=d&e", "a%2Fb%3Fc%3Dd%26e");
+		NODE_FORM_TABLE.put("뉴스", "%EB%89%B4%EC%8A%A4");
+		NODE_FORM_TABLE.put(EMOJI, "%F0%9F%98%80");
+		NODE_FORM_TABLE.put(NBSP, "%C2%A0");
+		NODE_FORM_TABLE.put(BOM, "%EF%BB%BF");
+		NODE_FORM_TABLE.put(CONTROLS, "%00%1F");
+		NODE_FORM_TABLE.put("a\nb", "a%0Ab");
+		NODE_FORM_TABLE.put("a\tb", "a%09b");
+		NODE_FORM_TABLE.put("100%", "100%25");
+		NODE_FORM_TABLE.put("a=b", "a%3Db");
+		NODE_FORM_TABLE.put("\"q\"", "%22q%22");
+		NODE_FORM_TABLE.put("#h", "%23h");
+		NODE_FORM_TABLE.put("본문 (끝)", "%EB%B3%B8%EB%AC%B8+%28%EB%81%9D%29");
+		NODE_FORM_TABLE.put("SENTINEL-Kv9x7Qb3ZmT0-DO-NOT-LEAK", "SENTINEL-Kv9x7Qb3ZmT0-DO-NOT-LEAK");
+	}
+
+	@Test
+	@DisplayName("URLSearchParams 실측표 전건이 문자 단위로 같다")
+	void itReproducesTheNodeFormTableExactly() {
+		for (Map.Entry<String, String> row : NODE_FORM_TABLE.entrySet()) {
+			assertEquals(row.getValue(), NodeUri.encodeFormComponent(row.getKey()),
+					"encodeFormComponent(" + escaped(row.getKey()) + ")");
+		}
+	}
+
+	/**
+	 * 두 인코더가 갈리는 코드는 <b>정확히 6개</b>다(0..255 전수 실측): {@code 0x20 공백}({@code %20} 대
+	 * {@code +}) · {@code !} · {@code '} · {@code (} · {@code )} · {@code ~}.
+	 *
+	 * <p>이 단언이 있는 이유는 <b>둘을 헷갈려 쓰는 것이 이 phase에서 가장 쉬운 실수</b>이기 때문이다 —
+	 * 미디어 검색은 {@code encodeURIComponent}, 번역은 {@code URLSearchParams}이고 두 자리가 서로 옆에
+	 * 있다. 어느 한쪽을 다른 쪽으로 바꾸면 여기서 개수가 흔들린다.
+	 */
+	@Test
+	@DisplayName("encodeURIComponent와 갈리는 코드는 0..255에서 정확히 6개다")
+	void theTwoEncodersDifferInExactlySixCodes() {
+		List<String> different = new ArrayList<>();
+		for (int code = 0; code < 256; code++) {
+			String one = String.valueOf((char) code);
+			if (!NodeUri.encodeURIComponent(one).equals(NodeUri.encodeFormComponent(one))) {
+				different.add(escaped(one));
+			}
+		}
+
+		assertEquals(List.of("\" \"", "\"!\"", "\"'\"", "\"(\"", "\")\"", "\"~\""), different,
+				"두 인코더가 갈리는 코드 목록");
+		assertEquals("a%20b", NodeUri.encodeURIComponent("a b"));
+		assertEquals("a+b", NodeUri.encodeFormComponent("a b"));
+	}
+
+	/**
+	 * 리터럴로 남는 문자는 <b>정확히 66자</b>({@code * - . 0-9 A-Z _ a-z})다 — Node 전수 탐침과 같다.
+	 */
+	@Test
+	@DisplayName("리터럴로 남는 문자 집합이 Node 전수 탐침과 같다(66자)")
+	void theLiteralSetMatchesNode() {
+		StringBuilder literal = new StringBuilder();
+		for (int code = 0; code < 128; code++) {
+			String one = String.valueOf((char) code);
+			if (NodeUri.encodeFormComponent(one).equals(one)) {
+				literal.append(one);
+			}
+		}
+
+		assertEquals("*-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz", literal.toString());
+		assertEquals(66, literal.length());
+	}
+
+	/**
+	 * 짝 없는 서러게이트에서 두 인코더의 처분이 <b>반대</b>다: {@code encodeURIComponent}는 던지고
+	 * ({@code URIError}) {@code URLSearchParams}는 <b>U+FFFD로 치환</b>한다(WebIDL {@code USVString}
+	 * 변환) — 실측 {@code %EF%BF%BD}.
+	 *
+	 * <p>표준 {@link URLEncoder}는 같은 입력을 {@code ?}(0x3F)로 바꾼다({@code String#getBytes}의 기본
+	 * 치환 바이트) — 그래서 {@code URLEncoder}로 갈음할 수 없다. 정본과 다른 URL이 만들어지는 것도
+	 * 문제지만, <b>번역은 던지면 안 되는 라우트</b>(키가 없어도 200이다)라 {@code encodeURIComponent}를
+	 * 쓰면 본문에 고아 서러게이트가 섞인 기사 하나가 500을 만든다.
+	 */
+	@Test
+	@DisplayName("짝 없는 서러게이트는 던지지 않고 U+FFFD로 치환한다(URLEncoder의 ?와도 다르다)")
+	void loneSurrogatesBecomeTheReplacementCharacter() {
+		assertEquals("%EF%BF%BD", NodeUri.encodeFormComponent("\uD83D"));
+		assertEquals("x%EF%BF%BDy", NodeUri.encodeFormComponent("x\uDC00y"));
+		assertEquals("%EF%BF%BD", NodeUri.encodeFormComponent("\uD800"));
+		assertEquals("%F0%9F%98%80", NodeUri.encodeFormComponent(EMOJI), "정상 페어는 그대로 4바이트다");
+
+		assertThrows(IllegalArgumentException.class, () -> NodeUri.encodeURIComponent("\uD83D"),
+				"같은 입력에서 encodeURIComponent는 던진다 — 두 함수의 처분이 반대다");
+		assertEquals("%3F", URLEncoder.encode("\uD83D", StandardCharsets.UTF_8),
+				"URLEncoder는 ?로 치환한다 — Node와 다르다");
+	}
+
+	@Test
+	@DisplayName("null은 빈 문자열이다(form 인코더도 500으로 새지 않는다)")
+	void formEncodingFoldsNullToTheEmptyValue() {
+		assertEquals("", NodeUri.encodeFormComponent(null));
 	}
 
 	private static String escaped(String raw) {
