@@ -162,7 +162,18 @@ class Adr008DisciplineTest {
 			// 않고 요청 스레드 밖에서 코드를 돌리는 가장 짧은 철자다(가장 손이 먼저 가는 형태이기도 하다).
 			Pattern.compile("\\bThread\\s*\\.\\s*startVirtualThread\\s*\\("),
 			Pattern.compile("\\bThread\\s*\\.\\s*of(Virtual|Platform)\\s*\\("),
-			Pattern.compile("\\bCountDownLatch\\b")),
+			Pattern.compile("\\bCountDownLatch\\b"),
+			// 2026-08-28 ④ 게이트 변이 F·G 실측에서 통과했던 형태들 — 이제 red다.
+			// sendAsync: 2군 패턴에 이 철자가 없어 **네트워크 예외 파일 안에서** 비동기 전환이 통째로
+			// 통과했다(변이 G — HttpApiSourceFetcher에 sendAsync를 심었을 때 게이트 green). 3군 예외는
+			// 3군에만 열려 있으므로 이것은 2군(예외 0) 위반이어야 한다. step5는 이 구멍을
+			// HttpExternalProxyClientTest의 소스 스캔 한 파일로만 막아 두었고, 다른 예외 파일
+			// (HttpApiSourceFetcher)에는 대응 그물이 없었다 — 여기서 전 파일에 대해 닫는다.
+			Pattern.compile("\\.\\s*sendAsync\\s*\\("),
+			// CompletableFuture 자체 — 기존 패턴은 `CompletableFuture.<xxx>Async(` 호출만 봐서
+			// `CompletableFuture.completedFuture(x).thenAccept(...)`가 통과했다(변이 F).
+			Pattern.compile("\\bComple(tableFuture|tionStage)\\b"),
+			Pattern.compile("\\.\\s*(then(Apply|Accept|Run|Compose|Combine)\\w*|whenComplete\\w*)\\s*\\(")),
 			List.of());
 
 	/**
@@ -221,11 +232,44 @@ class Adr008DisciplineTest {
 			// File.delete()/deleteOnExit(): Files.delete만 막고 있어 java.io 표기의 **파일 삭제**가 어느
 			// main 소스에서든 통과했다 — 쓰기보다 위험한 파괴 연산이 4군의 구멍이었다(DB 비파괴와 같은 축).
 			Pattern.compile("\\bAsynchronousFileChannel\\b"),
-			Pattern.compile("\\.\\s*delete(OnExit)?\\s*\\(\\s*\\)")),
+			Pattern.compile("\\.\\s*delete(OnExit)?\\s*\\(\\s*\\)"),
+			// 2026-08-28 ④ 게이트 변이 A·B·C 실측에서 통과했던 형태들 — 이제 red다.
+			// File.createTempFile: 기존 패턴은 `Files.`(NIO)로 시작해야 잡혀 java.io 정적 팩토리가 통째로
+			// 열려 있었다. 업로드 phase가 "임시 파일에 먼저 쓰고 옮긴다"로 손이 가는 바로 그 자리다.
+			Pattern.compile("\\bFile\\s*\\.\\s*create(Temp\\w*|NewFile)\\s*\\("),
+			// PrintStream: PrintWriter만 막고 있었다(둘 다 File/OutputStream 생성자로 파일을 만든다).
+			Pattern.compile("\\bnew\\s+(java\\.io\\.)?PrintStream\\s*\\("),
+			// 링크 생성·메타데이터 변경: 바이트를 쓰지 않아도 파일시스템을 바꾼다(uploads 루트 밖을
+			// 가리키는 심볼릭 링크는 정적 서빙의 경로 탈출 방어를 우회하는 수단이기도 하다).
+			Pattern.compile("\\bFiles\\s*\\.\\s*create(SymbolicLink|Link)\\s*\\("),
+			Pattern.compile("\\bFiles\\s*\\.\\s*set(LastModifiedTime|Attribute|PosixFilePermissions|Owner)\\s*\\(")),
 			List.of(SPOOL_WRITER_FILE, UPLOAD_STORE_FILE));
 
-	private static final List<Rule> RULES =
-			List.of(PERIODIC_EXECUTION, ASYNC_AND_RETRY, NETWORK_CLIENT, FILE_WRITE);
+	/**
+	 * 5군 — 외부 프로세스·동적 적재(<b>예외 0</b>).
+	 *
+	 * <p><b>2026-08-28 ④ 게이트 변이 D·E·H·J 실측</b>: {@code new ProcessBuilder("curl", url).start()} ·
+	 * {@code Runtime.getRuntime().exec(...)} · {@code Class.forName("java.net.http.Http" + "Client")} ·
+	 * {@code System.load(lib)}가 <b>전부 통과했다</b>. 이것들은 3·4군의 우회가 아니라 <b>3·4군을 통째로
+	 * 무의미하게 만드는</b> 벡터다 — 자식 프로세스는 우리가 등재하지 않은 egress이자 파일 쓰기이고,
+	 * 리플렉션·네이티브 적재는 금지 타입의 철자를 소스에서 지워 버린다.
+	 *
+	 * <p>예외가 0인 이유: 등재된 네 파일 중 어느 것도 자식 프로세스나 동적 적재를 필요로 하지 않는다
+	 * (수집 pull·프록시는 {@code java.net.http}, 스풀·업로드는 {@code java.nio.file}만 쓴다). 그래서
+	 * <b>3·4군 예외가 이 축으로 새지 않는다</b> — {@code HttpApiSourceFetcher}에서 {@code curl}을 띄우는
+	 * 것도 red다.
+	 */
+	private static final Rule SUBPROCESS_AND_DYNAMIC_LOADING = new Rule("외부 프로세스·동적 적재", List.of(
+			Pattern.compile("\\bProcessBuilder\\b"),
+			Pattern.compile("\\bRuntime\\s*\\.\\s*getRuntime\\s*\\("),
+			Pattern.compile("\\.\\s*exec\\s*\\("),
+			Pattern.compile("\\bClass\\s*\\.\\s*forName\\s*\\("),
+			Pattern.compile("\\bSystem\\s*\\.\\s*load(Library)?\\s*\\("),
+			Pattern.compile("\\bMethodHandles\\s*\\.\\s*lookup\\s*\\(")),
+			List.of());
+
+	private static final List<Rule> RULES = List.of(PERIODIC_EXECUTION, ASYNC_AND_RETRY, NETWORK_CLIENT,
+			FILE_WRITE, SUBPROCESS_AND_DYNAMIC_LOADING);
 
 	/**
 	 * 각 군의 <b>심어 둔 위반</b> — 패턴마다 최소 하나씩 둔다. 아래 자기 검사가 "모든 패턴이 적어도 하나를
@@ -286,7 +330,13 @@ class Adr008DisciplineTest {
 			"Thread.startVirtualThread(() -> spool(article));",
 			"Thread.ofVirtual().start(task);",
 			"Thread.ofPlatform().start(task);",
-			"private final CountDownLatch done = new CountDownLatch(1);");
+			"private final CountDownLatch done = new CountDownLatch(1);",
+			// 2026-08-28 ④ 게이트 변이 F·G 실측에서 통과했던 형태들 — 이제 red다.
+			"this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenAccept((r) -> { });",
+			"CompletableFuture<String> pending = null;",
+			"CompletionStage<String> stage = null;",
+			"CompletableFuture.completedFuture(\"x\").thenApply((s) -> s);",
+			"future.whenCompleteAsync((r, e) -> log(r));");
 
 	private static final List<String> PLANTED_NETWORK = List.of(
 			"private final HttpClient http = HttpClient.newHttpClient();",
@@ -335,10 +385,38 @@ class Adr008DisciplineTest {
 			// 2026-08-26 ④ 게이트 변이 실측에서 통과했던 형태들 — 이제 red다.
 			"try (var ch = AsynchronousFileChannel.open(target, StandardOpenOption.WRITE)) { ch.write(buf, 0L); }",
 			"target.toFile().delete();",
-			"stale.deleteOnExit();");
+			"stale.deleteOnExit();",
+			// 2026-08-28 ④ 게이트 변이 A·B·C 실측에서 통과했던 형태들 — 이제 red다.
+			"File tmp = File.createTempFile(\"spool\", \".tmp\");",
+			"java.io.File.createTempFile(\"upload\", \".part\", dir);",
+			"try (var out = new PrintStream(target.toFile())) { out.print(json); }",
+			"try (var out = new java.io.PrintStream(target.toFile(), \"UTF-8\")) { out.print(json); }",
+			"Files.createSymbolicLink(link, target);",
+			"Files.createLink(link, target);",
+			"Files.setLastModifiedTime(target, FileTime.fromMillis(0L));",
+			"Files.setAttribute(target, \"dos:hidden\", Boolean.TRUE);",
+			"Files.setPosixFilePermissions(target, perms);",
+			"Files.setOwner(target, owner);");
+
+	/**
+	 * 5군의 심어 둔 위반 — 전부 <b>2026-08-28 ④ 게이트 변이에서 실제로 통과했던</b> 형태다.
+	 * 자식 프로세스 한 줄이면 3군(egress)과 4군(파일 쓰기)을 동시에, 그리고 <b>철자 없이</b> 우회한다.
+	 */
+	private static final List<String> PLANTED_SUBPROCESS = List.of(
+			"new ProcessBuilder(\"curl\", url).start();",
+			"var builder = new java.lang.ProcessBuilder(\"cmd\", \"/c\", \"copy\");",
+			"Runtime.getRuntime().exec(new String[] { \"curl\", url });",
+			"java.lang.Runtime.getRuntime().exec(command);",
+			"process.exec(command);",
+			"return Class.forName(\"java.net.http.Http\" + \"Client\").getMethod(\"newHttpClient\").invoke(null);",
+			"java.lang.Class.forName(name);",
+			"System.load(lib);",
+			"System.loadLibrary(\"native-egress\");",
+			"var lookup = MethodHandles.lookup();");
 
 	private static List<List<String>> plantedByRule() {
-		return List.of(PLANTED_PERIODIC, PLANTED_ASYNC, PLANTED_NETWORK, PLANTED_FILE_WRITE);
+		return List.of(PLANTED_PERIODIC, PLANTED_ASYNC, PLANTED_NETWORK, PLANTED_FILE_WRITE,
+				PLANTED_SUBPROCESS);
 	}
 
 	/**
@@ -403,6 +481,24 @@ class Adr008DisciplineTest {
 	}
 
 	/**
+	 * 5군: 자식 프로세스도 동적 적재도 없다(<b>예외 0</b>).
+	 *
+	 * <p>이 축이 열려 있으면 3·4군의 예외 목록이 무의미해진다 — {@code curl} 한 줄이면 등재되지 않은
+	 * egress이자 파일 쓰기이고, {@code Class.forName}이면 금지 타입의 철자가 소스에서 사라진다.
+	 */
+	@Test
+	void mainSourcesNeverSpawnProcessesOrLoadCodeDynamically() throws IOException {
+		assertTrue(Files.isDirectory(MAIN_SOURCES),
+				"스캔 대상이 없다 — 테스트 작업 디렉토리가 모듈 루트가 아니다: " + MAIN_SOURCES.toAbsolutePath());
+
+		List<String> hits = scan(SUBPROCESS_AND_DYNAMIC_LOADING);
+
+		assertTrue(hits.isEmpty(),
+				"main 소스가 자식 프로세스를 띄우거나 코드를 동적으로 적재한다(예외 0 — 3·4군 예외가 "
+						+ "이 축으로 새면 등재 목록 자체가 무의미해진다): " + hits);
+	}
+
+	/**
 	 * 예외 목록의 <b>크기와 구성</b>을 못 박는다 — 예외가 늘어나면 그 사실이 반드시 diff와 red로 드러난다
 	 * (phase 70 review_gate low의 {@code theDerivedMainJavaListDropsExactlyTheDeleteFromPattern}과 같은 계열).
 	 *
@@ -427,6 +523,8 @@ class Adr008DisciplineTest {
 		assertEquals(4, allExemptions.size(), "예외 목록 크기");
 		assertEquals(List.of(), PERIODIC_EXECUTION.exemptPaths(), "주기 실행은 예외 0이다");
 		assertEquals(List.of(), ASYNC_AND_RETRY.exemptPaths(), "비동기·재시도는 예외 0이다");
+		assertEquals(List.of(), SUBPROCESS_AND_DYNAMIC_LOADING.exemptPaths(),
+				"외부 프로세스·동적 적재는 예외 0이다 — 여기에 예외를 열면 3·4군 등재 목록이 통째로 무의미해진다");
 		assertEquals(List.of(NETWORK_CLIENT_FILE, EXTERNAL_PROXY_FILE), NETWORK_CLIENT.exemptPaths(),
 				"네트워크 예외는 수집 pull 어댑터와 ADR-014 프록시 둘뿐이다");
 		assertEquals(List.of(SPOOL_WRITER_FILE, UPLOAD_STORE_FILE), FILE_WRITE.exemptPaths(),
@@ -466,6 +564,25 @@ class Adr008DisciplineTest {
 		assertFalse(violations(PERIODIC_EXECUTION, SPOOL_WRITER_FILE,
 				"@Scheduled(fixedDelay = 1000)\nvoid flush() { }", "planted").isEmpty(),
 				"예외 파일이라도 앱 내 타이머는 금지다(1군 예외 0)");
+
+		// 2026-08-28 ④ 게이트가 더한 5군은 **예외 파일 넷 전부**에 그대로 적용된다 — 자식 프로세스 한 줄이면
+		// 등재 목록(누가 나가고 누가 쓰는가)이 통째로 무의미해지기 때문이다(변이 D·E·I 실측).
+		for (String exempt : List.of(NETWORK_CLIENT_FILE, EXTERNAL_PROXY_FILE, SPOOL_WRITER_FILE,
+				UPLOAD_STORE_FILE)) {
+			assertFalse(violations(SUBPROCESS_AND_DYNAMIC_LOADING, exempt,
+					"new ProcessBuilder(\"curl\", url).start();", "planted").isEmpty(),
+					"등재된 예외 파일이 자식 프로세스로 나가는 것까지 허용된다: " + exempt);
+			assertFalse(violations(SUBPROCESS_AND_DYNAMIC_LOADING, exempt,
+					"Class.forName(\"java.net.http.Http\" + \"Client\");", "planted").isEmpty(),
+					"등재된 예외 파일이 리플렉션으로 금지 타입을 적재하는 것까지 허용된다: " + exempt);
+		}
+		// 2군(예외 0)은 네트워크 예외 파일 안의 비동기 전환도 잡는다 — 변이 G가 여기로 수렴한다.
+		assertFalse(violations(ASYNC_AND_RETRY, EXTERNAL_PROXY_FILE,
+				"this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString());", "planted").isEmpty(),
+				"3군 예외가 2군까지 새어 나간다 — 프록시가 sendAsync로 바뀌어도 게이트가 조용하다");
+		assertFalse(violations(ASYNC_AND_RETRY, NETWORK_CLIENT_FILE,
+				"this.http.sendAsync(request, HttpResponse.BodyHandlers.ofString());", "planted").isEmpty(),
+				"수집 pull 어댑터의 sendAsync가 통과한다(2026-08-28 변이 G 실측 — 그때는 대응 그물이 없었다)");
 		assertFalse(violations(ASYNC_AND_RETRY, NETWORK_CLIENT_FILE,
 				"@Retryable(maxAttempts = 3)\nString fetch() { return \"\"; }", "planted").isEmpty(),
 				"예외 파일이라도 재시도는 금지다(2군 예외 0 — ADR-008 (6))");

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -160,6 +161,111 @@ class UploadsStaticWireTest {
 			assertFalse(response.bodyAsLatin1().contains(SQLITE_MAGIC),
 					"응답 본문에 news.db 바이트가 실렸다: " + escape);
 		}
+	}
+
+	/**
+	 * <b>윈도우 파일시스템 고유 표기</b> 전량 거부 — 2026-08-28 ④ 테스트 게이트 보강.
+	 *
+	 * <p>기존 탈출 목록은 {@code ../}·퍼센트 인코딩 계열뿐이라 <b>NTFS·Win32 이름 규칙</b>이 만드는 표면이
+	 * 통째로 비어 있었다. 이 서버가 실제로 도는 곳이 win32이므로 이것들은 이론이 아니다:
+	 * <ul>
+	 * <li><b>대체 데이터 스트림</b>({@code file.png::$DATA} · {@code file.png:s}) — 같은 파일의 다른
+	 * 스트림을 열면 확장자 판정과 미디어타입이 어긋난 채 바이트가 나간다.</li>
+	 * <li><b>후행 점·공백</b>({@code file.png.} · {@code file.png%20}) — Win32가 조용히 잘라내므로
+	 * "다른 이름"이 같은 파일을 연다(경로 정규화 뒤 검사하는 게이트를 우회하는 고전 수법).</li>
+	 * <li><b>NUL 절단</b>({@code %00}) — 뒤를 잘라 확장자 검사를 통과시키는 수법.</li>
+	 * <li><b>8.3 단축명</b>({@code NEWS~1.DB}) — 긴 이름 검사를 우회한다.</li>
+	 * <li><b>예약 장치명</b>({@code CON}·{@code NUL}·{@code AUX}) — 파일이 아니라 장치를 연다.
+	 * {@code CON}은 <b>읽기가 블록되어</b> Tomcat 워커를 잠식할 수 있다(71a ⑤가 잡은 축과 같은 형태).
+	 * {@link Wire}의 15초 소켓 상한이 그 잠식을 red로 만든다.</li>
+	 * <li><b>UNC 경로</b>({@code \\host\share}) — 로컬 탈출이 아니라 <b>원격 egress</b>다(ADR-008 축).</li>
+	 * </ul>
+	 *
+	 * <p>단언은 셋이다: (1) 200이 아니다 (2) {@code news.db} 바이트가 실리지 않았다 (3) 응답 어디에도
+	 * 서버 절대경로가 없다.
+	 */
+	/**
+	 * <b>불변식</b>: 어떤 윈도우 고유 표기도 uploads 루트 <b>밖</b>으로 나가지 못하고, 서버 경로를 흘리지
+	 * 않으며, 워커를 잠식하지 않는다.
+	 *
+	 * <p>200을 <b>금지하지 않는다</b>. 2026-08-28 ④ 실측이 그 이유다 — {@code ::$DATA}(NTFS 기본 데이터
+	 * 스트림 별칭) · 후행 점 · 후행 공백 셋은 <b>같은 파일의 같은 바이트</b>를 200으로 돌려준다. Win32가
+	 * 이름 단계에서 접는 형태라 정본(express.static)도 동형으로 200이 유력하고, 이것을 404로 바꾸는 것은
+	 * 계약 밖 라우트의 <b>동작 변경</b>이라 이 phase의 범위가 아니다(finding으로 보고한다). 그래서 여기서는
+	 * "무엇이 나갔는가"를 잠근다: 200이면 <b>반드시 그 PNG 픽스처의 바이트</b>여야 한다. 다른 파일이
+	 * 나가기 시작하면 즉시 red다.
+	 */
+	@Test
+	void windowsSpecificNameFormsNeverEscapeTheUploadsRoot() {
+		List<String> hostile = List.of(
+				"/uploads/" + HEX + ".png::$DATA",
+				"/uploads/" + HEX + ".png:s",
+				"/uploads/" + HEX + ".png.",
+				"/uploads/" + HEX + ".png%20",
+				"/uploads/" + HEX + ".png%00.txt",
+				"/uploads/%00news.db",
+				"/uploads/../NEWS~1.DB",
+				"/uploads/CON",
+				"/uploads/NUL",
+				"/uploads/AUX",
+				"/uploads/%5C%5C127.0.0.1%5Cshare%5Cx.png",
+				"/uploads/" + "a".repeat(300) + ".png");
+
+		for (String probe : hostile) {
+			// 응답이 오지 않으면 Wire의 15초 소켓 상한이 던진다 — CON 같은 장치명이 워커를 잠식하는
+			// 형태(71a ⑤가 잡은 축)는 그래서 여기서 red가 된다.
+			Wire.RawResponse response = Wire.raw(this.port, "GET", probe);
+
+			assertFalse(response.bodyAsLatin1().contains(SQLITE_MAGIC),
+					"응답 본문에 news.db 바이트가 실렸다: " + probe);
+			assertFalse(response.bodyAsLatin1().contains(SIBLING_SECRET),
+					"응답 본문에 uploads 형제 파일 내용이 실렸다: " + probe);
+			String wire = String.join("\n", response.headerLines()) + "\n" + response.bodyAsLatin1();
+			assertFalse(DRIVE_ABSOLUTE_PATH.matcher(wire).find(),
+					"응답에 서버 절대경로가 실렸다: " + probe + " / " + wire);
+			if (response.status() == 200) {
+				assertArrayEquals(PNG, response.body(),
+						"별칭 표기가 의도한 파일이 아닌 바이트를 냈다: " + probe);
+			}
+		}
+	}
+
+	/**
+	 * 200을 내는 <b>별칭 표기의 목록을 동결</b>한다 — 새 별칭이 열리면 그 사실이 red와 diff로 드러난다.
+	 *
+	 * <p>이 단언이 앞의 불변식과 별개인 이유: 앞의 것은 "무엇이 나갔는가"를 보고, 이것은 "몇 개의 문이
+	 * 열려 있는가"를 본다. 경로 탈출이 아니라도 같은 파일에 무한한 URL 별칭이 생기는 것 자체가 표면이다
+	 * (URL 기준 차단·캐시 키가 갈린다).
+	 */
+	@Test
+	void theSetOfAliasesThatStillReturnTwoHundredIsFrozen() {
+		List<String> aliases = List.of(
+				"/uploads/" + HEX + ".png::$DATA",
+				"/uploads/" + HEX + ".png.",
+				"/uploads/" + HEX + ".png%20",
+				"/uploads/" + HEX + ".png:s",
+				"/uploads/" + HEX + ".PNG",
+				"/uploads/" + HEX + ".png%2e",
+				"/uploads/./" + HEX + ".png");
+		List<String> serving = new ArrayList<>();
+
+		for (String alias : aliases) {
+			if (Wire.raw(this.port, "GET", alias).status() == 200) {
+				serving.add(alias);
+			}
+		}
+
+		// 2026-08-28 실측 6종. 넷은 <b>Win32 이름 규칙</b>이 만든다(대소문자 무시 · 후행 점/공백 절단 ·
+		// 기본 데이터 스트림 별칭)이고 하나는 URL 정규화({@code ./})다. 정본(express.static)도 같은
+		// 파일시스템 위에서 도므로 이 넷은 divergence가 아니라 플랫폼 사실에 가깝다.
+		assertEquals(List.of(
+				"/uploads/" + HEX + ".png::$DATA",
+				"/uploads/" + HEX + ".png.",
+				"/uploads/" + HEX + ".png%20",
+				"/uploads/" + HEX + ".PNG",
+				"/uploads/" + HEX + ".png%2e",
+				"/uploads/./" + HEX + ".png"), serving,
+				"200을 내는 별칭 집합이 바뀌었다 — 늘었다면 새 표면이고, 줄었다면 정본과의 divergence다");
 	}
 
 	/** 백슬래시 원문 변형 — 요청줄에 그대로 실어 보낸다(브라우저는 {@code /}로 정규화하지만 공격자는 안 한다). */
