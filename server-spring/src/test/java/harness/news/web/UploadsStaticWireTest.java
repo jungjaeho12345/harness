@@ -12,9 +12,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -181,19 +182,15 @@ class UploadsStaticWireTest {
 	 * <li><b>UNC 경로</b>({@code \\host\share}) — 로컬 탈출이 아니라 <b>원격 egress</b>다(ADR-008 축).</li>
 	 * </ul>
 	 *
-	 * <p>단언은 셋이다: (1) 200이 아니다 (2) {@code news.db} 바이트가 실리지 않았다 (3) 응답 어디에도
-	 * 서버 절대경로가 없다.
-	 */
-	/**
-	 * <b>불변식</b>: 어떤 윈도우 고유 표기도 uploads 루트 <b>밖</b>으로 나가지 못하고, 서버 경로를 흘리지
-	 * 않으며, 워커를 잠식하지 않는다.
+	 * <p><b>불변식</b>: 어떤 윈도우 고유 표기도 uploads 루트 <b>밖</b>으로 나가지 못하고, 서버 경로를 흘리지
+	 * 않으며, 워커를 잠식하지 않는다. 단언은 셋이다: (1) {@code news.db} 바이트가 실리지 않았다
+	 * (2) 응답 어디에도 서버 절대경로가 없다 (3) 200이면 <b>반드시 그 PNG 픽스처의 바이트</b>다.
 	 *
-	 * <p>200을 <b>금지하지 않는다</b>. 2026-08-28 ④ 실측이 그 이유다 — {@code ::$DATA}(NTFS 기본 데이터
-	 * 스트림 별칭) · 후행 점 · 후행 공백 셋은 <b>같은 파일의 같은 바이트</b>를 200으로 돌려준다. Win32가
-	 * 이름 단계에서 접는 형태라 정본(express.static)도 동형으로 200이 유력하고, 이것을 404로 바꾸는 것은
-	 * 계약 밖 라우트의 <b>동작 변경</b>이라 이 phase의 범위가 아니다(finding으로 보고한다). 그래서 여기서는
-	 * "무엇이 나갔는가"를 잠근다: 200이면 <b>반드시 그 PNG 픽스처의 바이트</b>여야 한다. 다른 파일이
-	 * 나가기 시작하면 즉시 red다.
+	 * <p><b>여기서 200을 금지하지 않는 이유</b>는 표기별 상태코드가 이 테스트의 관심사가 아니기 때문이다 —
+	 * 그것은 {@link #theStatusOfEveryAliasSpellingMatchesTheNodeMeasurement}가 정본 실측 표로 동결한다.
+	 * (2026-08-28 ④가 이 자리에 적어 둔 "후행 점·공백 200은 정본도 동형일 것"이라는 추정은 2026-08-29
+	 * 실측으로 <b>반증됐다</b>: 정본은 404이고 그 차이는 libuv가 {@code \\?\} 장문 경로를 쓰기 때문이다.
+	 * 지금은 {@link UploadsResourceResolver}가 닫아 양쪽이 같다.)
 	 */
 	@Test
 	void windowsSpecificNameFormsNeverEscapeTheUploadsRoot() {
@@ -231,41 +228,79 @@ class UploadsStaticWireTest {
 	}
 
 	/**
-	 * 200을 내는 <b>별칭 표기의 목록을 동결</b>한다 — 새 별칭이 열리면 그 사실이 red와 diff로 드러난다.
+	 * 별칭 표기별 상태코드를 <b>정본 실측값 그대로</b> 동결한다 — 새 별칭이 열리면 red와 diff로 드러난다.
 	 *
 	 * <p>이 단언이 앞의 불변식과 별개인 이유: 앞의 것은 "무엇이 나갔는가"를 보고, 이것은 "몇 개의 문이
 	 * 열려 있는가"를 본다. 경로 탈출이 아니라도 같은 파일에 무한한 URL 별칭이 생기는 것 자체가 표면이다
 	 * (URL 기준 차단·캐시 키가 갈린다).
+	 *
+	 * <h2>2026-08-29 정본 실측(express.static · 이 리포 {@code node_modules} · win32 · 원시 소켓)</h2>
+	 * <pre>
+	 * .png          200 image/png                 .png.        404
+	 * .png::$DATA   200 application/octet-stream  .png%20      404
+	 * .PNG          200 image/png                 .png%2e      404
+	 * ./&lt;hex&gt;.png   200 image/png                 .png:s       404
+	 *                                             .png.. · .png%20%20 · .png%20. · .png%09  404
+	 *                                             &lt;하위디렉토리&gt;./&lt;파일&gt;                     404
+	 * </pre>
+	 *
+	 * <h2>정본이 404를 내는 이유 = libuv가 Win32 이름 정규화를 받지 않는다</h2>
+	 * 같은 날 {@code fs.statSync} 직접 실측: {@code "x.png."}·{@code "x.png "}·{@code "CON"} → <b>ENOENT</b>,
+	 * {@code "x.png::$DATA"}·{@code "X.PNG"} → <b>ok</b>. libuv는 경로를 {@code \\?\} 장문 형태로 열어
+	 * 후행 점·공백 절단과 예약 장치명 해석을 <b>받지 않는다</b>. 반대로 Java의 파일 접근은 그 정규화를
+	 * 그대로 받으므로 같은 별칭이 열린다 — 그 간극을 {@link UploadsResourceResolver}가 닫는다.
+	 * 열려 있는 셋({@code ::$DATA}·{@code .PNG}·{@code ./})은 <b>정본도 200</b>이라 divergence가 아니다.
 	 */
 	@Test
-	void theSetOfAliasesThatStillReturnTwoHundredIsFrozen() {
-		List<String> aliases = List.of(
-				"/uploads/" + HEX + ".png::$DATA",
-				"/uploads/" + HEX + ".png.",
-				"/uploads/" + HEX + ".png%20",
-				"/uploads/" + HEX + ".png:s",
-				"/uploads/" + HEX + ".PNG",
-				"/uploads/" + HEX + ".png%2e",
-				"/uploads/./" + HEX + ".png");
-		List<String> serving = new ArrayList<>();
+	void theStatusOfEveryAliasSpellingMatchesTheNodeMeasurement() {
+		Map<String, Integer> expected = new LinkedHashMap<>();
+		expected.put("/uploads/" + HEX + ".png", 200);
+		expected.put("/uploads/" + HEX + ".png::$DATA", 200);
+		expected.put("/uploads/" + HEX + ".PNG", 200);
+		expected.put("/uploads/./" + HEX + ".png", 200);
+		expected.put("/uploads/" + HEX + ".png.", 404);
+		expected.put("/uploads/" + HEX + ".png%20", 404);
+		expected.put("/uploads/" + HEX + ".png%2e", 404);
+		expected.put("/uploads/" + HEX + ".png:s", 404);
+		expected.put("/uploads/" + HEX + ".png..", 404);
+		expected.put("/uploads/" + HEX + ".png%20%20", 404);
+		expected.put("/uploads/" + HEX + ".png%20.", 404);
+		expected.put("/uploads/" + HEX + ".png%09", 404);
+		expected.put("/uploads/" + NESTED_DIR + "./" + NESTED_FILE, 404);
+		expected.put("/uploads/" + NESTED_DIR + "%20/" + NESTED_FILE, 404);
 
-		for (String alias : aliases) {
-			if (Wire.raw(this.port, "GET", alias).status() == 200) {
-				serving.add(alias);
-			}
+		Map<String, Integer> actual = new LinkedHashMap<>();
+		for (String alias : expected.keySet()) {
+			actual.put(alias, Wire.raw(this.port, "GET", alias).status());
 		}
 
-		// 2026-08-28 실측 6종. 넷은 <b>Win32 이름 규칙</b>이 만든다(대소문자 무시 · 후행 점/공백 절단 ·
-		// 기본 데이터 스트림 별칭)이고 하나는 URL 정규화({@code ./})다. 정본(express.static)도 같은
-		// 파일시스템 위에서 도므로 이 넷은 divergence가 아니라 플랫폼 사실에 가깝다.
-		assertEquals(List.of(
-				"/uploads/" + HEX + ".png::$DATA",
-				"/uploads/" + HEX + ".png.",
-				"/uploads/" + HEX + ".png%20",
-				"/uploads/" + HEX + ".PNG",
-				"/uploads/" + HEX + ".png%2e",
-				"/uploads/./" + HEX + ".png"), serving,
-				"200을 내는 별칭 집합이 바뀌었다 — 늘었다면 새 표면이고, 줄었다면 정본과의 divergence다");
+		assertEquals(expected, actual,
+				"별칭 표기의 상태코드가 정본 실측과 갈렸다 — 200이 늘었다면 새 표면이고, 줄었다면 서빙이 깨진 것이다");
+	}
+
+	/**
+	 * <b>예약 DOS 장치명</b>은 정본과 같이 404다 — 500이 아니다.
+	 *
+	 * <p>2026-08-29 정본 실측: {@code CON}·{@code NUL}·{@code AUX}·{@code PRN}·{@code COM1}·{@code LPT1}·
+	 * {@code con}·{@code CON.txt}·{@code CONIN$}·{@code CONOUT$}·{@code CLOCK$}·{@code CON/<hex>.png}
+	 * 전부 <b>404</b>(libuv {@code \\?\} 경로라 장치로 해석되지 않는다).
+	 *
+	 * <p>이 서버에서 그냥 두면 {@code NUL} 같은 이름이 <b>실재하는 장치</b>로 열려 리소스 조회가 예외를
+	 * 던지고 전역 핸들러가 <b>500 {@code internal-error}</b>로 만든다(같은 날 실측) — 없는 파일이 500이
+	 * 되는 것은 그 자체로 상태코드 divergence이고, 500 경로는 로그를 남기므로 무한히 반복 호출당할 수
+	 * 있는 자리다.
+	 */
+	@Test
+	void reservedDeviceNamesAreNotFoundRatherThanServerErrors() {
+		List<String> devices = List.of("CON", "NUL", "AUX", "PRN", "COM1", "LPT1", "con", "CON.txt",
+				"CONIN$", "CONOUT$", "CLOCK$", "CON/" + HEX + ".png");
+
+		for (String device : devices) {
+			Wire.RawResponse response = Wire.raw(this.port, "GET", "/uploads/" + device);
+
+			assertEquals(404, response.status(), "예약 장치명 " + device + "이(가) 404가 아니다");
+			assertFalse(response.bodyAsLatin1().contains(SQLITE_MAGIC), "장치명 응답에 DB 바이트가 실렸다");
+		}
 	}
 
 	/** 백슬래시 원문 변형 — 요청줄에 그대로 실어 보낸다(브라우저는 {@code /}로 정규화하지만 공격자는 안 한다). */

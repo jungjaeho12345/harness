@@ -73,7 +73,12 @@ public class WebConfig {
 		return new WebMvcConfigurer() {
 			@Override
 			public void addResourceHandlers(ResourceHandlerRegistry registry) {
-				registry.addResourceHandler("/uploads/**").addResourceLocations(directoryLocation);
+				// 리졸버를 명시하는 이유는 UploadsResourceResolver 참조(Win32 이름 별칭 = 정본에 없는 200).
+				// 캐시는 켜지 않는다(resourceChain(false)) — 조건부 요청·캐시 헤더 표면을 새로 열지 않는다.
+				registry.addResourceHandler("/uploads/**")
+						.addResourceLocations(directoryLocation)
+						.resourceChain(false)
+						.addResolver(new UploadsResourceResolver());
 			}
 		};
 	}

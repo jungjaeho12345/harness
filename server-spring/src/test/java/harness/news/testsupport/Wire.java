@@ -165,6 +165,64 @@ public final class Wire {
 		}
 	}
 
+	/**
+	 * 요청 <b>프레이밍을 호출자가 직접 정하는</b> 왕복 — 위 메서드들은 언제나 실제 길이의
+	 * {@code Content-Length}를 붙이므로 "상한 판정이 헤더를 믿는가, 실제로 읽은 바이트를 세는가"를
+	 * 관측할 수 없다. 그 축(chunked · 길이 스푸핑) 전용이다.
+	 *
+	 * @param requestHead 상태줄 + 헤더 원문. 끝의 빈 줄(CRLFCRLF)까지 호출자가 넣는다
+	 * @param bodyBytes 헤더 뒤로 그대로 흘릴 바이트(chunk 프레이밍이 있다면 그것까지 포함)
+	 * @param boundedRead {@code true}면 응답 헤더의 {@code Content-Length}만큼만 읽고 끊는다. 요청 본문을
+	 *        선언한 만큼 보내지 않은 경우 EOF까지 기다리면 컨테이너가 남은 본문을 흘려버리려 기다리는
+	 *        시간을 그대로 기다리게 된다 — 그러면 "응답이 곧바로 왔는가"를 관측할 수 없다
+	 */
+	public static Response framed(int port, String requestHead, byte[] bodyBytes, boolean boundedRead) {
+		try (Socket socket = new Socket()) {
+			socket.connect(new InetSocketAddress("127.0.0.1", port), 5000);
+			socket.setSoTimeout(15000);
+			OutputStream out = socket.getOutputStream();
+			out.write(requestHead.getBytes(StandardCharsets.ISO_8859_1));
+			out.write(bodyBytes);
+			out.flush();
+			InputStream in = socket.getInputStream();
+			RawResponse response = parse(boundedRead ? readDeclaredBody(in) : readAll(in));
+			return new Response(response.status(), response.headerLines(),
+					new String(response.body(), StandardCharsets.UTF_8));
+		}
+		catch (IOException ex) {
+			throw new IllegalStateException("원시 HTTP 왕복 실패(framed)", ex);
+		}
+	}
+
+	/** 헤더 + 응답의 {@code Content-Length}만큼만 읽는다(EOF를 기다리지 않는다). */
+	private static byte[] readDeclaredBody(InputStream in) throws IOException {
+		ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+		byte[] chunk = new byte[4096];
+		int headerEnd = -1;
+		while (headerEnd < 0) {
+			int read = in.read(chunk);
+			if (read < 0) {
+				throw new IOException("응답 헤더가 끝나기 전에 연결이 닫혔다");
+			}
+			buffer.write(chunk, 0, read);
+			headerEnd = indexOfHeaderEnd(buffer.toByteArray());
+		}
+		int declared = 0;
+		for (String line : new String(buffer.toByteArray(), 0, headerEnd, StandardCharsets.ISO_8859_1).split("\r\n")) {
+			if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+				declared = Integer.parseInt(line.substring(line.indexOf(':') + 1).trim());
+			}
+		}
+		while (buffer.size() - (headerEnd + 4) < declared) {
+			int read = in.read(chunk);
+			if (read < 0) {
+				break;
+			}
+			buffer.write(chunk, 0, read);
+		}
+		return buffer.toByteArray();
+	}
+
 	private static byte[] readAll(InputStream in) throws IOException {
 		ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 		byte[] chunk = new byte[8192];
