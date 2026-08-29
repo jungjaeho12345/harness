@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -83,6 +85,27 @@ class NodeStringTest {
 		assertEquals("", NodeString.trim(""));
 		assertEquals("x", NodeString.trim("x"));
 		assertNull(NodeString.trim(null), "부재 판정은 호출자 몫이다");
+	}
+
+	/**
+	 * {@link NodeString#queryText(Object)} — JS {@code String(value)}다.
+	 *
+	 * <p>호출부가 셋이라 여기 단일 출처로 있다(사진 캡션 검색의 {@code q} · 미디어 검색의 데모 시드와
+	 * 외부 URL {@code q}). 배열 결합이 {@code ','}인지 {@code ", "}인지가 이 헬퍼의 존재 이유다 —
+	 * {@code List#toString}을 그대로 쓰면 {@code [a, b]}가 되고 첫 값만 취하면 {@code a}가 된다.
+	 */
+	@Test
+	void queryTextFoldsValuesTheWayJavaScriptDoes() {
+		assertEquals("", NodeString.queryText(null), "미전달은 라우트의 ?? ''와 같다");
+		assertEquals("", NodeString.queryText(""));
+		assertEquals("a", NodeString.queryText("a"));
+		assertEquals("a,b", NodeString.queryText(List.of("a", "b")), "Array#toString은 콤마 결합이다");
+		assertEquals("a", NodeString.queryText(List.of("a")), "원소 하나짜리 배열도 결합 결과는 그 값이다");
+		assertEquals("", NodeString.queryText(List.of()), "빈 배열은 빈 문자열이다");
+		assertEquals("a,,b", NodeString.queryText(Arrays.asList("a", null, "b")),
+				"Array#join은 null을 빈 문자열로 쓴다");
+		assertEquals("1", NodeString.queryText(1), "문자열이 아닌 값도 String(...)을 탄다");
+		assertEquals("true", NodeString.queryText(Boolean.TRUE));
 	}
 
 	private static String ch(int codePoint) {

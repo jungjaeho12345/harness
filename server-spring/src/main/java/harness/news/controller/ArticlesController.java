@@ -7,6 +7,7 @@ import harness.news.service.Authorization;
 import harness.news.service.EditLockService;
 import harness.news.service.Identity;
 import harness.news.service.SessionGuard;
+import harness.news.service.TranslationService;
 import harness.news.web.JsonHttp;
 import harness.news.web.NodeNumber;
 import harness.news.web.ReasonStatus;
@@ -24,15 +25,18 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 기사 12라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
+ * 기사 13라우트 — 단건 3개(생성 {@code POST /api/articles} · 조회 {@code GET /api/articles/:id} ·
  * 부분 수정 {@code PUT /api/articles/:id}) · 편집 잠금 3개({@code POST /api/articles/:id/lock} ·
  * {@code .../unlock} · {@code .../force-unlock}) · 생애주기 2개({@code POST /api/articles/:id/action} ·
  * {@code .../derive}) · 조회 4개(검색 {@code GET /api/articles/search} · 목록 {@code GET /api/articles} ·
- * 이력 {@code GET /api/articles/:id/history} · 스냅샷 {@code .../history/:historyId}).
- * 리포 루트 {@code server/index.js}의 같은 12라우트와 1:1이다.
+ * 이력 {@code GET /api/articles/:id/history} · 스냅샷 {@code .../history/:historyId}) ·
+ * <b>번역 1개</b>({@code POST /api/articles/:id/translate} — phase 73 step9).
+ * 리포 루트 {@code server/index.js}의 같은 13라우트와 1:1이다.
  *
- * <p>열둘이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
- * 여러 벌이면 그중 하나가 드리프트하는 순간 그 라우트가 인가 우회 표면이 된다.
+ * <p>열셋이 한 클래스인 이유는 <b>신원 재도출 코드가 하나여야</b> 하기 때문이다: 토큰을 읽는 자리가
+ * 여러 벌이면 그중 하나가 드리프트하는 순간 그 라우트가 인가 우회 표면이 된다. 번역이 미디어·업로드와
+ * 다른 클래스에 있는 것도 같은 이유다 — 경로가 {@code /api/articles/:id/...}라 신원 재도출이 여기 있어야
+ * 한다(index.json decisions (17)).
  *
  * <h2>컨트롤러가 하는 일은 넷뿐이다(ADR-006 · index.json decisions (13))</h2>
  * <ol>
@@ -132,16 +136,20 @@ public class ArticlesController {
 
 	private final ArticleLifecycleService lifecycle;
 
+	private final TranslationService translation;
+
 	private final JsonHttp json;
 
 	public ArticlesController(SessionGuard sessions, Authorization authorization, ArticleReadService reads,
-			ArticleWriteService writes, EditLockService locks, ArticleLifecycleService lifecycle, JsonHttp json) {
+			ArticleWriteService writes, EditLockService locks, ArticleLifecycleService lifecycle,
+			TranslationService translation, JsonHttp json) {
 		this.sessions = sessions;
 		this.authorization = authorization;
 		this.reads = reads;
 		this.writes = writes;
 		this.locks = locks;
 		this.lifecycle = lifecycle;
+		this.translation = translation;
 		this.json = json;
 	}
 
@@ -327,6 +335,42 @@ public class ArticlesController {
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.put("item", found.item());
 		this.json.write(request, response, 200, payload);
+	}
+
+	/**
+	 * 기사 본문 번역 — 세션 → <b>존재(404 {@code not-found})</b> → 번역 위임 → <b>언제나 200</b>.
+	 *
+	 * <h2>상태코드로 성공을 판정할 수 없다</h2>
+	 * 키가 없거나 외부 호출이 실패해도 <b>200</b>이고 본문만 {@code {ok:false, reason:'no-key'|'error',
+	 * translatedText:원문}}이다(graceful degrade — 계약 머리말과 reason-tokens.md 표 3 #13). 4xx/5xx로
+	 * 감싸면 상태코드를 해석하지 않는 클라이언트({@code httpModel})가 조용히 깨진다. 그래서 두 사유는
+	 * {@link ReasonStatus} 표에 <b>넣지 않는다</b> — 상태 매핑이 아니라 200 본문의 필드다(decisions (16)).
+	 *
+	 * <h2>번역 대상은 서버 DB에서만 온다(ADR-004)</h2>
+	 * 요청 본문에서 읽는 값은 {@code targetLang} <b>하나뿐</b>이고 {@code text}는 읽지 않는다 — 읽으면
+	 * 서버 보유 키로 임의 문자열을 번역시키는 무료 프록시가 열린다. 본문 도출({@code articleToText})은
+	 * <b>서비스 안에서 끝난다</b>: 여기서 원본 행을 만지면 투영 타입 경계 게이트가 red다.
+	 *
+	 * <p>{@code targetLang}은 본문 값을 <b>그대로</b> 넘긴다({@code String.valueOf}로 강제하지 마라).
+	 * 정본이 {@code ?? 'ko'}(null 병합)라 부재·{@code null}만 기본값이 되고 빈 문자열·숫자는 그대로 가며,
+	 * 그 병합은 서비스가 소유한다.
+	 */
+	@PostMapping("/api/articles/{id}/translate")
+	public void translate(@PathVariable String id, HttpServletRequest request, HttpServletResponse response) {
+		Identity actor = actorOf(request);
+		if (actor == null) {
+			deny(request, response, "unauthenticated");
+			return;
+		}
+
+		// 본문 판독은 세션 게이트 직후다 — 정본에서도 body parser가 라우트 로직보다 먼저 돈다.
+		Object targetLang = this.json.readBody(request).get("targetLang");
+		Map<String, Object> found = this.reads.getById(id);
+		if (found == null) {
+			deny(request, response, NOT_FOUND);
+			return;
+		}
+		this.json.write(request, response, 200, this.translation.translateArticle(found, targetLang));
 	}
 
 	/**

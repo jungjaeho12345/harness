@@ -85,6 +85,8 @@ const SCOPE = [
       // phase 72 step9 — 배부 실행 3라우트가 붙으면서 green이 됐다(Z 게이트·6키 요약·body 미판독·실배부·멱등).
       'contract/cases/default/distribution-tick.contract.js',
       'contract/cases/default/health.contract.js',
+      // phase 73 step9 — 미디어·업로드·사진·번역 5라우트가 붙으면서 green이 됐다(키 없는 서버의 데모 폴백·base64 JSON 업로드·사진 append-only·번역 200 graceful degrade).
+      'contract/cases/default/media-upload.contract.js',
       // phase 70 step3 — 수집 수신 설정 3라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 10키·유일 행 삭제).
       'contract/cases/default/receiver-config.contract.js',
       'contract/cases/default/session-guard.contract.js',

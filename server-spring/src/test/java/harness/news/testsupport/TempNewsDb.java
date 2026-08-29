@@ -26,7 +26,8 @@ import java.util.List;
 public final class TempNewsDb {
 
 	/**
-	 * Node `src/db/schema.js`와 1:1인 <b>정본</b> 픽스처 — User·Article·Contents·ArticleHistory.
+	 * Node `src/db/schema.js`와 1:1인 <b>정본</b> 픽스처 —
+	 * User·Article·Contents·ArticleHistory·ReceiverConfig·DistributionTarget·Photo.
 	 *
 	 * <p>부팅 스키마 검증({@code SchemaGuard})은 {@code RequiredSchema.TABLES}의 전 테이블을 보므로
 	 * 이 픽스처가 요구 목록을 따라가지 못하면 <b>이것으로 시드된 모든 @SpringBootTest가 컨텍스트 로딩에서
@@ -48,6 +49,9 @@ public final class TempNewsDb {
 
 	/** DistributionTarget 2컬럼(spoolDir·updatedAt)만 빠진 드리프트 픽스처 — 배부 대상 축의 컬럼 단위 거부 실증용. */
 	public static final String DISTRIBUTION_TARGET_DRIFT_FIXTURE = "db/distribution-target-schema-drift.sql";
+
+	/** Photo 2컬럼(registeredBy·createdAt)만 빠진 드리프트 픽스처 — 사진DB 축의 컬럼 단위 거부 실증용. */
+	public static final String PHOTO_DRIFT_FIXTURE = "db/photo-schema-drift.sql";
 
 	/** 데이터 디렉토리 안의 DB 파일 이름 — 서버가 여는 이름과 같아야 한다. */
 	public static final String DB_FILE_NAME = "news.db";

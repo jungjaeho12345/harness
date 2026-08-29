@@ -22,11 +22,36 @@ import java.util.Map;
  * 세미콜론 뒤 공백 1바이트)이라, 관측 도구가 문자열을 만지면 판정이 무의미해진다.
  *
  * <p>요청은 {@code Connection: close}로 보내고 응답은 EOF까지 읽는다(chunked도 해독한다).
- * 헤더는 원문 그대로(ISO-8859-1로 바이트 보존) 보관하고 본문만 UTF-8로 해석한다.
+ * 헤더는 원문 그대로(ISO-8859-1로 바이트 보존) 보관하고 본문만 UTF-8로 해석한다 —
+ * 바이너리 응답은 {@link #raw(int, String, String)}({@link RawResponse})으로 바이트를 그대로 받는다.
  */
 public final class Wire {
 
 	private Wire() {
+	}
+
+	/**
+	 * 본문 바이트를 그대로 들고 있는 원시 응답 — <b>바이너리 응답</b>(정적 서빙 등) 관측용이다.
+	 *
+	 * <p>{@link Response}는 본문을 UTF-8 문자열로 해석하므로 PNG 같은 바이트열은 그 과정에서 손상된다
+	 * (부정 바이트열이 U+FFFD로 치환된다) — "놓은 파일과 응답 바이트가 같다"를 단언하려면 바이트가 필요하다.
+	 */
+	public record RawResponse(int status, List<String> headerLines, byte[] body) {
+
+		/** 헤더 원문 줄 전체(예: {@code "Content-Type: image/png"}). 없으면 null. */
+		public String line(String name) {
+			return firstLine(this.headerLines, name);
+		}
+
+		/** 이름이 일치하는 헤더 줄 전부(대소문자 무시). */
+		public List<String> lines(String name) {
+			return matchingLines(this.headerLines, name);
+		}
+
+		/** 본문을 ISO-8859-1로 읽은 문자열 — 바이트 손실 없이 "특정 바이트열이 들어 있나"를 볼 때 쓴다. */
+		public String bodyAsLatin1() {
+			return new String(this.body, StandardCharsets.ISO_8859_1);
+		}
 	}
 
 	/** 원시 응답 — {@code headerLines}는 상태줄 다음 줄들의 <b>원문</b>이다(이름 대소문자·공백 포함). */
@@ -40,14 +65,7 @@ public final class Wire {
 
 		/** 이름이 일치하는 헤더 줄 전부(대소문자 무시). Set-Cookie처럼 반복되는 헤더용. */
 		public List<String> lines(String name) {
-			String prefix = name.toLowerCase(Locale.ROOT) + ":";
-			List<String> out = new ArrayList<>();
-			for (String headerLine : this.headerLines) {
-				if (headerLine.toLowerCase(Locale.ROOT).startsWith(prefix)) {
-					out.add(headerLine);
-				}
-			}
-			return out;
+			return matchingLines(this.headerLines, name);
 		}
 
 		/** 헤더 값(콜론 뒤 공백 1개를 뺀 나머지 원문). 없으면 null. */
@@ -66,9 +84,30 @@ public final class Wire {
 		}
 	}
 
+	private static String firstLine(List<String> headerLines, String name) {
+		List<String> found = matchingLines(headerLines, name);
+		return found.isEmpty() ? null : found.get(0);
+	}
+
+	private static List<String> matchingLines(List<String> headerLines, String name) {
+		String prefix = name.toLowerCase(Locale.ROOT) + ":";
+		List<String> out = new ArrayList<>();
+		for (String headerLine : headerLines) {
+			if (headerLine.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+				out.add(headerLine);
+			}
+		}
+		return out;
+	}
+
 	/** 헤더·본문 없는 요청. */
 	public static Response send(int port, String method, String path) {
 		return send(port, method, path, Map.of(), null);
+	}
+
+	/** 헤더·본문 없는 요청 — 본문을 <b>바이트 그대로</b> 돌려준다(바이너리 응답 관측용). */
+	public static RawResponse raw(int port, String method, String path) {
+		return raw(port, method, path, Map.of(), null);
 	}
 
 	/** JSON 본문 요청({@code Content-Type: application/json}). */
@@ -85,6 +124,18 @@ public final class Wire {
 	 * @param body 본문(UTF-8 인코딩). null이면 본문 없음
 	 */
 	public static Response send(int port, String method, String path, Map<String, String> headers, String body) {
+		RawResponse response = raw(port, method, path, headers, body);
+		return new Response(response.status(), response.headerLines(),
+				new String(response.body(), StandardCharsets.UTF_8));
+	}
+
+	/**
+	 * {@link #send(int, String, String, Map, String)}와 같은 왕복이되 본문을 디코딩하지 않는다.
+	 *
+	 * @param headers 추가 요청 헤더(Host·Connection·Content-Length는 여기서 붙인다)
+	 * @param body 본문(UTF-8 인코딩). null이면 본문 없음
+	 */
+	public static RawResponse raw(int port, String method, String path, Map<String, String> headers, String body) {
 		byte[] payload = (body == null) ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
 		StringBuilder head = new StringBuilder();
 		head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
@@ -124,7 +175,7 @@ public final class Wire {
 		return buffer.toByteArray();
 	}
 
-	private static Response parse(byte[] raw) {
+	private static RawResponse parse(byte[] raw) {
 		int split = indexOfHeaderEnd(raw);
 		if (split < 0) {
 			throw new IllegalStateException("응답에 헤더 종료(CRLFCRLF)가 없다: " + new String(raw, StandardCharsets.ISO_8859_1));
@@ -145,7 +196,7 @@ public final class Wire {
 			}
 		}
 		byte[] payload = chunked ? dechunk(bodyBytes) : bodyBytes;
-		return new Response(status, List.copyOf(headerLines), new String(payload, StandardCharsets.UTF_8));
+		return new RawResponse(status, List.copyOf(headerLines), payload);
 	}
 
 	private static int indexOfHeaderEnd(byte[] raw) {

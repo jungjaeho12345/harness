@@ -23,6 +23,9 @@ public record AppProperties(String dataDir, String env, List<String> allowedOrig
 
 	private static final String DEFAULT_ENV = "development";
 
+	/** 데이터 디렉토리 아래 업로드 루트 이름 — Node {@code resolveRuntimePaths}의 {@code uploadDir}와 같다. */
+	private static final String UPLOADS_DIR = "uploads";
+
 	private static final String MISSING_DATA_DIR =
 			"필수 설정 app.data-dir 이(가) 없습니다. 환경변수 DATA_DIR 에 데이터 디렉토리 절대경로를 지정하고 다시 실행하세요. "
 					+ "이 서버는 데이터 경로를 추정하지 않습니다(설정 누락으로 엉뚱한 news.db 를 여는 사고를 막기 위함).";
@@ -46,5 +49,20 @@ public record AppProperties(String dataDir, String env, List<String> allowedOrig
 	/** 데이터 디렉토리 경로. 존재 여부·스키마 확인은 DB 접근층(step2)의 책임이다. */
 	public Path dataDirPath() {
 		return Path.of(dataDir);
+	}
+
+	/**
+	 * 업로드 파일 루트 — Node {@code resolveRuntimePaths}의 {@code uploadDir}({@code <dataDir>/uploads})와
+	 * 같은 자리이고, 이 서버에서 그 경로를 도출하는 <b>유일한 지점</b>이다.
+	 *
+	 * <p>저장측({@code UploadStore})과 서빙측(정적 리소스 핸들러 — {@code /uploads/**})이 각자 도출하면
+	 * 업로드는 성공하는데 서빙은 404가 되는 조용한 divergence가 생긴다. cwd 상대 경로·기본값 추정은 없다:
+	 * {@code app.data-dir}은 필수 설정이라 추정 경로가 존재할 수 없고, Node {@code createApp}의 기본값
+	 * {@code 'uploads'}(cwd 상대)는 테스트 잔재라 이식 대상이 아니다(그것을 이식하면 프로세스 cwd에 쓴다).
+	 *
+	 * <p>디렉토리를 만들지 않는다 — 생성은 첫 업로드 직전의 lazy mkdir 한 자리뿐이다.
+	 */
+	public Path uploadsDirPath() {
+		return dataDirPath().resolve(UPLOADS_DIR);
 	}
 }

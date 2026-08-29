@@ -43,4 +43,19 @@ class AppPropertiesTest {
 	void dataDirIsTrimmed() {
 		assertEquals("/tmp/x", new AppProperties("  /tmp/x  ", null, null).dataDir());
 	}
+
+	/**
+	 * uploads 루트는 <b>여기 한 지점</b>에서만 도출된다 — 저장측({@code UploadStore})과 서빙측(정적 리소스
+	 * 핸들러)이 각자 도출하면 업로드는 성공하는데 서빙은 404가 되는 조용한 divergence가 생긴다.
+	 * Node {@code resolveRuntimePaths}의 {@code uploadDir = <dataDir>/uploads}와 같은 자리다.
+	 */
+	@Test
+	void uploadsDirIsAlwaysUnderTheDataDir() {
+		AppProperties properties = new AppProperties("  /tmp/x  ", null, null);
+
+		assertEquals(properties.dataDirPath().resolve("uploads"), properties.uploadsDirPath());
+		assertEquals("uploads", properties.uploadsDirPath().getFileName().toString());
+		assertEquals(properties.dataDirPath(), properties.uploadsDirPath().getParent(),
+				"uploads 루트가 데이터 디렉토리 바로 아래가 아니다 — cwd 상대 경로면 리포를 오염시킨다");
+	}
 }
