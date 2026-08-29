@@ -15,7 +15,7 @@
 	<description>기사 작성기 Spring 서버 (phase 68 — REST 계약 패리티 대상)</description>
 
 	<properties>
-		<java.version>21</java.version>
+		<java.version>25</java.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 
