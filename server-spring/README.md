@@ -156,17 +156,17 @@ DDL을 **한 줄도 실행하지 않는다**: `ddl-auto`·`schema.sql`·`data.sq
 
 ## 빌드 · 테스트 · 실행
 
-시스템 `java`는 1.8이라 **`JAVA_HOME`을 명시하지 않으면 빌드가 실패한다**. 포터블 JDK 21을 쓴다.
+시스템 `java`는 1.8이라 **`JAVA_HOME`을 명시하지 않으면 빌드가 실패한다**. 포터블 JDK 25(LTS)를 쓴다.
 
 ```bash
 # 테스트 포함 전체 빌드
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B verify
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B verify
 
 # 실행 가능한 jar 만들기 (target/server-spring-0.0.1-SNAPSHOT.jar)
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B package -DskipTests
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B package -DskipTests
 
 # 기동 (DATA_DIR 필수 — 아래 표 참조)
-DATA_DIR=/경로/임시데이터 PORT=15731 "D:/agents/tools/jdk-21.0.12+8/bin/java.exe" \
+DATA_DIR=/경로/임시데이터 PORT=15731 "D:/agents/tools/jdk-25.0.4.1+1/bin/java.exe" \
   -jar target/server-spring-0.0.1-SNAPSHOT.jar
 
 # 생존 확인
@@ -207,20 +207,20 @@ scope 표에는 지금 **5 프로파일**이 올라 있다(`default` 12파일 ·
 
 ```bash
 # 1) jar를 먼저 만든다 — 하네스는 Maven을 호출하지 않는다(빌드 실패가 계약 실패와 섞이면 진단이 무너진다)
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B -q package -DskipTests
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests
 
 # 2) 기동 경로만 실증(케이스 없이 기동 → /api/health → 세션 준비 → 종료·정리)
-cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" \
+cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" \
   npm run test:contract:spring -- --boot-check --profile auth-negative --profile prod-cookie
 
 # 3) 계약 케이스 실행(프로파일 미지정 = scope 표 전부)
-cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" npm run test:contract:spring
+cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" npm run test:contract:spring
 
 # 4) Node 리포트와 기계 비교 — 이것이 패리티 판정이다
-cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" npm run test:contract:spring -- --parity
+cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" npm run test:contract:spring -- --parity
 
 # 5) 대상의 자기 결정성(같은 입력 → 같은 리포트) — 프로파일마다 새 DATA_DIR + 새 프로세스로 2패스
-cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" npm run test:contract:spring -- --dual-run
+cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" npm run test:contract:spring -- --dual-run
 ```
 
 - **`JAVA_HOME`(또는 `SPRING_JAVA_HOME`·`--java-home`)이 필수다.** 시스템 `java`(1.8)로 폴백하지 않는다 —
@@ -404,7 +404,7 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
   전부 굶긴다(phase 73에서 그 표면이 미디어·번역까지 넓어졌다 — 아래 참조). 타임아웃은 단일 요청의 상한일 뿐 재시도가 아니다(ADR-008 (6) 유지). · ③ **응답 본문 16 MiB 상한**
   (없으면 거대 응답의 `OutOfMemoryError`가 `catch` 밖에서 JVM을 죽인다 — Node는 V8 문자열 상한 `RangeError`가
   `fetch-failed`로 접힌다). ②③ 모두 초과 시 **기존 실패 shape 그대로**(`ok=false` → `fetch-failed`)이며 새 사유 토큰은 없다.
-  **잔여 위험**: `HttpRequest.timeout`은 **응답 헤더까지만** 덮는다(JDK 21 실측 — 본문을 3초에 걸쳐 흘리는 서버는 상한
+  **잔여 위험**: `HttpRequest.timeout`은 **응답 헤더까지만** 덮는다(JDK 21·25 실측 — 본문을 3초에 걸쳐 흘리는 서버는 상한
   500ms에도 3,082ms를 기다렸다). 본문을 천천히 흘리는 소스는 여전히 워커를 점유한다(막으려면 타이머·별도 스레드가 필요하고
   그것이 ADR-008 (3)(6) 위반이라 하지 않았다).
 - **정수값의 실수 표기** — payload JSON의 `2.0`이 Node 파서에서는 `"2"`, Jackson→Java에서는 `"2.0"`으로 문자열화된다.
