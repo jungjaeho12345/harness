@@ -47,6 +47,17 @@ public class UploadController {
 	/** 거부 2종의 상태코드 — Node도 라우트에서 직접 쓴다(전역 사유 표를 거치지 않는다). */
 	private static final int REJECTED = 400;
 
+	/**
+	 * 이 라우트 <b>하나만</b>의 요청 본문 상한 — Node {@code express.json({limit:'10mb'})}
+	 * ({@code server/index.js} 1011행)의 {@code bytes('10mb')} = <b>10 MiB</b>와 같은 값·같은 부등호다
+	 * (경계값 자신은 통과, 1바이트 초과부터 거부).
+	 *
+	 * <p><b>전역 상한을 도입하지 않는 이유</b>: 정본의 전역 파서(~100kb)를 이식하면 30여 라우트의 거부 경계가
+	 * 한꺼번에 움직이는데 그 경계를 관측하는 계약이 하나도 없다 — 조용히 갈릴 축을 새로 만드는 셈이다.
+	 * 여기만 막는 것으로 이 phase가 연 표면(base64 본문 = 유일하게 큰 본문을 정상적으로 받는 라우트)은 닫힌다.
+	 */
+	private static final long MAX_BODY_BYTES = 10L * 1024 * 1024;
+
 	private final SessionGuard sessions;
 
 	private final UploadService uploads;
@@ -72,7 +83,8 @@ public class UploadController {
 			return;
 		}
 
-		Map<String, Object> body = this.json.readBody(request);
+		// 상한 초과는 사유가 아니라 예외다 — 전역 핸들러가 500 internal-error로 만든다(정본과 같은 응답).
+		Map<String, Object> body = this.json.readBody(request, MAX_BODY_BYTES);
 		// 값은 만지지 않는다 — 문자열 여부 판정도 확장자·크기 게이트도 전부 서비스가 소유한다.
 		Map<String, Object> result = this.uploads.upload(body.get("filename"), body.get("contentBase64"));
 		int status = Boolean.TRUE.equals(result.get("ok")) ? 200 : REJECTED;

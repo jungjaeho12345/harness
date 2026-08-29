@@ -11,7 +11,9 @@
   auth-negative 1 · **failclosed 1** · prod-cookie 1) = **5 프로파일**이 이 서버 대상에서 green이고 Node 리포트 대비
   **패리티 diff 0**이다 (phase 73 마감 실측 2026-08-28 — 연속 2회 동일: 관측 **296**(default 229 · minimal 55 ·
   auth-negative 4 · failclosed 5 · prod-cookie 3) · diffs 0 · 자기 결정성(`--dual-run`) 296관측 diffs 0 ·
-  Java **1229 테스트 0 실패** · jar **35,778,253 B**(clean 빌드 기준 — 증분 빌드는 수십~수백 바이트 다르다) ·
+  Java **1246 테스트 0 실패**(⑤ 코드리뷰 반려 폐색 재측정 2026-08-29 — 본문 상한 3건 + 정적 서빙 별칭 2건이
+  늘었다. 관측 296·diffs 0·라우트 37은 불변) · jar 약 **35.78 MB**(clean 빌드에서도 수 KB 흔들린다 — 정확
+  바이트로 인용하지 마라. 2026-08-29 clean 2회 실측 35,780,997 B와 35,778,319 B) ·
   Node 축 `npm test` **1328/1328**(2회 실행 중 1회는 `test/distribution-failure-api.test.js`가 `bad port` fetch flake로
   1건 실패했고 **재실행 2회 green** — Spring 축과 공유 자원이 없는 하네스 flake다)). **남은 것은 SSE 2개뿐**이다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
@@ -112,6 +114,16 @@ phase 73이 5 라우트를 붙이면서 그 표면은 다시 **37 라우트**로
 - **헤더 divergence는 고치지 않았다**: express.static은 `Cache-Control: public, max-age=0`과 약한 `ETag`를 싣지만 Spring은
   **둘 다 없다**(계약 리포트가 싣지 않는 헤더이고, 조건부 요청 304 경로를 새로 여는 것은 표면만 넓힌다).
   `.txt`의 `Content-Type`도 Node `text/plain; charset=UTF-8` 대 Spring `text/plain`(charset 없음)이다.
+- **Win32 이름 별칭은 `UploadsResourceResolver`로 닫았다**(2026-08-29 ⑤ 리뷰 반영). 정본은 `fs.stat`(libuv)이고
+  libuv는 경로를 `\\?\` 장문 형태로 열어 **Win32 레거시 이름 정규화를 받지 않는다** — 그래서 `x.png.`·`x.png `·`CON`이
+  전부 **ENOENT**다(같은 호스트 `fs.statSync` 직접 실측). Java의 파일 접근은 그 정규화를 그대로 받으므로 손대기 전에는
+  `.png.`·`.png%20`·`.png%2e`·`.png..`·`.png%20%20`·`.png%20.`·`<하위디렉토리>./<파일>` **7종이 200**(정본은 전부 404)이었고
+  `CON`·`NUL`·`AUX` 등 **예약 장치명은 500**(정본 404)이었다 — 실재하는 장치로 열려 조회가 예외를 던진 것이다.
+  리졸버는 세그먼트를 **퍼센트 디코딩한 뒤**(이 층의 `resourcePath`는 아직 인코딩된 원문이라 디코딩 없이는 `%2e`·`%20`이
+  그대로 통과한다) 후행 점·공백과 예약 장치명을 "없는 리소스"로 접는다. 체인은 `resourceChain(false)`라 캐시 리졸버가
+  끼지 않아 응답 헤더는 한 바이트도 달라지지 않는다. 반대로 **정본도 200인 셋**
+  (`::$DATA` = `application/octet-stream` · `.PNG` · `./<hex>.png`)은 **그대로 둔다** — 여기서 막으면 divergence가 오히려 는다.
+  이 규칙은 강화가 아니라 **정본 실측의 재현**이며, 표기별 상태코드 14종 + 장치명 12종을 `UploadsStaticWireTest`가 표로 동결한다.
 
 **배부 실행은 phase 72에서 결선됐다**(ADR-008 이식 — 파일 스풀 outbound · 외부 cron tick pull · 앱 내 타이머 0 · 배부 축
 네트워크 egress 0 · 자동 재시도·백오프·큐 0). 결선 여부를 정하는 **판정 지점은 `SpoolProperties.rootPath()` 하나**다:
@@ -440,8 +452,18 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
   (`UploadServiceTest`·`UploadStoreTest`가 유일한 관측점).
 - **정적 서빙의 대용량 파일·`Range` 요청** · **`/uploads` 파일의 수명·정리 정책** — 앱은 업로드 파일을 지우지 않는다(**운영 소유**).
 - **비-ASCII 파일명의 응답 왕복 인코딩** — 계약 픽스처는 ASCII뿐이다(확장자 도출 자체는 `UploadNamesTest`의 골든 벡터가 덮는다).
-- **요청 본문 크기 상한이 Spring에는 없다** — Node는 전역 100kb + 기사 쓰기/업로드 2라우트만 10mb다.
-  전역 상한 도입은 37 라우트 전부에 파급되므로 이 phase에서 하지 않았다(양쪽 다 계약 미관측).
+- **요청 본문 크기 상한은 `POST /api/upload` 한 라우트에만 있다**(2026-08-29 ⑤ 리뷰 반영). Node는 전역 100kb +
+  기사 쓰기/업로드 2라우트만 10mb인데, 업로드는 base64 본문이라 **큰 본문을 정상적으로 받는 유일한 라우트**여서
+  상한이 없으면 세션 하나로 수백 MB JSON을 밀어 힙을 태울 수 있었다. 그래서 그 라우트만 **10 MiB**로 막았고
+  경계·부등호·응답을 정본 실측에 맞췄다(`10,485,760` 통과 · `+1`부터 **500 `internal-error`** — `raw-body`의 413을
+  Node 전역 에러 핸들러가 `err.status`를 보지 않고 500으로 접는다). 상한은 **디코드 전 원문 바이트**에 걸리고
+  `Content-Length`를 믿지 않는다(헤더 없는 chunked도 같은 경계에서 끊긴다 — 양쪽 실측 동일).
+  **전역 상한(100kb)과 기사 쓰기 라우트의 10mb는 여전히 없다** — 전역 도입은 37 라우트 전부의 거부 경계를 한꺼번에
+  움직이는데 그 경계를 관측하는 계약이 하나도 없다(조용히 갈릴 축을 새로 만드는 셈이다).
+  단, 상한을 넘긴 요청의 **응답 시점은 갈린다**(의도된 divergence): 이 서버는 초과를 감지한 자리에서 곧바로 500이고,
+  정본은 `body-parser`가 `stream.resume()` + `onFinished(req, ...)`로 **요청이 끝나기를 기다렸다가** 오류를 넘기므로
+  선언한 `Content-Length`를 채우지 않고 멈춘 클라이언트에는 **응답을 아무것도 주지 않는다**(20초 관측 TIMEOUT).
+  정본은 그동안 수신 바이트를 버리기만 해 힙이 늘지 않고, 이쪽은 조기 종료로 같은 보호를 준다. 계약 미관측 축이다.
 - **`path.extname`을 win32 알고리즘으로 이식했다**(의도된 선택) — POSIX 호스트의 Node와 갈리는 입력이 실재한다
   (`C:.png`는 win32 400/posix 200 · `a.png\`는 win32 200/posix 400 — 계획서의 "영향 없음"은 실측으로 반증됐다).
   Node 서버가 도는 곳이 win32라 win32를 골랐고, 그 선택이 상태코드를 가른다는 사실을 `UploadNamesTest`가 잠근다.
