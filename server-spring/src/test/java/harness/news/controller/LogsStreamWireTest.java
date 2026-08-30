@@ -379,6 +379,41 @@ class LogsStreamWireTest {
 	}
 
 	/**
+	 * 항목 7(c) — <b>스냅샷과 큐가 겹치는 구간의 중복 0</b>(결정적 재현).
+	 *
+	 * <p>「구독은 끝났고 스냅샷은 아직」인 창에서 발생한 줄은 <b>스냅샷(→ replay)과 prelude 큐에 둘 다</b>
+	 * 들어간다. {@code endPrelude(lastReplayedSeq)}가 그 순서키 이하를 버리지 않으면(M5-5c) 같은 seq가
+	 * <b>두 번</b> 나가고, 클라이언트는 로그 줄이 겹쳐 보인다.
+	 *
+	 * <p><b>이 테스트는 2026-08-30 변이 M5-5c가 드러낸 공백을 메운다</b>: 그때까지 이 클래스의 훅은
+	 * {@code afterSnapshot}(=유실 창)뿐이라 중복 제거를 지우는 변이가 전부 green으로 통과했다.
+	 * 반복 경합({@code LogsStreamReplayWireTest})도 이 창이 마이크로초라 잡지 못한다 — 훅이 유일 방어선이다.
+	 */
+	@Test
+	void aLogLineRaisedBetweenTheSubscriptionAndTheSnapshotArrivesExactlyOnce() {
+		List<Long> raised = Collections.synchronizedList(new ArrayList<>());
+		AtomicInteger hookRuns = new AtomicInteger();
+		this.logs.beforeSnapshot(() -> {
+			raised.add(this.logs.info("ls-dedupe-window-1").seq());
+			raised.add(this.logs.info("ls-dedupe-window-2").seq());
+			hookRuns.incrementAndGet();
+		});
+
+		try (WireStream stream = openStream(sessionFor("ls-z"))) {
+			assertNotNull(awaitReady(stream));
+			assertTrue(awaitHookRun(hookRuns), "스냅샷 직전 훅이 돌지 않았다 — 이 테스트가 공허해진다");
+			List<Long> received = drainReplay(stream);
+
+			for (long seq : List.copyOf(raised)) {
+				assertEquals(1, Collections.frequency(received, seq),
+						"같은 seq가 두 번 나갔다 — 스냅샷과 prelude 큐가 겹치는 구간의 중복 제거가 없다"
+								+ "(seq=" + seq + ")");
+			}
+			assertStrictlyAscending(received);
+		}
+	}
+
+	/**
 	 * 항목 7(b) — <b>ready 창</b>의 유실 0(결정적 재현). "구독은 끝났고 ready는 나가는 중"인 창이다.
 	 *
 	 * <p>구독 등록을 {@code endPrelude} 뒤로 옮기면(M5-5 = 초안의 "ready → replay → subscribe" 순서)
@@ -747,6 +782,8 @@ class LogsStreamWireTest {
 	 */
 	static final class HookedLogService extends LogService {
 
+		private final AtomicReference<Runnable> beforeSnapshot = new AtomicReference<>();
+
 		private final AtomicReference<Runnable> afterSnapshot = new AtomicReference<>();
 
 		HookedLogService(Clock clock) {
@@ -755,12 +792,16 @@ class LogsStreamWireTest {
 
 		@Override
 		public List<LogRecord> snapshot() {
+			// 두 훅은 서로 다른 창이다: before = 「구독은 끝났고 스냅샷은 아직」(그 줄은 스냅샷과 큐에
+			// 둘 다 들어간다 → 중복 제거 대상) · after = 「스냅샷은 떴고 그 뒤」(큐에만 들어간다 → 유실 대상).
+			runOnce(this.beforeSnapshot);
 			List<LogRecord> snapshot = super.snapshot();
-			Runnable hook = this.afterSnapshot.getAndSet(null); // 1회용 — 다음 스트림에 새지 않는다.
-			if (hook != null) {
-				hook.run();
-			}
+			runOnce(this.afterSnapshot);
 			return snapshot;
+		}
+
+		void beforeSnapshot(Runnable hook) {
+			this.beforeSnapshot.set(hook);
 		}
 
 		void afterSnapshot(Runnable hook) {
@@ -768,7 +809,16 @@ class LogsStreamWireTest {
 		}
 
 		void clearHooks() {
+			this.beforeSnapshot.set(null);
 			this.afterSnapshot.set(null);
+		}
+
+		/** 1회용 — 다음 스트림에 새지 않는다. */
+		private static void runOnce(AtomicReference<Runnable> slot) {
+			Runnable hook = slot.getAndSet(null);
+			if (hook != null) {
+				hook.run();
+			}
 		}
 
 	}
