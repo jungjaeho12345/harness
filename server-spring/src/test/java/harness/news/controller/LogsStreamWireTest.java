@@ -757,7 +757,10 @@ class LogsStreamWireTest {
 						+ "와이어로 구별되지 않는다)");
 		assertTrue(handler.contains("endPrelude("), "endPrelude를 부르지 않으면 스트림이 영원히 침묵한다");
 
-		for (String forbidden : List.of("@Scheduled", "@Async", "@EnableAsync", "TaskScheduler", "TaskExecutor",
+		// "@Scheduled"가 아니라 "Scheduled"를 막는 이유(2026-08-30 변이 M5-9 실측): 완전 수식
+		// 애노테이션(@org.springframework.scheduling.annotation.Scheduled)은 "@Scheduled"를 포함하지 않아
+		// 이 스캔을 그대로 통과했다(그때 red를 낸 것은 Adr008DisciplineTest뿐이었다).
+		for (String forbidden : List.of("Scheduled", "@Async", "@EnableAsync", "TaskScheduler", "TaskExecutor",
 				"ExecutorService", "Executors.", "ScheduledFuture", "new Timer(", "Thread.sleep(", "LockSupport",
 				".await(", "CompletableFuture", "CompletionStage", ".thenApply(", ".whenComplete(",
 				"CountDownLatch", "new Thread(", "startVirtualThread", "Thread.ofVirtual(", "Thread.ofPlatform(",
