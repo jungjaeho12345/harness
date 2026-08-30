@@ -32,27 +32,43 @@
 4. **금지 철자(main 소스 전역, 예외 4파일 밖)** — 이 step의 새 코드에 하나도 쓰지 마라:
    `@Scheduled` · `@EnableScheduling` · `TaskScheduler` · `ScheduledExecutorService` · `ScheduledThreadPoolExecutor` · `Executors.newScheduled*(` · `new Timer(` · `Thread.sleep(` · `TimeUnit.*.sleep(` · `.schedule*(` · `ScheduledFuture` · `LockSupport` · `.park*(` · **`.await(`** · `@Async` · `@EnableAsync` · `@Retryable` · `RetryTemplate` · `CompletableFuture` · `CompletionStage` · `.thenApply/thenAccept/thenRun/thenCompose/thenCombine/whenComplete*(` · `ExecutorService` · `ThreadPoolExecutor` · `ForkJoinPool` · `TaskExecutor`/`AsyncTaskExecutor` · `Executors.new*(` · `new Thread(` · `Thread.startVirtualThread(` · `Thread.of(Virtual|Platform)(` · **`CountDownLatch`** · `.sendAsync(` · `@Recover` · 네트워크 군(`HttpClient`·`RestTemplate`·`WebClient`·`RestClient`·`.openConnection(`·`.openStream(` 등) · 파일 쓰기 군.
    **허용(패턴에 없다)**: `ConcurrentHashMap` · `CopyOnWriteArrayList` · `AtomicLong`/`AtomicBoolean` · `synchronized` · `ReentrantLock`(단 `Condition.await()`는 금지 철자에 걸린다 — 쓰지 마라).
+   **[JDK 25 주의 — 2026-08-30 계획 단계 실측] 위 패턴 목록은 JDK 21 API 표면 기준으로 작성됐고, JDK 25가 정식화한 일부 표면이 거기에 없다.** `Adr008DisciplineTest.java`(908행) 전문에 `StructuredTaskScope` · `ScopedValue` · `Subtask` · `.fork(` · `.join(` 문자열이 **0건**이다 — 즉 **게이트가 잡지 못한다**. 그래도 **쓰지 마라**: ADR-008의 취지는 패턴 목록이 아니라 "앱이 스스로 깨어나지 않고 스스로 다시 시도하지 않는다"이고, 게이트를 통과한다는 사실은 허가가 아니다. (가상 스레드 진입로 `Thread.startVirtualThread(`·`Thread.of(Virtual|Platform)(`·`Executors.new*(`는 **이미 걸린다**.) 이 공백의 조사·기록은 **step6 작업 G**가 소유한다 — **여기서 게이트 파일을 고치지 마라**(이 phase는 그 파일을 0줄 고친다).
 5. **`docs/ADR.md`는 순수 추가만 허용된다.** 기존 ADR 본문(ADR-001~014)은 **한 글자도** 고치지 않는다 — 각 문장은 그 시점의 결정·실측 기록이고 소급 수정은 이력을 오염시킨다(ADR-014가 명문화한 규율).
 
 ## 작업
 
-### A0 (선행 · 차단 조건) — 브랜치 위생 확인
+### A0 (선행) — 툴체인 전제 확인 (가벼운 확인 · 3커맨드)
 
-1. `git log --oneline -3` 과 `git show --stat --format="" HEAD` 로 **브랜치에 이 phase가 만들지 않은 커밋이 있는지** 확인하라.
-2. `grep -n "java.version\|<release>" server-spring/pom.xml` 을 확인하라. **`25`가 나오면 즉시 멈추고 처분하라** — 포터블 JDK 21(`D:/agents/tools/jdk-21.0.12+8`)에서 `release version 25 not supported`로 **컴파일이 즉사**한다(계획 단계 2026-08-29 21:22 실측: 커밋 `d1d5e84` "Step 3: Update java.version to 25 …"가 이 브랜치에 들어와 `pom.xml`·`spikes/p0-spring/pom.xml`·`.vscode/settings.json`을 바꿨다. `spikes/**`는 무접촉 목록이다).
-   - 처분은 **오케스트레이터 판단**이다. 되돌린다면 `server-spring/pom.xml`을 `f93bc5e` 상태(`<java.version>21</java.version>` · maven-compiler-plugin `<release>` 항목 없음)로, `spikes/p0-spring/pom.xml`을 `f93bc5e` 상태로 되돌리고 그 사실을 summary에 **명시**하라.
-   - **되돌리지 않고는 이 phase의 어떤 AC도 실행할 수 없다.** 이 항목이 미해결이면 step을 `blocked`로 보고하라.
+이 phase의 기준선은 **포터블 Temurin JDK 25.0.4.1+1**(`D:/agents/tools/jdk-25.0.4.1+1`)이다. PR #119(`fde4e3e` → 머지 `4543cea`)가 `server-spring`을 JDK 21에서 JDK 25로 옮기면서 **측정까지 동반**했다. 착수 시 그 전제가 그대로인지만 확인한다.
+
+```bash
+# ① pom이 25인가 (기대: server-spring은 25 · spikes/p0-spring은 21 그대로)
+grep -n "java.version" server-spring/pom.xml spikes/p0-spring/pom.xml
+
+# ② 포터블 JDK 25가 있는가
+ls -d D:/agents/tools/jdk-25.0.4.1+1
+
+# ③ 브랜치에 이 phase가 만들지 않은 커밋이 있는가
+git log --oneline -3 && git show --stat --format="" HEAD
+```
+
+기대치(2026-08-30 계획 단계 재실측):
+- `server-spring/pom.xml` → `<java.version>25</java.version>`. **`maven-compiler-plugin` 블록은 없다** — Spring Boot 부모 POM이 `maven.compiler.release`로 전달한다(빌드 로그 `Compiling ... with javac [debug parameters release 25]`로 확인됨). **`maven-compiler-plugin`을 새로 추가하지 마라**(부모가 이미 하는 일을 두 곳에서 하게 된다).
+- `spikes/p0-spring/pom.xml` → **21 유지**. 동결된 P0 산출물이고 게이트 대상이 아니며 **이 phase의 무접촉 목록**이다. 21이라고 해서 고치지 마라.
+- ①이 다르면(예: `server-spring`이 21로 되돌아갔거나 `<release>`가 박혔거나 `spikes`가 25로 바뀌었다면) **멈추고 오케스트레이터에게 보고하라** — 아래 「환경 함정」이 재발한 것이다.
+
+> **환경 함정(2026-08-29~30 실측 · 재발 가능)**: 이 리포에는 VS Code의 **GitHub Copilot App Modernization(java-upgrade) 세션**이 붙어 있다(`.github/modernize/java-upgrade/` — gitignore 대상이라 `git status`에 안 뜬다). 그 도구는 포터블 JDK를 찾지 못해 **기준선 측정을 통째로 건너뛴 채** pom만 Java 25로 바꾼 커밋 `d1d5e84`를 이 브랜치에 남긴 전례가 있다(그 커밋은 `wip-jdk25-upgrade`에 보존됐고 이 브랜치에서는 제거됐다. 이후 PR #119가 **측정을 동반해** 정식으로 JDK 25로 옮겼다). 세션 파일 4개에는 재개 금지 표지를 남겨 뒀으나 **IDE가 그 세션을 재개하면 다시 pom·`.vscode/`를 건드릴 수 있다.** 그래서 이 확인이 매 착수의 전제이고, 그래서 **`git add -A`가 금지**다.
 
 ### A1 (선행) — 기준선 재측정
 
 아래를 **직렬로** 돌려라. 결과를 summary에 수치로 적는다.
 
 ```bash
-# ① Java (반드시 clean — IDE가 target/에 JDK 25 클래스를 남기면 Tests run: 0 + BUILD FAILURE로 즉사한다)
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B clean verify
+# ① Java (반드시 clean — IDE가 target/에 다른 릴리스의 클래스를 남기면 Tests run: 0 + BUILD FAILURE로 즉사한다)
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
 
 # ② 계약 패리티 (리포 루트 cwd · SPRING_JAVA_HOME 필수)
-cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --parity
+cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.mjs --parity
 
 # ③ Node 스위트
 cd /d/agents/harness && npm test
@@ -64,12 +80,12 @@ grep -c '"\(GET\|POST\|PUT\|DELETE\) /api' server-spring/src/test/java/harness/n
 git status --porcelain
 ```
 
-기대치(계획 단계 실측 — `f93bc5e` 트리):
-- ① **Tests run: 1242, Failures: 0, Errors: 0, Skipped: 0** BUILD SUCCESS(4:11)
-- ② exit 0 · profiles=5 · **296관측 diffs 0**
-- ③ **tests 1328 / pass 1328 / fail 0 / suites 51**
+기대치(**2026-08-30 계획 단계 재실측 — `4543cea` 트리 · 포터블 JDK 25.0.4.1+1**):
+- ① **Tests run: 1246, Failures: 0, Errors: 0, Skipped: 0** BUILD SUCCESS(3:40) · jar 35,781,124 B
+- ② exit 0 · profiles=5 · **296관측 diffs 0**(default 229 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3)
+- ③ **tests 1328 / pass 1328 / fail 0**
 - ④ **37**
-- ⑤ 미추적 `.vscode/`만
+- ⑤ 미추적 `.vscode/`만. **단 PR #120(`.gitignore`에 `.vscode/` 추가)이 머지된 뒤라면 그것도 뜨지 않는다 — 둘 다 정상이다.** `.gitignore`에 `.vscode` 항목이 있는지 먼저 확인해 어느 쪽인지 판정하고, 그 밖의 미추적 항목이 있으면 멈춰라.
 
 **불일치하면 그 자리에서 `index.json`의 `baseline`과 전 step AC의 기대 수치를 갱신한 뒤 진행하라.** 추정치를 물려받지 마라.
 
@@ -143,17 +159,17 @@ public class ChangeBus {
 
 ```bash
 # 1) Java 전체 — clean 필수
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B clean verify
-#   기대: BUILD SUCCESS · Tests run: <기준선 1242 + 이 step 신규 N> · Failures 0 · Errors 0 · Skipped 0
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
+#   기대: BUILD SUCCESS · Tests run: <기준선 1246 + 이 step 신규 N> · Failures 0 · Errors 0 · Skipped 0
 #   N(신규 테스트 수)을 summary에 반드시 적어라.
 
 # 2) 계약 무회귀 — 관측 수가 변하지 않아야 한다(이 step은 계약이 하나도 보지 못한다)
-cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --parity
-#   기대: exit 0 · profiles=5 · 296관측 diffs 0
-#   (소스를 고쳤으므로 반드시 먼저: cd server-spring && JAVA_HOME=... ./mvnw -B -q package -DskipTests)
+cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.mjs --parity
+#   기대: exit 0 · profiles=5 · 296관측 diffs 0(default 229 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3)
+#   (소스를 고쳤으므로 반드시 먼저: cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests)
 
 # 3) ADR은 순수 추가다 — 기존 텍스트가 새 텍스트의 접두사임을 기계로 확인
-git show HEAD:docs/ADR.md > /tmp/adr-before.md 2>/dev/null || git show f93bc5e:docs/ADR.md > /tmp/adr-before.md
+git show HEAD:docs/ADR.md > /tmp/adr-before.md 2>/dev/null || git show 4543cea:docs/ADR.md > /tmp/adr-before.md
 node -e "const fs=require('fs');const a=fs.readFileSync('/tmp/adr-before.md','utf8');const b=fs.readFileSync('docs/ADR.md','utf8');if(!b.startsWith(a)){console.error('ADR 순수 추가가 아니다');process.exit(1)}console.log('ADR pure-append OK +'+(b.length-a.length)+'B')"
 
 # 4) 무접촉 경로 — 출력이 있으면 즉시 실패

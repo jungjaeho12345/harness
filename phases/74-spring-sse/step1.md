@@ -53,7 +53,24 @@ public class LogService {
 ```
 
 핵심 규칙:
-- **`log(...)`의 순서**: ① `synchronized` 블록 안에서 seq 증가·record 생성·버퍼 append·evict → ② **monitor를 푼 뒤** 구독자에게 통지 → ③ record 반환. 통지 대상 목록은 `CopyOnWriteArrayList`라 스냅샷이 필요 없다.
+- **`log(...)`의 순서 — [② 검토 반영으로 정정] 락이 _둘_ 이다.** 초안은 "버퍼 monitor를 푼 뒤 통지"만 지시했는데, 그러면 **두 스레드가 append를 끝낸 순서와 통지에 진입하는 순서가 달라져 구독자가 seq를 역전된 순서로 받을 수 있다**(Node는 단일 스레드라 없는 현상이다). 계약은 `seq > seqBefore`만 보므로 **조용히 통과**한다. 다음 구조를 써라.
+
+  ```
+  synchronized (notifyLock) {          // 통지 순서 = seq 순서를 보장하는 바깥 락
+      LogRecord rec;
+      synchronized (bufferLock) {      // 버퍼 monitor — digest()/snapshot()과 공유
+          rec = append(...);           // seq 증가 · record 생성 · 버퍼 append · evict
+      }
+      notifyListeners(rec);            // 버퍼 monitor 밖 — digest()를 막지 않는다
+      return rec;
+  }
+  ```
+
+  - **왜 이게 맞나**: 원래 "monitor 밖 통지"를 요구한 목적은 **느린 구독자가 `GET /api/logs/digest`를 막지 않게** 하는 것이었다(decisions (11)). 이 구조는 그 목적을 그대로 달성하면서(통지 중 `bufferLock`을 안 잡는다) **seq 순서까지 보존**한다.
+  - **[② 재검토 정정 — 대가를 축소해 적지 마라] 이 구조의 대가는 "느린 구독자가 다른 스레드의 `log(...)`를 직렬화한다"이고, 그것은 _Node 동형이 아니다_.** Node의 `res.write`는 **논블로킹 버퍼링**이라 느린 소비자가 있어도 이벤트 루프가 멈추지 않는다. 반면 Spring의 `ServletOutputStream.write`는 **블로킹**이다. **완전히 멈춘 소비자 하나가 `notifyLock`을 물면**, `RequestLogFilter`가 `finally`에서 `logs.info(...)`를 부르므로 **모든 요청의 액세스 로그가 그 락에서 대기 → 서버 전체가 정지**한다. 게다가 **동시 연결 상한이 없다**(`excluded (d)`). 이것은 71a·72가 반복 확인한 "블로킹이 워커를 잠식해 전 라우트를 죽인다" 축의 재발 형태다. **이 사실을 숨기지 말고 step6 `forward_notes` 6(미검증)에 그대로 인계하라**(관측은 step5 항목 20이 한다). **그래도 이 구조를 택하는 이유**: seq 역전을 막는 다른 수단이 전부 금지 철자(`.await(`·`CountDownLatch`·큐+워커)이고, 부분 정지(느린 소비자)는 write 실패 → 자기 봉인 경로로 회수되기 때문이다. **완전 정지 소비자는 미검증 공백으로 남는다.**
+  - **락 획득 순서는 항상 `notifyLock` → `bufferLock` 한 방향**이다. `digest()`/`snapshot()`은 `bufferLock`만 잡는다 — 역전 쌍이 없으므로 **deadlock-free**다. **이 순서를 뒤집지 마라**(뒤집어도 데드락이 나지는 않지만 통지가 `bufferLock` 안으로 들어가 항목 5가 깨진다 — M1-9).
+  - **`.await(`·`CountDownLatch`·`Condition`으로 순서를 맞추려 하지 마라** — 전부 금지 철자다. `synchronized` 둘로 끝난다.
+  - 통지 대상 목록은 `CopyOnWriteArrayList`라 별도 스냅샷이 필요 없다.
 - **구독자 예외는 격리한다** — 한 구독자가 던져도 (a) 다른 구독자가 받고 (b) `log(...)`가 던지지 않는다. 이유: 배경 (2). 그리고 예외를 삼킬 때 **`LogService`에 다시 로그하지 마라**(무한 재귀).
 - **통지 순서는 등록 순서**다(결정성).
 - `snapshot()`은 **불변/방어 복사**(`List.copyOf`)다. 내부 `Deque`의 뷰를 반환하면 반복 중 `ConcurrentModificationException`이 나고 호출자가 버퍼를 들여다본다.
@@ -69,7 +86,8 @@ public class LogService {
 2. 구독자 2개가 1건에 둘 다 받고 **등록 순서대로** 받는다.
 3. `close()` 후 안 받는다 · **이중 `close()` 안전** · `subscriberCount()`가 정확히 오르내린다.
 4. 구독자가 던져도 (a) 다른 구독자가 받고 (b) `info(...)`가 던지지 않고 (c) 반환 record가 정상이다.
-5. **통지는 monitor 밖에서 돈다** — 콜백 안에서 **별도 스레드**로 `logService.digest()`를 호출해 2초 안에 반환됨을 단언한다(테스트 소스는 `Adr008DisciplineTest`의 스캔 대상이 아니다 — 스캔 루트는 `src/main/java`다. 테스트에서 스레드·타임아웃을 쓰는 것은 허용된다).
+5. **통지는 버퍼 monitor 밖에서 돈다** — 콜백 안에서 **별도 스레드**로 `logService.digest()`를 호출해 2초 안에 반환됨을 단언한다(테스트 소스는 `Adr008DisciplineTest`의 스캔 대상이 아니다 — 스캔 루트는 `src/main/java`다. 테스트에서 스레드·타임아웃을 쓰는 것은 허용된다).
+5b. **seq 역전 0(교차 스레드)** — 스레드 8개가 각각 `info(...)`를 200회씩 호출하는 동안 구독자 1개가 받은 record의 `seq`가 **엄격 증가**임을 단언한다(총 1600건 · 유실 0 · 중복 0). **이것이 없으면 위 두 락 구조가 공허하다.** 변이 M1-8이 red를 실증한다.
 6. **통지는 호출 스레드에서 돈다** — 콜백의 `Thread.currentThread()`가 `info()` 호출 스레드와 같다.
 7. `snapshot()`은 방어 복사다: 반환 리스트를 수정해도 버퍼가 안 바뀌고(또는 불변이라 `UnsupportedOperationException`), 이후 append가 **이전 스냅샷에 보이지 않는다**.
 8. `snapshot()`은 **오래된→최신** 순서다 · cap evict 후 길이는 정확히 cap이고 **가장 오래된 것이 빠진다**.
@@ -81,12 +99,12 @@ public class LogService {
 
 ```bash
 # 1) Java 전체
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B clean verify
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
 #   기대: BUILD SUCCESS · Tests run: <step0 종료 수치 + 신규 N> · Failures 0 · Errors 0 · Skipped 0
 
 # 2) 계약 무회귀 — 관측 수 불변(이 step도 계약이 하나도 보지 못한다)
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B -q package -DskipTests
-cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --parity
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests
+cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.mjs --parity
 #   기대: exit 0 · profiles=5 · 296관측 diffs 0
 
 # 3) 무접촉 경로
@@ -107,13 +125,15 @@ git diff --stat -- server-spring/src/main/java/harness/news/service/LogRecord.ja
 
 | 변이 | 심는 곳 | 기대 |
 |---|---|---|
-| M1-1 | 구독자 통지를 `synchronized` 블록 **안**으로 이동 | 항목 5(교차 스레드 `digest()`) red |
+| M1-1 | 구독자 통지를 **버퍼 monitor(`bufferLock`) 안**으로 이동 | 항목 5(교차 스레드 `digest()`) red |
 | M1-2 | 구독자 예외를 격리하지 않고 전파 | 항목 4 red |
 | M1-3 | `snapshot()`이 내부 `Deque`를 그대로 반환 | 항목 7 red |
 | M1-4 | `snapshot()`이 최근 2000건만 반환 | 항목 9 red(절단 지점이 두 곳이 되는 것을 막는다) |
 | M1-5 | 통지 순서를 역순으로 | 항목 2 red |
 | M1-6 | `LogService.java`에 `Executors.newSingleThreadExecutor()` 한 줄 | `Adr008DisciplineTest` **red** — 통지가 비동기가 아니라는 사실의 비공허 실증 |
 | M1-7 | 예외 격리 블록 안에서 `this.warn("subscriber failed")` 호출 | 항목 4가 **무한 재귀/StackOverflow**로 red — "삼킬 때 로그하지 마라"의 실증 |
+| M1-8 | **`notifyLock`을 제거**하고 통지를 버퍼 monitor 밖에서 락 없이 수행(= 초안 구조) | **항목 5b red**(seq 역전). 한가한 환경에서는 우연히 통과할 수 있으니 항목 5b가 지정한 8스레드×200회를 반드시 돌리고, red가 안 나면 **반복을 늘려 재시도**한 뒤 결과를 그대로 기록하라. **계약은 이 축을 못 본다**(`seq > seqBefore`만 본다) — 그 사실도 함께 적어라 |
+| M1-9 | 락 획득 순서를 뒤집어 `bufferLock` → `notifyLock`으로(= 통지를 `bufferLock` 안에서 하게 된다) | **항목 5 red**(통지 중 다른 스레드의 `digest()`가 막힌다). **[② 재검토 정정] 데드락을 기대하지 마라 — 데드락이 나지 않는다.** 모든 `log()`가 **같은 역순**으로 잡고 `digest()`/`snapshot()`은 `bufferLock` **하나만** 잡으므로 역전 쌍이 성립하지 않는다. **한 방향 규율(`notifyLock` → `bufferLock`)은 그대로 유지하라** — deadlock-free이고, 뒤집으면 위 항목 5가 깨진다 |
 
 각 변이 전후로 green→red→green 3단계를 기록하라.
 

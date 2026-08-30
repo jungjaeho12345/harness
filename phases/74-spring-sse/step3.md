@@ -71,7 +71,7 @@
    - **retry의 4xx 거부** 전부
    - **retry의 500 재매핑 3토큰**(`spool-write-failed`·`invalid-spool-dir`·`invalid-article-id`)
    - collection receive/pull의 401·403·400·503
-3. **kind 어휘 잠금** — 발행된 문자열이 `create|update|status|lock` 4종 밖이면 red.
+3. **kind 어휘 잠금** — 발행된 문자열이 `create|update|status|lock` 4종 밖이면 red. **`null` kind를 명시적으로 태워 `NullPointerException`이 나지 않음을 단언하라**(`Set.of(...).contains(null)`은 NPE다 — 금지사항 참조).
 4. **발행이 응답을 바꾸지 않는다** — 구독자가 `RuntimeException`을 던지는 상태에서 위 11 경로를 다시 태워 **응답 status·본문이 동일**함을 단언한다(Node `server/index.js` 1144~1150의 위험: 예외가 새면 성공한 저장이 500으로 뒤집힌다).
 5. **송고 훅은 자체 신호를 내지 않는다** — 배부 결선이 있는 구성에서 `POST /api/articles/:id/action`(send)이 내는 신호가 **`status` 1건뿐**이고 엠바고 승격에서 추가 신호가 없음을 단언한다(sse.md 각주).
 6. 기존 와이어 테스트 **전건 무회귀**.
@@ -80,12 +80,12 @@
 
 ```bash
 # 1) Java 전체
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B clean verify
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
 #   기대: BUILD SUCCESS · Tests run: <step2 종료 수치 + 신규 N> · Failures 0 · Errors 0 · Skipped 0
 
 # 2) 계약 무회귀 — 관측 수와 diff가 **불변**이어야 한다
-cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" ./mvnw -B -q package -DskipTests
-cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-21.0.12+8" node scripts/spring-contract.mjs --parity
+cd /d/agents/harness/server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests
+cd /d/agents/harness && SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.mjs --parity
 #   기대: exit 0 · profiles=5 · 296관측 diffs 0
 #   (관측 수가 변했다면 이 step이 응답 shape을 건드린 것이다 — 즉시 원인을 찾아라)
 
@@ -118,13 +118,15 @@ git diff --stat -- server-spring/src/test/java/harness/news/web/HandlerInventory
 | M3-5 | unlock의 발행을 통째로 삭제 | 항목 1(unlock) red |
 | M3-6 | collection pull의 발행을 삭제 | 항목 1(pull) red |
 | M3-7 | 구독자 예외를 컨트롤러가 잡지 않도록(step0 `ChangeBus`의 격리를 끄고) | 항목 4 red — 응답이 500으로 뒤집힌다 |
-| M3-8 | **위 M3-1~M3-6 각각에 대해 `--parity`를 돌려라** | **전건 296관측 diffs 0(green)** — "계약이 이 축을 구조적으로 못 본다"의 실증. 이 결과를 표에 명시하라 |
+| M3-8 | kind 어휘 검사에서 `kind == null ||` 가드를 제거 | 항목 3 red(**NPE**) — 68·69·70·73에서 반복된 함정이 이 자리에도 있다는 실증 |
+| M3-9 | **위 M3-1~M3-6 각각에 대해 `--parity`를 돌려라** | **전건 296관측 diffs 0(green)** — "계약이 이 축을 구조적으로 못 본다"의 실증. 이 결과를 표에 명시하라 |
 
-M3-8은 이 step에서 가장 중요한 기록이다: **계약이 green인데 기능이 깨져 있는 상태를 실제로 만들어 보고**, 그 상태를 잡는 것이 Java 테스트뿐임을 증명한다.
+M3-9는 이 step에서 가장 중요한 기록이다: **계약이 green인데 기능이 깨져 있는 상태를 실제로 만들어 보고**, 그 상태를 잡는 것이 Java 테스트뿐임을 증명한다.
 
 ## 금지사항
 
 - **거부·실패 응답에 발행하지 마라.** 이유: sse.md가 "거부/실패 응답은 신호를 내지 않는다(변경 0건 재조회 낭비 + 오신호 방지)"로 동결했다. tick의 `distributed` 0건도 같은 축이다.
+- **[반복 발생 함정] `Set.of(...)`·`Map.of(...)`·`List.of(...)`에 `null`을 넘기거나 `contains(null)`을 부르지 마라 — `NullPointerException`이다.** 이 step의 항목 3(kind 어휘 잠금 — `create|update|status|lock` 4종 집합 검사)이 정확히 그 자리다. **반드시 `kind == null ||` 로 먼저 걸러라**(정본 선례: `Authorization.java` 170행 `if (action == null || !REVISE_ACTIONS.contains(action))`). 이유: 이 함정이 **68·69·70·73에서 반복 발생**해 **400이어야 할 응답을 500으로** 만들었다. 여기서는 더 나쁘다 — 발행 경로에서 NPE가 나면 `ChangeBus.publish`의 격리를 통과하기 전 컨트롤러 스택에서 터져 **성공한 저장이 500으로 뒤집힌다**(항목 4가 막는 바로 그 사고). **테스트에서 `kind = null`을 명시적으로 태워라.**
 - **발행을 서비스층(`ArticleWriteService`·`DistributionTickService`·`CollectionService` 등)으로 내리지 마라.** 이유: Node 정본이 transport에서 발행한다. 서비스층에 두면 같은 서비스를 부르는 다른 경로(송고 훅의 엠바고 승격)에서 Node에 없는 신호가 추가로 나가고, 그것은 계약이 관측하지 못한다.
 - **송고 훅의 비동기 엠바고 승격(DES→EPS→DPS)에 신호를 붙이지 마라.** 이유: sse.md가 "자체 신호를 내지 않는다 — 상태 변화 관측은 tick 라우트의 `status` 신호 또는 재조회에 의존한다"로 동결했다.
 - **FTP watcher 경로(`server/index.js` 1379행의 `notifyChange('create')`)를 이식하지 마라.** 이유: 수집 watcher 자체가 Spring 미이식이다(`excluded`). 없는 소비자를 위한 발행을 만들면 검증되지 않은 표면이 쌓인다.
