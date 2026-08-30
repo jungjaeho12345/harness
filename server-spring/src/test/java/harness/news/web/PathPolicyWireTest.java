@@ -121,15 +121,22 @@ class PathPolicyWireTest {
 	 * {@code AuthClass.SESSION}으로 등재돼 있어 <b>인증된</b> 요청이 필터를 통과하고, 핸들러가 없어
 	 * 컨테이너 404 {@code text/html}이 된다(경로에 다른 메서드 핸들러가 없으므로 405도 아니다).
 	 *
-	 * <p><b>다음에 옮길 사람을 위한 규칙</b>(index.json decisions (9)): SSE phase가 {@code stream}을
-	 * 구현하면 인벤토리 39 라우트 안에 남는 후보는 {@code GET /api/logs/stream} <b>하나</b>이고, 그마저
-	 * 구현되면 <b>인벤토리 안에는 후보가 없다</b>. 그때는 인벤토리 밖 경로({@code /api/undefined-route}
-	 * 계열)로 옮기되, 그 순간 이 프로브의 의미가 "스텁 금지"에서 "미정의 경로 404 shape"으로 <b>바뀐다</b>는
-	 * 것을 명시하고 옮겨라(그 판단은 마지막 phase의 소유다).
+	 * <p><b>재조준 이력 3회차(phase 74 step4)</b>: 이 phase가 {@code GET /api/stream}을 구현하면
+	 * 그 프로브가 <b>200</b>이 되므로 <b>{@code GET /api/logs/stream}</b>으로 옮겼다. 조건은 앞서와 같다 —
+	 * {@code RoutePolicy}에 {@code AuthClass.ADMIN}으로 등재돼 있고({@code ADMIN.requiresSession()}이
+	 * {@code true}다) <b>인증된</b> 요청이 필터를 통과하고, 핸들러가 없어 컨테이너 404 {@code text/html}이 된다.
+	 * 역할 게이트(Z 전용)는 필터가 아니라 라우트가 가지므로, 아직 구현되지 않은 지금은 비-Z 세션으로도 404다.
+	 *
+	 * <p><b>다음 이동이 마지막이다</b>(index.json decisions (6)): step5가 {@code logs-stream}을 구현하면
+	 * 인벤토리 39 라우트 안에 <b>미구현 후보가 0개</b>가 된다. 그때는 인벤토리 <b>밖</b> 경로
+	 * ({@code GET /api/does-not-exist} 계열)로 옮기되, 그 순간 이 프로브의 의미가 "스텁 금지"에서
+	 * "미정의 경로 404 shape"으로 <b>바뀐다</b> — 테스트 이름과 이 javadoc을 함께 바꿔라(같은 이름을 유지한 채
+	 * 의미만 바꾸면 다음 사람이 스텁 금지가 여전히 지켜지는 줄 안다). 그 이후 스텁 금지는
+	 * {@code HandlerInventoryTest}의 정확 집합 단언이 단독으로 지킨다.
 	 */
 	@Test
 	void authenticatedRequestToAnUnimplementedRouteIs404NotAStub() {
-		Wire.Response response = Wire.send(this.port, "GET", "/api/stream",
+		Wire.Response response = Wire.send(this.port, "GET", "/api/logs/stream",
 				Map.of("x-session-id", login()), null);
 
 		assertEquals(404, response.status(), "구현하지 않은 라우트는 정직하게 404다(스텁 금지)");

@@ -46,7 +46,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 class HandlerInventoryTest {
 
 	/**
-	 * 구현된 37 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
+	 * 구현된 38 라우트 — phase 68이 만든 7개 + phase 69 step0의 {@code GET /api/users} +
 	 * step7의 기사 단건 3개({@code POST /api/articles} · {@code GET /api/articles/{id}} ·
 	 * {@code PUT /api/articles/{id}}) + step8의 편집 잠금 3개({@code POST /api/articles/{id}/lock} ·
 	 * {@code .../unlock} · {@code .../force-unlock}) + step10의 생애주기 2개
@@ -63,7 +63,9 @@ class HandlerInventoryTest {
 	 * {@code GET /api/distribution/failures} · {@code POST /api/distribution/retry}) +
 	 * <b>phase 73 step9의 미디어·업로드·사진·번역 5개</b>({@code GET /api/media/search} ·
 	 * {@code POST /api/upload} · {@code POST /api/photos} · {@code GET /api/photos/search} ·
-	 * {@code POST /api/articles/{id}/translate})다.
+	 * {@code POST /api/articles/{id}/translate}) + <b>phase 74 step4의 무효화 신호 스트림 1개</b>
+	 * ({@code GET /api/stream} — ADR-005·ADR-015. 남은 미구현은 {@code GET /api/logs/stream} 하나이고
+	 * 그것이 붙으면 39/39다)다.
 	 * {@code server-spring/README.md}·index.json forward_notes (2)와 같은 목록이며 표기는 Spring 매핑
 	 * 원문({@code {userId}})이다. 행을 늘릴 때는 아래 테스트 메서드 이름과 실패 메시지의 <b>라우트 수</b>도
 	 * 같이 고쳐라 — 수치가 목록과 어긋나면 이 테스트가 주장하는 문장이 거짓이 된다(같은 커밋에서 이동).
@@ -87,6 +89,7 @@ class HandlerInventoryTest {
 			"GET /api/photos/search",
 			"GET /api/receiver-config",
 			"GET /api/session",
+			"GET /api/stream",
 			"GET /api/users",
 			"POST /api/articles",
 			"POST /api/articles/{id}/action",
@@ -149,12 +152,12 @@ class HandlerInventoryTest {
 	}
 
 	@Test
-	void exactlyTheThirtySevenImplementedRoutesHaveHandlers() {
+	void exactlyTheThirtyEightImplementedRoutesHaveHandlers() {
 		Set<String> expected = new TreeSet<>(IMPLEMENTED_ROUTES);
 		expected.addAll(FRAMEWORK_ROUTES);
 
 		assertEquals(expected, mappedRoutes(),
-				"핸들러 집합이 선언된 37 라우트(+ Boot 기본 /error)와 다르다 — "
+				"핸들러 집합이 선언된 38 라우트(+ Boot 기본 /error)와 다르다 — "
 						+ "스텁이 늘었거나(패리티 착시) 구현이 늘었는데 계약 scope 표를 갱신하지 않았다");
 	}
 

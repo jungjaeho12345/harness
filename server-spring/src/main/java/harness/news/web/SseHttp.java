@@ -117,9 +117,19 @@ public class SseHttp {
 	 * 헤더 3종을 바이트 그대로 쓰고 200을 커밋한 뒤 비동기 컨텍스트를 연다.
 	 *
 	 * <p>순서가 계약이다: ① Content-Type을 seam으로 기록(없으면 <b>던진다</b> — 폴백 금지)
-	 * ② 200 ③ {@code Cache-Control: no-cache} ④ {@code Connection: keep-alive} 시도
-	 * ⑤ {@code startAsync} + 무한 타임아웃 ⑥ 컨테이너 종료 이벤트에 정리 훅 ⑦ <b>헤더 flush</b>.
+	 * ② 200 ③ {@code Cache-Control: no-cache} ④ {@code startAsync} + 무한 타임아웃
+	 * ⑤ 컨테이너 종료 이벤트에 정리 훅 ⑥ <b>헤더 flush</b>.
 	 * 본문 길이는 정하지 않는다 — 정하면 컨테이너가 그 바이트에서 응답을 끝내 스트림이 첫 프레임에서 닫힌다.
+	 *
+	 * <p><b>{@code Connection}은 앱이 정하지 않는다(2026-08-30 step4 와이어 실측).</b> Node는
+	 * {@code Connection: keep-alive}를 보내고 이 클래스도 처음에는 같은 값을 {@code setHeader}로 지정했는데,
+	 * Tomcat은 keep-alive 연결에 <b>자기 값을 이미 싣기 때문에</b> 와이어에
+	 * {@code Connection: keep-alive, keep-alive}가 나갔다(실측 원문). 지정을 지우면 Tomcat 단독으로
+	 * {@code Connection: keep-alive} 한 값이 나가 <b>Node와 바이트가 같아진다</b>. 즉 이 헤더는 hop-by-hop
+	 * 이라 컨테이너 소유이며, 앱이 손대면 오히려 갈린다({@code docs/ADR.md} ADR-015 트레이드오프 ·
+	 * index.json open_questions (1)). 계약 리포트는 이 헤더를 싣지 않는다
+	 * ({@code contract/lib/record.js}의 {@code ALLOWED_HEADERS}) — 그래서 이 사실은 계약이 아니라
+	 * {@code StreamWireTest}의 와이어 관측이 지킨다.
 	 *
 	 * <p><b>첫 프레임은 여기서 쓰지 않는다</b> — 호출자가 정한다(로그 스트림은 ready 뒤에 replay가 붙는다).
 	 * 반환되는 스트림은 <b>prelude 모드</b>이므로 호출자는 반드시 {@link Stream#endPrelude(long)}를 불러야
@@ -132,9 +142,8 @@ public class SseHttp {
 		RawContentType.set(request.getAttribute(RawContentType.REQUEST_ATTRIBUTE), CONTENT_TYPE);
 		response.setStatus(HttpServletResponse.SC_OK);
 		response.setHeader("Cache-Control", "no-cache");
-		// Node 실측 헤더다. Tomcat이 hop-by-hop 헤더를 자체 관리하면 무시될 수 있고, 계약 리포트가 싣지
-		// 않는 헤더이므로(contract/lib/record.js ALLOWED_HEADERS) 컨테이너를 뚫어서 맞추지 않는다.
-		response.setHeader("Connection", "keep-alive");
+		// Connection은 여기서 정하지 않는다 — 지정하면 컨테이너 값과 겹쳐 "keep-alive, keep-alive"가 된다
+		// (위 javadoc의 2026-08-30 실측). 컨테이너에 맡기는 쪽이 Node와 바이트가 같다.
 
 		AsyncContext context = request.startAsync();
 		context.setTimeout(NO_TIMEOUT);

@@ -90,6 +90,8 @@ const SCOPE = [
       // phase 70 step3 — 수집 수신 설정 3라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 10키·유일 행 삭제).
       'contract/cases/default/receiver-config.contract.js',
       'contract/cases/default/session-guard.contract.js',
+      // phase 74 step4 — GET /api/stream이 붙으면서 green이 됐다(무효화 신호 · 프레임 원문 바이트 · 쿠키 인증 · 동시 2연결 · 봉인).
+      'contract/cases/default/sse-stream.contract.js',
       'contract/cases/default/users.contract.js',
     ],
     extraEnv: {},
