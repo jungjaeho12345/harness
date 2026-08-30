@@ -1,6 +1,7 @@
 package harness.news.controller;
 
 import harness.news.config.CollectionProperties;
+import harness.news.service.ChangeBus;
 import harness.news.service.CollectionAccess;
 import harness.news.service.CollectionService;
 import harness.news.service.CollectionTokenSource;
@@ -82,13 +83,23 @@ public class CollectionController {
 
 	private final JsonHttp json;
 
+	/**
+	 * 무효화 신호 버스 — 생성자 주입(ADR-013). 수집 등록도 <b>새 기사</b>이므로 kind는 {@code create}다.
+	 *
+	 * <p>여기서 신호를 내는 이유는 Node 정본이 라우트(1090 · 1116행)에서 낸다는 것 하나다. FTP watcher의
+	 * {@code notifyChange('create')}(정본 1379행)는 <b>HTTP 밖</b>이라 이 클래스에 없다 — watcher 자체가
+	 * Spring 미이식이고, 없는 소비자를 위한 발행은 검증되지 않은 표면이다.
+	 */
+	private final ChangeBus changes;
+
 	public CollectionController(CollectionService collection, CollectionProperties properties,
-			CollectionTokenSource tokens, LogService logs, JsonHttp json) {
+			CollectionTokenSource tokens, LogService logs, JsonHttp json, ChangeBus changes) {
 		this.collection = collection;
 		this.properties = properties;
 		this.tokens = tokens;
 		this.logs = logs;
 		this.json = json;
+		this.changes = changes;
 	}
 
 	/** 수신 인제스트 — {@code {sourceId, payload}}를 파싱해 자동기사로 등록한다. */
@@ -99,8 +110,12 @@ public class CollectionController {
 		}
 		Map<String, Object> body = this.json.readBody(request);
 		Object sourceId = body.get(SOURCE_ID);
-		respond(request, response, "receive", sourceId,
-				this.collection.receive(sourceId, body.get(PAYLOAD)));
+		CollectionService.Result result = this.collection.receive(sourceId, body.get(PAYLOAD));
+		record("receive", sourceId, result);
+		if (result.ok()) {
+			this.changes.publish(ChangeBus.CREATE); // Node 1090행 — 로그 뒤, 응답 앞.
+		}
+		respond(request, response, result);
 	}
 
 	/** 능동 수집 — 등록된 활성 API 소스를 <b>한 번</b> 호출해 응답을 등록한다(재시도 없음). */
@@ -110,7 +125,12 @@ public class CollectionController {
 			return;
 		}
 		Object sourceId = this.json.readBody(request).get(SOURCE_ID);
-		respond(request, response, "pull", sourceId, this.collection.pull(sourceId));
+		CollectionService.Result result = this.collection.pull(sourceId);
+		record("pull", sourceId, result);
+		if (result.ok()) {
+			this.changes.publish(ChangeBus.CREATE); // Node 1116행 — 로그 뒤, 응답 앞.
+		}
+		respond(request, response, result);
 	}
 
 	/**
@@ -140,20 +160,30 @@ public class CollectionController {
 	}
 
 	/**
-	 * 결과 → 응답 + 로그. 로그는 Node 동형으로 <b>{@code sourceId}와 결과만</b> 담는다 —
-	 * {@code payload}(수집 본문)와 토큰은 절대 담지 않는다(LOGS.md 마스킹: 링 버퍼는
-	 * {@code GET /api/logs/digest}로 밖으로 나간다).
+	 * 수집 로깅 — Node 동형으로 <b>{@code sourceId}와 결과만</b> 담는다. {@code payload}(수집 본문)와
+	 * 토큰은 절대 담지 않는다(LOGS.md 마스킹: 링 버퍼는 {@code GET /api/logs/digest}로 밖으로 나간다).
+	 *
+	 * <p>응답 조립과 분리해 둔 이유는 <b>순서</b>다: Node는 성공 경로에서 로그 → 무효화 신호 →
+	 * {@code res.json} 순으로 돈다(1088~1091행). 신호를 응답 뒤로 옮기면 트리거 응답이 이미 나간 상태에서
+	 * 구독자에게 쓰게 되어 정본과 순서가 갈린다.
 	 */
-	private void respond(HttpServletRequest request, HttpServletResponse response, String route,
-			Object sourceId, CollectionService.Result result) {
+	private void record(String route, Object sourceId, CollectionService.Result result) {
 		if (result.ok()) {
 			this.logs.info("collection " + route + " sourceId=" + sourceId + " ok");
+			return;
+		}
+		this.logs.warn("collection " + route + " sourceId=" + sourceId + " reason=" + result.reason());
+	}
+
+	/** 결과 → 응답. 성공 {@code {ok:true, articleId}} · 거부 {@code {ok:false, reason}} + 사유→상태. */
+	private void respond(HttpServletRequest request, HttpServletResponse response,
+			CollectionService.Result result) {
+		if (result.ok()) {
 			Map<String, Object> payload = JsonHttp.ok();
 			payload.put("articleId", result.articleId());
 			this.json.write(request, response, 200, payload);
 			return;
 		}
-		this.logs.warn("collection " + route + " sourceId=" + sourceId + " reason=" + result.reason());
 		this.json.write(request, response, ReasonStatus.of(result.reason()), JsonHttp.fail(result.reason()));
 	}
 }

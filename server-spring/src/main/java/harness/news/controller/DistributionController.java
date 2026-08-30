@@ -1,6 +1,7 @@
 package harness.news.controller;
 
 import harness.news.service.Authorization;
+import harness.news.service.ChangeBus;
 import harness.news.service.DistributionRetryService;
 import harness.news.service.DistributionTickService;
 import harness.news.service.Identity;
@@ -75,13 +76,18 @@ public class DistributionController {
 
 	private final JsonHttp json;
 
+	/** 무효화 신호 버스 — 생성자 주입(ADR-013). 발행은 <b>성공 분기</b>에서만 한다(아래 두 자리). */
+	private final ChangeBus changes;
+
 	public DistributionController(Authorization authorization, SessionGuard sessions,
-			DistributionTickService tick, DistributionRetryService retries, JsonHttp json) {
+			DistributionTickService tick, DistributionRetryService retries, JsonHttp json,
+			ChangeBus changes) {
 		this.authorization = authorization;
 		this.sessions = sessions;
 		this.tick = tick;
 		this.retries = retries;
 		this.json = json;
+		this.changes = changes;
 	}
 
 	/**
@@ -101,7 +107,14 @@ public class DistributionController {
 			return;
 		}
 		// 스풀 미설정 판정은 서비스가 한다(spool-disabled) — 설정을 여기서 다시 읽으면 판정 지점이 둘이 된다.
-		respond(request, response, this.tick.run(actorUserId(token)));
+		Map<String, Object> result = this.tick.run(actorUserId(token));
+		// Node 749행 — 성공이면서 **실제 배부가 있었을 때만** 신호를 낸다. 실행 결과가 0건인데 신호를
+		// 내면 클라이언트가 변경 0건을 위해 목록을 다시 읽는다(재조회 낭비 + 오신호). 판정 입력
+		// distributed는 서비스 반환 맵에 이미 있다 — 여기서 다시 계산하지 않는다.
+		if (Boolean.TRUE.equals(result.get(OK)) && distributedAny(result)) {
+			this.changes.publish(ChangeBus.STATUS);
+		}
+		respond(request, response, result);
 	}
 
 	/**
@@ -145,6 +158,8 @@ public class DistributionController {
 		Map<String, Object> body = this.json.readBody(request);
 		Map<String, Object> result = this.retries.retry(numberOf(body.get("historyId")), actorUserId(token));
 		if (Boolean.TRUE.equals(result.get(OK))) {
+			// Node 787행 — 성공 분기 **안**이다. 4xx 거부에도, 아래 500 재매핑 3토큰에도 신호는 없다.
+			this.changes.publish(ChangeBus.STATUS);
 			this.json.write(request, response, 200, result);
 			return;
 		}
@@ -152,6 +167,16 @@ public class DistributionController {
 		// null 안전: Set.contains(null)은 NPE라 400이어야 할 거부가 500 internal-error로 나간다.
 		int status = (reason != null && SERVER_FAULT_REASONS.contains(reason)) ? 500 : ReasonStatus.of(reason);
 		this.json.write(request, response, status, result);
+	}
+
+	/**
+	 * {@code Array.isArray(r.distributed) && r.distributed.length > 0} — Node 749행의 판정 그대로다.
+	 *
+	 * <p>키가 없거나 리스트가 아니면 <b>거짓</b>이다(Node의 {@code Array.isArray}와 같은 폭). 값의 내용은
+	 * 보지 않는다 — 요약 맵의 소유자는 서비스이고 여기서 다시 해석하면 판정이 둘로 갈린다.
+	 */
+	private static boolean distributedAny(Map<String, Object> result) {
+		return result.get("distributed") instanceof List<?> distributed && !distributed.isEmpty();
 	}
 
 	/** 서비스 결과 → 응답. 성공이면 요약 맵 그대로, 거부면 사유가 상태코드를 정한다(전역 표 + 폴백 400). */
