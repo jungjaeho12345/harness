@@ -51,6 +51,9 @@ class AuthorizationTest {
 
 	private Authorization authorization;
 
+	/** 세션 유휴 만료 경계를 왕복하는 seam — 비연장 peek는 이것 없이 관측할 수 없다. */
+	private MutableClock sessionClock;
+
 	@BeforeEach
 	void setUp() {
 		TempNewsDb.seed(this.tempDir);
@@ -59,9 +62,11 @@ class AuthorizationTest {
 		this.articles = new ArticleRepository(JdbcClient.create(this.dataSource),
 				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)),
 				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
-		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), this.users);
+		this.sessionClock = new MutableClock(1_700_000_000_000L);
+		this.guard = new SessionGuard(new SessionStore(this.sessionClock), this.users);
 		this.authorization = new Authorization(this.guard, this.articles);
 		insert("gate-z", "Z");
+		insert("gate-z2", "Z");
 		insert("gate-r", "R");
 		insert("gate-d", "D");
 	}
@@ -232,6 +237,77 @@ class AuthorizationTest {
 	void unknownCapabilityDoesNotLeakAheadOfTheSessionCheck() {
 		// Node manageUsers는 세션 검증이 먼저다 — 미인증에는 capability 존재 여부를 알려주지 않는다.
 		assertEquals("unauthenticated", this.authorization.authorize(null, "manageEverything").reason());
+	}
+
+	// --- 비연장 판정(authorizePeek — SSE push 전용) -------------------------------------------------
+
+	/**
+	 * <b>{@code authorize}는 세션을 연장하고 {@code authorizePeek}는 연장하지 않는다.</b>
+	 *
+	 * <p>실측 근거(2026-08-30): {@link Authorization#authorize}와 {@code editDps}는
+	 * {@code sessions.touchSession(...)}을 쓴다 — 실제 요청 경로에서는 그것이 정상이지만
+	 * <b>SSE push마다</b> 부르면 열린 스트림 하나가 1시간 유휴 만료를 무한히 밀어낸다
+	 * (ADR-005·ADR-007이 닫은 자리이며 <b>계약이 관측할 수 없는 축</b>이다 — 하네스는 시계를 주입하지 못한다).
+	 * 그래서 push 경로는 {@code peekSession}을 쓰는 이 메서드만 쓴다.
+	 */
+	@Test
+	void authorizePeekDoesNotExtendTheSessionWhileAuthorizeDoes() {
+		long oneHourMs = 60L * 60L * 1000L;
+		String touched = this.guard.createSession("gate-z");
+		String peeked = this.guard.createSession("gate-z2"); // 단일 세션 정책 — 계정을 분리한다.
+
+		this.sessionClock.advance(oneHourMs - 60_000L); // 만료 1분 전.
+		assertTrue(this.authorization.authorize(touched, Authorization.VIEW_LOGS).ok());
+		assertTrue(this.authorization.authorizePeek(peeked, Authorization.VIEW_LOGS).ok());
+		this.sessionClock.advance(2 * 60_000L); // 원래 만료 시각을 넘겼다.
+
+		assertTrue(this.authorization.authorize(touched, Authorization.VIEW_LOGS).ok(),
+				"authorize는 세션을 연장한다(일반 요청 경로의 슬라이딩 갱신)");
+		assertEquals("unauthenticated", this.authorization.authorizePeek(peeked, Authorization.VIEW_LOGS).reason(),
+				"authorizePeek이 세션을 연장했다 — 열린 SSE 스트림이 유휴 만료를 무한 연장하게 된다");
+	}
+
+	/**
+	 * <b>같은 (role, capability)에 대해 두 메서드의 판정이 항상 같다</b> — 역할 표가 한 출처임의 잠금이다.
+	 * 판정을 복제하면(예: 호출부에서 {@code "Z"} 문자열 비교) 한쪽만 고쳐도 조용히 갈린다.
+	 */
+	@Test
+	void theTwoGatesAgreeOnEveryRoleAndCapability() {
+		for (String userId : List.of("gate-z", "gate-r", "gate-d")) {
+			for (String capability : List.of(Authorization.MANAGE_USERS, Authorization.VIEW_LOGS,
+					Authorization.EDIT_DPS, Authorization.MANAGE_DISTRIBUTION_TARGET, "manageEverything")) {
+				Authorization.Decision extending =
+						this.authorization.authorize(this.guard.createSession(userId), capability);
+				Authorization.Decision peeking =
+						this.authorization.authorizePeek(this.guard.createSession(userId), capability);
+
+				assertEquals(extending.ok(), peeking.ok(), userId + "/" + capability + " 판정이 갈렸다");
+				assertEquals(extending.reason(), peeking.reason(),
+						userId + "/" + capability + " 사유 토큰이 갈렸다 — 두 메서드는 같은 CAPABILITIES 표를 쓴다");
+			}
+		}
+	}
+
+	/** 세션 검증이 먼저라는 순서도 같다 — 미인증에는 capability 존재 여부조차 알려주지 않는다. */
+	@Test
+	void authorizePeekRejectsMissingAndUnknownTokensLikeAuthorize() {
+		String unknown = "0".repeat(64);
+
+		assertEquals("unauthenticated", this.authorization.authorizePeek(null, Authorization.VIEW_LOGS).reason());
+		assertEquals("unauthenticated", this.authorization.authorizePeek(unknown, Authorization.VIEW_LOGS).reason());
+		assertEquals("unauthenticated", this.authorization.authorizePeek(null, "manageEverything").reason());
+	}
+
+	/** 강등·비활성은 peek 경로에서도 <b>재로그인 없이</b> 즉시 반영된다(ADR-004 재도출). */
+	@Test
+	void authorizePeekRederivesTheRoleOnEveryCall() {
+		String sessionId = this.guard.createSession("gate-z");
+		assertTrue(this.authorization.authorizePeek(sessionId, Authorization.VIEW_LOGS).ok());
+
+		this.users.update("gate-z", Map.of("role", "D")); // 재로그인 없음.
+
+		assertEquals("forbidden", this.authorization.authorizePeek(sessionId, Authorization.VIEW_LOGS).reason(),
+				"강등된 계정의 열린 스트림이 로그를 계속 받으면 ADR-007의 Z 전용 봉인이 시간축에서 깨진다");
 	}
 
 	// --- 재도출(ADR-004) -------------------------------------------------------------------------

@@ -7,7 +7,6 @@ import harness.news.web.SessionTokens;
 import harness.news.web.SseHttp;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.ObjectMapper;
@@ -52,7 +51,7 @@ import tools.jackson.databind.ObjectMapper;
  * 밖으로 나가면 컨테이너가 async error dispatch로 받아 컨텍스트를 완료하고, 그 완료가
  * {@code AsyncListener} → {@code Stream.close()} → 구독 해제로 이어진다. 그래도 이 {@code catch}를 두는
  * 이유는 <b>종료 경로를 컨테이너 에러 처리에 맡기지 않고</b> 다른 두 종료(재검증 실패 · 클라 끊김)와 같은
- * 한 지점({@code Closer.seal})으로 모으기 위해서다. 와이어로 구별되지 않는 결정이므로
+ * 한 지점({@code SseCloser.seal})으로 모으기 위해서다. 와이어로 구별되지 않는 결정이므로
  * {@code StreamWireTest}의 정적 그물이 이 자리를 잠근다.
  *
  * <h2>push 시점 재검증은 비연장 peek다</h2>
@@ -99,7 +98,7 @@ public class StreamController {
 		}
 
 		SseHttp.Stream stream = this.sse.open(request, response);
-		Closer closer = new Closer(stream);
+		SseCloser closer = new SseCloser(stream);
 		try {
 			closer.subscribed(this.changes.subscribe((kind) -> push(token, kind, stream, closer)));
 			stream.onClosed(closer::unsubscribe); // 클라 끊김·컨테이너 종료 — 구독 해제만 한다.
@@ -117,7 +116,7 @@ public class StreamController {
 	 * <p>여기서 예외를 내보내면 이미 성공한 저장이 500으로 뒤집힌다(버스가 삼키지만 규율은 이쪽에도 둔다).
 	 * 재검증 불가는 "일단 전송"이 아니라 봉인이다.
 	 */
-	private void push(String token, String kind, SseHttp.Stream stream, Closer closer) {
+	private void push(String token, String kind, SseHttp.Stream stream, SseCloser closer) {
 		try {
 			if (this.sessions.peekSession(token) == null) {
 				closer.seal();
@@ -140,65 +139,6 @@ public class StreamController {
 	 */
 	private String signal(String kind) {
 		return this.mapper.createObjectNode().put("kind", kind).toString();
-	}
-
-	/**
-	 * 종료기 — 정본 {@code createSseCloser}(server/index.js 428~443행)와 같은 순서다:
-	 * <b>① 구독 해제 → ② {@code unauthorized} 1회 → ③ 종료</b>. 해제를 먼저 하는 이유는 닫힌 응답에
-	 * write가 누적되면 누수와 예외가 되기 때문이고, 봉인이 멱등인 이유는 세 경로(재검증 실패 · 구독 콜백 ·
-	 * 접속 시퀀스 예외)가 같은 종료기를 부르기 때문이다.
-	 *
-	 * <p>플래그를 {@code synchronized}가 아니라 {@link AtomicBoolean}으로 둔 것은 <b>락 순서 때문</b>이다:
-	 * 봉인은 스트림의 write monitor를 잡고, 스트림의 종료 훅({@code onClosed})은 그 monitor를 잡은 채
-	 * {@link #unsubscribe()}를 부른다 — 종료기가 자기 monitor를 잡은 채 스트림을 호출하면 두 락이
-	 * 반대 순서로 얽혀 데드락이 된다.
-	 */
-	private static final class Closer {
-
-		private final SseHttp.Stream stream;
-
-		private final AtomicBoolean sealed = new AtomicBoolean();
-
-		private volatile AutoCloseable subscription;
-
-		private Closer(SseHttp.Stream stream) {
-			this.stream = stream;
-		}
-
-		/**
-		 * 구독 핸들을 넘겨받는다. 등록과 이 호출 사이에 이미 봉인이 지나갔으면(동시 트리거가 죽은 세션을
-		 * 발견한 경우) 그 자리에서 해제한다 — 그 창을 열어 두면 구독이 영원히 남는다.
-		 */
-		void subscribed(AutoCloseable subscription) {
-			this.subscription = subscription;
-			if (this.sealed.get()) {
-				unsubscribe();
-			}
-		}
-
-		void seal() {
-			if (!this.sealed.compareAndSet(false, true)) {
-				return;
-			}
-			unsubscribe();
-			this.stream.write(SseHttp.UNAUTHORIZED);
-			this.stream.close();
-		}
-
-		/** 멱등 — 스트림의 종료 훅과 봉인이 같은 해제를 부른다. */
-		void unsubscribe() {
-			AutoCloseable handle = this.subscription;
-			if (handle == null) {
-				return;
-			}
-			try {
-				handle.close();
-			}
-			catch (Exception ex) {
-				// 해제 실패가 나머지 정리를 막지 않는다(버스의 해제는 던지지 않는다).
-			}
-		}
-
 	}
 
 }
