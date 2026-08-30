@@ -25,6 +25,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -188,6 +189,12 @@ class SseHttpTest {
 					"ADR-015: Content-Type 바이트는 RawContentType 한 경로로만 쓰고 스트림은 서블릿 출력으로만 "
 							+ "내보낸다(컨테이너 재조립 = 전 SSE 관측 diff) — 코드에 있다: " + forbidden);
 		}
+
+		// 인코딩을 플랫폼 기본 charset에 맡기지 않는다. 2026-08-30 실측: JDK 25는 file.encoding이 UTF-8
+		// (JEP 400)이라 항목 5의 왕복 단언이 이 실수를 잡지 못한다 — 그러나 native.encoding은 MS949이고
+		// -Dfile.encoding이나 구 런타임에서는 헤더만 utf-8인 채 본문이 조용히 갈린다. 여기서 막는다.
+		assertFalse(Pattern.compile("\\.getBytes\\s*\\(\\s*\\)").matcher(code).find(),
+				"charset 없는 getBytes()가 있다 — 프레임 바이트는 언제나 UTF-8로 못 박는다");
 	}
 
 	/**
