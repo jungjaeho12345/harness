@@ -100,6 +100,9 @@ class StreamWireTest {
 
 	private static final String UNAUTHORIZED_DATA = "{\"ok\":false,\"reason\":\"unauthenticated\"}";
 
+	/** 종료 프레임 원문 — 봉인 뒤 본문이 이것으로 <b>끝난다</b>는 사실을 바이트로 못 박는다. */
+	private static final String UNAUTHORIZED_FRAME = "event: unauthorized\ndata: " + UNAUTHORIZED_DATA + "\n\n";
+
 	private static final String UNAUTHENTICATED_JSON = "{\"ok\":false,\"reason\":\"unauthenticated\"}";
 
 	private static final Duration WAIT = Duration.ofSeconds(5);
@@ -352,6 +355,10 @@ class StreamWireTest {
 			assertEquals("unauthorized", frame.event(), "재검증 실패인데 신호를 그대로 내보냈다");
 			assertEquals(UNAUTHORIZED_DATA, frame.data());
 			assertTrue(stream.awaitSilence(SILENCE), "봉인 후에도 프레임이 나갔다");
+			// 프레임 대기만으로는 "신호를 쓰지 않았다"를 증명하지 못한다(순서에 따라 이미 소비돼 버린다) —
+			// 본문 전체가 ready + unauthorized 두 프레임뿐임을 바이트로 못 박는다.
+			assertEquals(READY_FRAME + UNAUTHORIZED_FRAME, stream.rawBody(),
+					"재검증 실패 경로가 신호를 함께 흘렸다: " + describe(stream.rawBody()));
 			assertEquals(0, this.changes.subscriberCount(), "봉인했는데 구독이 남았다");
 		}
 	}
@@ -373,6 +380,9 @@ class StreamWireTest {
 
 			this.changes.publish(ChangeBus.CREATE);
 			assertTrue(stream.awaitSilence(SILENCE), "봉인 이후에 프레임이 더 나갔다");
+			assertEquals(READY_FRAME + UNAUTHORIZED_FRAME, stream.rawBody(),
+					"봉인 스트림의 본문은 ready + unauthorized 두 프레임뿐이어야 한다: "
+							+ describe(stream.rawBody()));
 			assertEquals(0, this.changes.subscriberCount(), "봉인했는데 구독이 남았다");
 		}
 	}
@@ -412,6 +422,31 @@ class StreamWireTest {
 		}
 		finally {
 			streams.forEach(WireStream::close);
+		}
+	}
+
+	/**
+	 * 항목 11 — <b>컨테이너 주도 종료도 구독을 거둔다</b>({@code stream.onClosed(...)} 배선).
+	 *
+	 * <p><b>이 테스트가 없으면 그 배선을 지워도 전부 green이다</b>(2026-08-30 변이 M4-6 실측): 클라 끊김은
+	 * 컨트롤러의 write 실패 경로가, 세션 종료는 {@code seal()}이 각각 <b>따로</b> 구독을 거두기 때문이다.
+	 * 컨테이너가 {@code onComplete}/{@code onError}/{@code onTimeout}으로 스트림을 끝내는 경로만이
+	 * 그 배선을 필요로 하고(그 셋은 전부 {@code Stream.close()}로 수렴한다), 이 컨테이너는 무한 타임아웃
+	 * 비동기 요청에서 그 이벤트를 즉시 내지 않으므로 와이어로는 재현할 수 없다 — 그래서 스트림 객체를
+	 * 직접 닫아 <b>그 경로만</b> 관측한다.
+	 */
+	@Test
+	void aContainerDrivenCloseAlsoDropsTheSubscription() {
+		try (WireStream stream = openWith(header(sessionFor("stream-r")))) {
+			assertNotNull(awaitReady(stream));
+			assertEquals(1, this.changes.subscriberCount());
+			SseHttp.Stream open = this.sse.lastStream();
+			assertNotNull(open, "열린 스트림을 관측하지 못했다 — 이 테스트가 공허해진다");
+
+			open.close(); // 컨테이너의 onComplete/onError/onTimeout이 부르는 바로 그 경로다.
+
+			assertEquals(0, this.changes.subscriberCount(),
+					"컨테이너 주도 종료에서 구독이 남았다 — onClosed 배선이 없다");
 		}
 	}
 
@@ -629,10 +664,18 @@ class StreamWireTest {
 
 	/**
 	 * 항목 19 — <b>{@code open()} 성공 뒤 {@code endPrelude} 도달 전의 예외는 봉인이다.</b>
+	 * 헤더만 받은 클라이언트가 무한 대기하지 않고, 구독도 남지 않으며, 본문에 SSE 아닌 바이트가 섞이지 않는다.
 	 *
-	 * <p>봉인하지 않으면 클라이언트는 헤더만 받고 <b>영원히</b> 기다리고({@code setTimeout(0)}이라 컨테이너
-	 * 타임아웃이 없다) 서버는 구독과 비동기 컨텍스트를 붙든다 = 영구 침묵 + 누수. step2의 {@code Stream}
-	 * 쪽 절반(M2-15)이 보지 못하는 <b>컨트롤러 절반</b>이 이 자리이며 변이 M4-14가 그것을 실증한다.
+	 * <p><b>[2026-08-30 변이 M4-14 실측 — 계획서 문장 정정]</b> 계획서는 "{@code setTimeout(0)}이라 컨테이너가
+	 * 대신 정리해 주지 않는다"고 적었으나 <b>거짓이다</b>: 컨트롤러의 {@code try/catch}를 통째로 제거해도
+	 * 이 테스트는 <b>green</b>이었다. 예외가 핸들러 밖으로 나가면 컨테이너가 async error dispatch로 받아
+	 * 비동기 컨텍스트를 완료하고, 그 완료가 {@code AsyncListener} → {@code Stream.close()} → 구독 해제로
+	 * 이어진다(본문에 에러 JSON이 섞이지도 않았다 — 응답이 이미 커밋됐기 때문이다).
+	 *
+	 * <p>그래도 앱이 스스로 봉인하는 결정은 유지한다: 종료 경로가 <b>컨테이너 에러 처리에 의존하지 않고</b>
+	 * 다른 두 종료(재검증 실패·클라 끊김)와 같은 한 지점으로 수렴해야 하기 때문이다. 그 결정은 와이어로
+	 * 구별되지 않으므로 아래 {@link #theStreamControllerNeverExtendsTheSessionAndHasNoTimerOrThread()}의
+	 * <b>정적 그물</b>이 대신 잠근다(그것이 M4-14의 red 지점이다).
 	 */
 	@Test
 	void anExceptionBeforeEndPreludeSealsTheStreamInsteadOfHangingIt() {
@@ -654,8 +697,7 @@ class StreamWireTest {
 					"봉인 경로가 ready 뒤에 다른 바이트를 흘렸다(전역 에러 핸들러가 SSE 본문에 끼어들었다): "
 							+ describe(stream.rawBody()));
 			assertTrue(stream.closedByServer(),
-					"서버가 연결을 끝내지 않았다 — 클라이언트가 영원히 기다린다(setTimeout(0)이라 "
-							+ "컨테이너가 대신 정리해 주지 않는다)");
+					"서버가 연결을 끝내지 않았다 — 클라이언트가 영원히 기다린다");
 			assertEquals(0, this.changes.subscriberCount(), "봉인하지 않아 구독이 누수됐다");
 		}
 	}
@@ -678,6 +720,12 @@ class StreamWireTest {
 
 		assertTrue(code.contains("peekSession"),
 				"컨트롤러가 비연장 조회를 쓰지 않는다 — 스캔이 공허해진다(양성 대조)");
+		String handler = code.substring(code.indexOf("public void stream("));
+		handler = handler.substring(0, handler.indexOf("\n\t}"));
+		assertTrue(handler.contains("catch (RuntimeException"),
+				"open()~endPrelude 구간의 봉인 catch가 사라졌다 — 종료는 컨테이너 에러 처리가 아니라 "
+						+ "앱의 한 지점(seal)으로 수렴해야 한다(2026-08-30 M4-14 실측: 이 축은 와이어로 "
+						+ "구별되지 않는다 — 컨테이너가 예외를 받아 대신 정리해 준다)");
 		for (String forbidden : List.of("touchSession", "authorize(", "editDps(")) {
 			assertFalse(code.contains(forbidden),
 					"push 시점 인가는 비연장 peek다(ADR-005·ADR-007) — 세션을 연장하는 호출이 있다: " + forbidden);
@@ -738,10 +786,13 @@ class StreamWireTest {
 		private final AtomicReference<java.util.function.Supplier<RuntimeException>> failure =
 				new AtomicReference<>();
 
+		/** 마지막으로 연 스트림 — 컨테이너 주도 종료 경로를 직접 태우는 관측 지점이다. */
+		private final AtomicReference<Stream> lastStream = new AtomicReference<>();
+
 		@Override
 		public Stream open(HttpServletRequest request, HttpServletResponse response) {
 			Stream delegate = super.open(request, response);
-			return new Stream() {
+			Stream wrapper = new Stream() {
 
 				@Override
 				public boolean write(byte[] frame) {
@@ -789,6 +840,8 @@ class StreamWireTest {
 				}
 
 			};
+			this.lastStream.set(wrapper);
+			return wrapper;
 		}
 
 		void afterWritePrelude(Runnable hook) {
@@ -799,9 +852,14 @@ class StreamWireTest {
 			this.failure.set(fault);
 		}
 
+		Stream lastStream() {
+			return this.lastStream.get();
+		}
+
 		void clearHooks() {
 			this.afterWritePrelude.set(null);
 			this.failure.set(null);
+			this.lastStream.set(null);
 		}
 
 	}

@@ -42,12 +42,18 @@ import tools.jackson.databind.ObjectMapper;
  * </ol>
  * 그래서 <b>"구독이 ready보다 먼저"와 "ready가 첫 프레임"이 동시에 참</b>이다(index.json decisions (15)).
  *
- * <h2>2~4 구간의 예외는 반드시 봉인이다</h2>
- * {@code open()}이 성공한 뒤 {@code endPrelude}에 닿기 전에 예외가 그냥 빠져나가면 클라이언트는 헤더만
- * 받고 <b>영원히</b> 기다리고({@code AsyncContext.setTimeout(0)}이라 컨테이너 타임아웃도 없다) 서버는
- * 구독과 비동기 컨텍스트를 붙든다 = 영구 침묵 + 누수. 그래서 그 구간을 통째로 감싸 봉인한다.
- * 다시 던지지 않는 이유: 응답은 이미 커밋됐고 SSE 본문이 흐르는 중이라, 전역 에러 핸들러가 그 위에
- * 500 JSON을 덧쓰면 프레임 스트림이 오염된다(봉인은 그 자체로 정직한 종료다).
+ * <h2>2~4 구간의 예외는 봉인으로 수렴시킨다</h2>
+ * {@code open()}이 성공한 뒤 {@code endPrelude}에 닿기 전에 예외가 나면 그 구간을 감싼 {@code catch}가
+ * 봉인한다. 다시 던지지 않는 이유: 응답은 이미 커밋됐고 SSE 본문이 흐르는 중이라, 전역 에러 핸들러가
+ * 그 위에 500 JSON을 덧쓰려 하면 프레임 스트림이 오염될 수 있다(봉인은 그 자체로 정직한 종료다).
+ *
+ * <p><b>[2026-08-30 실측 · 계획서 문장 정정]</b> "이 {@code catch}가 없으면 클라이언트가 영원히 기다리고
+ * 구독이 누수된다"는 <b>이 컨테이너에서는 거짓</b>이다({@code StreamWireTest} 변이 M4-14): 예외가 핸들러
+ * 밖으로 나가면 컨테이너가 async error dispatch로 받아 컨텍스트를 완료하고, 그 완료가
+ * {@code AsyncListener} → {@code Stream.close()} → 구독 해제로 이어진다. 그래도 이 {@code catch}를 두는
+ * 이유는 <b>종료 경로를 컨테이너 에러 처리에 맡기지 않고</b> 다른 두 종료(재검증 실패 · 클라 끊김)와 같은
+ * 한 지점({@code Closer.seal})으로 모으기 위해서다. 와이어로 구별되지 않는 결정이므로
+ * {@code StreamWireTest}의 정적 그물이 이 자리를 잠근다.
  *
  * <h2>push 시점 재검증은 비연장 peek다</h2>
  * {@code touchSession}(그리고 그것을 쓰는 {@code Authorization.authorize}·{@code editDps})을 쓰면 열린
