@@ -20,8 +20,10 @@
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
-인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 37개**다
+인벤토리(`docs/api-contract/endpoints.json`)의 39 라우트 중 이 서버가 **핸들러를 가진 것은 39개 — 전부다**
 (`HandlerInventoryTest`가 이 집합을 **정확 일치**로 잠근다 — 목록을 늘리려면 같은 커밋에서 계약 scope 표도 늘려야 한다).
+**"아직 구현하지 않은 라우트"는 phase 74에서 0이 됐다**(P1 포팅 라우트 완결). 인벤토리 **밖**의 표면 2종은 여전히 그 밖이다:
+`/uploads/**` 리소스 핸들러(아래 절)와 Spring Boot 기본 `ANY /error`(`FRAMEWORK_ROUTES`).
 
 | 라우트 | 인증 | 비고 |
 |---|---|---|
@@ -61,6 +63,8 @@
 | `POST /api/upload` | session | **multipart가 아니라 base64 JSON**(`{filename, contentBase64}`)이다. 게이트 순서 **타입 → 확장자 → 크기**이고 확장자는 Node `path.win32.extname` 이식본 + 화이트리스트 **14종**(`invalid-file` 400), 상한은 **디코드된 5 MiB 초과**(`too-large` 400). 디코드는 Node의 **관대한 base64**(`NodeBase64` — 알파벳 밖 문자를 버리지 않고 UTF-16 코드유닛의 하위 1바이트로 절단해 표를 찾는다. 엄격 디코더로 바꾸면 200이어야 할 요청이 500이 된다). 저장명은 **서버가 발급하는 32-hex**이고 `CREATE_NEW`로만 만든다(클라 파일명은 경로에 닿지 않는다) · uploads 루트는 **첫 저장 직전 lazy mkdir** · 응답은 `{ok,path,filename}` |
 | `POST /api/photos` | session | **append-only**(수정·삭제 라우트 없음) · `registeredBy`는 **세션에서 재도출한 사용자**이고 body의 같은 이름 필드는 **읽지 않는다**(ADR-004) · `src` 없으면 `invalid-src` 400 |
 | `GET /api/photos/search` | session | `q`로 `caption` 부분일치(`LIKE '%q%'` · **`ESCAPE` 없음** — 정본이 `%q%`를 그대로 바인딩한다) · **id DESC** · 빈 질의는 400이 아니라 전체 · 반복 키는 콤마 결합(Node `String(array)` 동형) · 투영은 `SELECT *`가 아니라 **6컬럼 명시**다(`id,src,caption,sourceArticleId,registeredBy,createdAt` — 컬럼이 늘어도 응답이 저절로 넓어지지 않는다) |
+| `GET /api/stream` | session | **SSE**(ADR-005·ADR-015) — 로그인만 요구한다(역할 게이트 없음). 무효화 **신호**만 보내고 **행 데이터를 싣지 않는다**(payload 키가 정확히 `kind` 하나: `create`·`update`·`status`·`lock`) · 발행 지점은 컨트롤러 **11곳**(정본 `server/index.js`와 1:1) · push마다 **비연장 peek**로 세션을 재검증하고 죽었으면 `unauthorized` 1회 후 봉인 |
+| `GET /api/logs/stream` | admin(Z) | **SSE**(ADR-007·ADR-015) — 로그인 + **role Z**다(게이트를 빼면 R/D가 전 사용자 요청 흔적을 본다). 401은 경로 정책 필터가, **403은 컨트롤러가** 내며 **둘 다 스트림을 열기 전 JSON**이다 · 접속 시 버퍼 **최근 2000줄**을 `event: log`로 replay한 뒤 live push · push마다 **비연장 peek + role Z 재확인**이고 강등·비활성·로그아웃이면 **그 줄을 한 줄도 쓰지 않고** 봉인한다 |
 | `POST /api/articles/:id/translate` | session | 서버 보유 키 프록시(ADR-014) — 키가 없으면 **200 + `{ok:false, reason:'no-key'}` + 원문 폴백**이다(`no-key`·`error`는 `ReasonStatus`에 넣지 않았다 — 200 본문의 필드다). 번역할 본문은 **서버가 기사에서 도출**하고 요청 body의 `text`는 **쓰지 않는다**(ADR-004) · 외부 URL 인코딩은 `encodeURIComponent`가 아니라 **`URLSearchParams`**(공백이 `+`) · 빈 본문은 **호출 0회 · 2키** 응답 · 어떤 실패도 `{ok:false,reason:'error',translatedText:원문}`로 접힌다 |
 
 **배부 대상에는 행 삭제 경로가 없다** — `DELETE /api/distribution-targets/:id`는 핸들러 미등록으로 **404**다
@@ -69,10 +73,12 @@
 같은 매핑이 **`GET /api/distribution/tick`도 404 `text/html`**로 떨군다(POST만 붙였고 그 경로에 GET 특수처리를 새로 만들지
 않았다 — phase 72 실측 확인, `distribution-tick.contract.js`의 `x-distribution-tick-get` 관측).
 
-**나머지 2 라우트에는 스텁을 만들지 않았다** — SSE 2(`GET /api/stream` · `GET /api/logs/stream`)뿐이다.
-`PathPolicyWireTest`의 **스텁 금지 프로브는 이제 `GET /api/stream`을 가리킨다**(phase 73 step9 재조준 — 이전에는
-`GET /api/media/search`였고 그 라우트가 구현되면서 옮겼다. 단언은 그대로 **인증된 요청이 404 `text/html; charset=utf-8`**이다).
-대신 경로 정책 필터가 인벤토리의 `auth` 클래스를 그대로 읽어
+**스텁 금지 프로브의 대상이 사라졌다** — 인벤토리 39 라우트가 전부 구현됐으므로 "미구현 라우트"라는 프로브 대상이 더는
+존재하지 않는다. 그래서 phase 74 step5가 `PathPolicyWireTest`의 프로브를 **인벤토리 밖 경로**(`GET /api/undefined-path-probe`)로
+옮기고 **이름도 바꿨다**(`anUndefinedPathIs404HtmlNotAJsonError`) — 의미가 "스텁 금지"에서 **"미정의 경로의 404 shape"**으로
+바뀌었기 때문이다(같은 이름을 남기면 다음 사람이 스텁 금지가 여전히 지켜지는 줄 안다). 단언은 그대로 **404 +
+`text/html; charset=utf-8`**이고, **스텁 금지는 이제 `HandlerInventoryTest`의 정확 집합 단언이 단독으로 지킨다.**
+경로 정책 필터는 인벤토리의 `auth` 클래스를 그대로 읽어
 
 - 세션을 요구하는 클래스(`session`·`session-role`·`admin`·`lock-holder`)는 **미인증이면 401 JSON**
   (`{"ok":false,"reason":"unauthenticated"}`) — Node가 라우트 안에서 만드는 결과와 동형이다,
@@ -92,7 +98,57 @@
 Spring **200**이다(디스패처가 경로 파라미터를 떼어낸다). 계약이 관측하는 축인 **미인증이면 401**은 양쪽 동형이며 그것은 경로 정책
 필터가 잠근다. 고치지 않은 이유: 매칭 정책을 바꾸면 39 라우트 전부의 판정이 함께 움직이므로 도메인 phase가 개별로 판단할 것이
 아니라 **경로 정규화 정책을 한 번에 다루는 별도 판단**이 필요하다. **라우트를 늘리는 phase마다 같은 divergence가 새로 생긴다** —
-phase 73이 5 라우트를 붙이면서 그 표면은 다시 **37 라우트**로 넓어졌다(마지막으로 남은 SSE 2가 붙으면 39가 된다).
+phase 74가 SSE 2를 붙이면서 그 표면은 **39 라우트 전부**로 넓어졌다(더 늘 곳이 없다 — P1 라우트가 완결됐다).
+
+## SSE 두 스트림 (`GET /api/stream` · `GET /api/logs/stream`)
+
+**근거는 `ADR-015`**(phase 74 step0 신설)다. 요점 다섯:
+
+- **와이어 지점이 하나 더 있다.** JSON은 `JsonHttp`, SSE는 **`harness/news/web/SseHttp.java`**이며 **둘 다 같은
+  `RawContentType` seam**(coyote 응답에 완성 문자열을 직접 기록)을 쓴다. 그것만이 정본 실측값
+  `Content-Type: text/event-stream; charset=utf-8`의 **세미콜론 뒤 공백 1바이트와 소문자 `utf-8`**을 지킨다 —
+  서블릿 API로 지정하면 컨테이너가 재조립해 그 공백이 사라지고 **전 SSE 관측이 diff**가 된다(마감 변이로 실증: 공백 1개를
+  지우면 `--parity` **diffs 3**). `SseEmitter`·`ResponseBodyEmitter`·`StreamingResponseBody`·메시지 컨버터·WebFlux는 쓰지 않는다.
+  seam 호출자의 **집합**(`HtmlErrors`·`JsonHttp`·`SseHttp` **셋** — `HtmlErrors`는 404 `text/html`을 낸다)을
+  `SseHttpTest.exactlyThreeFilesWriteTheContentTypeBytes`가 정확 집합으로 잠근다(네 번째를 심으면 red).
+- **프레임 원문.** ready는 `event: ready\ndata: {"ok":true}\n\n` **32바이트**이고 개행은 **LF만**이다.
+  프레임 하나가 청크 하나이고 **write마다 flush**한다(빼면 계약 케이스가 10초 타임아웃 red). 초기 코멘트·`id:`·`retry:`·
+  heartbeat·패딩은 **0건**이며 정본에도 0건이다. 종료 프레임은 `event: unauthorized\ndata: {"ok":false,"reason":"unauthenticated"}\n\n`.
+  `Content-Length`는 없고 `Transfer-Encoding: chunked`다. **`Connection` 헤더는 앱이 지정하지 않는다** — 지정하면
+  컨테이너 값과 겹쳐 와이어에 `keep-alive, keep-alive`가 나갔고, 손을 떼면 Tomcat 단독으로 정본과 **같은 바이트**가 나갔다(step4 실측).
+- **인가 등급이 두 라우트에서 다르다.** `/api/stream`은 로그인만, `/api/logs/stream`은 로그인 + **role Z**다.
+  두 라우트 모두 미인증 401은 경로 정책 필터가 **스트림을 열기 전에** 만들고, 비-Z 403은 컨트롤러가 낸다(둘 다 JSON이다 —
+  200 SSE 헤더가 나간 뒤에는 거부를 상태코드로 표현할 수 없다).
+- **실행 모델: 서블릿 비동기 + 트리거 스레드 직접 쓰기.** `startAsync()` + `setTimeout(0)`이라 **스트림 수명 동안 워커를
+  점유하지 않고**(테스트가 `server.tomcat.threads.max=5`에서 스트림 8개를 연 채 다른 라우트의 200을 단언한다),
+  프레임은 `ChangeBus.publish`/`LogService.log`를 부른 그 스레드가 쓴다. **앱 내 타이머·워커풀·재시도가 0**이라
+  `Adr008DisciplineTest`의 예외 목록을 넓히지 않았다(아래 절).
+- **접속 시퀀스는 정본과 동형이 아니다 — replay-gate.** 정본은 단일 스레드라 "ready 쓰기 → 구독 등록" 사이에 다른 요청이
+  처리되지 않지만 **Spring은 다른 워커가 동시에 돈다**. 그 창의 신호·로그 유실을 막으려고 `SseHttp.Stream`을 **prelude 모드**로
+  열고(`write`는 큐에 적재된다) 컨트롤러가 「**구독 먼저** → 스냅샷 → `writePrelude(READY)` → replay → `endPrelude(마지막 replay seq)`」
+  순서로 진행한다. `endPrelude`는 write monitor 안에서 「순서키 ≤ dropUpTo 제거 → FIFO 드레인 → live 전환」을 **원자적으로** 한다.
+  결과는 **ready가 첫 프레임 · 유실 0 · 중복 0 · 역전 0**이다. `open()`~`endPrelude` 구간은 `catch (RuntimeException) → seal`로
+  수렴시킨다(안 하면 클라이언트가 헤더만 받고 영원히 기다린다).
+
+**계약이 보는 것과 보지 못하는 것을 구분하라.** 계약(`sse-stream.contract.js` 10관측 + `logs.contract.js` 7관측)이 보는 것은
+헤더 3종·ready 원문 바이트·쿠키 인증·`kind` 한 키·동시 2연결 fanout·세션 무효화 봉인·replay/live의 존재뿐이다.
+**다음 축은 계약이 구조적으로 보지 못하며 Java 테스트가 유일한 방어선이다**(각각 변이로 실증했다):
+
+| 축 | 유일한 방어선 |
+|---|---|
+| 등록 창의 신호·로그 유실(replay-gate) | `LogsStreamWireTest`의 훅 3종(`logLinesRaisedRightAfterTheSnapshotAreNotLost` 등) · `LogsStreamReplayWireTest.fiftyRoundsOfConnectingWhileLoggingLoseNothing` |
+| `seq` 역전(Node에 없는 현상) | `LogServiceTest.seqNeverArrivesOutOfOrderAcrossThreads`(8스레드 × 200회) |
+| replay 상한 2000 | `LogsStreamReplayWireTest.theReplayIsCappedAtTwoThousandAndKeepsTheNewest` |
+| 강등(Z→D)·비활성·로그아웃 봉인 | `LogsStreamWireTest.aDemotedAdminGetsNoFurtherLogLine` 외 2 |
+| push 시점 **비연장** peek(`authorizePeek`) | `LogsStreamWireTest.pushRevalidationNeverExtendsTheSessionExpiry` + 소스 철자 스캔(두 방어선은 서로를 대체하지 않는다) |
+| 발행 11지점(tick·retry·collection은 계약이 영원히 못 본다) | `ChangePublishWireTest` 22건 |
+| 구독 누수 0 · 워커 점유 0 · 로그 재귀 0 | `StreamWireTest`·`LogsStreamWireTest` |
+
+**계약의 하한 함정을 그대로 적어 둔다**: `logs.contract.js`의 live-push 케이스는 `seq > seqBefore`의 **하한만** 본다(그 파일
+170~178행 주석이 명시한다). 그 하한은 **늦게 도착한 replay 잔여 프레임**으로도, **SSE 요청 자신의 액세스 로그**로도 충족된다
+(`RequestLogFilter`는 async 가드가 없는 plain `Filter`라 `finally`가 컨트롤러 반환 직후 돈다 — 정본은 스트림 종료 시점이라
+그 줄이 스트림 중에 나가지 않는다. **관측 가능한 divergence이고 재귀는 아니다**). 그래서 구독을 `endPrelude` 뒤로 옮기거나
+`endPrelude` 호출을 아예 지워도 **계약은 313관측 diffs 0으로 통과한다**(phase 74 마감 변이 M5-5·M5-5d·M6-11로 실증).
 
 ## `/uploads` 정적 서빙은 39 라우트 인벤토리 밖이다
 
@@ -182,13 +238,39 @@ curl -i http://127.0.0.1:15731/api/health   # 200 {"ok":true}
 대해 갖는 소유 경계와 동형). 이 하네스가 이후 phase의 진행률 측정 수단이다 — 각 step의 합격 기준이
 "이 커맨드로 계약 파일 N개가 green"이다.
 
-scope 표에는 지금 **5 프로파일**이 올라 있다(`default` 12파일 · `minimal` 3 · `auth-negative` 1 · `failclosed` 1 ·
-`prod-cookie` 1 = 계약 18파일). 프로파일마다 **구성 축 3개**(`host` 바인드 주소 · `spool`=`DIST_SPOOL_DIR` 주입 여부 ·
+scope 표에는 지금 **5 프로파일**이 올라 있다(`default` **14파일** · `minimal` 3 · `auth-negative` 1 · `failclosed` 1 ·
+`prod-cookie` 1 = 계약 **20파일**). phase 74가 끝나면서 **표의 파일 집합이 각 프로파일 디렉토리 전체와 같아졌다** —
+즉 Spring 대상이 Node 대상의 전수 케이스와 같은 집합을 돈다(그 사실 자체를 하네스가 검사한다).
+현재 마감 수치는 **패리티 관측 313, diffs 0**(default **246** · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3)이다.
+
+**커버리지 함정 — `default` 단독의 `covered=32/39`는 미달이 아니다.** 이 하네스는 프로파일마다 `contract-run.mjs`를 **따로
+spawn**하므로 러너가 출력하는 `covered=<n>/39`는 **그 프로파일 안에서만** 센 값이다. `39/39`는 **5 프로파일 합산에서만**
+나온다(Node 대상은 한 프로세스가 5 프로파일을 전부 돌기 때문에 `npm run test:contract -- --require-full-coverage`가 곧바로
+39/39다). 그래서 Spring 대상에는 **합산 게이트**를 따로 뒀다:
+
+```bash
+cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" \
+  npm run test:contract:spring -- --require-full-coverage
+#   합산 커버리지(Spring 5리포트 · 관측 313) covered=39/39 미커버 쌍=0
+```
+
+판정 단위는 러너와 같은 **(routeId, `endpoints.json`의 `expect` 태그) 쌍**이고 `x-` 접두 관측은 제외한다.
+**규칙의 정본은 `scripts/contract-run.mjs` 451~473행 `judgeCoverage`이며 하네스의 구현은 그 복제다**(러너는 무수정 목록이다) —
+정본이 바뀌면 둘 다 고쳐라. 합산 대상은 **Spring 쪽 리포트만**이다(`--parity`의 Node 대조도 `--dual-run`의 b 패스도 아니다.
+섞으면 Node가 관측한 쌍이 Spring의 공백을 메워 게이트가 조용히 공허해진다). 부분 실행(`--profile`·`--files`·`--boot-check`)에서는
+켤 수 없게 막았다 — 확정 실패가 되고, **영구 red 게이트는 다음 사람이 무시하게 되어 없는 것보다 나쁘다.**
+게이트가 비어 있지 않다는 것은 **scope 표에서 `logs.contract.js` 1행을 지워** 확인했다(**exit 1** + 미커버 4쌍 나열 +
+합산 37/39). scope 표에서 행을 빠뜨리면 **다른 게이트는 조용히 통과한다** — `--parity`는 exit 0인 채 관측 수만 줄어든다
+(phase 74 실측: 246 → 239).
+
+프로파일마다 **구성 축 3개**(`host` 바인드 주소 · `spool`=`DIST_SPOOL_DIR` 주입 여부 ·
 `token`=`COLLECTION_TOKEN` 주입 여부)를 갖고 그 값은 러너(`scripts/contract-run.mjs`)의 `PROFILES`와 **반드시 같다** —
 갈리면 두 대상이 서로 다른 서버 구성을 측정하게 되고 그 구성 차이가 "계약 차이"로 위장된다(하네스가 실행 초반에 대조한다).
 
 - `default` — 표준 구성(스풀·수집 토큰 있음). 인증·기사 읽기/쓰기·잠금·users·수집·배부와
   **미디어/업로드/사진/번역**(`media-upload.contract.js` — phase 73이 올린 12번째 파일)이 여기 있다.
+  phase 74가 **SSE 2**(`sse-stream.contract.js` 10관측 · `logs.contract.js` 7관측 — 후자는 `logs-digest` 3관측을 함께 데려왔다)를
+  올려 **14파일**이 됐다.
   **외부 API 키는 계약 env에 애초에 존재하지 않는다** — Node 자식은 러너 `cleanEnv()`가 `GOOGLE_API_KEY`·`GOOGLE_CSE_ID`·
   `YOUTUBE_API_KEY`·`GOOGLE_TRANSLATE_API_KEY` 4종을 지우고, java 자식은 `javaChildEnv()`가 **OS 허용 목록만** 통과시킨다.
   그래서 계약이 관측하는 것은 언제나 **키 없는 폴백 경로**이고, 키가 설정된 경로와 키 비유출은 계약이 아니라
@@ -336,6 +418,31 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 **네 자리가 모두 찼다** — 다음 phase가 파일을 하나 더 넣으려 하면 그것은 예외 확대이며 별도 근거·리뷰가 필요하다.
 예외가 둘에서 넷이 되면서 **스캔 사각도 두 배**가 됐다는 사실을 함께 기억한다(ADR-014 트레이드오프).
 
+**phase 74(SSE)는 이 목록을 0줄 고쳤다.** SSE는 비동기·스레드 군과 정면으로 만나는 유일한 코드인데도 예외가 필요 없었다 —
+연결 유지는 서블릿 비동기 컨텍스트(`startAsync` + `setTimeout(0)`)가, 프레임 쓰기는 **트리거가 된 요청의 스레드**가 하므로
+앱이 만드는 타이머·스케줄러·워커풀·백그라운드 스레드·heartbeat가 **0**이기 때문이다(ADR-015). 마감 시점에 **5종 변이**로
+게이트가 살아 있음을 재확인했다(2026-08-31 · **5/5 red** · 각각 원복 후 pristine 사본과 byte-identical 확인):
+
+| 심은 곳 | 심은 코드 | 실제 red를 낸 테스트 |
+|---|---|---|
+| `controller/StreamController.java`(SSE) | 한정 이름 `@…Scheduled(fixedDelay = 1000)` | `mainSourcesRunNoTimersOrRetries` |
+| `controller/LogsController.java`(SSE) | `java.util.concurrent.Executors.newSingleThreadExecutor()` | `mainSourcesRunNoTimersOrRetries` |
+| `web/SseHttp.java`(SSE 와이어) | `java.net.http.HttpClient.newHttpClient()` | `onlyTheDeclaredOutboundAdaptersTalkToTheNetwork` |
+| `service/ChangeBus.java`(SSE 버스) | `java.nio.file.Files.write(p, b)` | `onlyTheDeclaredWritersWriteFiles` |
+| `service/SpoolWriter.java`(예외 4파일 중 하나) | `Thread.startVirtualThread(() -> { })` | `mainSourcesRunNoTimersOrRetries`(군 교차 누출 금지 재확인) |
+
+**알려진 사각 하나가 더 있다 — JDK 25가 추가한 표면이다**(기준선이 21 → 25로 옮겨진 뒤 phase 74가 조사·기록만 했다.
+**패턴은 추가하지 않았다** — 게이트 확장은 그 자체가 아키텍처 결정이라 별도 ADR·리뷰가 필요하다):
+
+| 후보 철자 | 게이트 결과 | 사실 |
+|---|---|---|
+| `ScopedValue`(JEP 506 · JDK 25 **정식**) | **green = 우회로** | `ChangeBus`에 `ScopedValue.where(V,"x").run(() -> {})`를 심어도 12/12 통과했다. 5군 패턴에 그 철자가 0건이다 |
+| `StructuredTaskScope`(JEP 505 · 25에서도 **preview**) | **green(철자 미적중)** | 실사용은 `--enable-preview` 없이 **컴파일되지 않는다**(실측: `is a preview API and is disabled by default`). 지금은 도달 불가일 뿐 게이트가 막는 것이 아니다 |
+| 모듈 import 선언(`import module java.base;`)으로 패턴 우회 | **우회되지 않는다** | 75개 패턴 전부가 `\b식별자\b`·사용 형태 매칭이고 import 문에 의존하는 패턴이 0건이다. 한정 이름으로 적어도 잡힌다(위 표의 M6-2·M6-4가 **import 없이** 한정 이름만으로 red였다) |
+
+그 사이를 메우는 것은 이 phase가 만든 SSE 소스의 **자기 스캔**이다 — `SseHttpTest`·`StreamWireTest`·`LogsStreamWireTest`가
+각자 `StructuredTaskScope`·`ScopedValue`·`Subtask` 철자 0건을 단언한다. **게이트 통과는 허가가 아니다.**
+
 예외를 파일 단위로 두는 이유는 `ClockDisciplineTest.CLOCK_FACTORY_FILES`와 같다: **예외가 늘어나면 그 사실이 diff에 보인다.**
 동시에 한계를 알고 쓴다 — 문자열을 끊어 쓰거나 리플렉션으로 만든 호출은 정적 스캔을 통과한다. 실질 방어선은 각 도메인의
 **행동 단언**(요청 횟수·파일 개수·응답 키 집합)이다. 알려진 사각 하나를 명시해 둔다: **②군 패턴에 `sendAsync` 철자가 없어**
@@ -475,3 +582,31 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
   본문을 천천히 흘리는 외부 API는 Tomcat 워커를 계속 점유한다. 막으려면 타이머·별도 스레드가 필요하고 그것이 ADR-008 위반이다.
 - **`Redirect.NEVER`는 의도된 divergence**다 — Node `fetch`는 302를 따라가지만 그 URL에는 **서버 보유 키가 들어 있다**.
   등록된 endpoint 밖으로 키가 새지 않는 쪽으로 틀렸다.
+
+SSE 2 스트림(phase 74)이 남긴 공백 — 각 항목의 **유일한 방어선**을 함께 적는다:
+
+- **블로킹 소비자 1개가 서버 전체를 정지시킬 수 있다 — 정본과 비대칭이다.** Node `res.write`는 **논블로킹 버퍼링**이고
+  `ServletOutputStream#write`는 **블로킹**이다. 완전히 멈춘 소비자가 `LogService`의 `notifyLock`을 물면
+  `RequestLogFilter`의 `finally`가 전 요청에서 그 락을 기다린다. **동시 연결 상한도 없다**(정본 `bus.setMaxListeners(0)` 동형 ·
+  `sse.md`가 "구독자 수 제한이 없다"로 동결). **2026-08-31 실측(관측이지 단언이 아니다)**: 읽지 않는 소비자 하나가
+  **15,112줄**을 소켓 버퍼로 흡수한 뒤에야 push가 멈췄고, 그 상태에서도 `GET /api/health`는 **2ms**에 응답했으며 정지 중에도
+  액세스 로그가 **6줄** 더 쌓였다 — **"서버 전체 정지"는 재현되지 않았고** 관측된 것은 push 처리량 급락이다(응답이 액세스
+  로그보다 먼저 커밋된다). 소비자를 끊으면 write 실패 → 자기 봉인 → 구독 해제로 **회복**된다(이것만 단언한다).
+  **더 느린 소비자·더 많은 연결에서 어떻게 되는지는 검증된 적이 없다.** 해법(비블로킹 write · write 타임아웃 · 연결 상한)은
+  전부 ADR-008 금지 철자이거나 `sse.md`가 배제한 축이라 **P2 소유**다. `LogsStreamReplayWireTest`의 관측 테스트가 유일한 계기다.
+- **prelude 큐의 총 메모리에 상한이 없다.** 스트림당 상한은 `PRELUDE_MAX`(4096) 프레임이고 실측 프레임 크기는
+  액세스 로그 208 B·change 39 B·ready 32 B이므로 **로그 스트림 하나당 최악 약 0.81 MiB**(`/api/stream`은 약 0.15 MiB)인데,
+  **동시 연결 상한이 없어 총량은 `연결 수 × 그 값`으로 무한히 는다.** 드롭(drop-oldest) 경로는 정상 부하에서 도달 불가라고
+  판단했을 뿐 **실부하로 확인하지 않았다** — `SseHttpTest`의 단위 테스트가 유일한 방어선이다.
+- **실제 브라우저 `EventSource`와의 상호운용** · **웹 클라이언트(`web/**`)가 Spring 서버에 붙었을 때의 재연결 동작** —
+  이 phase는 **서버측 패리티만** 소유했다(`web/**`·`client/**`는 무접촉). 계약 하네스의 `fetch` 기반 클라이언트가 유일한 관측점이다.
+- **프록시·리버스프록시의 버퍼링** — `X-Accel-Buffering`은 정본도 보내지 않는다(실측). 프록시 뒤 배치는 **운영 소유**다.
+- **수백 개 동시 연결**에서의 트리거 요청 지연 · **replay 2000건의 실제 전송 시간** — 측정한 적이 없다
+  (테스트는 스트림 8개 · 버퍼 2500건까지만 만든다).
+- **컨테이너 종료 중 열린 스트림의 정리** — 종료 훅을 만들지 않았다(만들면 앱이 스스로 하는 일이 하나 늘어난다).
+- **소켓 강제 끊김에서 Tomcat이 `onError`/`onComplete`를 즉시 내지 않는다**(실측 · divergence로 기록). `setTimeout(0)`이라
+  회수는 **다음 write 실패**까지 지연된다 — `/api/stream`에서는 publish **2회**가 필요했다(첫 write는 OS 버퍼에 성공하고
+  두 번째가 RST를 만난다). 그래서 테스트는 "끊자마자 0"이 아니라 "끊김 후 신호를 내면 0"으로 단언한다.
+- **SSE 요청 자신의 액세스 로그가 스트림이 열린 상태에서 자기 스트림으로 push된다**(정본은 스트림 종료 시점) —
+  `RequestLogFilter`가 async 가드 없는 plain `Filter`이기 때문이다. **관측 가능한 divergence이고 재귀는 아니다**
+  (그 write는 새 로그를 만들지 않는다). 계약은 이것을 red로 만들지 않는다(위 「하한 함정」).

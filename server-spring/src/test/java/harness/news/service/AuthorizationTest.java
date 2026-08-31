@@ -335,6 +335,36 @@ class AuthorizationTest {
 				"비활성화는 세션 자체를 무효화한다(역할 문제가 아니다)");
 	}
 
+	/**
+	 * phase 74 step6 작업 G-4 — 이 phase가 손댄 소스에 <b>JDK 25 신규 표면</b>이 0건임을 잠근다.
+	 *
+	 * <p>이 파일은 이 phase가 {@code authorizePeek} 1메서드를 순수 추가한 자리이고, SSE의 push 경로가
+	 * 매 프레임마다 부르는 유일한 서비스층 진입점이다. {@code Adr008DisciplineTest}가 main 소스 전역을
+	 * 스캔하지만 그 5군 패턴은 <b>JDK 21 API 표면 기준</b>으로 작성돼 {@code StructuredTaskScope}·
+	 * {@code ScopedValue}·{@code Subtask}가 <b>0건</b>이다(2026-08-31 실측: {@code ScopedValue} 실사용을
+	 * 심어도 그 게이트는 green이었다 — 우회로다). 게이트 파일은 이 phase가 0줄 고치기로 못 박았으므로
+	 * (확장은 별도 ADR·리뷰가 필요하다) 여기서 이 파일에 대해서만 막는다 —
+	 * {@code SseHttpTest}·{@code StreamWireTest}·{@code LogsStreamWireTest}·{@code ChangeBusTest}·
+	 * {@code LogServiceTest}가 자기 소스에 대해 같은 스캔을 이미 걸어 뒀고 이 파일만 빠져 있었다.
+	 *
+	 * <p>판정 전에 주석을 지운다 — 규칙을 <b>설명하는</b> 이 javadoc이 위반으로 잡히면 규칙을 문서화할 수 없다.
+	 */
+	@Test
+	void theAuthorizationSourceUsesNoJdk25ConcurrencySurface() throws java.io.IOException {
+		Path source = Path.of("src/main/java/harness/news/service/Authorization.java");
+		assertTrue(java.nio.file.Files.isRegularFile(source),
+				"인가 게이트 소스를 찾지 못했다 — 스캔이 공허해진다");
+		String code = java.nio.file.Files.readString(source, java.nio.charset.StandardCharsets.UTF_8)
+				.replaceAll("(?s)/\\*.*?\\*/", " ")
+				.replaceAll("(?m)//.*$", " ");
+
+		for (String forbidden : List.of("StructuredTaskScope", "ScopedValue", "Subtask",
+				"ExecutorService", "Executors.", "new Thread(", "startVirtualThread", "CompletableFuture")) {
+			assertFalse(code.contains(forbidden),
+					"ADR-008 · ADR-015: 인가 판정은 호출 스레드에서 동기로 끝난다 — 금지 철자가 있다: " + forbidden);
+		}
+	}
+
 	private void insert(String userId, String role) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		row.put("userId", userId);
