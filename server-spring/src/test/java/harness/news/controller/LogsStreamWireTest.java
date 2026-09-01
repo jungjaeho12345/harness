@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.zaxxer.hikari.HikariDataSource;
 import harness.news.model.UserRepository;
 import harness.news.service.FaultySessionGuard;
 import harness.news.service.LogRecord;
@@ -22,6 +23,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -126,6 +128,12 @@ class LogsStreamWireTest {
 
 	private static final Duration DRAIN_LIMIT = Duration.ofSeconds(10);
 
+	/** 항목 22 — "무관한 요청이 멈췄다"고 판정하기까지의 시간. 정상 경로는 밀리초 단위로 끝난다. */
+	private static final Duration STALL_LIMIT = Duration.ofSeconds(5);
+
+	/** 항목 22 — 사슬을 푼 뒤 정리에 허용하는 시간(Hikari connectionTimeout 30초보다 짧게 끝나야 한다). */
+	private static final Duration RECOVERY = Duration.ofSeconds(20);
+
 	private static final long MINUTE_MS = 60L * 1000L;
 
 	private static final long ONE_HOUR_MS = 60L * MINUTE_MS;
@@ -211,6 +219,10 @@ class LogsStreamWireTest {
 
 	@Autowired
 	private ServletWebServerApplicationContext webServerContext;
+
+	/** 항목 22 전용 — 상한 1의 실제 풀에서 유일 커넥션을 꺼내 사슬을 만든다(모형이 아니다). */
+	@Autowired
+	private HikariDataSource dataSource;
 
 	@BeforeEach
 	void freshBaseline() {
@@ -713,6 +725,60 @@ class LogsStreamWireTest {
 		}
 	}
 
+	/**
+	 * 항목 22 — <b>유일 커넥션을 기다리는 push가 다른 모든 요청을 세우지 않는다</b>
+	 * (2026-09-01 ⑤ 코드리뷰 high 폐색 · ADR-015 트레이드오프 정정).
+	 *
+	 * <h2>재현하는 사슬(전부 실물이다)</h2>
+	 * <ol>
+	 *   <li>스트림 1개가 붙어 있다 → 구독 콜백은 {@code authorizePeek} → {@code SessionGuard.peekSession}
+	 *       → {@code users.findById}로 <b>DB를 읽는다</b>.</li>
+	 *   <li>테스트가 실제 {@link HikariDataSource}에서 <b>유일 커넥션</b>을 꺼내 쥔다
+	 *       ({@code NewsDataSource.MAX_POOL_SIZE = 1}) — {@code ArticleEmbargoService}의
+	 *       {@code transactions.executeWithoutResult} 안에 있는 스레드와 같은 상태다.</li>
+	 *   <li>요청 하나가 끝나면 {@code RequestLogFilter}의 {@code finally}가 로그를 남기고, 그 통지의
+	 *       구독 콜백이 <b>커넥션 대기 큐</b>에 들어간다(Hikari {@code connectionTimeout} 30초).</li>
+	 *   <li>그동안 <b>다른 요청</b>을 보낸다. 통지가 전역 락 안에서 돌면 이 요청도 자기 {@code finally}에서
+	 *       그 락을 기다리며 멈춘다 — 스트림 하나 때문에 <b>서버 전체가 정지</b>한다.</li>
+	 * </ol>
+	 * {@code /api/health}를 쓰는 이유: 인증 0회·DB 0회라 <b>막히는 자리가 {@code finally} 하나뿐</b>이다
+	 * (다른 라우트로 재면 DB 대기와 락 대기가 섞여 무엇이 막았는지 구별되지 않는다).
+	 *
+	 * <p>계약은 이 축을 보지 못한다 — 하네스는 커넥션을 고갈시키지도, 소비자를 멈춰 세우지도 않는다.
+	 * <b>이 항목과 {@code LogServiceTest} 항목 5c·5d가 유일 방어선이다.</b>
+	 */
+	@Test
+	void aPushWaitingForTheOnlyDbConnectionDoesNotStallEveryOtherRequest() throws Exception {
+		try (WireStream stream = openStream(sessionFor("ls-z"))) {
+			assertNotNull(awaitReady(stream));
+			drainReplay(stream);
+
+			Connection held = this.dataSource.getConnection(); // 트랜잭션이 유일 커넥션을 쥔 상태.
+			Thread stalled = new Thread(() -> Wire.send(this.port, "GET", "/api/health", Map.of(), null));
+			AtomicInteger secondStatus = new AtomicInteger(-1);
+			Thread second = new Thread(() -> secondStatus
+					.set(Wire.send(this.port, "GET", "/api/health", Map.of(), null).status()));
+			boolean everythingStalled;
+			try {
+				stalled.start();
+				awaitConnectionWaiter(); // push가 커넥션 대기 큐에 들어갔다 — 여기부터가 사슬이다.
+
+				second.start();
+				second.join(STALL_LIMIT.toMillis());
+				everythingStalled = second.isAlive();
+			}
+			finally {
+				held.close(); // 트랜잭션이 커밋하고 커넥션을 돌려준다 — 사슬을 푼다.
+				second.join(RECOVERY.toMillis());
+				stalled.join(RECOVERY.toMillis());
+			}
+
+			assertFalse(everythingStalled, "로그 스트림 1개 + 커넥션 경합만으로 무관한 요청이 "
+					+ STALL_LIMIT.toMillis() + "ms 넘게 멈췄다 — 통지가 전역 락 안에서 DB를 기다린다");
+			assertEquals(200, secondStatus.get(), "막히지는 않았지만 응답이 정상이 아니다");
+		}
+	}
+
 	// --- 정적 규율 ----------------------------------------------------------------------------------
 
 	/**
@@ -1050,6 +1116,20 @@ class LogsStreamWireTest {
 	}
 
 	/** 이전 테스트가 남긴 끊긴 구독을 회수한다(로그 1건이 회수 트리거다 — decisions (12)). */
+	/**
+	 * push 콜백이 <b>실제로</b> 커넥션 대기 큐에 들어갈 때까지 기다린다(항목 22).
+	 * 이 확인이 없으면 사슬이 성립하기 전에 두 번째 요청을 보내 테스트가 공허해진다.
+	 */
+	private void awaitConnectionWaiter() {
+		long deadline = System.nanoTime() + RECOVERY.toNanos();
+		while (this.dataSource.getHikariPoolMXBean().getThreadsAwaitingConnection() < 1
+				&& System.nanoTime() < deadline) {
+			sleepQuietly();
+		}
+		assertTrue(this.dataSource.getHikariPoolMXBean().getThreadsAwaitingConnection() >= 1,
+				"구독 콜백이 커넥션을 기다리지 않는다 — 사슬이 성립하지 않아 이 테스트가 공허해진다");
+	}
+
 	private void awaitNoSubscribers() {
 		long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
 		while (this.logs.subscriberCount() > 0 && System.nanoTime() < deadline) {

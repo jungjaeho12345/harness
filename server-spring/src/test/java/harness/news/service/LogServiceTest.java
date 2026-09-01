@@ -18,6 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +49,15 @@ class LogServiceTest {
 
 	/** 2026-08-21 07:00:00 KST — 창이 닫힌 뒤의 조회 시각(운영 루틴이 pull하는 시점). */
 	private static final long AFTER_BOUNDARY = BOUNDARY + 60L * 60L * 1000L;
+
+	/** "막혔다"고 판정하기까지 기다리는 시간(항목 5c·5d). 정상 경로는 밀리초 단위로 끝난다. */
+	private static final long BLOCK_LIMIT_MS = 3000L;
+
+	/** 정리용 join 상한 — 붙잡아 둔 스레드를 풀어 준 뒤에 쓴다. */
+	private static final long JOIN_LIMIT_MS = 15_000L;
+
+	/** 세마포어를 풀 때 한 번에 주는 퍼밋 수(테스트가 붙잡아 둔 스레드보다 넉넉하다). */
+	private static final int RELEASE_ALL = 1024;
 
 	private final MutableClock clock = new MutableClock(WINDOW_OPEN);
 
@@ -353,6 +363,99 @@ class LogServiceTest {
 				"구독자가 seq를 역전된 순서로 받았다 — 계약은 이 축을 보지 못한다(하한만 본다)");
 	}
 
+	/**
+	 * 항목 5c — <b>콜백 안에서 멈춘 구독자 하나가 다른 스레드의 {@code log(...)}를 막지 않는다.</b>
+	 *
+	 * <p>구독 콜백이 하는 일은 (a) {@code authorizePeek} → {@code users.findById} = <b>DB 조회</b>와
+	 * (b) {@code ServletOutputStream#write} = <b>블로킹 쓰기</b>다. 그 콜백을 전역 통지 락 안에서 돌면
+	 * <b>모든 요청</b>이 {@code RequestLogFilter}의 {@code finally}에서 그 락을 기다리며 줄을 선다
+	 * (그 필터는 요청 100%에 걸린다) — 즉 소비자 하나가 서버 전체를 세운다.
+	 *
+	 * <p>여기서는 세마포어로 "영원히 안 끝나는 write"를 대신 세운다. 전역 락이 콜백을 감싸면
+	 * 두 번째 스레드의 {@code info(...)}가 {@link #BLOCK_LIMIT_MS} 안에 돌아오지 못한다.
+	 * <b>순서 보장은 항목 5b가 따로 지킨다</b> — 이 두 항목은 함께 성립해야 한다(락을 걷어내면서
+	 * 순서 방어선까지 걷어내면 안 된다).
+	 */
+	@Test
+	void aSubscriberStuckInsideItsCallbackDoesNotBlockOtherThreadsFromLogging() throws Exception {
+		LogService logs = new LogService(this.clock, 100, KST);
+		Semaphore blockingWrite = new Semaphore(0);
+		AtomicBoolean insideCallback = new AtomicBoolean(false);
+
+		try (AutoCloseable ignored = logs.subscribe((record) -> {
+			insideCallback.set(true);
+			blockingWrite.acquireUninterruptibly(); // 소비자가 읽지 않는 소켓에 쓰는 상태의 대역.
+		})) {
+			Thread stalled = new Thread(() -> logs.info("probe"));
+			stalled.start();
+			awaitTrue(insideCallback, "구독자 콜백에 진입하지 못했다 — 이 테스트가 공허해진다");
+
+			Thread other = new Thread(() -> logs.info("probe"));
+			other.start();
+			other.join(BLOCK_LIMIT_MS);
+			boolean blocked = other.isAlive();
+
+			blockingWrite.release(RELEASE_ALL); // 정리 — 붙잡아 둔 스레드를 전부 풀어 준다.
+			other.join(JOIN_LIMIT_MS);
+			stalled.join(JOIN_LIMIT_MS);
+
+			assertFalse(blocked, "멈춘 구독자 하나가 다른 스레드의 log()를 " + BLOCK_LIMIT_MS
+					+ "ms 넘게 막았다 — 그 자리는 모든 요청의 액세스 로그(RequestLogFilter의 finally)다");
+		}
+	}
+
+	/**
+	 * 항목 5d — <b>「유일 커넥션 ↔ 통지 락」 순환 대기가 성립하지 않는다.</b>
+	 *
+	 * <h2>막으려는 코드 경로(가정이 아니다)</h2>
+	 * <ol>
+	 *   <li>{@code ArticleEmbargoService}가 {@code transactions.executeWithoutResult} <b>안</b>에서
+	 *       {@code recorder.record}를 부르고, 이력 insert가 실패하면 {@code HistoryErrorLogger}가
+	 *       {@code logs.warn(...)}을 부른다 — 이 스레드는 <b>유일 커넥션</b>을 쥔 채다
+	 *       ({@code NewsDataSource.MAX_POOL_SIZE = 1}).</li>
+	 *   <li>동시에 다른 요청의 {@code RequestLogFilter} {@code finally}가 {@code logs.info(...)}를 불러
+	 *       구독 콜백이 {@code authorizePeek} → {@code users.findById}로 <b>커넥션을 기다린다</b>.</li>
+	 * </ol>
+	 * 통지가 전역 락 안에서 돌면 ②가 락을 쥔 채 커넥션을 기다리고 ①이 커넥션을 쥔 채 락을 기다린다 —
+	 * <b>순환 대기</b>이고 Hikari {@code connectionTimeout}(30초)으로만 풀린다. 트리거 현실성은 ADR-013이
+	 * 전제한 Node/Spring 동일 {@code news.db} 공존이다({@code SQLITE_BUSY} → 이력 insert 예외).
+	 *
+	 * <p>1퍼밋 세마포어는 <b>풀의 모형이 아니라 풀 그 자체의 형태</b>다(상한 1의 커넥션 풀은 퍼밋 하나다).
+	 * 같은 사슬을 실제 {@code HikariDataSource}·실제 필터·실제 구독 콜백으로 재현하는 자리는
+	 * {@code LogsStreamWireTest}의 「유일 커넥션」 항목이다 — 두 층 모두에서 red를 확인했다.
+	 */
+	@Test
+	void theSingleConnectionDeadlockChainDoesNotForm() throws Exception {
+		LogService logs = new LogService(this.clock, 100, KST);
+		Semaphore pool = new Semaphore(1); // 상한 1의 커넥션 풀.
+		AtomicBoolean waitingForConnection = new AtomicBoolean(false);
+
+		try (AutoCloseable ignored = logs.subscribe((record) -> {
+			waitingForConnection.set(true);
+			pool.acquireUninterruptibly(); // authorizePeek → SessionGuard.peekSession → users.findById
+			pool.release();
+		})) {
+			pool.acquireUninterruptibly(); // 트랜잭션이 유일 커넥션을 쥐었다.
+
+			Thread accessLog = new Thread(() -> logs.info("probe")); // RequestLogFilter의 finally
+			accessLog.start();
+			awaitTrue(waitingForConnection, "구독자가 커넥션 대기에 들어가지 못했다 — 이 테스트가 공허해진다");
+			awaitQueued(pool);
+
+			Thread transaction = new Thread(() -> logs.warn("probe")); // HistoryErrorLogger
+			transaction.start();
+			transaction.join(BLOCK_LIMIT_MS);
+			boolean deadlocked = transaction.isAlive();
+
+			pool.release(); // 트랜잭션이 커밋하고 커넥션을 돌려준다.
+			transaction.join(JOIN_LIMIT_MS);
+			accessLog.join(JOIN_LIMIT_MS);
+
+			assertFalse(deadlocked, "커넥션을 쥔 스레드의 warn()이 " + BLOCK_LIMIT_MS
+					+ "ms 안에 돌아오지 못했다 — 통지 락과 유일 커넥션이 순환 대기를 이룬다");
+		}
+	}
+
 	/** 항목 6 — 통지는 <b>호출 스레드</b>에서 돈다(ADR-015 · 트리거 스레드 직접 쓰기). */
 	@Test
 	void notificationRunsOnTheCallingThread() throws Exception {
@@ -455,6 +558,33 @@ class LogServiceTest {
 	}
 
 	// --- 도구 -------------------------------------------------------------------------------------
+
+	/** 플래그가 설 때까지 짧게 기다린다(항목 5c·5d의 창을 결정적으로 만든다). */
+	private static void awaitTrue(AtomicBoolean flag, String message) {
+		long deadline = System.nanoTime() + JOIN_LIMIT_MS * 1_000_000L;
+		while (!flag.get() && System.nanoTime() < deadline) {
+			pause();
+		}
+		assertTrue(flag.get(), message);
+	}
+
+	/** 커넥션 대기 큐에 실제로 스레드가 들어갈 때까지 기다린다(항목 5d). */
+	private static void awaitQueued(Semaphore pool) {
+		long deadline = System.nanoTime() + JOIN_LIMIT_MS * 1_000_000L;
+		while (!pool.hasQueuedThreads() && System.nanoTime() < deadline) {
+			pause();
+		}
+		assertTrue(pool.hasQueuedThreads(), "구독자가 커넥션 대기 큐에 들어가지 않았다 — 사슬이 성립하지 않는다");
+	}
+
+	private static void pause() {
+		try {
+			Thread.sleep(5);
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+		}
+	}
 
 	/** 창 경계 앞뒤 5지점에 레코드를 하나씩 남긴다(경계 판정의 전수 프로브). */
 	private LogService seedBoundaryProbes(LogService logs) {
