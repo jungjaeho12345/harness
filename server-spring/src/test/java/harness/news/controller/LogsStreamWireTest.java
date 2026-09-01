@@ -1115,7 +1115,6 @@ class LogsStreamWireTest {
 		return this.logs.subscriberCount() == target;
 	}
 
-	/** 이전 테스트가 남긴 끊긴 구독을 회수한다(로그 1건이 회수 트리거다 — decisions (12)). */
 	/**
 	 * push 콜백이 <b>실제로</b> 커넥션 대기 큐에 들어갈 때까지 기다린다(항목 22).
 	 * 이 확인이 없으면 사슬이 성립하기 전에 두 번째 요청을 보내 테스트가 공허해진다.
@@ -1130,6 +1129,7 @@ class LogsStreamWireTest {
 				"구독 콜백이 커넥션을 기다리지 않는다 — 사슬이 성립하지 않아 이 테스트가 공허해진다");
 	}
 
+	/** 이전 테스트가 남긴 끊긴 구독을 회수한다(로그 1건이 회수 트리거다 — decisions (12)). */
 	private void awaitNoSubscribers() {
 		long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
 		while (this.logs.subscriberCount() > 0 && System.nanoTime() < deadline) {
