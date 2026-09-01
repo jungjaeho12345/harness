@@ -50,6 +50,18 @@ class LogServiceTest {
 	/** 2026-08-21 07:00:00 KST — 창이 닫힌 뒤의 조회 시각(운영 루틴이 pull하는 시점). */
 	private static final long AFTER_BOUNDARY = BOUNDARY + 60L * 60L * 1000L;
 
+	/** 항목 5b — 동시에 기록하는 스레드 수. */
+	private static final int ORDER_WORKERS = 8;
+
+	/** 항목 5b — 스레드 1개가 남기는 로그 줄 수. */
+	private static final int ORDER_PER_WORKER = 200;
+
+	/** 항목 5b — 동시 구독자 수. 적재 루프의 창을 넓혀 역전을 드러낸다(줄이지 마라). */
+	private static final int ORDER_SUBSCRIBERS = 4;
+
+	/** 항목 5b — 반복 라운드. 경합 테스트의 1회 실행은 아무것도 증명하지 않는다. */
+	private static final int ORDER_ROUNDS = 20;
+
 	/** "막혔다"고 판정하기까지 기다리는 시간(항목 5c·5d). 정상 경로는 밀리초 단위로 끝난다. */
 	private static final long BLOCK_LIMIT_MS = 3000L;
 
@@ -316,27 +328,52 @@ class LogServiceTest {
 	}
 
 	/**
-	 * 항목 5b — <b>seq 역전 0(교차 스레드)</b>. 스레드 8개가 각각 200회 기록하는 동안 구독자 1개가 받은
-	 * {@code seq}가 엄격 증가여야 한다(총 1600건 · 유실 0 · 중복 0).
+	 * 항목 5b — <b>seq 역전 0(교차 스레드)</b>. 스레드 {@value #ORDER_WORKERS}개가 각각
+	 * {@value #ORDER_PER_WORKER}회 기록하는 동안 구독자 {@value #ORDER_SUBSCRIBERS}개가 받은
+	 * {@code seq}가 <b>각자</b> 엄격 증가여야 한다(구독자마다 유실 0 · 중복 0). 그것을
+	 * {@value #ORDER_ROUNDS}라운드 반복한다.
 	 *
 	 * <p><b>이 항목이 이 축의 유일한 방어선이다</b>: 계약 케이스는 {@code seq > seqBefore}(하한)만 보므로
 	 * 역전을 조용히 통과시킨다({@code contract/cases/default/logs.contract.js} 170~178행 주석이 명시한다).
-	 * 그래서 {@code notifyLock}을 없애면(= append monitor 밖에서 락 없이 통지) 계약은 green인 채
-	 * 구독자만 순서가 뒤섞인다 — 변이 M1-8이 그것을 실증한다.
+	 * 그래서 {@code notifyLock}을 없애면 계약은 green인 채 구독자만 순서가 뒤섞인다 — 변이 M1-8이 그것을
+	 * 실증한다.
+	 *
+	 * <h2>2026-09-01 — 구성을 「1구독자 · 1라운드」에서 키웠다(⑤ high 폐색의 부수 결과)</h2>
+	 * 통지가 {@code notifyLock} 안에서 콜백까지 돌던 때는 M1-8의 창이 넓어 1라운드에 역전 <b>48건</b>이
+	 * 즉시 나왔다. 전달을 락 밖으로 뺀 뒤 그 락이 감싸는 구간은 <b>append + O(1) 적재</b>뿐이라 창이
+	 * 좁아졌고, 같은 구성(8×200 · 구독자 1)에서 M1-8이 <b>5회 중 2회만 red</b>였다(2026-09-01 실측).
+	 * <b>그 상태의 방어선은 방어선이 아니다.</b> 그래서 두 축으로 넓혔다.
+	 * <ul>
+	 *   <li><b>구독자 수</b> — 적재 루프는 구독자 수만큼 돈다. 구독자가 여럿이면 「A가 1번 우편함에 넣고
+	 *       B가 끼어드는」 창이 그만큼 넓어지고, 뒤쪽 구독자일수록 역전이 드러난다(구조적 증폭이다).</li>
+	 *   <li><b>라운드</b> — 경합 테스트의 1회 실행은 아무것도 증명하지 않는다(계획서 decisions (15)).</li>
+	 * </ul>
+	 * 이 구성에서 M1-8은 <b>5회 중 5회 red</b>다. 상수를 줄이면 그 사실이 무너지니 줄이지 마라.
 	 */
 	@Test
 	void seqNeverArrivesOutOfOrderAcrossThreads() throws Exception {
-		int workerCount = 8;
-		int perWorker = 200;
-		int total = workerCount * perWorker;
-		LogService logs = new LogService(this.clock, total + 100, KST);
-		Queue<Long> delivered = new ConcurrentLinkedQueue<>();
+		for (int round = 1; round <= ORDER_ROUNDS; round++) {
+			assertOneRoundArrivesInOrder(round);
+		}
+	}
 
-		try (AutoCloseable ignored = logs.subscribe((record) -> delivered.add(record.seq()))) {
+	/** 항목 5b의 1라운드 — 구독자마다 따로 판정한다(뒤쪽 구독자가 먼저 무너진다). */
+	private void assertOneRoundArrivesInOrder(int round) throws Exception {
+		int total = ORDER_WORKERS * ORDER_PER_WORKER;
+		LogService logs = new LogService(this.clock, total + 100, KST);
+		List<Queue<Long>> delivered = new ArrayList<>();
+		List<AutoCloseable> handles = new ArrayList<>();
+		try {
+			for (int s = 0; s < ORDER_SUBSCRIBERS; s++) {
+				Queue<Long> seen = new ConcurrentLinkedQueue<>();
+				delivered.add(seen);
+				handles.add(logs.subscribe((record) -> seen.add(record.seq())));
+			}
+
 			List<Thread> workers = new ArrayList<>();
-			for (int t = 0; t < workerCount; t++) {
+			for (int t = 0; t < ORDER_WORKERS; t++) {
 				Thread worker = new Thread(() -> {
-					for (int i = 0; i < perWorker; i++) {
+					for (int i = 0; i < ORDER_PER_WORKER; i++) {
 						logs.info("probe");
 					}
 				});
@@ -347,20 +384,28 @@ class LogServiceTest {
 				worker.join();
 			}
 		}
-
-		List<Long> seqs = new ArrayList<>(delivered);
-		assertEquals(total, seqs.size(), "통지 건수가 다르다 — 유실 또는 중복이다");
-		assertEquals(total, new HashSet<>(seqs).size(), "같은 seq가 두 번 통지됐다");
-		long highest = 0L;
-		int inversions = 0;
-		for (long seq : seqs) {
-			if (seq <= highest) {
-				inversions++;
+		finally {
+			for (AutoCloseable handle : handles) {
+				handle.close();
 			}
-			highest = Math.max(highest, seq);
 		}
-		assertEquals(0, inversions,
-				"구독자가 seq를 역전된 순서로 받았다 — 계약은 이 축을 보지 못한다(하한만 본다)");
+
+		for (int s = 0; s < delivered.size(); s++) {
+			String where = "(round=" + round + " subscriber=" + s + ")";
+			List<Long> seqs = new ArrayList<>(delivered.get(s));
+			assertEquals(total, seqs.size(), "통지 건수가 다르다 — 유실 또는 중복이다 " + where);
+			assertEquals(total, new HashSet<>(seqs).size(), "같은 seq가 두 번 통지됐다 " + where);
+			long highest = 0L;
+			int inversions = 0;
+			for (long seq : seqs) {
+				if (seq <= highest) {
+					inversions++;
+				}
+				highest = Math.max(highest, seq);
+			}
+			assertEquals(0, inversions,
+					"구독자가 seq를 역전된 순서로 받았다 — 계약은 이 축을 보지 못한다(하한만 본다) " + where);
+		}
 	}
 
 	/**
