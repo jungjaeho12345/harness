@@ -141,6 +141,32 @@ public class Authorization {
 	}
 
 	/**
+	 * 위와 같은 판정을 <b>세션을 연장하지 않고</b> 한다 — SSE push 시점 재검증 전용이다(ADR-005·ADR-007).
+	 *
+	 * <h2>왜 {@link #authorize}를 쓰면 안 되는가</h2>
+	 * {@code authorize}(그리고 {@link #editDps})는 {@code touchSession}을 쓴다 — 슬라이딩 갱신은
+	 * <b>실제 요청</b>에서는 정상이지만, 열린 SSE 스트림이 <b>push마다</b> 그것을 부르면 유휴 만료(1시간)가
+	 * 무한히 밀려 "로그아웃하지 않은 브라우저 탭 = 무한 세션"이 된다. ADR-007이 "Z 전용 봉인이 시간축에서도
+	 * 유지된다"로 닫은 자리이고, <b>계약 스위트가 관측할 수 없는 축</b>이다(하네스는 서버 시계를 주입하지 못한다).
+	 *
+	 * <p>스트림을 <b>여는</b> 순간의 게이트에는 {@code authorize}가 맞다 — 그 요청은 사용자 활동이다.
+	 * 판정 규칙(역할 표)은 {@link #allow}에 위임하므로 두 메서드가 갈릴 수 없다: 역할 목록을 호출부에
+	 * 복제하면 한쪽만 고쳐도 조용히 갈린다({@code AuthorizationTest}가 두 메서드의 판정 일치를 단언한다).
+	 *
+	 * @param sessionToken 쿠키·헤더에서 읽은 세션 토큰(없으면 {@code null})
+	 * @param capability {@link #CAPABILITIES}의 키
+	 * @return {@link #authorize}와 <b>같은</b> 사유 토큰. 세션 조회 자체가 실패하면(DB 장애) 예외가
+	 *     그대로 올라간다 — fail-closed 판정(봉인)은 호출자(구독 콜백)의 몫이다
+	 */
+	public Decision authorizePeek(String sessionToken, String capability) {
+		Identity actor = (sessionToken == null) ? null : this.sessions.peekSession(sessionToken);
+		if (actor == null) {
+			return Decision.deny("unauthenticated");
+		}
+		return allow(actor.role(), capability);
+	}
+
+	/**
 	 * DPS 기사의 편집 진입 게이트 — {@code src/services/authorization.js}의 {@code editDps}와 1:1이다.
 	 *
 	 * <h2>판정 순서가 계약이다</h2>

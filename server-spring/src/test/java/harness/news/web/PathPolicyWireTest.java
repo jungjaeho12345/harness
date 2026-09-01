@@ -105,34 +105,33 @@ class PathPolicyWireTest {
 	}
 
 	/**
-	 * <b>스텁 금지의 와이어 게이트</b> — 구현하지 않은 라우트는 {@code ok:true} 스텁이 아니라 정직한 404다.
+	 * <b>미정의 경로의 404 shape</b> — 인증된 요청도 401·JSON·스텁이 아니라 정직한 404 {@code text/html}이다.
 	 *
-	 * <p>프로브 경로는 <b>구현 중인 도메인 밖</b>이어야 한다. phase 69 step7이 {@code POST /api/articles}를
-	 * 붙이는 순간 이 프로브가 쓰던 {@code GET /api/articles}는 <b>405</b>가 됐다(경로에 매핑은 있고 메서드가
-	 * 없다 → Boot {@code /error} JSON. 2026-08-21 실측: {@code expected: <404> but was: <405>}), 그리고
-	 * step11에서 목록이 구현되면 200이 된다. 그래서 <b>phase 69 내내 미구현으로 남는</b>
-	 * {@code GET /api/media/search}(미디어 도메인 phase 소유 — index.json excluded (b))로 재조준했다.
+	 * <h2>이 프로브의 의미가 2026-08-30(phase 74 step5)에 바뀌었다 — 이름도 함께 바꿨다</h2>
+	 * 원래 이름은 {@code authenticatedRequestToAnUnimplementedRouteIs404NotAStub}였고 대상은 그때그때
+	 * <b>인벤토리 안의 미구현 라우트</b>였다(재조준 이력: {@code GET /api/articles} → phase 69의
+	 * {@code GET /api/media/search} → phase 73의 {@code GET /api/stream} → phase 74 step4의
+	 * {@code GET /api/logs/stream}). <b>step5가 {@code GET /api/logs/stream}을 구현하면서 인벤토리 39
+	 * 라우트가 전부 구현됐고, "미구현 라우트"라는 프로브 대상이 더는 존재하지 않는다</b>(39/39 — P1 완결).
 	 *
-	 * <p>이 단언을 지우거나 405를 허용으로 넓히지 마라: 그러면 스텁 0을 지키는 와이어 게이트가 사라진다.
-	 * 미디어 라우트를 구현하는 phase는 <b>같은 규율로</b> 다시 미구현 라우트를 골라 재조준하면 된다.
+	 * <p>그래서 대상을 <b>인벤토리 밖</b> 경로로 옮겼고, 이 테스트가 주장하는 문장은
+	 * "스텁 금지"에서 <b>"미정의 경로의 404 shape"</b>으로 바뀌었다 — 같은 이름을 유지한 채 의미만 바꾸면
+	 * 다음 사람이 스텁 금지가 여전히 지켜지는 줄 안다(phase 73 forward_notes (3)).
+	 * <b>스텁 금지는 이제 {@code HandlerInventoryTest}의 정확 집합 단언이 단독으로 지킨다.</b>
 	 *
-	 * <p><b>재조준 이력 2회차(phase 73 step9)</b>: 그 phase가 {@code GET /api/media/search}를 구현하면서
-	 * 프로브를 <b>{@code GET /api/stream}</b>으로 옮겼다. 조건은 phase 69 때와 같다 — {@code RoutePolicy}에
-	 * {@code AuthClass.SESSION}으로 등재돼 있어 <b>인증된</b> 요청이 필터를 통과하고, 핸들러가 없어
-	 * 컨테이너 404 {@code text/html}이 된다(경로에 다른 메서드 핸들러가 없으므로 405도 아니다).
-	 *
-	 * <p><b>다음에 옮길 사람을 위한 규칙</b>(index.json decisions (9)): SSE phase가 {@code stream}을
-	 * 구현하면 인벤토리 39 라우트 안에 남는 후보는 {@code GET /api/logs/stream} <b>하나</b>이고, 그마저
-	 * 구현되면 <b>인벤토리 안에는 후보가 없다</b>. 그때는 인벤토리 밖 경로({@code /api/undefined-route}
-	 * 계열)로 옮기되, 그 순간 이 프로브의 의미가 "스텁 금지"에서 "미정의 경로 404 shape"으로 <b>바뀐다</b>는
-	 * 것을 명시하고 옮겨라(그 판단은 마지막 phase의 소유다).
+	 * <p>단언(404 + {@code text/html; charset=utf-8})은 그대로 둔다 — 지우거나 405로 넓히면 게이트가 사라진다.
+	 * 경로는 {@code RoutePolicy.match}가 {@code null}을 돌려주는 경로라 <b>미인증도 404</b>이지만
+	 * ({@code NotFoundWireTest}가 그쪽을 본다) 이 프로브는 <b>인증된</b> 요청을 계속 보낸다: 필터가 세션을
+	 * 확인한 <b>뒤에도</b> 미정의 경로를 401·JSON으로 바꾸지 않는다는 것이 여기서 보는 사실이다.
+	 * 경로 문자열이 {@code NotFoundWireTest}의 {@code /api/does-not-exist}와 다른 것도 의도다 —
+	 * 겹치면 두 테스트가 같은 것을 두 번 주장한다.
 	 */
 	@Test
-	void authenticatedRequestToAnUnimplementedRouteIs404NotAStub() {
-		Wire.Response response = Wire.send(this.port, "GET", "/api/stream",
+	void anUndefinedPathIs404HtmlNotAJsonError() {
+		Wire.Response response = Wire.send(this.port, "GET", "/api/undefined-path-probe",
 				Map.of("x-session-id", login()), null);
 
-		assertEquals(404, response.status(), "구현하지 않은 라우트는 정직하게 404다(스텁 금지)");
+		assertEquals(404, response.status(), "미정의 경로는 정직하게 404다(인증 여부와 무관하다)");
 		assertEquals("Content-Type: text/html; charset=utf-8", response.line("content-type"));
 	}
 

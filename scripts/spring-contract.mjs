@@ -4,7 +4,8 @@
 // targets.json·creds.json(0600) → contract-run.mjs를 외부 대상 모드로 실행 → 종료·정리한다.
 // 사용: node scripts/spring-contract.mjs [--profile <name>]... [--files <path>[,<path>]...]
 //                                       [--jar <path>] [--java-home <path>] [--out-dir <dir>]
-//                                       [--boot-check] [--parity] [--dual-run] [--keep] [--timeout <ms>]
+//                                       [--boot-check] [--parity] [--dual-run] [--keep]
+//                                       [--require-full-coverage] [--timeout <ms>]
 //
 // CRITICAL(DB 비파괴): 리포 news.db·uploads/에 절대 바인딩하지 않는다 — 프로파일(패스)마다 임시 DATA_DIR을
 //   새로 만들고 java 자식의 cwd도 그 임시 루트다(상대 경로 쓰기가 리포에 닿는 경로 원천 차단).
@@ -40,6 +41,8 @@ import { compareReports, formatDiffLines } from './contract-diff.mjs';
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
 const RUNNER = nodePath.join(REPO_ROOT, 'scripts', 'contract-run.mjs');
+// 라우트 인벤토리 정본 — --require-full-coverage의 합산 판정이 읽는다(러너 38행과 같은 파일).
+const INVENTORY_FILE = nodePath.join(REPO_ROOT, 'docs', 'api-contract', 'endpoints.json');
 const SPRING_TARGET_DIR = nodePath.join(REPO_ROOT, 'server-spring', 'target');
 const ROLES = ['R', 'D', 'Z'];
 // 접속 주소는 **언제나 127.0.0.1**이다 — 바인드 주소는 프로파일의 host 축이 정한다(failclosed는 0.0.0.0으로
@@ -52,7 +55,9 @@ const DEFAULT_BIND_HOST = '127.0.0.1';
 const PORT_BASE = 15000;
 const PORT_SPAN = 5000;
 
-const JDK_HINT = 'D:/agents/tools/jdk-21.0.12+8';
+// phase 74 step6 정정 — 포팅 기준선이 JDK 25로 옮겨졌다(PR #119). 21로 빌드하면
+// `release version 25 not supported`라 이 힌트가 잘못된 명령을 안내하고 있었다.
+const JDK_HINT = 'D:/agents/tools/jdk-25.0.4.1+1';
 const BUILD_HINT = `cd server-spring && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q package -DskipTests`;
 
 // scope 표(phase 68 소유 — 후속 phase는 행만 추가한다). 파일 목록은 **알파벳 정렬 순서 그대로**여야
@@ -85,11 +90,15 @@ const SCOPE = [
       // phase 72 step9 — 배부 실행 3라우트가 붙으면서 green이 됐다(Z 게이트·6키 요약·body 미판독·실배부·멱등).
       'contract/cases/default/distribution-tick.contract.js',
       'contract/cases/default/health.contract.js',
+      // phase 74 step5 — GET /api/logs/stream이 붙으면서 green이 됐다(Z 전용 게이트 · 접속 replay · live push · logs-digest 3관측 동반).
+      'contract/cases/default/logs.contract.js',
       // phase 73 step9 — 미디어·업로드·사진·번역 5라우트가 붙으면서 green이 됐다(키 없는 서버의 데모 폴백·base64 JSON 업로드·사진 append-only·번역 200 graceful degrade).
       'contract/cases/default/media-upload.contract.js',
       // phase 70 step3 — 수집 수신 설정 3라우트가 붙으면서 green이 됐다(Z 게이트·SAFE_FIELDS 10키·유일 행 삭제).
       'contract/cases/default/receiver-config.contract.js',
       'contract/cases/default/session-guard.contract.js',
+      // phase 74 step4 — GET /api/stream이 붙으면서 green이 됐다(무효화 신호 · 프레임 원문 바이트 · 쿠키 인증 · 동시 2연결 · 봉인).
+      'contract/cases/default/sse-stream.contract.js',
       'contract/cases/default/users.contract.js',
     ],
     extraEnv: {},
@@ -167,6 +176,9 @@ const USAGE = `사용법: node scripts/spring-contract.mjs [--profile <name>]...
   --parity           같은 파티션으로 Node 대상 리포트도 뽑아 프로파일 쌍마다 contract-diff로 비교한다.
   --dual-run         프로파일마다 **새 DATA_DIR + 새 프로세스로 2패스**를 돌려 A/B 리포트를 비교한다(자기 결정성).
   --keep             임시 디렉토리를 지우지 않는다(실패 시에는 항상 보존 — 비밀 파일은 그래도 지운다).
+  --require-full-coverage
+                     **Spring 리포트 5개를 합쳐** (routeId, expect 태그) 쌍 전수를 만족하는지 판정하고
+                     미달이면 exit 1(미커버 쌍을 나열한다). 프로파일 전체 실행에서만 쓸 수 있다.
   --timeout <ms>     health 대기·러너 단계 한도(기본 45000, 1000 이상 정수).`;
 
 function usageDie(msg) {
@@ -181,7 +193,14 @@ function parseArgs(argv) {
     return v.value;
   };
   const opts = {
-    profiles: [], files: [], bootCheck: false, parity: false, dualRun: false, keep: false, timeout: 45000,
+    profiles: [],
+    files: [],
+    bootCheck: false,
+    parity: false,
+    dualRun: false,
+    keep: false,
+    requireFullCoverage: false,
+    timeout: 45000,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -194,6 +213,7 @@ function parseArgs(argv) {
     else if (a === '--parity') opts.parity = true;
     else if (a === '--dual-run') opts.dualRun = true;
     else if (a === '--keep') opts.keep = true;
+    else if (a === '--require-full-coverage') opts.requireFullCoverage = true;
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
     else usageDie(`알 수 없는 인자: ${a}`);
   }
@@ -217,7 +237,53 @@ function parseArgs(argv) {
   // 관측 0건끼리의 비교는 차이 0을 보장할 뿐 계약 판정이 아니다(러너 119행과 같은 근거).
   if (opts.dualRun && opts.bootCheck) usageDie('--dual-run은 --boot-check와 함께 쓸 수 없다 — 관측 0건끼리의 비교는 계약 판정이 아니다.');
   if (opts.parity && opts.bootCheck) usageDie('--parity는 --boot-check와 함께 쓸 수 없다 — 관측 0건끼리의 비교는 계약 판정이 아니다.');
+  // 합산 커버리지는 **전 프로파일 실행에서만** 성립한다(phase 74 decisions (14)). 한 프로파일 단독의
+  // 최대치는 39가 아니고(default는 32/39), --files로 파일을 갈아끼우면 더 줄어든다 — 그 상태에서 켜면
+  // 영구 red 게이트가 되고, 영구 red는 다음 사람이 무시하게 되어 없는 것보다 나쁘다.
+  if (opts.requireFullCoverage && opts.bootCheck) usageDie('--require-full-coverage는 --boot-check와 함께 쓸 수 없다 — 관측 0건은 커버리지 판정의 대상이 아니다.');
+  if (opts.requireFullCoverage && opts.files.length > 0) usageDie('--require-full-coverage는 --files와 함께 쓸 수 없다 — 케이스 부분집합의 합산은 전수 커버리지가 아니다.');
+  if (opts.requireFullCoverage && opts.profiles.length > 0 && !MULTI_RUN_NAMES.every((n) => opts.profiles.includes(n))) {
+    usageDie(`--require-full-coverage는 프로파일 전체 실행에서만 쓸 수 있다(${MULTI_RUN_NAMES.join('|')} 전부)`
+      + ' — 39/39는 5 프로파일 합산에서만 나오고, 부분 실행에서 켜면 확정 실패다. --profile을 빼고 실행하라.');
+  }
   return opts;
+}
+
+// --- 합산 커버리지 판정(phase 74 step6 · decisions (14)) ---
+// **판정 규칙의 정본은 scripts/contract-run.mjs 451~473행 judgeCoverage이며 아래는 그 복제다**
+// (러너는 무수정 목록이고, 이 하네스는 프로파일마다 러너를 따로 spawn하므로 러너의 집계가 프로파일
+// 단위다 — Node 대상의 39/39는 한 프로세스가 5 프로파일을 전부 돌 때만 나온다). 규칙: 단위는
+// (routeId, endpoints.json의 expect 태그) 쌍이고, x- 접두 관측은 집계에서 제외한다.
+// **정본이 바뀌면 여기도 함께 고쳐라** — 두 구현이 갈리면 커버리지 판정이 두 벌이 된다.
+function judgeAggregateCoverage(reportFiles) {
+  const inventory = JSON.parse(fs.readFileSync(INVENTORY_FILE, 'utf8'));
+  const ids = new Set(inventory.routes.map((r) => r.id));
+  const observations = [];
+  for (const file of reportFiles) {
+    const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+    observations.push(...(report.observations ?? []));
+  }
+  const vocabularyErrors = [];
+  for (const o of observations) {
+    if (typeof o.routeId !== 'string' || (!ids.has(o.routeId) && !o.routeId.startsWith('x-'))) {
+      vocabularyErrors.push(`인벤토리에 없는 non-x routeId 관측: ${JSON.stringify(o.routeId)} (profile=${o.profile} caseId=${o.caseId})`);
+    }
+  }
+  const seen = new Set(
+    observations
+      .filter((o) => typeof o.routeId === 'string' && ids.has(o.routeId))
+      .map((o) => `${o.routeId} ${o.tag}`),
+  );
+  const missingPairs = [];
+  let coveredRoutes = 0;
+  for (const r of inventory.routes) {
+    const missing = (r.expect ?? []).filter((tag) => !seen.has(`${r.id} ${tag}`));
+    if (missing.length === 0) coveredRoutes += 1;
+    else missingPairs.push(...missing.map((tag) => `${r.id}:${tag}`));
+  }
+  return {
+    vocabularyErrors, missingPairs, coveredRoutes, total: inventory.routes.length, observations: observations.length,
+  };
 }
 
 // --- 러너 소스 파생(단일 출처) ---
@@ -649,6 +715,9 @@ async function main() {
 
   const failures = [];
   const reportFiles = [];
+  // 합산 커버리지 판정의 대상 — **Spring 쪽 리포트만**이다(--parity의 Node 대조도, --dual-run의 b 패스도
+  // 아니다. 섞으면 Node가 관측한 쌍으로 Spring의 공백이 메워져 게이트가 조용히 공허해진다).
+  const springReportFiles = [];
   let diffTotal = null;
   const addDiff = (n) => { if (n !== null) diffTotal = (diffTotal ?? 0) + n; };
 
@@ -670,6 +739,7 @@ async function main() {
     // 실패한 프로파일을 조용히 skip하지는 않는다(위에서 진단을 이미 기록했다) — 다만 비교는 리포트가
     // 양쪽 다 있을 때만 한다. 없는 리포트를 비교하면 진짜 실패 위에 읽기 실패 잡음이 얹힌다.
     const springReport = passes[0].reportFile;
+    if (fs.existsSync(springReport)) springReportFiles.push(springReport);
     if (opts.dualRun && passes.length === 2 && passes.every((p) => fs.existsSync(p.reportFile))) {
       addDiff(diffReports(`${profile.name}-a`, passes[0].reportFile, `${profile.name}-b`, passes[1].reportFile, failures));
     }
@@ -680,6 +750,24 @@ async function main() {
       failures.push(...nodePass.diagnostics);
       if (fs.existsSync(nodePass.reportFile) && fs.existsSync(springReport)) {
         addDiff(diffReports(`${profile.name}-node`, nodePass.reportFile, `${profile.name}-spring`, springReport, failures));
+      }
+    }
+  }
+
+  // 합산 커버리지 게이트 — 플래그가 있을 때만 판정한다(없으면 지금까지와 동일하게 아무 출력도 없다).
+  let coverage = null;
+  if (opts.requireFullCoverage) {
+    if (springReportFiles.length !== profiles.length) {
+      failures.push(`--require-full-coverage: Spring 리포트가 ${springReportFiles.length}/${profiles.length}개뿐이다 — 기동·케이스 실패가 먼저다(위 진단 참조).`);
+    } else {
+      coverage = judgeAggregateCoverage(springReportFiles);
+      process.stdout.write(
+        `합산 커버리지(Spring ${springReportFiles.length}리포트 · 관측 ${coverage.observations}) `
+        + `covered=${coverage.coveredRoutes}/${coverage.total} 미커버 쌍=${coverage.missingPairs.length}\n`,
+      );
+      for (const err of coverage.vocabularyErrors) failures.push(`--require-full-coverage: ${err}`);
+      if (coverage.missingPairs.length > 0) {
+        failures.push(`--require-full-coverage: 미커버 (routeId, expect) 쌍 ${coverage.missingPairs.length}건 — ${coverage.missingPairs.join(', ')}`);
       }
     }
   }

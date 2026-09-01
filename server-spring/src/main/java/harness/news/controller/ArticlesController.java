@@ -4,6 +4,7 @@ import harness.news.service.ArticleLifecycleService;
 import harness.news.service.ArticleReadService;
 import harness.news.service.ArticleWriteService;
 import harness.news.service.Authorization;
+import harness.news.service.ChangeBus;
 import harness.news.service.EditLockService;
 import harness.news.service.Identity;
 import harness.news.service.SessionGuard;
@@ -140,9 +141,22 @@ public class ArticlesController {
 
 	private final JsonHttp json;
 
+	/**
+	 * 무효화 신호 버스 — <b>생성자 주입</b>이다(ADR-013 · 필드 주입·정적 참조 금지).
+	 *
+	 * <p>신호는 <b>transport에서만</b> 낸다. 서비스층으로 내리면 같은 서비스를 부르는 다른 경로(송고 훅
+	 * 안의 엠바고 승격 등)에서 <b>Node에 없는 신호</b>가 추가로 나가고, 그것은 계약이 관측하지 못한다
+	 * ({@code docs/api-contract/sse.md}가 "송고 훅의 비동기 엠바고 승격은 자체 신호를 내지 않는다"로
+	 * 동결한 축이다).
+	 *
+	 * <p>넘기는 것은 <b>kind 문자열 하나</b>뿐이다 — 행 데이터를 실으면 ADR-005의 "무효화 신호에는 행
+	 * 데이터가 없다"가 깨지고, 컨트롤러가 모델 타입을 알게 되는 경로도 함께 열린다(ADR-006).
+	 */
+	private final ChangeBus changes;
+
 	public ArticlesController(SessionGuard sessions, Authorization authorization, ArticleReadService reads,
 			ArticleWriteService writes, EditLockService locks, ArticleLifecycleService lifecycle,
-			TranslationService translation, JsonHttp json) {
+			TranslationService translation, JsonHttp json, ChangeBus changes) {
 		this.sessions = sessions;
 		this.authorization = authorization;
 		this.reads = reads;
@@ -151,6 +165,7 @@ public class ArticlesController {
 		this.lifecycle = lifecycle;
 		this.translation = translation;
 		this.json = json;
+		this.changes = changes;
 	}
 
 	/**
@@ -190,6 +205,8 @@ public class ArticlesController {
 		// Node에서도 'hold'와 같지 않아 기본 RDS로 수렴하므로 여기서 문자열만 읽는 것이 동형이다
 		// (저장되는 값이 아니라 분기 입력이다 — 저장 값은 dto에 실려 그대로 간다).
 		payload.put("articleId", this.writes.create(dto, actor.role(), JsonHttp.text(body, "action")));
+		// 성공 분기에서만, 응답을 쓰기 **직전**에(Node 867행: notifyChange → res.json 순서).
+		this.changes.publish(ChangeBus.CREATE);
 		this.json.write(request, response, 200, payload);
 	}
 
@@ -407,6 +424,7 @@ public class ArticlesController {
 
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.put("changes", this.writes.update(id, fields));
+		this.changes.publish(ChangeBus.UPDATE); // Node 944행 — 잠금 미보유·미존재 거부는 위에서 끝났다.
 		this.json.write(request, response, 200, payload);
 	}
 
@@ -447,6 +465,7 @@ public class ArticlesController {
 			deny(request, response, acquired.reason()); // locked → 401(423·409가 아니다)
 			return;
 		}
+		this.changes.publish(ChangeBus.LOCK); // Node 963행.
 		this.json.write(request, response, 200, JsonHttp.ok());
 	}
 
@@ -472,6 +491,7 @@ public class ArticlesController {
 			deny(request, response, released.reason());
 			return;
 		}
+		this.changes.publish(ChangeBus.LOCK); // Node 976행.
 		this.json.write(request, response, 200, JsonHttp.ok());
 	}
 
@@ -499,6 +519,7 @@ public class ArticlesController {
 			deny(request, response, released.reason());
 			return;
 		}
+		this.changes.publish(ChangeBus.LOCK); // Node 988행.
 		this.json.write(request, response, 200, JsonHttp.ok());
 	}
 
@@ -541,6 +562,9 @@ public class ArticlesController {
 		}
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.put("status", result.status());
+		// Node 883행 — 409/400/403 거부를 전부 지난 뒤다. 송고 훅의 엠바고 승격은 여기서 신호를 늘리지
+		// 않는다(그 승격은 서비스 안에서 일어나고 sse.md가 "자체 신호를 내지 않는다"로 동결했다).
+		this.changes.publish(ChangeBus.STATUS);
 		this.json.write(request, response, 200, payload);
 	}
 
@@ -585,6 +609,7 @@ public class ArticlesController {
 		}
 		Map<String, Object> payload = JsonHttp.ok();
 		payload.put("articleId", result.articleId());
+		this.changes.publish(ChangeBus.CREATE); // Node 902행 — 파생도 "새 기사"라 create다.
 		this.json.write(request, response, 200, payload);
 	}
 
