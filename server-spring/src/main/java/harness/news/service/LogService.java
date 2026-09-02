@@ -279,6 +279,7 @@ public class LogService {
 			}
 		}
 		// notifyLock 밖 — 구독자 콜백(DB 재검증 + 블로킹 write)은 어떤 전역 락도 잡지 않는다.
+		// close()가 이 창(적재 후·notifyLock 해제 뒤·드레인 전)에 끼어들면 그 구독이 목록에서 빠져 방금 적재분은 드레인되지 않는다 — 닫힌 응답이라 의도된 드롭이다(Subscription#close 주석·index.json note 11).
 		for (Subscription subscription : this.subscriptions) {
 			subscription.drain();
 		}
