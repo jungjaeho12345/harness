@@ -10,6 +10,12 @@ web/dist/
 
 # 환경변수 (시크릿) / 런타임 DB
 .env
+# DB 자격증명 (phase 75) — 값은 리포 밖(D:/agents/secrets/news-mysql.env)에 두는 것이 규약이고,
+# 이 세 줄은 실수로 리포 안에 들어온 사본까지 막는 2차 방어선이다.
+# ⚠ SecretHygieneTest 가 이 세 줄의 존재를 단언한다 — 스캐너가 건너뛰는 자리와 같은 목록이어야 한다.
+*.env
+secrets/
+ops/mysql/*.local.sql
 news.db
 news.db-journal
 news.db-wal
