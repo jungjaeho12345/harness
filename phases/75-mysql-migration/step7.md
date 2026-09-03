@@ -31,7 +31,9 @@
 1. 지금과 **똑같이** 임시 `DATA_DIR`에 SQLite를 시드한다(`createSchema` + `seedUsers`) — 이것이 MySQL 적재의 **입력**이다.
 2. **패스마다 새 ephemeral DB 이름**을 만든다: `harness_ct_<16 hex>`. 이름은 stdout에 남긴다(`--dual-run`의 두 패스가 정말 다른 DB인지 눈으로 확인 — 지금 `dataDir`·pid·port를 남기는 것과 같은 규율).
 3. 마이그레이터 jar를 자식 프로세스로 호출: `ephemeral-create` → `migrate --source <임시 news.db> --target <그 DB>`. **비밀번호는 argv가 아니라 자식 env로만** 넘긴다.
-4. Spring을 `DB_KIND=mysql` + `NEWS_DB_URL/USERNAME/PASSWORD`(그 ephemeral DB를 가리킴) + 기존 `DATA_DIR`(업로드용) + 기존 축(포트·HOST·스풀·토큰)으로 띄운다.
+4. Spring을 `DB_KIND=mysql` + `NEWS_DB_URL/USERNAME/PASSWORD`(그 ephemeral DB를 가리킨다) + 기존 `DATA_DIR`(업로드용) + 기존 축(포트·HOST·스풀·토큰)으로 띄운다.
+   - **⚠ 그 `NEWS_DB_*`에 넣는 값은 `news_ct` 자격이다**(`NEWS_CT_MYSQL_*`에서 파생). `news_app`을 쓰지 마라 — 그 계정은 `harness_ct_*`에 **권한이 0**이라 기동조차 못 한다(`SchemaGuard`가 첫 조회에서 죽는다). 즉 **하네스 경로는 `news_app`의 최소 권한을 검증하지 않으며**, 그 검증은 step6 A가 `news_stage`에서 따로 소유한다.
+   - Spring 자식 env의 `NEWS_DB_URL`은 **패스마다 다른 DB 이름**을 가리켜야 한다(고정값을 쓰면 `--dual-run` 두 패스가 같은 DB를 공유한다).
 5. 러너 호출은 **지금과 동일**하다(외부 대상 모드).
 6. `finally`에서 **항상** `ephemeral-drop`을 부른다(성패·`--keep` 무관. 실패하면 이름을 stderr에 남겨 사람이 지울 수 있게 한다 — 비밀 파일 삭제 실패 처리와 같은 형태).
 
@@ -86,8 +88,9 @@ cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean v
 
 ## 검증 절차
 
-**변이 검증(최소 9종)** — 심어 red를 보고 원복한다. **이 step의 변이는 「게이트가 정말 MySQL을 보고 있는가」를 겨냥한다.**
-- M1: `--db mysql`인데 Spring을 sqlite로 띄우면(=`DB_KIND` 주입 누락) **diff가 나는가 아니면 green인가**. green이면 이 게이트는 방언을 보지 못하는 것이고, 그 사실을 반드시 기록하고 C의 「임시 news.db 무변」 단언으로 막아라.
+**변이 검증(최소 10종 · M1a/M1b는 분리 필수)** — 심어 red를 보고 원복한다. **이 step의 변이는 「게이트가 정말 MySQL을 보고 있는가」를 겨냥한다.**
+- **M1a: `DB_KIND` 주입만 뺀다.** step5 A의 「`kind`와 URL이 모순이면 기동 거부」에 **먼저 걸려** Spring이 아예 뜨지 않을 것이다(그러면 C의 md5 단언은 **실행조차 되지 않는다**). 그 거부가 실제로 나는지 확인하고 기록하라 — 이것은 방언 게이트의 실증이 **아니다**.
+- **M1b(본 실증): `DB_KIND=sqlite`로 두고 `NEWS_DB_*`를 아예 주입하지 않는다.** 모순이 없으므로 Spring은 **정상적으로 sqlite로 뜬다** — 즉 `--db mysql` 실행인데 서버는 SQLite를 쓰는 상태다. 이때 **계약이 green인지 red인지**를 보고, **C의 「임시 `DATA_DIR`의 `news.db` 바이트 무변」 단언이 red를 내는지**를 확인한다. 계약이 green이고 md5 단언도 red를 못 내면 **`open_questions (9)`의 방어가 공허**하다는 뜻이므로, 그 사실을 forward_notes **1급 항목**으로 올리고 대체 방어(예: 기동 로그의 방언 표기 검사 · `/api/health` 이전에 서버가 보고하는 방언 표식)를 이 step에서 만들어라.
 - M2: `migrate` 호출을 건너뛰어 **빈 MySQL DB**로 띄우면 red인가(어떤 관측이 먼저 깨지는가).
 - M3: 시드 사용자 1명을 빼면 red인가.
 - M4: `ephemeral-drop`을 지우면 잔존 DB 확인이 red인가.

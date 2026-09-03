@@ -46,7 +46,7 @@
 
 ### D. 실제 이관 리허설 — 리포 `news.db` → 전용 스테이징 DB
 
-- 대상은 **운영 `news` DB가 아니라 별도 스테이징 DB**다(이름은 step0 부트스트랩이 만든 것 또는 `harness_ct_*` 임시 DB 중 하나 — 판단하고 근거를 적어라). **운영 컷오버는 step8 런북이 소유한다.**
+- 대상은 **운영 `news` DB가 아니라 step0 부트스트랩이 만든 스테이징 DB `news_stage`** 다(계정은 `news_migrator`). **여기서 대상을 새로 정하지 마라** — step0이 그 DB와 grant를 이미 만들어 두었고, 다른 대상을 고르면 root 재실행이 필요한 중도 blocked가 된다. `harness_ct_*`는 쓰지 않는다(하네스가 만들고 지우는 공간이라 리허설 산출물이 실행 도중 사라질 수 있다). **운영 컷오버는 step8 런북이 소유한다.**
 - 소스는 **리포 `news.db` 원본**을 읽기 전용으로 연다(이것이 「원본 무변」 AC의 실증이다). 겁이 나면 사본으로 먼저 돌려 보되 **최종 측정은 원본으로** 한다.
 
 ## Acceptance Criteria
@@ -55,8 +55,8 @@
 cd tools/news-migrator && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
 # 이관 리허설 (자격증명은 환경변수 · 비밀번호는 argv 금지)
 md5sum news.db                      # 실행 전
-java -jar tools/news-migrator/target/news-migrator-*.jar migrate --source news.db --target <staging>
-java -jar tools/news-migrator/target/news-migrator-*.jar verify  --source news.db --target <staging>
+java -jar tools/news-migrator/target/news-migrator-*.jar migrate --source news.db --target news_stage
+java -jar tools/news-migrator/target/news-migrator-*.jar verify  --source news.db --target news_stage
 md5sum news.db && ls -l news.db     # 실행 후 — 반드시 동일
 ls news.db-wal news.db-shm news.db-journal 2>&1   # 전부 없어야 한다
 # 무회귀
@@ -74,6 +74,13 @@ SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.m
 ## 검증 절차
 
 **변이 검증(최소 8종 · 전건 결과표 필수)** — 심어 red를 보고 원복한다.
+
+> **⚠ 변이를 어디서·어떤 자격으로 돌리는가(역할 분리 — 이걸 틀리면 결과표를 채울 수 없다).**
+> M1·M2·M3·M5처럼 **대상 행을 변조·삭제해야 하는 변이**는 `news_stage`에서 할 수 없다 — `news_migrator`에는 `UPDATE`·`DELETE` 권한이 **없고**(step0 부트스트랩) 그것이 이 설계의 의도다.
+> ⇒ **변이 실험은 `news_ct` 자격으로 `harness_ct_<16hex>` 임시 DB에서 수행한다**(그 계정은 그 접두사 안에서 ALL 권한이라 자유롭게 변조·원복·폐기할 수 있고, 실험이 끝나면 DB째로 지운다 — 원복 실수의 폭발 반경이 0이다).
+> ⇒ **`news_stage`는 「최종 1회 실측」 전용**이다: 리포 `news.db`를 소스로 한 `migrate` + `verify`의 AC 측정에만 쓰고, **그 DB에 변이를 심지 마라**(심으면 되돌릴 권한이 없어 다시 채우지 못한다).
+> 각 변이 항목에 **어느 DB·어느 자격으로 돌렸는지**를 결과표 열로 남겨라.
+
 - M1: 한 컬럼의 값을 대상에서 1글자 바꾸면 `verify`가 red인가(**어느 컬럼·어느 테이블에서 재현했는지 적어라**).
 - M2: NULL을 빈 문자열로 바꿔 넣으면 `verify`가 red인가. 반대 방향도.
 - M3: 한 행을 통째로 빼면 행 수 대조가 red인가.

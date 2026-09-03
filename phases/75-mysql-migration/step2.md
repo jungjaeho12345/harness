@@ -10,13 +10,13 @@
 - `docs/porting-plan-cpp-spring.md` §3-② · §7 P2 행 · §8
 - `src/db/schema.js` (스키마 정본)
 - `server-spring/src/test/java/harness/news/db/NoSchemaSqlInMainSourcesTest.java` (**승계 대상 선례** — 특히 `inlineTableConstants` 펼치기와 자기검사 테스트들)
-- `server-spring/src/test/java/harness/news/service/Adr008DisciplineTest.java` (예외 목록의 **크기·구성**을 단언하는 규율의 선례)
+- `server-spring/src/test/java/harness/news/config/Adr008DisciplineTest.java` (예외 목록의 **크기·구성**을 단언하는 규율의 선례. ⚠ 경로는 `config/`다 — `service/`가 아니다)
 - `server-spring/pom.xml` · `server-spring/mvnw` · `server-spring/.mvn/`
 - `server-spring/src/test/java/harness/news/testsupport/EphemeralMysqlDb.java` (step1 산출물)
 
 ## 배경 (동결된 사실)
 
-1. **`NoSchemaSqlInMainSourcesTest.FORBIDDEN`은 `flyway`·`liquibase`·`ddl-auto` 철자를 `server-spring/src/main/java`와 `src/main/resources` 양쪽에서 금지한다**(실측 · 파일 44~53행). 그래서 **Flyway를 `server-spring`에 넣을 수 없다.** 이 제약은 완화 대상이 아니라 **설계 입력**이다: Flyway는 별도 모듈이 소유하고, `server-spring`은 ADR-013 ②의 「DDL 0 · 부팅 시 존재만 읽기 검증」을 그대로 유지한다. ⇒ **이 phase는 `NoSchemaSqlInMainSourcesTest`를 0줄 고친다.**
+1. **`NoSchemaSqlInMainSourcesTest.FORBIDDEN`은 `flyway`·`liquibase`·`ddl-auto` 철자를 `server-spring/src/main/java`와 `src/main/resources` 양쪽에서 금지한다**(실측 · 파일 **43~52행**). 그래서 **Flyway를 `server-spring`에 넣을 수 없다.** 이 제약은 완화 대상이 아니라 **설계 입력**이다: Flyway는 별도 모듈이 소유하고, `server-spring`은 ADR-013 ②의 「DDL 0 · 부팅 시 존재만 읽기 검증」을 그대로 유지한다. ⇒ **이 phase는 `NoSchemaSqlInMainSourcesTest`를 0줄 고친다.**
 2. **ADR은 소급 수정하지 않는다**(ADR-014 10행이 명문화한 규율). ADR-013 ②의 「스키마 소유자는 P2까지 Node다」는 **그 시점의 사실 기록**이므로 지우지 말고, ADR-016이 **그 이양 시점이 지금임을 선언**한다. 73이 ADR-005를 오인용해 revise를 받은 전례가 있다 — **근거 없는 ADR 인용 금지.**
 3. **`server-spring`은 독립 Maven 프로젝트**(멀티모듈 reactor 아님)이고 `scripts/spring-contract.mjs`가 그 `target/*.jar` 경로에 의존한다. **reactor로 바꾸지 마라** — 산출물 경로가 움직여 하네스가 깨진다.
 4. Maven 로컬 캐시에 Flyway가 없다(step0 실측) — 네트워크 필요.
@@ -47,6 +47,7 @@
 - **CLI 계약**(구현은 이 step에서 골격만, 나머지는 후속 step):
   - `migrate --source <sqlite-file> --target <env-key-set>` (step3)
   - `verify --source <sqlite-file> --target <env-key-set>` (step3)
+  - `verify --source <sqlite-file> --target-sqlite <sqlite-file>` (step4의 **왕복 대조** — 대조기가 SQLite ↔ SQLite 방향으로도 대칭이어야 한다. **이 형태를 CLI 계약에 지금 넣어라**: step4 AC가 그대로 이 커맨드를 부른다)
   - `export --target <env-key-set> --out <sqlite-file>` (step4)
   - `ephemeral-create --name <harness_ct_xxxx>` / `ephemeral-drop --name <...>` (step7이 쓴다)
   - **접속 비밀번호는 오직 환경변수에서만 읽는다**(argv 금지 — 프로세스 목록 노출). URL·사용자명도 환경변수 기본, argv로는 **키 이름만** 넘긴다.
@@ -64,8 +65,12 @@
 
 `tools/news-migrator/src/test/java/.../MigratorHasNoDestructiveSqlTest.java`. `NoSchemaSqlInMainSourcesTest`의 설계를 **승계**한다(복제가 아니라 같은 규율의 재적용 — 두 모듈이 서로의 소스를 못 보므로 물리적 공유는 불가하고, 그 사실을 주석에 적어라).
 
-- 금지: `DELETE FROM` · `DROP TABLE|INDEX|VIEW|TRIGGER|COLUMN|DATABASE|SCHEMA` · `TRUNCATE` · `REPLACE INTO` · `INSERT OR REPLACE` · `UPDATE` (마이그레이터는 **삽입만** 한다).
-- 스캔 대상: `src/main/java` **전체** + `src/main/resources` 전체(마이그레이션 SQL 포함).
+- **⚠ SQL 텍스트만 보는 게이트는 이 모듈에서 공허하다.** `server-spring`의 선례는 「DDL은 SQL 문자열로만 나타난다」는 전제 위에 있는데, **이 모듈은 Flyway와 `java.nio.file`을 직접 쓴다** — 그래서 아래 파괴 경로들은 **SQL 문자열이 아니라서** SQL 패턴 목록을 그대로 베끼면 **green으로 통과한다**. 이것은 71a 12/12 · 72 11/11 · 73 8/10 · 74(`ScopedValue`)와 **동형 실패**이며, 하필 CLAUDE.md CRITICAL(「DB에 있는 내용은 절대 삭제하지 않는다」)이 걸린 자리다.
+- 금지 패턴은 **두 군**이다.
+  - **SQL 군**: `DELETE FROM` · `DROP TABLE|INDEX|VIEW|TRIGGER|COLUMN|DATABASE|SCHEMA` · **`DROP\s+USER`** · `TRUNCATE` · **`RENAME\s+TABLE`** · `REPLACE INTO` · `INSERT OR REPLACE` · `UPDATE` (마이그레이터는 **삽입만** 한다).
+  - **API 군(신설 — SQL이 아닌 파괴 경로)**: **`\.clean\s*\(`**(`Flyway.clean()`은 스키마의 **전 객체를 DROP**한다 — 이 모듈이 Flyway를 소유하므로 한 줄이면 도달한다) · **`cleanDisabled\s*\(\s*false`**(**끄는 설정만** 금지한다 — 아래 행동 잠금이 요구하는 `cleanDisabled(true)` 명시는 허용해야 한다. 패턴을 `cleanDisabled`로 넓게 잡으면 **이 절이 자기 요구와 충돌해 예외 1파일 AC가 깨진다**) · **`Files\.(delete|deleteIfExists|move)`**(**소스 `news.db` 자체를 지우거나 옮길 수 있다** — 「원본 바이트 무변」 AC를 SQL 한 줄 없이 무너뜨리는 경로다).
+- **행동 잠금(정적 스캔과 별개의 방어선)**: Flyway 구성이 **`cleanDisabled(true)`** 로 만들어짐을 단언하고, 그 상태에서 `clean()` 호출이 **예외로 실패**함을 실제로 확인하는 테스트를 둔다(설정이 조용히 빠지면 red).
+- 스캔 대상: `src/main/java` **전체** + `src/main/resources` 전체(마이그레이션 SQL·설정 포함).
 - **예외는 정확히 1파일**: `ephemeral-drop` 구현 파일 하나. 그 예외 목록의 **크기와 구성(파일 경로)** 자체를 단언한다(`Adr008DisciplineTest`의 규율). 그리고 그 파일 안에서도 드롭 대상 이름이 **`^harness_ct_[0-9a-f]{16}$`** 를 만족할 때만 진행함을 행동 테스트로 잠근다.
 - **우회 방어**(71a 12/12·72 11/11·73 8/10·74 2건이 전부 green이었던 실패의 재발 방지): 판정 전에 ① 문자열 이어붙이기(`"delete from" + " Contents"`) 펼치기 ② 테이블 이름 상수 펼치기 ③ 클래스 한정 이름 제거 ④ 대소문자 무시를 적용한다. **그리고 그 펼치기가 실제로 동작함을 자기검사 테스트로 단언한다**(선례: `theDeleteScanSeesThroughConcatenationAndStillAllowsTheReceiverConfigException`).
 
@@ -94,11 +99,12 @@ git diff --stat -- server-spring/src/main
 - `git diff -U0 -- docs/ADR.md | grep -c '^-[^-]'` → **0**(순수 추가) · `### ADR-` 개수 15 → **16**.
 - `git diff -- server-spring/src/main`이 비어 있다.
 - `NoSchemaSqlInMainSourcesTest.java`가 **0줄** 변경됐다.
-- **변이 전건 결과표 기록**(아래). 미기록 시 미완.
+- 정적 게이트가 **SQL 군 + API 군 두 군**을 갖고 있고, **`cleanDisabled(true)` 행동 잠금**이 존재한다.
+- **변이 전건 결과표 기록**(아래). **M8(`flyway.clean()`)·M9(`Files.deleteIfExists`)의 red 실증이 없으면 이 step은 미완이다.**
 
 ## 검증 절차
 
-**변이 검증(최소 7종 · 전건 결과표 필수)** — 각각 심어 red를 보고 원복한다.
+**변이 검증(최소 11종 · 전건 결과표 필수 · M8·M9는 면제 불가)** — 각각 심어 red를 보고 원복한다.
 - M1: 마이그레이터 main에 `sql("DELETE FROM Contents WHERE 1=1")` → red인가.
 - M2: 문자열을 끊어 쓴 `"delete from" + " Contents"` → red인가(원문만 보는 정규식은 이것을 **놓친다**는 것이 실측된 우회다).
 - M3: 테이블 이름을 상수로 조립한 `"DROP TABLE " + TABLES.CONTENTS` → red인가.
@@ -106,6 +112,10 @@ git diff --stat -- server-spring/src/main
 - M5: 한정 이름(`java.sql.Statement`를 통한 우회 형태 등) → 잡히는가.
 - M6: `ephemeral-drop`의 이름 정규식을 `harness_ct.*`로 넓히면 행동 테스트가 red인가. `news`를 넘기면 거부하는가.
 - M7: 예외 목록에 파일 하나를 더 넣으면 목록 크기·구성 단언이 red인가.
+- **M8(필수): `flyway.clean()` 호출 1줄을 main에 심으면 red인가.** SQL 문자열이 하나도 없는 변이다 — API 군 패턴이 없으면 **green으로 통과**하고, 통과하면 이 게이트는 이 모듈에서 공허하다.
+- **M9(필수): `Files.deleteIfExists(sourcePath)` 를 main에 심으면 red인가.** 이것은 소스 `news.db`를 지우는 경로이며 「원본 무변」 AC를 SQL 없이 무너뜨린다. `Files.move`·`Files.delete`도 같이 확인한다.
+- M10: `cleanDisabled(true)` 설정을 지우면 행동 잠금 테스트가 red인가(정적 스캔만으로는 「설정 누락」을 못 잡는다는 것을 여기서 확인하라).
+- M11: `RENAME TABLE Contents TO Contents_old` · `DROP USER news_app` 를 각각 심으면 red인가.
 
 + `V1__baseline.sql`의 컬럼 이름·순서·DEFAULT를 `src/db/schema.js`와 **기계로** 대조하는 테스트를 두고(수작업 대조 금지), 컬럼 하나를 빼면 red인지 확인한다.
 

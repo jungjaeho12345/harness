@@ -15,9 +15,11 @@
 
 ## 배경 (동결된 사실)
 
-1. **계약 리포트는 `status`·`ok`·`reason`·`bodyKeys`·케이스가 명시한 `values`·허용 헤더만 싣는다**(실측). 그리고 목록 케이스는 **id를 정렬해 비교**한다 — 즉 **행 순서는 단언되지 않는다**. `photos-search`는 소문자 랜덤 토큰만 쓰므로 **LIKE 대소문자도 관측되지 않는다**. `receiver-config` 케이스는 **id 원값을 리포트에 싣지 않는다**. ⇒ **이 세 축의 유일 방어선은 이 step이 만드는 Java 테스트다.** (「계약이 잡는다」고 적지 마라.)
+1. **계약 리포트는 `status`·`ok`·`reason`·`bodyKeys`·케이스가 명시한 `values`·허용 헤더만 싣는다**(실측). `articles-read.contract.js`는 목록을 **`idsOf(items).sort()`로 비교**하므로 그 파일에서 **행 순서는 단언되지 않는다**. `photos-search`는 소문자 랜덤 토큰만 쓰므로 **LIKE 대소문자는 관측되지 않는다**. `receiver-config` 케이스는 **id 원값을 리포트에 싣지 않는다**.
+   - ⚠ **예외 1건**: `contract/cases/default/media-upload.contract.js` **342행**이 `assert.deepEqual(mine.map((it) => it.id), [...], '최신 등록 우선(id DESC)')` 로 **`photos-search`의 순서를 직접 단언**한다(어서션 실패 = 러너 비-0 = 패스 실패). ⇒ **`PhotoRepository`의 `ORDER BY id DESC`는 계약이 실제로 잡는다.**
+   - ⇒ **Java 테스트가 유일 방어선인 축**: `Article`·`ArticleHistory`·`DistributionTarget`·`ReceiverConfig`의 **정렬** · **LIKE 대소문자** · **id 재사용**. `Photo` 정렬은 이중 방어다. **이 구분을 뭉개지 마라**(「전부 계약이 못 본다」도 「계약이 잡는다」도 둘 다 거짓이다).
 2. **관련된 리포지토리 SQL 실측 좌표**: `ArticleRepository` 246행(`ORDER BY createdAt DESC`) · 259행(3컬럼 `LIKE`) / `PhotoRepository` 111행(`caption LIKE ? ORDER BY id DESC`, **ESCAPE 없음**) / `ArticleHistoryRepository` 162·198·226행(`ORDER BY id DESC`, `length(...)>0`) / `DistributionTargetRepository` 88행 · `ReceiverConfigRepository` 92행(`ORDER BY id`).
-3. **유일한 행 삭제 예외는 `DELETE FROM ReceiverConfig`**다(`NoSchemaSqlInMainSourcesTest`가 그 하나만 허용). step0 부트스트랩의 `news_app`은 `SELECT/INSERT/UPDATE`만 갖는다 — **그 예외를 어떻게 열지는 이 step이 실측으로 판정**한다(후보: `GRANT DELETE ON news.ReceiverConfig TO news_app` 테이블 단위 부여. 그러면 나머지 6테이블의 삭제는 **DB 서버가** 계속 막는다).
+3. **유일한 행 삭제 예외는 `DELETE FROM ReceiverConfig`**다(`ReceiverConfigRepository` **153행**이 실제로 실행하고 `NoSchemaSqlInMainSourcesTest`가 그 하나만 허용한다). **그 grant는 step0 부트스트랩이 이미 부여했다**(`GRANT DELETE ON news.ReceiverConfig` 테이블 단위 · `news_stage`도 동일) — **이 step은 grant를 새로 요구하지 않는다.** 여기서 뒤늦게 root 재실행을 요구하면 phase가 중도 blocked가 되기 때문이다. 이 step의 몫은 **나머지 6테이블의 삭제가 실제로 거부되는지 실증**하는 것뿐이다.
 4. `Contents.createdAt`은 현재 데이터에서 77/77 상이하지만(실측) **동일 값 tie는 양쪽 다 순서 비보장**이다.
 5. `MAX_POOL_SIZE = 1` 유지(ADR-016 결정 6).
 
@@ -28,6 +30,9 @@
 - `NewsDataSource`의 mysql 분기를 완성한다: 드라이버·URL 파라미터(step1 측정 11의 확정 집합) · 풀 1 · **접속 후 read-back 검증**(sqlite의 `busy_timeout` read-back과 같은 규율으로, 예: 세션 `sql_mode`·`character_set_connection`·`collation_connection`이 의도한 값인지 읽어 확인하고 어긋나면 기동 실패). **조용히 다른 설정으로 뜨지 않게 하라.**
 - `SchemaGuard`가 MySQL 대상에서 7테이블·전 컬럼을 검증한다. 드리프트 상황(컬럼 1개 결손)에서 **컬럼을 지목하며 기동 거부**하는지 MySQL에서도 확인한다.
 - `@SpringBootTest` 기반 **MySQL 와이어 스모크**: 로그인 → 목록 → 기사 생성 → 잠금 → 상태 전이 → 사진 등록·검색 → 수집설정 생성·삭제 → 로그 다이제스트. 픽스처는 `EphemeralMysqlDb`.
+- **⚠ 그 스모크를 최소 1회는 `news_app` 자격으로 돌린다.** 이유: 하네스(step7)와 나머지 테스트는 **`news_ct`(ALL 권한)** 로 돌기 때문에 **`news_app`의 최소 권한 구성이 어느 게이트에서도 검증되지 않는다** — 운영은 `news_app`으로 뜨는데 그 조합은 한 번도 시험되지 않은 상태가 된다(권한 부족이 500으로 새는 것을 아무도 못 본다). 스모크 전 경로를 `news_app` 자격으로 1회 통과시키고, 그때 **어떤 라우트가 어떤 권한을 실제로 요구했는지**를 summary에 적어라.
+  - **⚠ 그 1회의 대상 DB는 `EphemeralMysqlDb`(`harness_ct_*`)가 아니라 `news_stage`다.** 이유: step0 부트스트랩이 `news_app`에게 준 권한은 `news`·`news_stage` 한정이고 **`harness_ct_*`에는 권한이 0**이다 — 픽스처 DB로 돌리면 전 쿼리가 거부돼 「스모크 통과」가 애초에 불가능하고, 「ReceiverConfig 삭제 성공」도 성립하지 않는다. 스키마·시드 준비는 `news_migrator`가 `news_stage`에 하고 **접속 자격만** `news_app`으로 바꾼다.
+  - 이 경로는 **행을 추가한다**(삭제하지 않는다 — DB 비파괴). `news_stage`는 step3·step4의 최종 측정에도 쓰이므로 **측정 순서를 기록**하고, 스모크가 남긴 행이 뒤 측정을 오염시키지 않도록 **step3·step4 최종 측정 뒤에 이 스모크를 돌리거나** 빈 `news_stage`에서 다시 적재한 뒤 돌려라(어느 쪽을 택했는지 summary에 적어라).
 
 ### B. 리포지토리 차등 테스트 — **같은 입력, 두 방언, 결과 동일 단언**
 
@@ -41,10 +46,12 @@
 6. **트랜잭션·잠금**: `TransactionTemplate` 롤백이 두 방언에서 동형인지. 풀 1 상태에서 `LogsStreamWireTest` 항목 22가 세운 사슬(구독 콜백의 DB 조회 ↔ 요청 필터의 로그)이 **MySQL에서도 성립하는지**(= 무관한 `GET /api/health`가 막히지 않는지). InnoDB `innodb_lock_wait_timeout`과 `busy_timeout`의 차이를 기록한다.
 7. **`length()` 술어**: `ArticleHistoryRepository` 198행이 두 방언에서 같은 행 집합을 주는지(멀티바이트 본문 포함).
 
-### C. `DELETE FROM ReceiverConfig` 예외 경로
+### C. `DELETE FROM ReceiverConfig` 예외 경로 — **거부 실증만** 소유한다
 
-- `news_app` 권한으로 그 삭제가 되는지 실측하고, 안 되면 **테이블 단위 grant를 `ops/mysql/bootstrap.sql`에 추가**한다(그리고 나머지 6테이블 삭제가 여전히 거부되는지 **실측으로 확인**한다 — 이것이 「최소 권한이 1차 방어선」 주장의 유일한 근거다).
-- 거부 상황에서 서버가 어떤 응답을 내는지도 확인한다(계약은 200 `{ok:true,changes:1}`을 요구한다 — 권한 오류가 500으로 새면 패리티가 깨진다. step7에서 실제로 드러날 축이므로 여기서 먼저 잡아라).
+- **grant 부여는 step0이 끝냈다.** 여기서 `ops/mysql/bootstrap.sql`을 고쳐 새 권한을 요구하지 마라(사용자 root 재실행 = 중도 blocked).
+- **대상은 `news_stage`다**(A의 `news_app` 스모크와 같은 DB). `EphemeralMysqlDb`(`harness_ct_*`)로 이 실증을 하지 마라 — `news_app`은 그 DB에 **권한이 0**이라 **모든** 쿼리가 거부되고, 그러면 「6/6 거부」는 **권한 경계를 증명하는 것이 아니라 아무것도 증명하지 않는 공허한 green**이 된다(①의 「ReceiverConfig 성공」이 짝으로 붙어 있는 이유가 그것이다 — 성공과 거부가 **같은 DB·같은 자격**에서 갈려야 경계가 실재한다).
+- 실증할 것: ① `news_app` 자격으로 `DELETE FROM ReceiverConfig`가 **성공**한다(계약이 요구하는 200 `{ok:true,changes:1}` 경로) ② **나머지 6테이블**(User·Article·Contents·ArticleHistory·DistributionTarget·Photo)의 `DELETE`가 **DB 서버에 의해 거부**된다 — 6/6 전부 테스트로 단언한다. 이것이 「최소 권한이 DB 비파괴의 1차 방어선」 주장의 **유일한 근거**이며, 거부가 확인되지 않으면 그 주장을 ADR-016에서 **철회**하고 정적 스캔만 남았음을 명시하라.
+- 권한 오류가 났을 때 서버가 어떤 응답을 내는지도 확인한다(권한 오류가 500으로 새면 패리티가 깨진다 — step7에서 드러날 축이므로 여기서 먼저 잡아라).
 
 ### D. 문서
 
@@ -64,13 +71,14 @@ md5sum news.db
 - `clean verify` BUILD SUCCESS · Failures/Errors/**Skipped 0** · `Tests run` 증가(감소 0).
 - **`--parity`·`--dual-run` 둘 다 313관측 diffs 0**(SQLite 경로 무회귀 — 이 step은 아직 하네스를 MySQL로 돌리지 않는다).
 - B의 7축 전부에 테스트가 있고, **divergence로 판정된 축은 「양쪽 기대값을 각각 명시한 테스트」 + `docs/db-mysql-mapping.md` 기록**이 있다.
-- C의 실측 결과(어떤 grant를 추가했는지 · 나머지 6테이블 삭제가 거부되는지)가 summary에 있다.
+- **A의 와이어 스모크가 `news_app` 자격 · `news_stage` 대상으로 1회 전 경로 통과**했고 그 결과가 summary에 있다(이것이 없으면 최소 권한 구성은 이 phase에서 한 번도 검증되지 않는다. `harness_ct_*`로 돌렸다면 무효다 — 그 DB에 `news_app` 권한이 0이다).
+- C의 실증 결과가 summary에 있다: `ReceiverConfig` 삭제 **성공** · 나머지 **6/6 테이블 삭제 거부**. `ops/mysql/bootstrap.sql`은 **0줄 변경**이다(새 grant를 요구했다면 step0 설계가 틀린 것이므로 그 사실을 보고하라).
 - `news.db` md5 무변 · 무접촉 목록 diff 0.
 - **변이 전건 결과표 기록.** 미기록 시 미완.
 
 ## 검증 절차
 
-**변이 검증(최소 8종)**
+**변이 검증(최소 9종)**
 - M1: `ORDER BY`를 하나 지우면 B-1이 red인가(**어느 리포지토리에서 재현했는지 적어라**).
 - M2: MySQL collation을 결정값에서 `utf8mb4_0900_ai_ci`로 바꾸면 B-1·B-2 중 몇 개가 red인가.
 - M3: `WHERE userId = ?` 경로에서 대소문자·후행 공백이 다른 값으로 로그인이 되는가(**된다면 그것은 결함이고 이 step에서 막아야 한다**).
@@ -79,6 +87,7 @@ md5sum news.db
 - M6: `MAX_POOL_SIZE`를 2로 바꾸면 B-6이 red인가.
 - M7: mysql 분기의 read-back 검증을 지우면(= 다른 `sql_mode`로 조용히 뜨게 하면) 어떤 테스트가 red인가.
 - M8: `SchemaGuard`가 MySQL에서 컬럼 결손을 못 잡게 하면 red인가.
+- M9: `news_app` 스모크에서 `DELETE FROM Contents`를 시도하는 코드를 심으면 **DB 서버가 거부**하는가(= C-②가 공허하지 않은가).
 
 flake 판정은 **재실행 2회 연속 green** 규약을 따른다. green 즉시 커밋한다.
 

@@ -34,14 +34,14 @@ SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.m
 node scripts/contract-inventory-check.mjs --require-spec-paths
 npm test && npm run lint && npm run build
 md5sum news.db && ls -l news.db
-java -jar tools/news-migrator/target/news-migrator-*.jar verify --source news.db --target <staging>
+java -jar tools/news-migrator/target/news-migrator-*.jar verify --source news.db --target news_stage
 ```
 
 기록할 항목: Java 두 모듈의 `Tests run`·skip 0 · jar 크기 · 각 하네스 실행의 관측 수·diffs·프로파일별 내역 · 합산 커버리지 · `npm test` 수 · 인벤토리 routes/spec-paths · **`news.db` md5·크기** · `uploads/` 항목 수·바이트 · **이관 대조 표(7테이블 · 178행 · 불일치 0)** · **잔존 `harness_ct_*` DB 0개**.
 
 ### B. 교차 변이 재확인 (게이트가 살아 있는지)
 
-각 변이를 심어 **red를 확인하고 원복**한다. 결과표(변이 → 기대 → 실제)를 기록한다. **최소 8종**:
+각 변이를 심어 **red를 확인하고 원복**한다. 결과표(변이 → 기대 → 실제)를 기록한다. **최소 10종**:
 1. 마이그레이터 main에 `DELETE FROM Contents`(원문) → red.
 2. 같은 것을 **문자열을 끊어 쓴 형태**로 → red(원문만 보는 정규식은 놓친다).
 3. `ephemeral-drop`의 이름 가드를 넓혀 `news`를 넘김 → 거부(하네스·마이그레이터 양쪽).
@@ -50,7 +50,8 @@ java -jar tools/news-migrator/target/news-migrator-*.jar verify --source news.db
 6. MySQL collation을 `utf8mb4_0900_ai_ci`로 → 정렬/LIKE 차등 테스트 중 몇 개가 red인가(개수·이름).
 7. `--db mysql`에서 `DB_KIND` 주입을 빼 Spring이 sqlite로 뜨게 함 → **무엇이 잡는가**(step7 M1의 재확인 — 잡는 것이 없으면 그 사실이 forward_notes의 1급 항목이다).
 8. `MysqlConfiguredGuardTest`의 fail-closed를 skip으로 바꿈 → 전체 스위트가 MySQL 없이 green이 되는가(= 게이트 공허화 경로가 열려 있는가).
-9. (있다면) `Adr008DisciplineTest`·`NoSchemaSqlInMainSourcesTest`가 **0줄 변경**임을 `git diff`로 재확인.
+9. `Adr008DisciplineTest`(**`harness/news/config/`** — `service/`가 아니다)·`NoSchemaSqlInMainSourcesTest`(`harness/news/db/`)가 **0줄 변경**임을 `git diff`로 재확인. **먼저 `ls`로 두 경로가 실재하는지 확인하라** — 경로를 틀리면 `git diff --stat`이 무출력·exit 0이라 단언이 공허해진다.
+10. step2의 **M8(`flyway.clean()`)·M9(`Files.deleteIfExists(source)`)** 를 다시 심어 red를 재확인한다(SQL 문자열이 없는 파괴 경로 — 이 phase가 새로 연 면이라 마감에서 반드시 다시 본다).
 
 ### C. `forward_notes` 작성 — P3에 넘긴다
 
@@ -73,7 +74,10 @@ java -jar tools/news-migrator/target/news-migrator-*.jar verify --source news.db
 # A의 커맨드 전부를 연속 2회
 # 그리고 무접촉 최종 확인
 git diff --stat -- contract docs/api-contract scripts/contract-run.mjs scripts/contract-diff.mjs server src web client test package.json docs/news.md spikes news.db
-git diff --stat -- server-spring/src/test/java/harness/news/db/NoSchemaSqlInMainSourcesTest.java server-spring/src/test/java/harness/news/service/Adr008DisciplineTest.java
+# 경로 주의: Adr008DisciplineTest는 config/ 아래다(service/ 아님). 경로를 틀리면 git diff가
+# 무출력·exit 0이라 "0줄 변경" 단언이 조용히 공허해진다 — 먼저 파일 존재를 확인한다.
+ls server-spring/src/test/java/harness/news/db/NoSchemaSqlInMainSourcesTest.java server-spring/src/test/java/harness/news/config/Adr008DisciplineTest.java
+git diff --stat -- server-spring/src/test/java/harness/news/db/NoSchemaSqlInMainSourcesTest.java server-spring/src/test/java/harness/news/config/Adr008DisciplineTest.java
 git status --porcelain
 ```
 

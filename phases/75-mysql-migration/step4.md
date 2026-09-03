@@ -42,7 +42,7 @@
 ```bash
 cd tools/news-migrator && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
 md5sum news.db
-java -jar tools/news-migrator/target/news-migrator-*.jar export --target <staging> --out <리포 밖>/export.db
+java -jar tools/news-migrator/target/news-migrator-*.jar export --target news_stage --out <리포 밖>/export.db
 java -jar tools/news-migrator/target/news-migrator-*.jar verify --source news.db --target-sqlite <리포 밖>/export.db
 md5sum news.db && ls -l news.db
 # 무회귀
@@ -61,7 +61,9 @@ SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.m
 ## 검증 절차
 
 **변이 검증(최소 6종)** — 심고 red를 보고 원복한다.
-- M1: MySQL 쪽 한 컬럼 값을 바꾸면 왕복 대조가 red인가.
+> **⚠ 역할 분리(step3과 동일 규율)**: **MySQL 쪽 값을 변조해야 하는 변이(M1)** 는 `news_stage`에서 할 수 없다 — `news_migrator`에는 `UPDATE`·`DELETE`가 **없다**. **`news_ct` 자격으로 `harness_ct_<16hex>` 임시 DB에 같은 데이터를 `migrate`한 뒤 거기서 변조**하고, 끝나면 DB째로 지운다. **`news_stage`는 AC의 최종 1회 측정(`export` + 왕복 `verify`) 전용**이다. 결과표에 **어느 DB·어느 자격**인지 열을 남겨라.
+
+- M1: MySQL 쪽 한 컬럼 값을 바꾸면 왕복 대조가 red인가(`harness_ct_*` · `news_ct`).
 - M2: export가 NULL을 빈 문자열로 쓰면 red인가(양방향).
 - M3: export 스키마에서 컬럼 하나를 빼거나 **순서를 바꾸면** 동형 대조가 red인가.
 - M4: 165,802바이트 본문이 export에서 잘리면 red인가.
