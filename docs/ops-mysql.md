@@ -106,6 +106,13 @@ Get-Content D:/agents/secrets/news-mysql.env |
   ForEach-Object { $k,$v = $_ -split '=',2; [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim(), 'Process') }
 ```
 
+> ⚠ **`mvnw verify` 와 계약 하네스에는 `NEWS_CT_MYSQL_*` 만 실어라**(2026-09-03 step5 실측). step5 부터
+> Spring 은 `DB_KIND`(기본 `sqlite`)와 `NEWS_DB_URL` 이 **서로 다른 저장소를 가리키면 기동을 거부**한다.
+> 그래서 위 절차로 파일을 통째로 싣고 `mvnw verify` 를 돌리면 `DB_KIND` 없이 `NEWS_DB_URL`(MySQL)만
+> 남아 **모든 `@SpringBootTest` 가 컨텍스트 기동 실패**로 red 다(실측: `DbBootGuardTest` 3 red +
+> `DbPropertiesBindingTest` 1 red). 코드 회귀가 아니라 **설계된 거부**다 — 셸을 좁히거나
+> (`case "$k" in NEWS_CT_MYSQL_*)`) `DB_KIND=mysql` 을 함께 실어라.
+
 ## 4. 리포에 비밀을 남기지 않는 규칙 (기계가 지킨다)
 
 `server-spring/src/test/java/harness/news/config/SecretHygieneTest.java` 가 리포 루트 전체를 훑어

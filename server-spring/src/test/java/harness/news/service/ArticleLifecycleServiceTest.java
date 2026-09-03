@@ -189,7 +189,7 @@ class ArticleLifecycleServiceTest {
 		clock = new MutableClock(T0.toEpochMilli());
 		articles = new ArticleRepository(client, transactions(), clock);
 		history = new ArticleHistoryRepository(client);
-		targets = new DistributionTargetRepository(client, transactions());
+		targets = new DistributionTargetRepository(client);
 		ArticleHistoryRecorder recorder = new ArticleHistoryRecorder(history, clock, error -> {
 		});
 		writeService = new ArticleWriteService(articles, recorder, clock);

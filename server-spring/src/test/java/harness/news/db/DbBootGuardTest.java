@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 import harness.news.NewsServerApplication;
 import harness.news.testsupport.TempNewsDb;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.SpringApplication;
@@ -51,12 +53,55 @@ class DbBootGuardTest {
 		run(tempDir);
 	}
 
-	private static void run(Path dataDir) {
+	/**
+	 * <b>변이 M1</b>(phase 75 step5): mysql을 골랐는데 접속 정보가 없으면 <b>뜨지 않는다</b>.
+	 *
+	 * <p>여기서 조용히 sqlite로 폴백하면 최악의 형태가 된다 — 운영자는 MySQL로 옮겼다고 믿는데 서버는
+	 * 옛 파일에 쓰고, 두 저장소의 내용이 갈린 뒤에야 드러난다. 시드된 DB가 있는 디렉토리로 돌리는 이유는
+	 * "파일이 없어서" 실패한 것이 아님을 못 박기 위해서다.
+	 */
+	@Test
+	void startupFailsWhenMysqlIsSelectedWithoutCredentials() {
+		TempNewsDb.seed(tempDir);
+
+		// 자격 3키를 커맨드라인으로 비운다: 이 테스트가 "셸에 NEWS_DB_* 가 실려 있는가"에 따라 갈리면 안 된다
+		// (커맨드라인 인자는 최우선 순위라 application.properties의 ${NEWS_DB_URL:} 전개를 확실히 덮는다).
+		Exception thrown = assertThrows(Exception.class, () -> run(tempDir, "--app.db.kind=mysql",
+				"--app.db.url=", "--app.db.username=", "--app.db.password="));
+
+		String chain = messageChain(thrown);
+		assertTrue(chain.contains("NEWS_DB_URL"), "무엇이 없는지 지목해야 한다: " + chain);
+		assertTrue(chain.contains("NEWS_DB_USERNAME"), chain);
+		assertTrue(chain.contains("NEWS_DB_PASSWORD"), chain);
+	}
+
+	/**
+	 * <b>변이 M2</b>(phase 75 step5): {@code kind}와 URL이 <b>모순</b>이면 기동을 거부한다.
+	 *
+	 * <p>URL을 보고 방언을 추론하지 않기 때문에({@code DbProperties}) 이 조합은 "어느 쪽이 진심인지"를
+	 * 서버가 알 수 없는 상태다. 추론하는 서버는 {@code DB_KIND} 누락을 조용히 삼키고, 그 누락이야말로
+	 * 이관 중에 가장 흔한 사고다(step7 M1a가 정확히 이 거부에 걸린다).
+	 */
+	@Test
+	void startupFailsWhenTheKindContradictsTheUrl() {
+		TempNewsDb.seed(tempDir);
+
+		Exception thrown = assertThrows(Exception.class,
+				() -> run(tempDir, "--app.db.kind=sqlite", "--app.db.url=jdbc:mysql://127.0.0.1:3306/news"));
+
+		String chain = messageChain(thrown);
+		assertTrue(chain.contains("DB_KIND"), "무엇을 맞춰야 하는지 지목해야 한다: " + chain);
+		assertTrue(chain.contains("NEWS_DB_URL"), chain);
+	}
+
+	private static void run(Path dataDir, String... extraArgs) {
 		SpringApplication application = new SpringApplication(NewsServerApplication.class);
 		application.setLogStartupInfo(false);
-		try (ConfigurableApplicationContext context = application.run(
+		List<String> args = new ArrayList<>(List.of(
 				"--app.data-dir=" + dataDir.toAbsolutePath(),
-				"--spring.main.web-application-type=none")) {
+				"--spring.main.web-application-type=none"));
+		args.addAll(List.of(extraArgs));
+		try (ConfigurableApplicationContext context = application.run(args.toArray(String[]::new))) {
 			if (context == null) {
 				fail("컨텍스트가 null이다");
 			}

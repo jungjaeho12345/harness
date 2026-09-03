@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
  * 부팅 스키마 검증(읽기 전용) — "없으면 만들지 않고, 무엇이 없는지 말하고 뜨지 않는다".
@@ -117,7 +116,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.PHOTO_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -137,7 +136,7 @@ class SchemaGuardTest {
 		seedCanonicalWithoutPhoto();
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -169,7 +168,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.RECEIVER_CONFIG_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -187,7 +186,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DISTRIBUTION_TARGET_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -204,7 +203,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 			assertDoesNotThrow(guard::verify);
 		}
 	}
@@ -214,7 +213,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -234,7 +233,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.ARTICLE_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -253,7 +252,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.HISTORY_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -271,7 +270,7 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -287,7 +286,7 @@ class SchemaGuardTest {
 		TempNewsDb.seedEmpty(tempDir);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(JdbcClient.create(dataSource), TempNewsDb.dbFile(tempDir));
+			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 

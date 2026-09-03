@@ -10,8 +10,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 배부 대상(수신처) 데이터 접근 계층 — 직접 SQL(ORM 없음, ADR-002). 비즈니스 규칙은 없다.
@@ -60,11 +61,8 @@ public class DistributionTargetRepository {
 
 	private final JdbcClient jdbcClient;
 
-	private final TransactionTemplate transactions;
-
-	public DistributionTargetRepository(JdbcClient jdbcClient, TransactionTemplate transactions) {
+	public DistributionTargetRepository(JdbcClient jdbcClient) {
 		this.jdbcClient = jdbcClient;
-		this.transactions = transactions;
 	}
 
 	/**
@@ -105,11 +103,16 @@ public class DistributionTargetRepository {
 	/**
 	 * 값이 주어진 화이트리스트 컬럼만 삽입한다({@code id} 제외 — 자동 증가).
 	 *
-	 * <p><b>삽입과 id 판독은 한 트랜잭션이다</b>(2026-08-24 리뷰 med): {@code last_insert_rowid()}는
-	 * <b>커넥션 단위 상태</b>이고 풀 상한이 1이라 모든 스레드가 같은 물리 커넥션을 쓴다. 두 문장을 따로
-	 * 실행하면 그 사이에 커넥션이 반납돼 A의 INSERT → B의 INSERT → A의 SELECT 순서에서 A가 <b>B의 id</b>를
-	 * 받고, 그 뒤의 수정·비활성이 남의 행에 적용된다. Node는 단일 스레드라 없는 결함이라 계약이 관측하지
-	 * 않는다({@code ArticleRepository}의 확립된 관례를 따른다).
+	 * <p><b>id는 삽입한 그 문장에서 회수한다</b>({@link GeneratedKeyHolder} — {@code PhotoRepository}·
+	 * {@code ArticleHistoryRepository}의 확립된 패턴). 별도 문장으로 되읽으면 두 문장 사이에서 커넥션이
+	 * 풀에 반납되고, 풀 상한이 1이라 모든 스레드가 같은 물리 커넥션을 쓰므로 A의 INSERT → B의 INSERT →
+	 * A의 되읽기 순서에서 A가 <b>B의 id</b>를 받는다(그 뒤의 수정·비활성이 남의 행에 적용된다). Node는
+	 * 단일 스레드라 없는 결함이라 계약이 관측하지 않는다 — {@code DistributionTargetRepositoryTest}의
+	 * 동시 삽입 테스트가 유일 방어선이다.
+	 *
+	 * <p>2026-09-03(phase 75 step5): 예전 근거인 "삽입과 id 판독을 한 트랜잭션으로 묶는다"(2026-08-24
+	 * 리뷰 med)는 <b>더 이상 유효하지 않다</b> — 되읽는 두 번째 문장 자체가 사라져 묶을 대상이 없다.
+	 * 그래서 트랜잭션 경계도 함께 걷어냈다(방언 중립이라는 이득이 덤이다: 되읽기 함수는 SQLite 전용이었다).
 	 *
 	 * @return 새 행의 id(정수)
 	 * @throws IllegalArgumentException 화이트리스트 컬럼이 하나도 남지 않을 때(빈 삽입문을 만들지 않는다)
@@ -129,14 +132,16 @@ public class DistributionTargetRepository {
 		if (columns.isEmpty()) {
 			throw new IllegalArgumentException(RequiredSchema.DISTRIBUTION_TARGET_TABLE + ": 입력할 컬럼이 없습니다");
 		}
-		Integer id = this.transactions.execute((status) -> {
-			this.jdbcClient.sql("INSERT INTO " + RequiredSchema.DISTRIBUTION_TARGET_TABLE
-							+ " (" + String.join(", ", columns) + ") VALUES (" + placeholders(columns.size()) + ")")
-					.params(params)
-					.update();
-			return lastInsertRowId();
-		});
-		return id == null ? 0 : id;
+		KeyHolder keys = new GeneratedKeyHolder();
+		this.jdbcClient.sql("INSERT INTO " + RequiredSchema.DISTRIBUTION_TARGET_TABLE
+						+ " (" + String.join(", ", columns) + ") VALUES (" + placeholders(columns.size()) + ")")
+				.params(params)
+				.update(keys);
+		Number id = keys.getKey();
+		if (id == null) {
+			throw new IllegalStateException("배부 대상 행의 id를 돌려받지 못했습니다 — 삽입 결과를 신뢰할 수 없습니다");
+		}
+		return id.intValue();
 	}
 
 	/**
@@ -165,14 +170,6 @@ public class DistributionTargetRepository {
 						+ " SET " + String.join(", ", assignments) + " WHERE id = ?")
 				.params(params)
 				.update();
-	}
-
-	/** 방금 삽입한 행의 ROWID(= INTEGER PK 값). <b>반드시 삽입과 같은 트랜잭션(=같은 커넥션)에서 부른다.</b> */
-	private int lastInsertRowId() {
-		Integer id = this.jdbcClient.sql("SELECT last_insert_rowid()")
-				.query(Integer.class)
-				.single();
-		return id == null ? 0 : id;
 	}
 
 	/**
