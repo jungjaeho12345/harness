@@ -193,11 +193,22 @@ SHOW VARIABLES LIKE 'innodb_lock_wait_timeout';
 ## 7. 삭제 예외를 실제 스키마에 붙이기 (§2 가 (b) 로 끝났을 때만)
 
 step3 이 `news_stage` 에 스키마를 만든 **뒤에** 같은 파일을 한 번 더 돌린다. 전 문장이 멱등이라
-`§1~§6` 은 조용히 지나가고 `§7` 의 두 `GRANT` 만 새로 붙는다.
+`§1~§6` 은 조용히 지나간다.
+
+> **⚠ 지금 실행할 때는 `--force` 를 붙여라 (2026-09-03 step3 실측).** `§7` 의 두 `GRANT` 는
+> `news` → `news_stage` 순서인데, **`news` 는 아직 비어 있다**(step3 은 스테이징에만 적재했고 운영
+> 적재는 P3 다). 그래서 첫 문장이 `ERROR 1146` 으로 죽고, `mysql` 클라이언트는 배치 모드에서 오류를
+> 만나면 **거기서 멈추므로** 뒤의 `news_stage` 문장이 실행되지 않는다 — 아무것도 붙지 않은 채 끝난다.
+> `--force` 는 오류를 건너뛰고 계속한다(멱등이라 안전하다). 한 줄만 실행해도 된다:
+> ``GRANT DELETE ON `news_stage`.`ReceiverConfig` TO 'news_app'@'localhost';``
 
 ```powershell
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p < ops\mysql\bootstrap.local.sql
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p --force < ops\mysql\bootstrap.local.sql
 ```
+
+**언제 필요한가**: step3 이 끝난 지금이다(`news_stage` 에 7테이블 + `flyway_schema_history` 가 있다 —
+2026-09-03 실측). `news` 쪽 예외는 그 DB 에 스키마가 선 뒤(=step8 런북의 컷오버 리허설/P3) 같은 파일을
+다시 돌리면 붙는다.
 
 붙었는지 확인:
 
