@@ -9,6 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 이관이 다루는 <b>테이블·컬럼 목록</b> — 기반선({@code db/migration/V1__baseline.sql})에서 읽는다.
@@ -44,14 +46,24 @@ public final class BaselineSchema {
 
 	private static final String TABLE_HEAD = "CREATE TABLE IF NOT EXISTS";
 
+	/** 기본값의 두 형태 — 식(기반선이 쓰는 형태)과 리터럴. 값 자체만 뽑는다. */
+	private static final Pattern DEFAULT_LITERAL = Pattern.compile("(?i)\\bDEFAULT\\s*\\(?\\s*'([^']*)'");
+
 	private final Map<String, Table> tables;
 
 	private BaselineSchema(Map<String, Table> tables) {
 		this.tables = tables;
 	}
 
-	/** 컬럼 하나 — 이름과, 이관이 알아야 하는 두 성질. */
-	public record Column(String name, boolean integer, boolean primaryKey) {
+	/**
+	 * 컬럼 하나 — 이름과, 이관이 알아야 하는 세 성질.
+	 *
+	 * <p>{@code defaultValue} 는 기반선의 식 기본값({@code DEFAULT ('Y')})에서 읽은 <b>값</b>이다(없으면
+	 * {@code null}). 역방향 export 가 그것을 SQLite 표기로 되돌려야 하기 때문에 여기서 들고 있는다 —
+	 * 기본값이 산출물에서 빠지면, 값 없이 넣는 삽입문(이 리포의 삽입은 전부 동적 컬럼 목록이다)이
+	 * 정본에서는 {@code 'Y'} 를 얻고 산출물에서는 NULL 을 얻는다. 그 파일은 "같은 DB" 가 아니다.
+	 */
+	public record Column(String name, boolean integer, boolean primaryKey, String defaultValue) {
 	}
 
 	/** 테이블 하나 — 컬럼은 <b>선언 순서</b>를 지킨다. */
@@ -153,8 +165,21 @@ public final class BaselineSchema {
 			throw new IllegalStateException(table + " 의 컬럼 정의를 읽지 못했다: " + definition);
 		}
 		String name = definition.substring(0, space);
-		String rest = definition.substring(space + 1).strip().toUpperCase(Locale.ROOT);
-		return new Column(name, rest.startsWith("BIGINT"), rest.contains("PRIMARY KEY"));
+		String rest = definition.substring(space + 1).strip();
+		String upper = rest.toUpperCase(Locale.ROOT);
+		return new Column(name, upper.startsWith("BIGINT"), upper.contains("PRIMARY KEY"), defaultValue(rest));
+	}
+
+	/**
+	 * 기본값을 읽는다 — 기반선은 식 형태({@code DEFAULT ('Y')})를 쓰지만 리터럴 형태도 받아 준다.
+	 *
+	 * <p>두 형태를 다 읽는 이유: 기반선이 어느 날 리터럴 형태로 바뀌어도 <b>기본값이 조용히 사라지는</b>
+	 * 것보다는 읽히는 편이 안전하다. 어느 형태를 쓸지는 {@code BaselineMatchesCanonicalSchemaTest} 가
+	 * 따로 잠근다(LONGTEXT 는 리터럴 기본값을 가질 수 없다 — 1101).
+	 */
+	private static String defaultValue(String definition) {
+		Matcher matcher = DEFAULT_LITERAL.matcher(definition);
+		return matcher.find() ? matcher.group(1) : null;
 	}
 
 	private static String withoutComments(String sql) {

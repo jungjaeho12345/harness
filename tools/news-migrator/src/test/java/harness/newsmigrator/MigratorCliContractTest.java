@@ -6,10 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * CLI <b>계약</b> — 커맨드 이름 · 옵션 · 종료코드. 구현은 후속 step 이 채우지만 <b>계약은 지금 고정</b>한다.
@@ -83,23 +87,67 @@ class MigratorCliContractTest {
 	}
 
 	/**
-	 * 아직 구현되지 않은 커맨드는 <b>비-0</b>으로 끝나고 어느 step 이 채우는지 밝힌다.
+	 * <b>미구현 커맨드는 이제 하나도 없다</b> — step4 가 마지막 둘({@code export} · SQLite 대상
+	 * {@code verify})을 채웠다.
 	 *
-	 * <p>이 단언이 정직성 장치다 — 골격이 성공을 흉내 내면 그 순간부터 "이관이 됐다"는 거짓 신호가
-	 * 런북과 다음 step 의 전제로 흘러 들어간다. step3 이 {@code migrate} 와 MySQL {@code verify} 를
-	 * 채웠으므로 남은 것은 step4 의 둘뿐이다(목록이 줄어드는 것 자체가 진척의 기록이다).
+	 * <p>이 단언이 정직성 장치다. 뒤집힌 형태로 남긴 이유가 있다: 미구현 커맨드가 성공을 흉내 내면
+	 * "이관이 됐다"는 거짓 신호가 런북으로 흘러가고, 반대로 <b>구현된 뒤에도</b> 미구현 코드를 계속
+	 * 내면 런북이 멀쩡한 경로를 없는 것으로 읽는다. 그래서 목록을 지우지 않고 <b>방향만 뒤집어</b>
+	 * 남긴다({@link MigratorCli#EXIT_UNIMPLEMENTED} 는 뒤에 커맨드가 늘 때를 위해 예약된 채로 둔다).
 	 */
 	@Test
-	void theUnimplementedCommandsFailLoudlyAndNameTheirOwningStep() {
+	void noCommandReportsItselfAsUnimplementedAnyMore() {
 		for (String[] attempt : List.of(
-				new String[] { "verify", "--source", "news.db", "--target-sqlite", "export.db" },
-				new String[] { "export", "--target", "NEWS_MIGRATOR", "--out", "export.db" })) {
+				new String[] { "verify", "--source", "no-such-news.db", "--target-sqlite", "no-such-export.db" },
+				new String[] { "export", "--target", "NO_SUCH_KEY_SET", "--out", "no-such-export.db" })) {
 			Output output = run(attempt);
-			assertEquals(MigratorCli.EXIT_UNIMPLEMENTED, output.code(),
-					"미구현 커맨드가 성공하거나 다른 코드로 끝난다: " + String.join(" ", attempt));
-			assertTrue(output.err().contains("step"), "어느 step 이 채우는지 밝히지 않는다: " + output.err());
-			assertNotEquals(0, output.code(), "미구현이 조용한 성공이 됐다");
+			assertNotEquals(MigratorCli.EXIT_UNIMPLEMENTED, output.code(),
+					"step4 가 채운 커맨드가 아직 미구현으로 끝난다: " + String.join(" ", attempt));
+			assertNotEquals(0, output.code(), "없는 파일로 부른 커맨드가 조용한 성공이 됐다");
 		}
+		assertEquals(3, MigratorCli.EXIT_UNIMPLEMENTED, "예약된 미구현 종료코드");
+	}
+
+	/**
+	 * <b>왕복 대조도 없는 파일 앞에서 멈춘다</b> — 그리고 자격을 읽기 전이다.
+	 *
+	 * <p>{@code verify --target-sqlite} 는 자격이 아예 필요 없는 경로지만(양쪽이 파일이다) 그 사실이
+	 * "어떤 검사도 없이 시작한다"는 뜻은 아니다. 없는 산출물로 대조하면 "행이 0인데 소스도 0이라
+	 * 일치"라는 결론이 나올 수 있고, 그것이 롤백 자산에 대해 <b>가장 위험한 거짓 green</b> 이다.
+	 */
+	@Test
+	void theRoundTripComparisonStopsWhenEitherFileIsMissing(@TempDir Path directory) throws IOException {
+		Path present = Files.writeString(directory.resolve("present.db"), "not a database");
+
+		Output missingSource = run("verify", "--source", "no-such-news.db", "--target-sqlite", present.toString());
+		assertEquals(MigratorCli.EXIT_FAILURE, missingSource.code(), "없는 소스로 부른 왕복 대조가 다른 코드로 끝난다");
+		assertTrue(missingSource.err().contains("no-such-news.db"),
+				"어느 파일이 없는지 밝히지 않는다: " + missingSource.err());
+		assertFalse(missingSource.err().contains("환경변수"),
+				"자격부터 읽었다(왕복 대조는 자격이 필요 없다): " + missingSource.err());
+
+		Output missingTarget = run("verify", "--source", present.toString(), "--target-sqlite", "no-such-export.db");
+		assertEquals(MigratorCli.EXIT_FAILURE, missingTarget.code(), "없는 산출물로 부른 왕복 대조가 다른 코드로 끝난다");
+		assertTrue(missingTarget.err().contains("no-such-export.db"),
+				"어느 파일이 없는지 밝히지 않는다: " + missingTarget.err());
+	}
+
+	/**
+	 * <b>M6 의 CLI 쪽 절반</b> — 이미 있는 산출물은 <b>접속하기 전에</b> 거부한다.
+	 *
+	 * <p>순서가 중요하다. 자격을 먼저 읽으면 이 테스트는 환경변수가 실린 셸에서 <b>실제 대상 DB 에
+	 * 접속</b>하게 되고, 무엇보다 "덮어쓰지 않는다"는 판정이 접속 성공 여부에 매달리게 된다.
+	 */
+	@Test
+	void exportRefusesAnExistingOutputFileBeforeTouchingAnyCredentials(@TempDir Path directory) throws IOException {
+		Path existing = Files.writeString(directory.resolve("export.db"), "덮어쓰면 되돌릴 수 없다");
+
+		Output output = run("export", "--target", "NO_SUCH_KEY_SET", "--out", existing.toString());
+
+		assertEquals(MigratorCli.EXIT_FAILURE, output.code(), "이미 있는 산출물에 export 가 성공하거나 다른 코드로 끝난다");
+		assertTrue(output.err().contains("export.db"), "어느 파일이 이미 있는지 밝히지 않는다: " + output.err());
+		assertFalse(output.err().contains("환경변수"), "자격부터 읽었다(파일 확인이 먼저다): " + output.err());
+		assertEquals("덮어쓰면 되돌릴 수 없다", Files.readString(existing), "거부하면서 파일을 건드렸다");
 	}
 
 	/**

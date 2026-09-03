@@ -11,14 +11,14 @@ import java.util.Map;
  * 마이그레이터의 커맨드라인 <b>계약</b>.
  *
  * <h2>이 step 이 고정하는 것과 고정하지 않는 것</h2>
- * 커맨드 이름 · 옵션 · 종료코드는 <b>지금</b> 고정한다 — step4 의 AC 가
+ * 커맨드 이름 · 옵션 · 종료코드는 step2 가 <b>미리</b> 고정했다 — step4 의 AC 가
  * {@code verify --source <db> --target-sqlite <db>} 를 그대로 부르고, step7 의 계약 하네스가
  * {@code ephemeral-create}/{@code ephemeral-drop} 을 그대로 부른다. 그때 이름이 바뀌면 그 step 들의 AC
- * 문장이 거짓이 된다. 행 복사와 MySQL 대조의 <b>구현</b>은 step3 이 채웠고, 역방향 export 와 SQLite
- * 왕복 대조는 step4 가 채운다.
+ * 문장이 거짓이 된다. 행 복사와 MySQL 대조의 <b>구현</b>은 step3 이, 역방향 export 와 SQLite 왕복 대조는
+ * step4 가 채웠다 — <b>미구현으로 남은 커맨드는 이제 없다.</b>
  *
  * <h2>미구현은 조용한 성공이 되지 않는다</h2>
- * 아직 채워지지 않은 커맨드는 {@link #EXIT_UNIMPLEMENTED} 로 끝나고 어느 step 이 소유하는지 밝힌다.
+ * 채워지지 않은 커맨드는 {@link #EXIT_UNIMPLEMENTED} 로 끝나고 어느 step 이 소유하는지 밝힌다.
  * 골격이 0을 내면 그 순간부터 "이관이 됐다"는 거짓 신호가 런북과 다음 step 의 전제로 흘러 들어간다.
  *
  * <h2>자격은 argv 로 흐르지 않는다</h2>
@@ -36,7 +36,13 @@ public final class MigratorCli {
 	/** 사용법 오류(모르는 커맨드·빠진 옵션·규약 밖 값). */
 	public static final int EXIT_USAGE = 2;
 
-	/** 아직 이 step 이 채우지 않은 커맨드. <b>0이 아니다.</b> */
+	/**
+	 * 아직 채워지지 않은 커맨드. <b>0이 아니다.</b>
+	 *
+	 * <p>지금은 어느 커맨드도 이 코드를 내지 않는다(step4 가 마지막 둘을 채웠다). 그래도 <b>예약해
+	 * 둔다</b> — 뒤에 커맨드가 늘 때 골격이 성공을 흉내 내지 않게 하는 자리이고, 런북의 종료코드 표에서
+	 * 의미가 재배치되면 옛 문서가 조용히 거짓이 된다.
+	 */
 	public static final int EXIT_UNIMPLEMENTED = 3;
 
 	/**
@@ -104,7 +110,7 @@ public final class MigratorCli {
 			return switch (command) {
 				case "migrate" -> migrate(options, out);
 				case "verify" -> verify(options, out, err);
-				case "export" -> export(options, err);
+				case "export" -> export(options, out);
 				case "ephemeral-create" -> ephemeral(options, out, err, true);
 				case "ephemeral-drop" -> ephemeral(options, out, err, false);
 				default -> {
@@ -166,22 +172,52 @@ public final class MigratorCli {
 			throw new IllegalArgumentException(
 					"verify 는 대상 하나만 받습니다: --target(환경변수 키 집합) 또는 --target-sqlite(파일)");
 		}
-		if (!mysql) {
-			err.println("verify --target-sqlite 는 아직 구현되지 않았습니다 — phase 75 step4(reverse-export)가 채웁니다.");
-			return EXIT_UNIMPLEMENTED;
-		}
-		requireKeySet(options.get("--target"));
 		Path source = Path.of(options.get("--source"));
 		SourceFingerprint before = SourceFingerprint.of(source);
+		return mysql ? verifyAgainstMysql(options, source, before, out, err)
+				: verifyAgainstFile(options, source, before, out, err);
+	}
+
+	private static int verifyAgainstMysql(Map<String, String> options, Path source, SourceFingerprint before,
+			PrintStream out, PrintStream err) {
+		requireKeySet(options.get("--target"));
 		TargetCredentials target = TargetCredentials.of(options.get("--target"), System::getenv);
 
 		RowVerifier.Result result;
 		try (SqliteSource opened = SqliteSource.open(source)) {
 			result = RowVerifier.verify(opened, target);
 		}
-		Path report = RowVerifier.writeReport(result, source, target);
-		out.print(RowVerifier.render(result, source, target));
-		out.println("리포트: " + report.toAbsolutePath());
+		return report(result, source.toAbsolutePath().toString(), target.describe(), before, source, out, err);
+	}
+
+	/**
+	 * 파일 둘을 대조한다(왕복 검증) — <b>자격이 필요 없는 유일한 대조</b>다.
+	 *
+	 * <p>그래도 두 파일의 존재를 <b>열기 전에</b> 확인한다: 없는 산출물로 대조하면 "양쪽 다 0행이라 일치"
+	 * 라는 결론이 나올 수 있고, 롤백 자산에 대해 그것이 가장 위험한 거짓 green 이다.
+	 */
+	private static int verifyAgainstFile(Map<String, String> options, Path source, SourceFingerprint before,
+			PrintStream out, PrintStream err) {
+		Path targetFile = Path.of(options.get("--target-sqlite"));
+		SourceFingerprint targetBefore = SourceFingerprint.of(targetFile);
+
+		RowVerifier.Result result;
+		try (SqliteSource opened = SqliteSource.open(source); SqliteSource target = SqliteSource.open(targetFile)) {
+			result = RowVerifier.verify(opened, target);
+		}
+		int code = report(result, source.toAbsolutePath().toString(),
+				targetFile.toAbsolutePath() + " (" + targetBefore.describe() + ")", before, source, out, err);
+		targetBefore.requireUnchanged(targetFile);
+		out.println("대상 무변 확인: " + targetBefore.describe());
+		return code;
+	}
+
+	/** 리포트를 남기고 종료코드를 정한다 — <b>리포트를 남기고도 0을 내면 그 리포트는 아무도 읽지 않는다.</b> */
+	private static int report(RowVerifier.Result result, String sourceLabel, String targetLabel,
+			SourceFingerprint before, Path source, PrintStream out, PrintStream err) {
+		Path file = RowVerifier.writeReport(result, sourceLabel, targetLabel);
+		out.print(RowVerifier.render(result, sourceLabel, targetLabel));
+		out.println("리포트: " + file.toAbsolutePath());
 		before.requireUnchanged(source);
 		out.println("소스 무변 확인: " + before.describe());
 		if (!result.matched()) {
@@ -192,11 +228,27 @@ public final class MigratorCli {
 		return EXIT_OK;
 	}
 
-	private static int export(Map<String, String> options, PrintStream err) {
+	/**
+	 * MySQL 의 내용을 SQLite 파일로 내린다(역방향 · 참조용 롤백 자산).
+	 *
+	 * <p>순서가 계약이다: <b>산출물 자리 확인이 자격 조회보다 먼저</b>다. 뒤에 두면 "덮어쓰지 않는다"는
+	 * 판정이 접속 성공 여부에 매달리고, 환경변수가 실린 셸에서 실수로 부른 한 번이 실제 대상에 접속한다.
+	 */
+	private static int export(Map<String, String> options, PrintStream out) {
 		require(options, "--target", "--out");
 		requireKeySet(options.get("--target"));
-		err.println("export 는 아직 구현되지 않았습니다 — phase 75 step4(reverse-export)가 채웁니다.");
-		return EXIT_UNIMPLEMENTED;
+		Path file = Path.of(options.get("--out"));
+		SqliteExport.requireAbsent(file);
+		TargetCredentials source = TargetCredentials.of(options.get("--target"), System::getenv);
+
+		out.println("소스: " + source.describe());
+		SqliteExport.Result result = SqliteExport.export(source, file);
+		for (SqliteExport.TableExport table : result.tables()) {
+			out.println(String.format(Locale.ROOT, "  %-20s %5d행", table.table(), table.rows()));
+		}
+		out.println("내려받은 행: " + result.totalRows() + " (" + result.tables().size() + "테이블)");
+		out.println("산출물: " + result.file() + " (" + SourceFingerprint.of(result.file()).describe() + ")");
+		return EXIT_OK;
 	}
 
 	/**

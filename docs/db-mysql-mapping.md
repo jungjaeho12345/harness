@@ -341,6 +341,30 @@ V1__baseline.sql` 이 MySQL 측 스키마의 정본이고(ADR-016 ③), 위 프�
 DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버리면 동적 컬럼 목록 삽입에서
 정본과 값이 갈린다.
 
+### 6-1. 역방향(export) 매핑 — 되돌아오는 길 **[step4]**
+
+역방향 산출물은 SQLite 파일이므로 위 표를 거꾸로 읽는다. 규칙은 **둘**로 줄어든다.
+
+| MySQL | SQLite(산출물) | 근거 |
+|---|---|---|
+| `BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` | `INTEGER PRIMARY KEY` | SQLite 에서 **rowid 별칭이 되는 선언은 이것 하나뿐**이다. 다르게 적으면 채번이 달라지고 정수 자리에 문자열도 들어간다 — 글자까지 정본과 같아야 한다. |
+| `BIGINT`(`targetId`) | `INTEGER` | 같은 이유(정수 affinity 보존 — 문자열이 되면 `DistributionTarget.id` 매칭이 조용히 깨진다). |
+| `VARCHAR(768) NOT NULL PRIMARY KEY` | `VARCHAR PRIMARY KEY` | 길이 상한은 MySQL 쪽 제약이고 SQLite 에는 없다(길이 무제한). |
+| `LONGTEXT` | `VARCHAR` | 텍스트 affinity. |
+
+`DEFAULT ('Y')` 는 `DEFAULT 'Y'` 로 되돌린다(SQLite 는 리터럴 DEFAULT 를 가진다).
+
+> **표기가 한 곳에서 갈린다 — 정직하게 적는다.** 정본은 같은 뜻을 두 표기로 쓴다: `User` 는 `TEXT`,
+> 나머지 여섯 테이블은 `VARCHAR`. 그런데 기반선은 그 둘을 **모두** `LONGTEXT`/`VARCHAR(768)` 로 옮기므로
+> 역방향에는 구분이 남아 있지 않다. 되살리려면 "테이블이 `User` 면 `TEXT`" 라는 표를 손으로 적어야 하고,
+> 그 표는 정본이 바뀌면 조용히 낡는다. 그래서 **텍스트 표기를 `VARCHAR` 하나로 모았다.** SQLite 는 선언
+> 타입의 철자가 아니라 **affinity** 로 값을 다루고 `TEXT` 와 `VARCHAR` 는 둘 다 TEXT affinity 이므로
+> 저장·비교·정렬 중 무엇도 바뀌지 않는다. 방어선은 셋이다: ① `ExportSchemaTest` 가 컬럼마다 affinity 를
+> 맞추고 **정본과 표기가 다른 컬럼의 목록이 "정본이 `TEXT` 로 선언한 것들" 과 정확히 같은지**까지 계산해
+> 단언한다 ② `ExportRoundTripOnMysqlTest` 가 **실제 산출물의 카탈로그**(`PRAGMA table_info`)를 정본으로
+> 만든 DB 와 맞춰 본다 ③ 실측 — 산출물을 임시 `DATA_DIR` 에 놓고 Node 서버를 띄우면 `createSchema` 가
+> **컬럼을 하나도 추가하지 않는다**(부팅 전후 md5 동일 · 2026-09-03).
+
 ## 7. 잔여 divergence 목록 — 각 축의 **유일 방어선**
 
 | # | divergence | 계약이 보는가 | 유일 방어선(파일·메서드) |

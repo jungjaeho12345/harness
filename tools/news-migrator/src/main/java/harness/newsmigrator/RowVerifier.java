@@ -5,10 +5,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -37,10 +33,16 @@ import java.util.TreeSet;
  * <h2>행 수만 세지 않는 이유</h2>
  * 행 수 단언은 그물이 아니다 — 삭제 1건과 삽입 1건이 함께 일어나면 통과한다.
  *
+ * <h2>양쪽이 대칭이다(step4)</h2>
+ * 대조기는 저장소가 아니라 {@link ComparisonSide} 를 본다. 그래서 같은 판정 규칙이 <b>SQLite → MySQL</b>
+ * (이관 검증)에도 <b>SQLite ↔ SQLite</b>(왕복 검증)에도 그대로 쓰인다. 방향마다 대조기를 따로 두면
+ * 규칙이 두 벌이 되고, 갈리는 쪽은 언제나 덜 엄격한 쪽이다.
+ *
  * <h2>이관 원장</h2>
  * 기반선을 적용하면 정본에 없는 테이블이 하나 생긴다({@code flyway_schema_history}). 그것은
  * <b>명시적으로</b> 제외하고 그 사실을 리포트에 적는다 — "정본에 없으면 무시"로 넓히면 이관이 통째로
- * 빠뜨린 테이블도 함께 조용해진다(ADR-016 트레이드오프 ⑨).
+ * 빠뜨린 테이블도 함께 조용해진다(ADR-016 트레이드오프 ⑨). 제외는 그 이름을 가진 쪽
+ * ({@link MysqlSide})의 성질이므로, SQLite ↔ SQLite 대조에서는 제외 목록이 비어 있다.
  */
 public final class RowVerifier {
 
@@ -90,36 +92,54 @@ public final class RowVerifier {
 	}
 
 	/**
-	 * 소스와 대상을 대조한다 — <b>양쪽 모두 읽기만</b> 한다.
+	 * 소스 파일과 MySQL 대상을 대조한다(이관 검증) — <b>양쪽 모두 읽기만</b> 한다.
 	 *
 	 * @throws IllegalStateException 대조 자체를 수행할 수 없을 때(접속·질의 실패)
 	 */
 	public static Result verify(SqliteSource source, TargetCredentials target) {
+		try (MysqlSide targetSide = MysqlSide.open(target)) {
+			return verify(source, targetSide);
+		}
+	}
+
+	/**
+	 * 두 쪽을 대조한다 — <b>양쪽 모두 읽기만</b> 한다.
+	 *
+	 * <p>왕복 검증({@code news.db} ↔ 역방향 산출물)이 부르는 것이 이 형태다.
+	 *
+	 * @throws IllegalStateException 대조 자체를 수행할 수 없을 때(접속·질의 실패)
+	 */
+	public static Result verify(ComparisonSide source, ComparisonSide target) {
 		BaselineSchema schema = BaselineSchema.load();
 		List<String> problems = new ArrayList<>();
+		problems.addAll(mismatch("소스", schema.tableNames(), source.tableNames()));
+		problems.addAll(mismatch("대상", schema.tableNames(), target.tableNames()));
+
+		TreeSet<String> inSource = caseInsensitive(source.tableNames());
+		TreeSet<String> inTarget = caseInsensitive(target.tableNames());
 		List<TableResult> results = new ArrayList<>();
-		try (Connection connection = TargetCredentials.open(target)) {
-			problems.addAll(structuralProblems(source, connection, schema));
-			TreeSet<String> targetTables = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-			targetTables.addAll(tableNames(connection));
-			for (BaselineSchema.Table table : schema.tables()) {
-				if (!targetTables.contains(table.name())) {
-					results.add(new TableResult(table.name(), source.rowCount(table.name()), 0, 0,
-							List.of(new Difference(table.name(), "(테이블)", "(전체)", "대상에 테이블이 없다"))));
-					continue;
-				}
-				results.add(compare(source, connection, table));
+		for (BaselineSchema.Table table : schema.tables()) {
+			if (!inSource.contains(table.name())) {
+				results.add(new TableResult(table.name(), 0, 0, 0,
+						List.of(new Difference(table.name(), "(테이블)", "(전체)", "소스에 테이블이 없다"))));
+				continue;
 			}
+			results.add(compare(source, target, table, inTarget.contains(table.name())));
 		}
-		catch (SQLException ex) {
-			throw new IllegalStateException("대조에 실패했다: " + target.describe(), ex);
-		}
-		return new Result(List.copyOf(results), List.copyOf(problems),
-				List.of(BaselineSchema.MIGRATION_LEDGER_TABLE));
+
+		TreeSet<String> excluded = new TreeSet<>();
+		excluded.addAll(source.excludedTables());
+		excluded.addAll(target.excludedTables());
+		return new Result(List.copyOf(results), List.copyOf(problems), List.copyOf(excluded));
 	}
 
 	/** 리포트를 <b>리포 밖</b>(OS 임시 디렉토리)에 쓴다. 경로를 반환한다. */
 	public static Path writeReport(Result result, Path source, TargetCredentials target) {
+		return writeReport(result, source.toAbsolutePath().toString(), target.describe());
+	}
+
+	/** 리포트를 <b>리포 밖</b>(OS 임시 디렉토리)에 쓴다 — 양쪽을 이름으로만 받는다. */
+	public static Path writeReport(Result result, String source, String target) {
 		Path directory = Path.of(System.getProperty("java.io.tmpdir"), "news-migrator");
 		Path file = directory.resolve("verify-" + ZonedDateTime.now(ZoneOffset.UTC).format(STAMP) + ".txt");
 		try {
@@ -134,15 +154,22 @@ public final class RowVerifier {
 
 	/** 사람이 읽는 리포트 본문 — <b>길이는 싣고 값은 싣지 않는다.</b> */
 	public static String render(Result result, Path source, TargetCredentials target) {
+		return render(result, source.toAbsolutePath().toString(), target.describe());
+	}
+
+	/** 사람이 읽는 리포트 본문 — <b>길이는 싣고 값은 싣지 않는다.</b> */
+	public static String render(Result result, String source, String target) {
 		StringBuilder text = new StringBuilder();
 		text.append("news-migrator verify (phase 75 / P2)\n");
 		text.append("시각: ").append(ZonedDateTime.now(ZoneOffset.UTC)).append('\n');
-		text.append("소스: ").append(source.toAbsolutePath()).append('\n');
-		text.append("대상: ").append(target.describe()).append('\n');
+		text.append("소스: ").append(source).append('\n');
+		text.append("대상: ").append(target).append('\n');
 		text.append("판정: ").append(result.matched() ? "일치" : "불일치").append('\n');
 		text.append("대조 테이블 수: ").append(result.tables().size()).append(" · 소스 총 ").append(result.sourceRows())
 				.append("행 · 대상 총 ").append(result.targetRows()).append("행\n");
-		text.append("제외(대조 대상 아님): ").append(String.join(", ", result.excludedTables())).append('\n');
+		text.append("제외(대조 대상 아님): ")
+				.append(result.excludedTables().isEmpty() ? "없음" : String.join(", ", result.excludedTables()))
+				.append('\n');
 		text.append('\n');
 		for (TableResult table : result.tables()) {
 			text.append(String.format(Locale.ROOT, "%-20s 소스 %5d행 · 대상 %5d행 · 컬럼 %2d · 불일치 %d%n",
@@ -166,32 +193,21 @@ public final class RowVerifier {
 
 	// --- 대조 ---
 
-	private static List<String> structuralProblems(SqliteSource source, Connection connection, BaselineSchema schema)
-			throws SQLException {
-		List<String> problems = new ArrayList<>();
-		TreeSet<String> expected = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-		expected.addAll(schema.tableNames());
-
-		TreeSet<String> inSource = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-		inSource.addAll(source.tableNames());
-		problems.addAll(mismatch("소스", expected, inSource));
-
-		TreeSet<String> inTarget = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-		inTarget.addAll(tableNames(connection));
-		inTarget.remove(BaselineSchema.MIGRATION_LEDGER_TABLE);
-		problems.addAll(mismatch("대상", expected, inTarget));
-		return problems;
+	private static TreeSet<String> caseInsensitive(List<String> names) {
+		TreeSet<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+		set.addAll(names);
+		return set;
 	}
 
-	private static List<String> mismatch(String side, TreeSet<String> expected, TreeSet<String> actual) {
+	private static List<String> mismatch(String side, List<String> expectedNames, List<String> actualNames) {
+		TreeSet<String> expected = caseInsensitive(expectedNames);
+		TreeSet<String> actual = caseInsensitive(actualNames);
 		if (expected.equals(actual)) {
 			return List.of();
 		}
-		TreeSet<String> unexpected = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-		unexpected.addAll(actual);
+		TreeSet<String> unexpected = caseInsensitive(actualNames);
 		unexpected.removeAll(expected);
-		TreeSet<String> absent = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-		absent.addAll(expected);
+		TreeSet<String> absent = caseInsensitive(expectedNames);
 		absent.removeAll(actual);
 		List<String> problems = new ArrayList<>();
 		if (!unexpected.isEmpty()) {
@@ -203,66 +219,54 @@ public final class RowVerifier {
 		return problems;
 	}
 
-	private static TableResult compare(SqliteSource source, Connection connection, BaselineSchema.Table table)
-			throws SQLException {
+	/**
+	 * 테이블 하나를 대조한다 — 소스를 PK 로 색인하고 대상을 훑으며 짝을 지운다.
+	 *
+	 * <p>{@code targetHasTable} 이 거짓이면 대상 쪽은 읽지 않는다(질의가 실패할 자리다). 그래도 소스 쪽
+	 * 행 수는 세서 보고한다 — "대상에 테이블이 없다" 는 진단은 몇 행을 잃었는지까지 말해야 쓸모가 있다.
+	 */
+	private static TableResult compare(ComparisonSide source, ComparisonSide target, BaselineSchema.Table table,
+			boolean targetHasTable) {
 		List<Difference> differences = new ArrayList<>();
 		Map<String, Map<String, Object>> pending = new LinkedHashMap<>();
-		for (Map<String, Object> row : source.rows(table)) {
+		source.forEachRow(table, (row) -> {
 			Object key = row.get(table.primaryKey().name());
 			if (key == null) {
 				differences.add(new Difference(table.name(), "(NULL)", table.primaryKey().name(),
 						"소스의 PK 가 NULL 이다 — 행을 짝지을 수 없다"));
-				continue;
+				return;
 			}
 			pending.put(String.valueOf(key), row);
-		}
+		});
 		long sourceRows = pending.size() + differences.size();
+		if (!targetHasTable) {
+			differences.add(new Difference(table.name(), "(테이블)", "(전체)", "대상에 테이블이 없다"));
+			return new TableResult(table.name(), sourceRows, 0, 0, List.copyOf(differences));
+		}
 
-		long targetRows = 0;
 		List<BaselineSchema.Column> columns = table.columns();
-		String sql = "SELECT " + String.join(", ", columns.stream().map((column) -> Identifiers.quote(column.name()))
-				.toList()) + " FROM " + Identifiers.quote(table.name());
-		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
-			while (rows.next()) {
-				targetRows++;
-				Map<String, Object> targetRow = new LinkedHashMap<>();
-				for (int i = 0; i < columns.size(); i++) {
-					BaselineSchema.Column column = columns.get(i);
-					targetRow.put(column.name(),
-							CellValues.read(rows, i + 1, column, table.name() + "." + column.name()));
-				}
-				String key = String.valueOf(targetRow.get(table.primaryKey().name()));
-				Map<String, Object> sourceRow = pending.remove(key);
-				if (sourceRow == null) {
-					differences.add(new Difference(table.name(), key, "(행)", "대상에만 있는 행이다"));
-					continue;
-				}
-				for (BaselineSchema.Column column : columns) {
-					Object left = sourceRow.get(column.name());
-					Object right = targetRow.get(column.name());
-					if (!CellValues.sameBytes(left, right)) {
-						differences.add(new Difference(table.name(), key, column.name(),
-								"소스 " + CellValues.describe(left) + " ≠ 대상 " + CellValues.describe(right)));
-					}
+		long[] targetRows = { 0 };
+		target.forEachRow(table, (targetRow) -> {
+			targetRows[0]++;
+			String key = String.valueOf(targetRow.get(table.primaryKey().name()));
+			Map<String, Object> sourceRow = pending.remove(key);
+			if (sourceRow == null) {
+				differences.add(new Difference(table.name(), key, "(행)", "대상에만 있는 행이다"));
+				return;
+			}
+			for (BaselineSchema.Column column : columns) {
+				Object left = sourceRow.get(column.name());
+				Object right = targetRow.get(column.name());
+				if (!CellValues.sameBytes(left, right)) {
+					differences.add(new Difference(table.name(), key, column.name(),
+							"소스 " + CellValues.describe(left) + " ≠ 대상 " + CellValues.describe(right)));
 				}
 			}
-		}
+		});
 		for (String missing : pending.keySet()) {
 			differences.add(new Difference(table.name(), missing, "(행)", "대상에 없는 행이다"));
 		}
-		return new TableResult(table.name(), sourceRows, targetRows, columns.size(), List.copyOf(differences));
-	}
-
-	private static List<String> tableNames(Connection connection) throws SQLException {
-		List<String> names = new ArrayList<>();
-		try (Statement statement = connection.createStatement();
-				ResultSet rows = statement.executeQuery("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES"
-						+ " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'")) {
-			while (rows.next()) {
-				names.add(rows.getString(1));
-			}
-		}
-		return names;
+		return new TableResult(table.name(), sourceRows, targetRows[0], columns.size(), List.copyOf(differences));
 	}
 
 }

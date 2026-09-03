@@ -240,3 +240,58 @@ ALTER DATABASE news_stage CHARACTER SET utf8mb4 COLLATE <확정값>;
 
 DB 기본 collation 은 이후 `CREATE TABLE` 의 기본값일 뿐이고, 테이블·컬럼 collation 은 Flyway
 마이그레이션이 명시적으로 정한다(스키마 정본은 `tools/news-migrator` 다).
+
+## 9. 되돌리기 — Spring/MySQL 에서 Node/SQLite 로 (step4 초안 · step8 이 완성한다)
+
+로드맵의 되돌림 지점이다: **P3 완료 전에 문제가 생기면 Node 서버로 즉시 복귀한다(클라이언트 무변경).**
+그 복귀가 가능한 이유는 역방향 export 산출물이 **Node 서버가 실제로 여는 SQLite 파일**이기 때문이다.
+
+> **원본 `news.db` 는 지우지 않는다.** 되돌릴 때 필요한 것은 "지금 MySQL 에 있는 내용"이고, 원본은
+> 그것과 별개로 **비교 기준**으로 남는다. 이름을 바꿔 보관하라(`news.db.<날짜>.bak`) — 옮기지 말고 복사하라.
+
+① **Spring 을 정지한다.** 요청을 받는 프로세스가 없어야 아래 스냅샷이 "그 순간의 전부"다.
+
+② **지금의 MySQL 내용을 SQLite 파일로 내린다** — 리포 밖 경로에, 아직 없는 파일 이름으로.
+
+```bash
+java -jar tools/news-migrator/target/news-migrator.jar \
+  export --target NEWS_MIGRATOR --out D:/agents/rollback/news-<날짜>.db
+```
+
+③ **왕복을 확인한다**(권장). 이관 직후라면 원본과 셀 하나까지 같아야 한다 — 다르면 종료코드 **4**다.
+
+```bash
+java -jar tools/news-migrator/target/news-migrator.jar \
+  verify --source news.db --target-sqlite D:/agents/rollback/news-<날짜>.db
+```
+
+④ **그 파일을 Node 서버의 `DATA_DIR` 에 `news.db` 라는 이름으로 놓는다**(원본은 옆에 이름을 바꿔 보관).
+
+⑤ **Node 를 기동한다.**
+
+```bash
+DATA_DIR=D:/agents/rollback-data PORT=3001 node server/index.js
+```
+
+⑥ **검증 3종 — 로그인 · 목록 · 상세 1건.**
+
+```bash
+curl -s -c cookies.txt -H "Content-Type: application/json" \
+  -d '{"userId":"<계정>","password":"<비밀번호>"}' http://127.0.0.1:3001/api/login
+curl -s -b cookies.txt http://127.0.0.1:3001/api/articles
+curl -s -b cookies.txt http://127.0.0.1:3001/api/articles/<articleId>
+```
+
+**알아 둘 것 다섯**
+
+1. **`export` 는 이미 있는 파일을 덮어쓰지 않는다**(종료코드 1). 되돌림 자산을 덮어쓰는 실수는 되돌릴 수
+   없기 때문이다. 다시 내리려면 **새 이름**을 주어라.
+2. **중간에 실패하면 만들다 만 파일이 남는다.** 이 도구에는 파일을 지우거나 옮기는 경로가 없다(정적
+   게이트가 금지한다 — 그 금지가 원본 `news.db` 를 지키는 방어선이다). 사람이 치운 뒤 다시 돌려라.
+3. **산출물은 리포 밖에 만들어라.** 리포 안에 두면 `.gitignore` 의 `news.db` 규칙과 엇갈려 실데이터가
+   커밋될 수 있다.
+4. **부팅이 스키마를 고치지 않는다.** 산출물의 스키마는 정본(`src/db/schema.js`)과 동형이라 Node 의
+   `createSchema` 가 컬럼을 하나도 추가하지 않는다. 2026-09-03 실측 — 임시 `DATA_DIR` 에 놓고 서버를 띄운
+   뒤 **파일 md5 가 그대로였다**(로그인 200 · 목록 77건 · 상세 200).
+5. **되돌린 뒤에도 MySQL 은 그대로 둔다**(지우지 않는다). 원인 조사가 남아 있고, 무엇보다 이 리포의
+   최상위 규칙이다.

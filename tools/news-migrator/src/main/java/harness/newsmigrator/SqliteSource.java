@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import org.sqlite.SQLiteConfig;
 
 /**
@@ -29,7 +30,7 @@ import org.sqlite.SQLiteConfig;
  * 어렵다. 이 phase 의 완료 게이트가 "원본 바이트 무변"이므로, 그 게이트는 SQL 없이도 무너질 수 있다
  * ({@code NewsDataSource} 의 javadoc 이 같은 이유를 적는다).
  */
-public final class SqliteSource implements AutoCloseable {
+public final class SqliteSource implements ComparisonSide {
 
 	private final Path file;
 
@@ -66,6 +67,17 @@ public final class SqliteSource implements AutoCloseable {
 		return this.file;
 	}
 
+	/**
+	 * 로그·리포트에 실어도 되는 표현.
+	 *
+	 * <p>지문을 함께 싣는다 — 왕복 대조 리포트에서 "어느 파일을 봤는가" 가 경로만으로는 부족하기 때문이다
+	 * (같은 이름의 산출물이 여러 번 만들어진다). 값은 들어가지 않는다.
+	 */
+	@Override
+	public String describe() {
+		return this.file.toAbsolutePath() + " (" + this.fingerprint.describe() + ")";
+	}
+
 	/** 열기 직전에 잰 지문 — 실행이 끝나면 이 값과 같아야 한다. */
 	public SourceFingerprint fingerprint() {
 		return this.fingerprint;
@@ -77,6 +89,7 @@ public final class SqliteSource implements AutoCloseable {
 	}
 
 	/** 소스에 실제로 있는 테이블(SQLite 내부 테이블은 빼고). */
+	@Override
 	public List<String> tableNames() {
 		List<String> names = new ArrayList<>();
 		try (Statement statement = this.connection.createStatement();
@@ -145,6 +158,19 @@ public final class SqliteSource implements AutoCloseable {
 			throw new IllegalStateException("소스의 행을 읽지 못했다: " + table.name(), ex);
 		}
 		return rows;
+	}
+
+	/**
+	 * 한 테이블의 전 행을 흘려 준다 — {@link #rows(BaselineSchema.Table)} 와 같은 규칙이다.
+	 *
+	 * <p>이 쪽은 파일이고 대조기가 <b>흘려 읽는 쪽</b>으로도 <b>색인하는 쪽</b>으로도 쓴다(왕복 대조는
+	 * 양쪽이 모두 SQLite 다). 그래서 두 창구를 같은 구현 위에 둔다.
+	 */
+	@Override
+	public void forEachRow(BaselineSchema.Table table, Consumer<Map<String, Object>> handler) {
+		for (Map<String, Object> row : rows(table)) {
+			handler.accept(row);
+		}
 	}
 
 	/** 연결을 닫고 <b>원본이 그대로인지</b> 다시 잰다 — 이 클래스를 거친 모든 경로가 그 확인을 받는다. */
