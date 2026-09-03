@@ -119,13 +119,23 @@ final class SqliteFixture {
 		return row;
 	}
 
-	/** 정본 정의를 그대로 쓴 SQLite DDL — 번역하지 않는다(번역하면 무엇을 재는지 흐려진다). */
+	/**
+	 * 정본 정의를 그대로 쓴 SQLite DDL — 다만 <b>컬럼 순서는 일부러 정본과 다르게</b> 만든다.
+	 *
+	 * <p>실측이 그렇기 때문이다: 리포 {@code news.db} 의 컬럼 순서는 정본의 선언 순서와 다르다
+	 * ({@code ArticleHistory} 는 {@code snapshotTitle} 이 맨 뒤, {@code Contents} 는 {@code category} 가
+	 * 맨 뒤 — 나중에 붙은 컬럼이 {@code ALTER ... ADD COLUMN} 순서대로 뒤에 쌓였다). 픽스처를 정본 순서로
+	 * 만들면 <b>이름이 아니라 위치로 옮기는 버그가 스위트에서 보이지 않는다</b>(그리고 실기 이관에서
+	 * 값이 옆 컬럼으로 들어간다). PK 만 첫 자리에 두고 나머지는 뒤집는다.
+	 */
 	private static List<String> canonicalDdl() {
 		List<String> ddl = new ArrayList<>();
 		for (Map.Entry<String, List<CanonicalSchema.Column>> table : CanonicalSchema.load().tables().entrySet()) {
+			List<CanonicalSchema.Column> declared = table.getValue();
 			List<String> columns = new ArrayList<>();
-			for (CanonicalSchema.Column column : table.getValue()) {
-				columns.add(column.name() + " " + column.definition());
+			columns.add(declared.get(0).name() + " " + declared.get(0).definition());
+			for (int i = declared.size() - 1; i >= 1; i--) {
+				columns.add(declared.get(i).name() + " " + declared.get(i).definition());
 			}
 			ddl.add("CREATE TABLE IF NOT EXISTS " + table.getKey() + " (" + String.join(", ", columns) + ")");
 		}

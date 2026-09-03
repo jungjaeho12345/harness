@@ -118,6 +118,10 @@ class SqliteSourceTest {
 			assertEquals(0L, source.rowCount("DistributionTarget"), "빈 테이블의 행 수도 대조 대상이다");
 			assertTrue(source.columnNames("Contents").containsAll(List.of("articleId", "embargoAt", "category")),
 					"컬럼 이름을 읽지 못한다: " + source.columnNames("Contents"));
+			// 픽스처의 컬럼 순서는 정본과 달라야 한다 — 같으면 "위치로 옮기는" 버그가 스위트에서 보이지 않는다
+			// (실기 news.db 의 순서도 정본과 다르다: 나중에 ALTER 로 붙은 컬럼이 뒤에 쌓였다).
+			assertNotEquals(CanonicalSchema.load().columnNames("Contents"), source.columnNames("Contents"),
+					"픽스처가 정본과 같은 컬럼 순서다 — 이름 매핑을 검사하지 못한다");
 		}
 	}
 
