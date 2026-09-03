@@ -24,6 +24,8 @@ import { manifestFromExport } from './export.mjs';
 // 두 detailed 매니페스트의 rows 맵을 대조해 어긋난 PK 목록을 낸다.
 // 어긋남 = 한쪽에만 있는 PK 또는 양쪽에 있으나 rowChecksum이 다른 PK.
 // 정렬은 결정적이어야 한다(같은 입력 → 같은 출력): INTEGER 정규형은 BigInt 수치, 그 외 코드포인트.
+// pk-order.mjs와 달리 verify는 엔진 중립이라 pkTypeClass 문맥이 없다(매니페스트는 PK 문자열만 담는다)
+// — 그래서 typeClass 없이 항상 BigInt 파싱을 시도하는 이 2-인자 변종을 별도로 둔다(공유 불가).
 function comparePk(a, b) {
   let ba;
   let bb;
@@ -55,11 +57,23 @@ function diffPks(rowsA, rowsB) {
   return mismatched;
 }
 
+// 매니페스트가 { tables: {...} } 형태인지 검증한다. 아니면 던진다(관대한 {} 폴백 금지).
+function assertManifest(manifest, label) {
+  if (!manifest || typeof manifest !== 'object'
+    || !manifest.tables || typeof manifest.tables !== 'object') {
+    throw new Error(`invalid ${label} manifest: expected an object with a 'tables' map`);
+  }
+}
+
 // 두 매니페스트를 대조한다.
 // 반환: { ok, tables: [{ name, rowCountMatch, digestMatch, mismatchedPks?, onlyIn? }], summary }
 export function verifyManifests(sourceManifest, targetManifest) {
-  const aTables = (sourceManifest && sourceManifest.tables) || {};
-  const bTables = (targetManifest && targetManifest.tables) || {};
+  // 방어: 매니페스트가 없거나 형태가 불량(tables 객체 부재)이면 던진다 — {}로 관대하게 접으면
+  // verifyManifests(null, null)이 ok:true로 읽혀(입력 부재를 '전 행 대조 통과'로 오인) 거짓 통과가 된다.
+  assertManifest(sourceManifest, 'source');
+  assertManifest(targetManifest, 'target');
+  const aTables = sourceManifest.tables;
+  const bTables = targetManifest.tables;
 
   // 테이블 집합 대조 — 한쪽에만 있는 테이블 = 불일치. 이름 정렬로 결정적 출력.
   const names = [...new Set([...Object.keys(aTables), ...Object.keys(bTables)])].sort();

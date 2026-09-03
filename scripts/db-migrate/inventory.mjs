@@ -18,35 +18,11 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { buildCanonicalSchema } from './schema-spec.mjs';
 import { canonicalizeValue, rowChecksum } from './canonical.mjs';
+import { comparePk } from './pk-order.mjs';
 
 const INVENTORY_VERSION = 1;
 
-// PK 정규형 비교자: INTEGER PK는 BigInt 수치 비교, TEXT PK는 코드포인트 비교.
-// 엔진마다 기본 행 순서가 다르므로 순서 비의존 판정이 필수다(decisions (5)).
-function comparePk(pkTypeClass, a, b) {
-  if (pkTypeClass === 'integer') {
-    // 정규형은 십진 정수 문자열이므로 BigInt로 수치 비교. (정수 아닌 정규형은 문자열 폴백.)
-    let ba;
-    let bb;
-    try { ba = BigInt(a); } catch { ba = null; }
-    try { bb = BigInt(b); } catch { bb = null; }
-    if (ba !== null && bb !== null) {
-      if (ba < bb) return -1;
-      if (ba > bb) return 1;
-      return 0;
-    }
-  }
-  // 코드포인트 비교(astral 문자까지 결정적).
-  const ca = [...a];
-  const cb = [...b];
-  const n = Math.min(ca.length, cb.length);
-  for (let i = 0; i < n; i += 1) {
-    const da = ca[i].codePointAt(0);
-    const db = cb[i].codePointAt(0);
-    if (da !== db) return da - db;
-  }
-  return ca.length - cb.length;
-}
+// PK 정규형 비교자는 pk-order.mjs 한 곳만 쓴다(export.mjs와 동일 순서 — 라운드트립 잠금 · decisions (5)).
 
 // 소스 SQLite(읽기 전용)에서 매니페스트를 만든다.
 // detailed=false: 테이블별 { rowCount, aggregateDigest }

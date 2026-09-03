@@ -24,34 +24,12 @@ import {
 } from 'node:fs';
 import { buildCanonicalSchema } from './schema-spec.mjs';
 import { canonicalizeValue, rowChecksum } from './canonical.mjs';
+import { comparePk } from './pk-order.mjs';
 
 const EXPORT_MANIFEST_VERSION = 1;
 
-// PK 정규형 비교자: INTEGER PK는 BigInt 수치 비교, TEXT PK는 코드포인트 비교.
-// inventory.mjs와 동일한 순서 규율(decisions (5)) — 이 순서로 JSONL을 쓰므로 export→재매니페스트가
-// inventory 매니페스트와 같은 aggregateDigest를 낸다. 순서가 갈리면 라운드트립 잠금 테스트가 red다.
-function comparePk(pkTypeClass, a, b) {
-  if (pkTypeClass === 'integer') {
-    let ba;
-    let bb;
-    try { ba = BigInt(a); } catch { ba = null; }
-    try { bb = BigInt(b); } catch { bb = null; }
-    if (ba !== null && bb !== null) {
-      if (ba < bb) return -1;
-      if (ba > bb) return 1;
-      return 0;
-    }
-  }
-  const ca = [...a];
-  const cb = [...b];
-  const n = Math.min(ca.length, cb.length);
-  for (let i = 0; i < n; i += 1) {
-    const da = ca[i].codePointAt(0);
-    const db = cb[i].codePointAt(0);
-    if (da !== db) return da - db;
-  }
-  return ca.length - cb.length;
-}
+// PK 정규형 비교자는 pk-order.mjs 한 곳만 쓴다(inventory.mjs와 동일 순서). 이 순서로 JSONL을
+// 쓰므로 export→재매니페스트가 inventory 매니페스트와 같은 aggregateDigest를 낸다(라운드트립 잠금).
 
 // outDir이 이미 존재하고 비어 있지 않으면 throw(덮어쓰기/혼합 방지). 없으면 만든다.
 function ensureEmptyOutDir(outDir) {

@@ -21,7 +21,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { readdirSync, readFileSync } from 'node:fs';
+import {
+  readdirSync, readFileSync, mkdirSync, writeFileSync, rmSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -159,6 +161,44 @@ function readArgs(text, start) {
   return argsText;
 }
 
+// 줄/블록 주석을 제거한다(문자열/템플릿 리터럴 내용은 보존). readOnly 판정 전에 적용해
+// 주석 안의 `readOnly: true`가 읽기 전용으로 위장(스푸핑)하는 것을 막는다.
+function stripComments(text) {
+  let out = '';
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      i += 2;
+      while (i < n && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < n && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const q = c;
+      out += c;
+      i += 1;
+      while (i < n && text[i] !== q) {
+        if (text[i] === '\\') { out += text[i] + (text[i + 1] || ''); i += 2; continue; }
+        out += text[i];
+        i += 1;
+      }
+      out += text[i] || '';
+      i += 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
 function lineAt(text, index) {
   let line = 1;
   for (let i = 0; i < index && i < text.length; i += 1) {
@@ -175,7 +215,8 @@ function findReadWriteOpens(text) {
   let idx = text.indexOf(marker);
   while (idx !== -1) {
     const open = idx + marker.length;
-    const argsText = readArgs(text, open);
+    // 주석을 벗겨 판정한다 — 주석 안의 readOnly:true가 읽기 전용으로 위장하지 못하게 한다.
+    const argsText = stripComments(readArgs(text, open));
     const firstArgMemory = /^\s*['"]:memory:['"]/.test(argsText);
     const hasReadOnlyTrue = /readOnly\s*:\s*true/.test(argsText);
     if (!firstArgMemory && !hasReadOnlyTrue) {
@@ -190,10 +231,19 @@ function findReadWriteOpens(text) {
   return findings;
 }
 
+// 선언 범위(scripts/db-migrate/**)와 일치하도록 재귀 워크로 .js/.cjs/.mjs를 전부 모은다.
+// 플랫 스캔은 하위 디렉토리·.js/.cjs를 놓쳐 중첩 파일에 파괴 SQL을 숨길 수 있었다.
 function listScannedFiles() {
-  return readdirSync(SCAN_ROOT)
-    .filter((f) => f.endsWith('.mjs'))
-    .map((f) => path.join(SCAN_ROOT, f));
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (/\.(m?js|cjs)$/.test(entry.name)) out.push(full);
+    }
+  };
+  walk(SCAN_ROOT);
+  return out;
 }
 
 // --- A: 실제 파일 스캔 게이트 ---
@@ -311,5 +361,61 @@ test('자가증명 — readOnly 규율: 파일 경로 open은 잡고 :memory:·r
     findReadWriteOpens("const db = new DatabaseSync(':notmemory:');").length,
     1,
     ':memory: 면제가 다른 리터럴로 새어나갔다(면제가 너무 넓다)',
+  );
+});
+
+// --- C: 스캔 범위 = 선언된 scripts/db-migrate/** (재귀 · .js/.cjs/.mjs) ---
+
+test('스캔은 재귀적이고 .js/.cjs/.mjs를 포함한다 — 중첩 파일의 파괴 토큰도 잡힌다', () => {
+  // 게이트의 선언 범위는 scripts/db-migrate/** 전체다. 플랫 readdir(+.mjs만)은 하위 디렉토리와
+  // .js/.cjs 파일을 놓쳐 선언 범위보다 좁았다 — 중첩 파일에 파괴 SQL을 숨길 수 있었다.
+  const subdir = path.join(SCAN_ROOT, '__gate_scope_probe__');
+  const nestedMjs = path.join(subdir, 'evil.mjs');
+  const nestedJs = path.join(subdir, 'evil.js');
+  mkdirSync(subdir, { recursive: true });
+  try {
+    writeFileSync(nestedMjs, "db.exec('DROP TABLE User');\n", 'utf8');
+    writeFileSync(nestedJs, "db.exec('DELETE FROM Contents');\n", 'utf8');
+
+    const scanned = listScannedFiles();
+    assert.ok(scanned.includes(nestedMjs), '중첩 .mjs가 스캔 목록에 포함된다(재귀 워크)');
+    assert.ok(scanned.includes(nestedJs), '중첩 .js가 스캔 목록에 포함된다(.js 확장자)');
+
+    // 스캔이 실제로 중첩 파일의 파괴 토큰을 잡는다(비공허).
+    const offenders = [];
+    for (const file of scanned) {
+      const text = readFileSync(file, 'utf8');
+      for (const f of findForbiddenInStrings(text)) offenders.push({ file, token: f.token });
+    }
+    assert.ok(
+      offenders.some((o) => o.file === nestedMjs && o.token === 'DROP'),
+      '중첩 .mjs의 DROP을 잡는다',
+    );
+    assert.ok(
+      offenders.some((o) => o.file === nestedJs && o.token === 'DELETE'),
+      '중첩 .js의 DELETE를 잡는다',
+    );
+  } finally {
+    rmSync(subdir, { recursive: true, force: true });
+  }
+});
+
+test('자가증명 — 주석 안의 readOnly:true는 인정하지 않는다(주석 스푸핑 방지)', () => {
+  // 파일-경로 open 인자에서 유일한 readOnly:true가 주석 안에 있으면 읽기 전용이 아니다.
+  assert.equal(
+    findReadWriteOpens('const db = new DatabaseSync(sourcePath /* readOnly: true */);').length,
+    1,
+    '블록 주석 안의 readOnly:true는 읽기 전용으로 인정되면 안 된다(주석 스푸핑)',
+  );
+  assert.equal(
+    findReadWriteOpens('const db = new DatabaseSync(sourcePath, {\n  // readOnly: true\n});').length,
+    1,
+    '줄 주석 안의 readOnly:true는 읽기 전용으로 인정되면 안 된다(주석 스푸핑)',
+  );
+  // 진짜 코드 { readOnly: true }는 여전히 통과.
+  assert.equal(
+    findReadWriteOpens('const db = new DatabaseSync(sourcePath, { readOnly: true });').length,
+    0,
+    '진짜 코드의 readOnly:true는 통과한다',
   );
 });

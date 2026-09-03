@@ -213,6 +213,27 @@ test('verify: CLI가 일치에 exit 0, 불일치에 exit 1 (운영 게이트 계
   }
 });
 
+// 항목 9 — 방어: null/유효하지 않은 매니페스트는 던진다(거짓 ok:true 방지).
+// 이전엔 null 매니페스트를 {}로 취급해 verifyManifests(null, null)이 ok:true였다 — 두 소스가
+// '없음'인데 '전 행 대조 통과'로 읽히는 거짓 통과다. 게이트는 입력 부재에 침묵하면 안 된다.
+test('verify: null/undefined 매니페스트는 던진다 (거짓 ok:true 방지)', () => {
+  assert.throws(() => verifyManifests(null, null), /manifest/i, 'null 매니페스트는 던진다');
+  assert.throws(
+    () => verifyManifests({ tables: {} }, null),
+    /manifest/i,
+    '한쪽만 null이어도 던진다',
+  );
+  assert.throws(
+    () => verifyManifests(null, { tables: {} }),
+    /manifest/i,
+    '한쪽만 null이어도 던진다',
+  );
+  // tables 필드가 없는(형태 불량) 매니페스트도 던진다.
+  assert.throws(() => verifyManifests({}, {}), /manifest/i, 'tables 없는 매니페스트는 던진다');
+  // 정상 매니페스트 쌍(빈 tables 포함)은 던지지 않는다.
+  assert.doesNotThrow(() => verifyManifests({ tables: {} }, { tables: {} }));
+});
+
 // 항목 8 — --sources 플래그로 두 경로에서 매니페스트를 만들어 대조(일치 exit 0).
 test('verify: CLI --sources 로 두 소스를 직접 대조 (일치 exit 0)', () => {
   const a = makeSource(seedFull);
