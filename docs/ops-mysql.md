@@ -86,9 +86,17 @@ NEWS_CT_MYSQL_PASSWORD=__CHANGE_ME_CT__
 
 ### 셸에 싣는 법
 
+> ⚠ **`. 파일` 로 읽지 마라**(2026-09-03 실측 함정). URL 값에 `&` 가 들어 있어 셸이 그 지점에서 명령을
+> 백그라운드로 끊는다 — 그 결과 `NEWS_*_URL` 세 개가 **조용히 빈 값**이 되고, 테스트는 "환경변수가
+> 없다"로 죽는다(원인은 파일이 아니라 읽는 방법이다). 값을 따옴표로 감싸는 방법도 있지만, 사람이
+> 편집하는 파일에 그 규율을 요구하는 대신 **읽는 쪽이 방어**한다. CRLF 파일의 끝 캐리지리턴도 함께 지운다.
+
 ```bash
-# Git Bash
-set -a; . /d/agents/secrets/news-mysql.env; set +a
+# Git Bash — 값에 & ? ; 가 있어도, CRLF 파일이어도 안전하다
+while IFS='=' read -r k v || [ -n "$k" ]; do
+  case "$k" in ''|'#'*) continue;; esac
+  export "$k=${v%$'\r'}"
+done < /d/agents/secrets/news-mysql.env
 ```
 
 ```powershell
@@ -157,6 +165,15 @@ Get-Content D:/agents/secrets/news-mysql.env |
 **4·5 가 이 검증의 핵심이다.** 같은 DB·같은 자격에서 한쪽은 성공하고 한쪽은 거부돼야 한다.
 다른 DB 에서 거부를 확인하면 애초에 권한이 0 이라 아무것도 증명하지 못한다(공허한 green).
 
+> **실행 기록(2026-09-03)**: 부트스트랩이 실행됐고 세 계정이 전부 붙는다. `news_ct` 는
+> `harness_ct_<16hex>` DB 를 **스스로 만들고 지울 수 있다**(CREATE → CREATE TABLE → INSERT → SELECT →
+> DROP DATABASE 왕복 성공) — open question (3) 이 이것으로 닫혔고 임시 DB 풀 방식은 필요 없다.
+> `news_app` 의 실측 grant 는 `SELECT,INSERT,UPDATE` on `news`·`news_stage`·`news_grant_probe` 와
+> **`DELETE ON news_grant_probe.receiverconfig`** 다(테이블 이름이 소문자로 붙는다 — `lower_case_table_names=1`).
+> **§7 의 `news`·`news_stage` 삭제 예외는 아직 붙지 않았다** — 테이블이 없어 `ERROR 1146` 이고 그것이
+> 예정된 동작이다. step3 이 Flyway 로 스키마를 세운 뒤 §7 을 실행해 붙인다.
+> 세션 실측값 9종은 `docs/db-mysql-mapping.md` §2 에 표로 있다(`my.ini` 추론값과 전건 일치).
+
 ### 세션 실측 (설정 파일 읽기로 대신하지 마라)
 
 `my.ini` 에 적힌 값과 세션에 실제 적용된 값은 다를 수 있다. **세션값이 정본이다.**
@@ -191,10 +208,19 @@ step3 이 `news_stage` 에 스키마를 만든 **뒤에** 같은 파일을 한 �
 `GRANT DELETE ON `news_stage`.`receiverconfig` TO ...` 줄이 보이면 완료다.
 이 grant 가 없으면 step6·step7 에서 수신설정 삭제 라우트가 권한 오류로 무너져 계약 패리티가 깨진다.
 
-## 8. collation 은 아직 확정이 아니다
+## 8. collation — **확정됐다**(step1 실측, 2026-09-03)
 
-부트스트랩은 `utf8mb4_0900_bin` 으로 DB 를 만든다 — **step1 의 실측이 확정할 때까지의 후보**다.
-확정값이 다르면 **root 재실행이 필요 없다**(`news_migrator` 가 ALTER 를 가진다):
+```
+CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin
+```
+
+부트스트랩이 만든 값 그대로이므로 **아무것도 고칠 필요가 없다.** 근거와 후보 3종의 전 축 비교는
+`docs/db-mysql-mapping.md` §3 축 3·4·5 · §4 에 있다. 요약: `utf8mb4_0900_bin` 만이 `=`(보안 축)와
+`ORDER BY` 에서 SQLite BINARY 와 **완전 일치**한다. `utf8mb4_bin` 은 PAD SPACE 라 후행 공백을 무시하고
+(`'x' = 'x '` 가 참이다 — 인증 축 붕괴), `utf8mb4_0900_ai_ci` 는 대소문자·전각·자모를 무시한다.
+대가는 `LIKE` 대소문자 divergence 이고 그것을 감수하기로 판정했다.
+
+만약 뒤에 값을 바꿀 일이 생겨도 **root 재실행이 필요 없다**(`news_migrator` 가 ALTER 를 가진다):
 
 ```sql
 ALTER DATABASE news       CHARACTER SET utf8mb4 COLLATE <확정값>;
