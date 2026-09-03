@@ -1,0 +1,703 @@
+{
+  "generatedFrom": "src/db/schema.js",
+  "tables": [
+    {
+      "columns": [
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "userId",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "name",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "password",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "role",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "department",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "departmentCode",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": "'Y'",
+          "name": "active",
+          "notNull": false,
+          "ordinal": 6,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": "'0'",
+          "name": "failedLoginCount",
+          "notNull": false,
+          "ordinal": 7,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "lockedUntil",
+          "notNull": false,
+          "ordinal": 8,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "TEXT",
+          "defaultValue": null,
+          "name": "lastFailedLoginAt",
+          "notNull": false,
+          "ordinal": 9,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "User",
+      "primaryKey": "userId"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "articleId",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "title",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "content",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "markupVersion",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "modifier",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "Article",
+      "primaryKey": "articleId"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "articleId",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "title",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "content",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "author",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "modifier",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "sender",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "department",
+          "notNull": false,
+          "ordinal": 6,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "departmentCode",
+          "notNull": false,
+          "ordinal": 7,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "createdAt",
+          "notNull": false,
+          "ordinal": 8,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "editedAt",
+          "notNull": false,
+          "ordinal": 9,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "sentAt",
+          "notNull": false,
+          "ordinal": 10,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "distributedAt",
+          "notNull": false,
+          "ordinal": 11,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "embargoAt",
+          "notNull": false,
+          "ordinal": 12,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "secondEmbargoAt",
+          "notNull": false,
+          "ordinal": 13,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "status",
+          "notNull": false,
+          "ordinal": 14,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": "'N'",
+          "name": "lockYN",
+          "notNull": false,
+          "ordinal": 15,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "lockerUserId",
+          "notNull": false,
+          "ordinal": 16,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "lockerSessionId",
+          "notNull": false,
+          "ordinal": 17,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "lockerClientId",
+          "notNull": false,
+          "ordinal": 18,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "lockedAt",
+          "notNull": false,
+          "ordinal": 19,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "coAuthor",
+          "notNull": false,
+          "ordinal": 20,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "category",
+          "notNull": false,
+          "ordinal": 21,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "region",
+          "notNull": false,
+          "ordinal": 22,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "attribute",
+          "notNull": false,
+          "ordinal": 23,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "keyword",
+          "notNull": false,
+          "ordinal": 24,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "internalComment",
+          "notNull": false,
+          "ordinal": 25,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "externalComment",
+          "notNull": false,
+          "ordinal": 26,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "attachmentFile",
+          "notNull": false,
+          "ordinal": 27,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "referenceFile",
+          "notNull": false,
+          "ordinal": 28,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "Contents",
+      "primaryKey": "articleId"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "INTEGER",
+          "defaultValue": null,
+          "name": "id",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "integer"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "articleId",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "eventType",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "action",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "fromStatus",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "toStatus",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "actorUserId",
+          "notNull": false,
+          "ordinal": 6,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "createdAt",
+          "notNull": false,
+          "ordinal": 7,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "markupVersion",
+          "notNull": false,
+          "ordinal": 8,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "snapshotTitle",
+          "notNull": false,
+          "ordinal": 9,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "INTEGER",
+          "defaultValue": null,
+          "name": "targetId",
+          "notNull": false,
+          "ordinal": 10,
+          "typeClass": "integer"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "reason",
+          "notNull": false,
+          "ordinal": 11,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "ArticleHistory",
+      "primaryKey": "id"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "INTEGER",
+          "defaultValue": null,
+          "name": "id",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "integer"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "sourceId",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "type",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "name",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "host",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "port",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "username",
+          "notNull": false,
+          "ordinal": 6,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "password",
+          "notNull": false,
+          "ordinal": 7,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "apiEndpoint",
+          "notNull": false,
+          "ordinal": 8,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "apiKey",
+          "notNull": false,
+          "ordinal": 9,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": "'Y'",
+          "name": "active",
+          "notNull": false,
+          "ordinal": 10,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "createdAt",
+          "notNull": false,
+          "ordinal": 11,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "ReceiverConfig",
+      "primaryKey": "id"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "INTEGER",
+          "defaultValue": null,
+          "name": "id",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "integer"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "name",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "kind",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "spoolDir",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": "'Y'",
+          "name": "active",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "createdAt",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "updatedAt",
+          "notNull": false,
+          "ordinal": 6,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "DistributionTarget",
+      "primaryKey": "id"
+    },
+    {
+      "columns": [
+        {
+          "declaredType": "INTEGER",
+          "defaultValue": null,
+          "name": "id",
+          "notNull": false,
+          "ordinal": 0,
+          "typeClass": "integer"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "src",
+          "notNull": false,
+          "ordinal": 1,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "caption",
+          "notNull": false,
+          "ordinal": 2,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "sourceArticleId",
+          "notNull": false,
+          "ordinal": 3,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "registeredBy",
+          "notNull": false,
+          "ordinal": 4,
+          "typeClass": "text"
+        },
+        {
+          "declaredType": "VARCHAR",
+          "defaultValue": null,
+          "name": "createdAt",
+          "notNull": false,
+          "ordinal": 5,
+          "typeClass": "text"
+        }
+      ],
+      "indexes": [],
+      "name": "Photo",
+      "primaryKey": "id"
+    }
+  ],
+  "version": 1
+}
