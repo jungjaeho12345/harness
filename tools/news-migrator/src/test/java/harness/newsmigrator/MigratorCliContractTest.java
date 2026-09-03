@@ -85,14 +85,13 @@ class MigratorCliContractTest {
 	/**
 	 * 아직 구현되지 않은 커맨드는 <b>비-0</b>으로 끝나고 어느 step 이 채우는지 밝힌다.
 	 *
-	 * <p>이 단언이 이 step 의 정직성 장치다 — 골격이 성공을 흉내 내면 그 순간부터 "이관이 됐다"는
-	 * 거짓 신호가 런북과 다음 step 의 전제로 흘러 들어간다.
+	 * <p>이 단언이 정직성 장치다 — 골격이 성공을 흉내 내면 그 순간부터 "이관이 됐다"는 거짓 신호가
+	 * 런북과 다음 step 의 전제로 흘러 들어간다. step3 이 {@code migrate} 와 MySQL {@code verify} 를
+	 * 채웠으므로 남은 것은 step4 의 둘뿐이다(목록이 줄어드는 것 자체가 진척의 기록이다).
 	 */
 	@Test
 	void theUnimplementedCommandsFailLoudlyAndNameTheirOwningStep() {
 		for (String[] attempt : List.of(
-				new String[] { "migrate", "--source", "news.db", "--target", "NEWS_MIGRATOR" },
-				new String[] { "verify", "--source", "news.db", "--target", "NEWS_MIGRATOR" },
 				new String[] { "verify", "--source", "news.db", "--target-sqlite", "export.db" },
 				new String[] { "export", "--target", "NEWS_MIGRATOR", "--out", "export.db" })) {
 			Output output = run(attempt);
@@ -101,6 +100,36 @@ class MigratorCliContractTest {
 			assertTrue(output.err().contains("step"), "어느 step 이 채우는지 밝히지 않는다: " + output.err());
 			assertNotEquals(0, output.code(), "미구현이 조용한 성공이 됐다");
 		}
+	}
+
+	/**
+	 * <b>구현된 커맨드는 없는 소스를 만나면 접속하기 <em>전에</em> 멈춘다.</b>
+	 *
+	 * <p>순서가 중요하다: 자격을 먼저 읽으면 이 테스트는 환경변수가 실린 셸에서 <b>실제 대상 DB 에
+	 * 접속</b>하게 된다. 계약 테스트가 스테이징을 건드리는 일은 없어야 하고, 그와 별개로 "경로 오타가
+	 * 빈 DB 를 만들어 0행 이관 성공으로 끝나는" 사고의 첫 관문이 여기다.
+	 */
+	@Test
+	void migrateAndVerifyStopOnAMissingSourceBeforeTouchingAnyCredentials() {
+		for (String[] attempt : List.of(
+				new String[] { "migrate", "--source", "no-such-news.db", "--target", "NO_SUCH_KEY_SET" },
+				new String[] { "verify", "--source", "no-such-news.db", "--target", "NO_SUCH_KEY_SET" })) {
+			Output output = run(attempt);
+			assertEquals(MigratorCli.EXIT_FAILURE, output.code(),
+					"없는 소스로 부른 커맨드가 다른 코드로 끝난다: " + String.join(" ", attempt));
+			assertTrue(output.err().contains("no-such-news.db"), "어느 파일이 없는지 밝히지 않는다: " + output.err());
+			assertFalse(output.err().contains("환경변수"), "자격부터 읽었다(소스 확인이 먼저다): " + output.err());
+		}
+	}
+
+	/** 대조 결과를 나타내는 종료코드는 "못 돌렸다"와 구분된다 — 런북의 처방이 다르다. */
+	@Test
+	void theMismatchExitCodeIsDistinctFromEveryOtherOutcome() {
+		assertEquals(4, MigratorCli.EXIT_MISMATCH, "불일치 종료코드");
+		assertEquals(List.of(0, 1, 2, 3, 4).size(),
+				List.of(MigratorCli.EXIT_OK, MigratorCli.EXIT_FAILURE, MigratorCli.EXIT_USAGE,
+						MigratorCli.EXIT_UNIMPLEMENTED, MigratorCli.EXIT_MISMATCH).stream().distinct().toList().size(),
+				"종료코드가 겹친다 — 런북이 결과를 구분할 수 없다");
 	}
 
 	/** 각 커맨드의 <b>필수 옵션</b>이 빠지면 사용법 오류다(옵션을 조용히 기본값으로 채우지 않는다). */

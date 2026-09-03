@@ -1,8 +1,10 @@
 package harness.newsmigrator;
 
 import java.io.PrintStream;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -12,8 +14,8 @@ import java.util.Map;
  * 커맨드 이름 · 옵션 · 종료코드는 <b>지금</b> 고정한다 — step4 의 AC 가
  * {@code verify --source <db> --target-sqlite <db>} 를 그대로 부르고, step7 의 계약 하네스가
  * {@code ephemeral-create}/{@code ephemeral-drop} 을 그대로 부른다. 그때 이름이 바뀌면 그 step 들의 AC
- * 문장이 거짓이 된다. 반면 행 복사·대조·역방향 export 의 <b>구현</b>은 이 step 의 범위가 아니다
- * (step3·step4가 소유한다).
+ * 문장이 거짓이 된다. 행 복사와 MySQL 대조의 <b>구현</b>은 step3 이 채웠고, 역방향 export 와 SQLite
+ * 왕복 대조는 step4 가 채운다.
  *
  * <h2>미구현은 조용한 성공이 되지 않는다</h2>
  * 아직 채워지지 않은 커맨드는 {@link #EXIT_UNIMPLEMENTED} 로 끝나고 어느 step 이 소유하는지 밝힌다.
@@ -36,6 +38,12 @@ public final class MigratorCli {
 
 	/** 아직 이 step 이 채우지 않은 커맨드. <b>0이 아니다.</b> */
 	public static final int EXIT_UNIMPLEMENTED = 3;
+
+	/**
+	 * 대조는 끝까지 돌았고 <b>불일치를 찾았다</b>. {@link #EXIT_FAILURE}(대조를 못 돌렸다)와 구분한다 —
+	 * 런북에서 "데이터가 다르다"와 "확인하지 못했다"는 전혀 다른 처방으로 이어진다.
+	 */
+	public static final int EXIT_MISMATCH = 4;
 
 	/** 커맨드 집합(순서까지 계약이다 — 사용법 출력이 이 순서로 나온다). */
 	public static final List<String> COMMANDS =
@@ -94,8 +102,8 @@ public final class MigratorCli {
 
 		try {
 			return switch (command) {
-				case "migrate" -> migrate(options, err);
-				case "verify" -> verify(options, err);
+				case "migrate" -> migrate(options, out);
+				case "verify" -> verify(options, out, err);
 				case "export" -> export(options, err);
 				case "ephemeral-create" -> ephemeral(options, out, err, true);
 				case "ephemeral-drop" -> ephemeral(options, out, err, false);
@@ -117,14 +125,40 @@ public final class MigratorCli {
 
 	// --- 커맨드 ---
 
-	private static int migrate(Map<String, String> options, PrintStream err) {
+	/**
+	 * 소스의 전 행을 대상으로 옮긴다.
+	 *
+	 * <p>순서가 계약이다: <b>소스 파일 확인이 자격 조회보다 먼저</b>다. 경로가 틀렸는데 접속부터 하면
+	 * 대상 DB 를 열어 둔 채로 실패하고, 무엇보다 "없는 소스로 0행을 옮겼다"는 경로가 열린다.
+	 */
+	private static int migrate(Map<String, String> options, PrintStream out) {
 		require(options, "--source", "--target");
 		requireKeySet(options.get("--target"));
-		err.println("migrate 는 아직 구현되지 않았습니다 — phase 75 step3(row-copy-verify)이 채웁니다.");
-		return EXIT_UNIMPLEMENTED;
+		Path source = Path.of(options.get("--source"));
+		SourceFingerprint before = SourceFingerprint.of(source);
+		TargetCredentials target = TargetCredentials.of(options.get("--target"), System::getenv);
+
+		out.println("소스: " + source.toAbsolutePath() + " (" + before.describe() + ")");
+		out.println("대상: " + target.describe());
+		RowCopier.Result result;
+		try (SqliteSource opened = SqliteSource.open(source)) {
+			result = RowCopier.migrate(opened, target);
+		}
+		for (RowCopier.TableCopy table : result.tables()) {
+			out.println(String.format(Locale.ROOT, "  %-20s %5d행%s", table.table(), table.rows(),
+					(table.nextAutoIncrement() == null) ? "" : " · 다음 id " + table.nextAutoIncrement()));
+		}
+		out.println("옮긴 행: " + result.totalRows() + " (" + result.tables().size() + "테이블)");
+		before.requireUnchanged(source);
+		out.println("소스 무변 확인: " + before.describe());
+		return EXIT_OK;
 	}
 
-	private static int verify(Map<String, String> options, PrintStream err) {
+	/**
+	 * 소스와 대상을 대조한다. 불일치가 하나라도 있으면 {@link #EXIT_MISMATCH} 로 끝난다 — 리포트를 남기고도
+	 * 0을 내면 그 리포트는 아무도 읽지 않는다.
+	 */
+	private static int verify(Map<String, String> options, PrintStream out, PrintStream err) {
 		require(options, "--source");
 		boolean mysql = options.containsKey("--target");
 		boolean sqlite = options.containsKey("--target-sqlite");
@@ -132,12 +166,30 @@ public final class MigratorCli {
 			throw new IllegalArgumentException(
 					"verify 는 대상 하나만 받습니다: --target(환경변수 키 집합) 또는 --target-sqlite(파일)");
 		}
-		if (mysql) {
-			requireKeySet(options.get("--target"));
+		if (!mysql) {
+			err.println("verify --target-sqlite 는 아직 구현되지 않았습니다 — phase 75 step4(reverse-export)가 채웁니다.");
+			return EXIT_UNIMPLEMENTED;
 		}
-		err.println("verify 는 아직 구현되지 않았습니다 — MySQL 대조는 phase 75 step3, "
-				+ "SQLite 왕복 대조는 step4(reverse-export)가 채웁니다.");
-		return EXIT_UNIMPLEMENTED;
+		requireKeySet(options.get("--target"));
+		Path source = Path.of(options.get("--source"));
+		SourceFingerprint before = SourceFingerprint.of(source);
+		TargetCredentials target = TargetCredentials.of(options.get("--target"), System::getenv);
+
+		RowVerifier.Result result;
+		try (SqliteSource opened = SqliteSource.open(source)) {
+			result = RowVerifier.verify(opened, target);
+		}
+		Path report = RowVerifier.writeReport(result, source, target);
+		out.print(RowVerifier.render(result, source, target));
+		out.println("리포트: " + report.toAbsolutePath());
+		before.requireUnchanged(source);
+		out.println("소스 무변 확인: " + before.describe());
+		if (!result.matched()) {
+			err.println("대조 불일치 " + result.differences().size() + "건 · 구조 문제 "
+					+ result.structuralProblems().size() + "건 — 리포트를 보세요.");
+			return EXIT_MISMATCH;
+		}
+		return EXIT_OK;
 	}
 
 	private static int export(Map<String, String> options, PrintStream err) {
