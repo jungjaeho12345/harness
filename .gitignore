@@ -28,6 +28,11 @@ instance-lock.db-journal
 phases/**/phase*-output.json
 phases/**/step*-output.json
 
+# 마이그레이터 모듈(phase 75) 빌드 산출물 — server-spring/.gitignore 와 같은 규율이다.
+# maven wrapper 는 스크립트만 커밋한다(jar 는 실행 시 캐시에서 온다).
+tools/news-migrator/target/
+tools/news-migrator/.mvn/wrapper/maven-wrapper.jar
+
 # python 바이트코드 캐시 (하네스 실행기)
 __pycache__/
 *.pyc

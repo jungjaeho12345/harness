@@ -166,9 +166,15 @@ Node `node:sqlite` 가 `2.0` 을 `"2.0"` 으로 저장한다는 74 이월 실측
 
 `max_allowed_packet` = 67,108,864 이라 이 크기는 여유롭게 들어간다(테스트가 부등식을 단언한다).
 
-> **step2(Flyway V1) 에 넘기는 항목**: 정본이 선언하는 `DEFAULT 'Y'`(`active`·`lockYN`)·`DEFAULT '0'`
-> (`failedLoginCount`) 를 **식 DEFAULT 로 옮길지, 애플리케이션에 맡길지**. 리터럴 DEFAULT 는 물리적으로
-> 불가능하다는 것이 위 실측이다.
+> **[step2 에서 닫힘] 결정: 식 DEFAULT 로 옮긴다.** 정본이 선언하는 `DEFAULT 'Y'`(`User.active`·
+> `ReceiverConfig.active`·`DistributionTarget.active`)·`DEFAULT 'N'`(`Contents.lockYN`)·`DEFAULT '0'`
+> (`User.failedLoginCount`) **5건 전부**를 `DEFAULT ('Y')` 형태로 기반선에 싣는다. 리터럴 DEFAULT 가
+> 물리적으로 불가능하다는 것이 위 실측이고, **버리는 선택지는 실측으로 탈락했다**: 이 리포의 삽입문은
+> 전부 **동적 컬럼 목록**을 만들어(`UserRepository` 104행 · `ReceiverConfigRepository` 126행 …) 값이 없는
+> 컬럼이 문장에서 빠진다. 정본에서 `'Y'` 로 채워지는 그 자리가 MySQL 에서만 `NULL` 이 되면 **이관이 동작을
+> 바꾼다**. 방어선은 정적 대조 하나와 행동 측정 하나다 — `BaselineMatchesCanonicalSchemaTest`(정본의
+> DEFAULT 5건이 식 형태로 그대로 옮겨졌는가) · `FlywayBaselineOnMysqlTest`(값 없이 삽입한 컬럼이 두
+> 엔진에서 같은 값인가 — `active='Y'` · `failedLoginCount='0'` · `lockYN='N'` 실측 일치).
 
 ### 축 8 — 길이 초과 = **수락 vs 거부** (`IdentityAndSizeProbeTest.axis8_*`)
 
@@ -326,8 +332,14 @@ Node `node:sqlite` 가 `2.0` 을 `"2.0"` 으로 저장한다는 74 이월 실측
 이 매핑으로 **7테이블 전부가 실제로 생성되고 무인용 SQL 로 조회된다**는 것을 테스트가 매번 확인한다
 (`CatalogSemanticsProbeTest`). 즉 이 표는 "적어 놓은 계획"이 아니라 **실행되는 코드**다.
 
-`DEFAULT` 절은 옮기지 않았다 — `LONGTEXT` 는 리터럴 DEFAULT 를 못 가진다(1101). 식 DEFAULT 로 옮길지
-애플리케이션에 맡길지는 **step2(Flyway V1) 의 결정**이다.
+**[step2] 이 표는 이제 파일 하나로 실체화됐다** — `tools/news-migrator/src/main/resources/db/migration/
+V1__baseline.sql` 이 MySQL 측 스키마의 정본이고(ADR-016 ③), 위 프로브도 **그 파일을 읽어** 스키마를
+세운다(스키마가 두 벌이면 반드시 갈린다). 기반선과 `src/db/schema.js` 의 컬럼 이름·선언 순서·타입·
+기본값 대조는 `BaselineMatchesCanonicalSchemaTest` 가 규칙으로 계산해서 한다(사람 눈 대조 금지).
+
+`DEFAULT` 절은 **식 형태로 옮겼다**(`DEFAULT ('Y')` — 위 축 7 의 결정 상자를 보라). `LONGTEXT` 는 리터럴
+DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버리면 동적 컬럼 목록 삽입에서
+정본과 값이 갈린다.
 
 ## 7. 잔여 divergence 목록 — 각 축의 **유일 방어선**
 
@@ -363,9 +375,22 @@ Node `node:sqlite` 가 `2.0` 을 `"2.0"` 으로 저장한다는 74 이월 실측
 | `db/dialect/ValueSemanticsProbeTest.java` | 1 · 2 · 9 | 3 |
 | `db/dialect/CollationSemanticsProbeTest.java` | 3 · 4 · 5 | 5 |
 | `db/dialect/IdentityAndSizeProbeTest.java` | 6 · 7 · 8 | 5 |
-| `db/dialect/CatalogSemanticsProbeTest.java` | 10 · 12 | 3 |
+| `db/dialect/CatalogSemanticsProbeTest.java` | 10 · 12 · **기반선 단일 출처(step2)** | **4** |
 | `db/dialect/ConnectionSemanticsProbeTest.java` | 11 | 4 |
-| **합계** | | **27** |
+| **합계** | | **28** |
+
+**[step2] 마이그레이터 모듈 쪽 방어선**(`tools/news-migrator` — 별도 Maven 프로젝트라 위 스위트와 함께
+돌지 않는다. `cd tools/news-migrator && ./mvnw -B clean verify`):
+
+| 파일 | 무엇을 지키는가 | 테스트 수 |
+|---|---|---|
+| `MigratorHasNoDestructiveSqlTest.java` | 파괴 경로 정적 게이트(**SQL 군 + API 군**)·예외 1파일 | 13 |
+| `BaselineMatchesCanonicalSchemaTest.java` | 기반선 ↔ `src/db/schema.js` 기계 대조 | 6 |
+| `FlywayBaselineOnMysqlTest.java` | 실제 적용·멱등·**`clean()` 거부**·DEFAULT 동작·인덱스 0 | 7 |
+| `EphemeralDatabaseTest.java` | 임시 DB 이름 규약·왕복·보호 대상 거부 | 6 |
+| `MigratorCliContractTest.java` | CLI 계약(커맨드·옵션·종료코드·자격 argv 금지) | 10 |
+| `TargetCredentialsTest.java` | 환경변수 전용 자격·비밀 미노출 | 7 |
+| **합계** | | **49** |
 
 `MysqlConfiguredGuardTest` 는 환경변수가 없으면 **skip 이 아니라 fail** 한다(decisions (14)) —
 조용한 skip 은 이 phase 의 모든 게이트를 공허하게 만든다. 대가는 이 모듈의 `mvnw verify` 가 MySQL

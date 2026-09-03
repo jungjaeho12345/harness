@@ -49,9 +49,9 @@ class CatalogSemanticsProbeTest {
 	static void openMysql() throws SQLException {
 		mysql = EphemeralMysqlDb.create();
 		my = mysql.openConnection();
-		for (Map.Entry<String, List<String>> table : RequiredSchema.TABLES.entrySet()) {
-			DialectProbe.exec(my, createTableSql(table.getKey(), table.getValue()));
-		}
+		// 스키마는 마이그레이터의 기반선을 그대로 적용한다(phase 75 step2 — 단일 출처).
+		// 이 프로브가 자기 DDL을 조립하던 시절에는 같은 스키마가 두 벌이었고, 두 벌은 반드시 갈린다.
+		mysql.applyBaselineSchema();
 	}
 
 	@AfterAll
@@ -179,31 +179,28 @@ class CatalogSemanticsProbeTest {
 	}
 
 	/**
-	 * 결정된 타입 매핑({@code docs/db-mysql-mapping.md})으로 CREATE TABLE을 만든다.
+	 * 이 프로브가 쓰는 스키마가 <b>마이그레이터의 기반선 그 자체</b>임을 못 박는다(phase 75 step2 E).
 	 *
-	 * <p>규칙 셋뿐이다: 첫 컬럼이 {@code id}면 {@code BIGINT AUTO_INCREMENT} PK · 첫 컬럼이 텍스트면
-	 * {@code VARCHAR(768)} PK · {@code targetId}는 {@code BIGINT} · 나머지는 전부 {@code LONGTEXT}.
-	 * <b>보조 인덱스·FK를 만들지 않는다</b>(정본이 PK 자동 인덱스만 쓴다 — {@code src/db/schema.js} 3행).
+	 * <p>step1까지 이 클래스는 7테이블 DDL을 자기 안에서 조립했다. 그러면 같은 스키마가 두 벌이 되고,
+	 * "마이그레이터가 만든 스키마" 위에서 서버가 도는데 "측정용으로 조립한 스키마" 위에서 측정이 도는
+	 * 상태가 조용히 만들어진다. 이제 파일 하나가 정본이고, 그 파일이 이 모듈의 결정 상수들과 <b>같은
+	 * 값</b>을 쓰는지를 여기서 확인한다 — 상수를 바꾸면(step1의 변이 M3·M4) 여기가 red다.
 	 */
-	static String createTableSql(String table, List<String> columns) {
-		StringBuilder sql = new StringBuilder("CREATE TABLE ").append(table).append(" (");
-		for (int i = 0; i < columns.size(); i++) {
-			String column = columns.get(i);
-			if (i > 0) {
-				sql.append(", ");
-			}
-			sql.append(column).append(' ').append(columnType(column, i == 0));
-		}
-		return sql.append(") ENGINE=InnoDB").toString();
-	}
+	@Test
+	void theProbeSchemaIsTheMigratorBaselineAndUsesTheDecidedTypes() {
+		String baseline = EphemeralMysqlDb.baselineSql();
 
-	private static String columnType(String column, boolean primaryKey) {
-		if (primaryKey) {
-			return "id".equals(column)
-					? "BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY"
-					: IdentityAndSizeProbeTest.PK_COLUMN_TYPE + " NOT NULL PRIMARY KEY";
+		assertEquals(7, EphemeralMysqlDb.baselineStatements().size(), "기반선의 문장 수(테이블 7개)");
+		assertTrue(baseline.contains(IdentityAndSizeProbeTest.PK_COLUMN_TYPE + " NOT NULL PRIMARY KEY"),
+				"기반선이 결정된 텍스트 PK 타입을 쓰지 않는다: " + IdentityAndSizeProbeTest.PK_COLUMN_TYPE);
+		assertTrue(baseline.contains(" " + IdentityAndSizeProbeTest.TEXT_COLUMN_TYPE),
+				"기반선이 결정된 텍스트 타입을 쓰지 않는다: " + IdentityAndSizeProbeTest.TEXT_COLUMN_TYPE);
+		assertTrue(baseline.contains("COLLATE=" + EphemeralMysqlDb.DEFAULT_COLLATION),
+				"기반선의 collation이 결정값과 다르다: " + EphemeralMysqlDb.DEFAULT_COLLATION);
+		for (String table : RequiredSchema.TABLES.keySet()) {
+			assertTrue(baseline.contains("CREATE TABLE IF NOT EXISTS " + table + " ("),
+					"기반선에 정본 테이블이 없다(또는 멱등 형태가 아니다): " + table);
 		}
-		return "targetId".equals(column) ? "BIGINT" : IdentityAndSizeProbeTest.TEXT_COLUMN_TYPE;
 	}
 
 }

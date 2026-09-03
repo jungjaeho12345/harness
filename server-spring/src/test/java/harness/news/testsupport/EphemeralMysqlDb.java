@@ -1,5 +1,10 @@
 package harness.news.testsupport;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -53,6 +58,21 @@ public final class EphemeralMysqlDb implements AutoCloseable {
 
 	/** 이 phase가 채택한 기본 collation — 근거는 {@code docs/db-mysql-mapping.md} 축 3·4·5다. */
 	public static final String DEFAULT_COLLATION = "utf8mb4_0900_bin";
+
+	/**
+	 * MySQL 측 스키마 정본의 <b>자리</b> — 마이그레이터 모듈이 소유한다(ADR-016 ③ · phase 75 step2).
+	 *
+	 * <p>이 경로를 두는 이유는 <b>단일 출처</b>다. step1의 프로브는 7테이블 DDL을 자기 안에서 조립했는데,
+	 * 그러면 같은 스키마가 두 벌이 되고 두 벌은 반드시 갈린다 — 마이그레이터가 만든 스키마 위에서
+	 * 서버가 도는데 측정은 <b>다른 스키마</b> 위에서 도는 상태가 조용히 만들어진다. 이제 프로브도
+	 * 마이그레이터의 기반선을 읽는다.
+	 *
+	 * <p>경로는 <b>모듈 작업 디렉토리 기준</b>이다({@code server-spring/}). 두 모듈은 독립 Maven
+	 * 프로젝트라 클래스패스를 공유하지 않으므로 파일로 읽는 것 말고는 방법이 없다. 파일이 없으면
+	 * <b>조용히 건너뛰지 않고 던진다</b> — 경로가 깨졌는데 측정이 계속되면 그 green은 공허하다.
+	 */
+	public static final Path BASELINE_SQL =
+			Path.of("..", "tools", "news-migrator", "src", "main", "resources", "db", "migration", "V1__baseline.sql");
 
 	private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -143,6 +163,54 @@ public final class EphemeralMysqlDb implements AutoCloseable {
 	/** 이 DB로 새 연결을 연다. 호출자가 닫는다. */
 	public Connection openConnection() throws SQLException {
 		return open(this.jdbcUrl);
+	}
+
+	/**
+	 * 마이그레이터의 기반선을 이 DB에 그대로 적용한다 — 측정이 <b>실제 이관 스키마</b> 위에서 돈다.
+	 *
+	 * <p>Flyway를 부르지 않고 문장만 읽어 실행한다: 이 모듈에는 그 도구가 없고(들어올 수도 없다 —
+	 * {@code NoSchemaSqlInMainSourcesTest}가 철자를 금지한다) 여기서 필요한 것은 이력 관리가 아니라
+	 * "정본과 같은 스키마"뿐이다.
+	 */
+	public void applyBaselineSchema() {
+		for (String statement : baselineStatements()) {
+			exec(statement);
+		}
+	}
+
+	/** 기반선 파일의 문장 목록. 파일이 없거나 문장이 없으면 <b>던진다</b>(조용한 no-op 금지). */
+	public static List<String> baselineStatements() {
+		if (!Files.isRegularFile(BASELINE_SQL)) {
+			throw new IllegalStateException("기반선 SQL을 찾지 못했다(경로가 깨졌다): " + BASELINE_SQL.toAbsolutePath()
+					+ " — 마이그레이터 모듈이 그 파일을 소유한다(phase 75 step2).");
+		}
+		List<String> statements = new ArrayList<>();
+		for (String raw : baselineSql().split(";")) {
+			StringBuilder body = new StringBuilder();
+			for (String line : raw.split("\n")) {
+				if (!line.strip().startsWith("--")) {
+					body.append(line).append('\n');
+				}
+			}
+			String statement = body.toString().strip();
+			if (!statement.isEmpty()) {
+				statements.add(statement);
+			}
+		}
+		if (statements.isEmpty()) {
+			throw new IllegalStateException("기반선 SQL에 문장이 없다: " + BASELINE_SQL.toAbsolutePath());
+		}
+		return statements;
+	}
+
+	/** 기반선 파일 원문. */
+	public static String baselineSql() {
+		try {
+			return Files.readString(BASELINE_SQL, StandardCharsets.UTF_8);
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
 	}
 
 	/** 이 DB에 DDL/DML 1건을 실행한다(측정 픽스처 전용). */
