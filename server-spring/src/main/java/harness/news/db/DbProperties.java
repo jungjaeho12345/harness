@@ -87,8 +87,15 @@ public record DbProperties(String kind, String url, String username, String pass
 	/**
 	 * URL이 있으면 그 스킴이 선택한 방언과 같아야 한다 — 다르면 <b>모순</b>이고 기동을 거부한다.
 	 *
-	 * <p>비어 있는 URL은 모순이 아니다(sqlite 모드에서 {@code NEWS_DB_*}는 무시한다 — 남아 있는 환경변수가
-	 * 기동을 막지 않는다). 반대로 <b>값이 있는데 다른 방언</b>이면 둘 중 무엇이 의도인지 알 수 없다.
+	 * <p><b>비어 있는</b> URL만 모순이 아니다. sqlite 모드에서 {@code NEWS_DB_USERNAME}·
+	 * {@code NEWS_DB_PASSWORD}는 실제로 무시되지만 <b>{@code NEWS_DB_URL}은 다르다</b>: 값이 있고 그것이
+	 * MySQL을 가리키면 <b>기동을 거부한다</b>(이 메서드가 던진다). 그것이 설계다 — 그 상태는 "MySQL로
+	 * 옮겼다고 믿는 사람"과 "옛 SQLite 파일에 쓰는 서버"가 공존하는 상태이고, {@code DB_KIND} 하나를
+	 * 빠뜨린 배포가 정확히 그렇게 된다. 남은 환경변수를 지우거나 {@code DB_KIND}를 맞추는 것이 처방이다
+	 * ({@code docs/ops-mysql.md} §3의 경고 — {@code mvnw verify}에 env 파일을 통째로 실으면 모든
+	 * {@code @SpringBootTest}가 이 거부로 red다).
+	 *
+	 * <p>반대로 <b>값이 있는데 다른 방언</b>이면 둘 중 무엇이 의도인지 알 수 없다 — 같은 이유로 거부한다.
 	 */
 	private static void requireUrlMatchesKind(String kind, String url) {
 		if (url.isEmpty()) {
