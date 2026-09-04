@@ -547,3 +547,11 @@ curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
 | 23 | 부팅 전후 md5 (7-⑥′) | **실행** | **동일**(`3021afa5…`) | 스키마·백필이 파일을 한 바이트도 바꾸지 않았다 |
 | 24 | `SHOW DATABASES LIKE 'harness\_ct\_%'` (8) | **실행** | **잔재 0개** | — |
 | 25 | 한글 출력 인코딩 (0-5) | **실행** | 옵션 없이 **깨짐** · `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` 로 **정상** | Windows 콘솔의 `chcp 65001` 은 이 환경에서 실행할 수 없어 **미실측** |
+
+> **이 실측이 `news_stage` 를 바꾼 곳은 한 군데뿐이고, 그것은 런북 명령이 아니라 `mvnw verify` 다**(§3 의 경고와 같은 축).
+> 위 명령들(대조·export·기동·권한 프로브)은 **행을 하나도 더하거나 지우지 않았다** — 권한 거부는 문장 실행 전이고 `migrate` 는
+> 멈췄으며 `verify`·`export` 는 읽기다. 반면 AC 로 돌린 `server-spring` 의 `clean verify` 는 `NewsAppMysqlWireTest` 가
+> **실행마다 9행을 추가**한다(계정 4 · 기사 1 · 본문 1 · 이력 1 · 수집 설정 1 · 사진 1). 이 step 에서 2회 돌렸으므로
+> **239행 → 257행**(User 37→45 · Article 84→86 · Contents 84→86 · ArticleHistory 19→21 · ReceiverConfig 7→9 · Photo 8→10 ·
+> DistributionTarget 0)이 됐고 **지운 행은 0** 이다. 되돌리려면 스테이징을 비우고 재적재해야 하는데 그 권한은 root 에만 있다
+> (§3 의 같은 경고 · P3 항목). **운영 컷오버 전에는 대상이 비어 있어야 하므로**(§11-0-6) 이 사실이 컷오버를 막지는 않는다.
