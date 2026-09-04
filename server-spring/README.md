@@ -17,6 +17,15 @@
   Node 축 `npm test` **1328/1328**(2회 실행 중 1회는 `test/distribution-failure-api.test.js`가 `bad port` fetch flake로
   1건 실패했고 **재실행 2회 green** — Spring 축과 공유 자원이 없는 하네스 flake다)). **남은 것은 SSE 2개뿐**이다(아래 라우트 표).
 - 설계 결정과 그 대가는 `docs/ADR.md`의 **ADR-013**에 있다(starter-security·Spring Session 미채택 · DDL 0 · 자체 필터 체인 · 패리티 판정 주체).
+- **[P1·P2 마감 실측 — 위 항목의 phase 73 수치는 그 시점의 기록이고 현재값은 이것이다]** 구현 라우트는 **39/39**이고(phase 74에서 SSE 2가 닫혀 P1이 완결됐다)
+  계약은 **20파일 = 5 프로파일**이다. **phase 75(P2) 마감 재실측(2026-09-04 · 연속 2회 동일 · 포터블 JDK 25.0.4.1+1)**: `./mvnw -B clean verify`
+  **Tests run 1469 / Failures 0 / Errors 0 / Skipped 0**(350초·345초) · jar **38,404,108 B** · `node scripts/spring-contract.mjs --parity`와
+  **`--db mysql --parity`가 각각 313관측 diffs 0**(default 246 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3) · 두 모드의 `--dual-run`도 동일 ·
+  `--db mysql --require-full-coverage` **39/39 · 미커버 0** · Node 축 `npm test` **1328 pass / 0 fail**.
+- **저장소는 이제 둘이다 — Node=SQLite / Spring=MySQL 병존이 정상 상태다**(ADR-016 ②). 이 서버는 `DB_KIND`(`sqlite` 기본 · `mysql`)로 방언을 **명시 주입**받고
+  **URL로 추론하지 않는다**(모순이면 기동 거부). MySQL 스키마의 정본은 `tools/news-migrator`의 Flyway 기반선이고 이 모듈은 여전히 **DDL 0**이다
+  (`NoSchemaSqlInMainSourcesTest`는 P2에서 **0줄** 바뀌었다). 방언 철자는 **`harness/news/db/NewsDataSource.java` 한 파일**에만 있고 `DialectSeamTest`가
+  파일 **집합**으로 잠근다. 운영 절차는 `docs/ops-mysql.md`, 타입·collation 매핑과 잔여 divergence는 `docs/db-mysql-mapping.md`가 소유한다.
 
 ## 구현한 라우트 · 아직 구현하지 않은 라우트
 
