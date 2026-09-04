@@ -125,14 +125,43 @@ class MigratorHasNoDestructiveSqlTest {
 	 * java.nio.file.Files.deleteIfExists;} 뒤의 {@code deleteIfExists(p)} 는 {@code Files.} 가 사라진
 	 * 형태다). 메서드 참조({@code Files::delete})도 별도로 잡는다 — {@code .forEach(Files::delete)} 는
 	 * 괄호가 붙지 않아 호출 패턴이 놓친다.
+	 *
+	 * <h3>지우지 않고 <b>덮어쓰는</b> 경로 (2026-09-04 ④ 테스터 게이트가 심어 뚫은 형태)</h3>
+	 * "원본 바이트 무변" 은 파일을 <b>지워야만</b> 무너지는 게 아니다. 빈 스트림 하나면 606,208 바이트가
+	 * 0 이 된다. 아래 넷은 전부 이 모듈의 main 에 <b>한 번도 쓰이지 않으므로</b>(실측) 예외 없이 막는다 —
+	 * 막는 비용이 0 이고, 열어 두면 SQL 도 {@code Files.delete} 도 없는 채로 소스가 사라진다.
+	 * <ul>
+	 * <li>{@code new FileOutputStream(source.toFile())} — 여는 순간 길이 0 으로 잘린다(T2).</li>
+	 * <li>{@code Files.write(source, new byte[0])} — {@code writeString} 과 달리 괄호가 바로 붙어
+	 * 구분된다(T3). 리포트를 쓰는 {@code RowVerifier} 의 {@code writeString} 은 계속 허용된다.</li>
+	 * <li>{@code new RandomAccessFile(f, "rw").setLength(0)} — {@code setLength} 는
+	 * {@code StringBuilder} 도 쓰는 이름이라({@code BaselineSchema} 229행) <b>클래스 이름</b>을 막는다(T4).</li>
+	 * <li>{@code FileChannel.open(...).truncate(0)} — 지금은 SQL 군의 {@code truncate} 낱말이 우연히
+	 * 잡지만(T5 실측), 그 우연에 기대지 않는다.</li>
+	 * </ul>
+	 * {@code ProcessBuilder}·{@code Runtime.getRuntime()} 도 같은 이유로 막는다 — 외부 {@code mysql}
+	 * 클라이언트를 띄우면 이 모듈의 자격·이름 규약·Flyway 잠금이 <b>전부 우회</b>된다(T6).
+	 *
+	 * <p><b>{@code source} 라는 이름에 기댄 얕은 방어가 하나 있다</b>: {@code Files.writeString} 은
+	 * {@code RowVerifier} 가 리포트를 쓸 때 실제로 필요하므로 통째로 막을 수 없다(막으면 예외 목록이
+	 * 늘고, 그 목록의 크기가 곧 아키텍처 단언이다). 그래서 "첫 인자가 {@code source} 인 쓰기" 만 막는다.
+	 * 변수 이름을 바꾸면 통과한다 — 그 한계를 알고 두는 것이지 모르고 두는 것이 아니다.
 	 */
 	private static final Rule DESTRUCTIVE_API = new Rule("SQL 밖 파괴 경로", List.of(
 			Pattern.compile("\\.\\s*clean\\s*\\("),
 			Pattern.compile("\\bclean\\s*\\("),
-			Pattern.compile("\\bcleanDisabled\\s*\\(\\s*false"),
+			Pattern.compile("\\bcleanDisabled\\s*\\(\\s*(false|Boolean\\s*\\.\\s*FALSE|!\\s*true)"),
 			Pattern.compile("\\bFiles\\s*\\.\\s*(delete|deleteIfExists|move)\\s*\\("),
 			Pattern.compile("\\b(delete|deleteIfExists|move)\\s*\\("),
-			Pattern.compile("\\bFiles\\s*::\\s*(delete|deleteIfExists|move)\\b")),
+			Pattern.compile("\\bFiles\\s*::\\s*(delete|deleteIfExists|move)\\b"),
+			Pattern.compile("\\bFileOutputStream\\b"),
+			Pattern.compile("\\bRandomAccessFile\\b"),
+			Pattern.compile("\\bFileChannel\\b"),
+			Pattern.compile("\\bFiles\\s*\\.\\s*write\\s*\\("),
+			Pattern.compile("\\bFiles\\s*::\\s*write\\b"),
+			Pattern.compile("\\b(ProcessBuilder|Runtime\\s*\\.\\s*getRuntime)\\b"),
+			Pattern.compile("\\b(write|writeString|newOutputStream|newBufferedWriter)\\s*\\(\\s*source\\b"),
+			Pattern.compile("\\bFiles\\s*\\.\\s*copy\\s*\\([^;)]*,\\s*source\\b")),
 			Normalization.CODE_TOKENS, List.of());
 
 	private static final List<Rule> RULES = List.of(DESTRUCTIVE_SQL, DROP_DATABASE, DESTRUCTIVE_API);
@@ -278,6 +307,32 @@ class MigratorHasNoDestructiveSqlTest {
 	}
 
 	/**
+	 * <b>T1 — 낱말 <em>가운데</em>를 끊어 쓴 형태.</b> 2026-09-04 ④ 테스터 게이트가 심어 통과시켰다.
+	 *
+	 * <p>step2·step9 가 잡았다고 기록한 "끊어 쓴 문자열" 은 전부 <b>낱말 경계</b>에서 끊은 것이었다
+	 * ({@code "delete from" + " Contents"}). 따옴표와 {@code +} 를 <b>공백</b>으로 지우는 정규화는 그
+	 * 형태만 편다 — {@code "DEL" + "ETE FROM x"} 는 {@code DEL ETE FROM x} 가 되어 어떤 패턴에도 걸리지
+	 * 않았다(실측: 마이그레이터 스위트 13/13 green). 자바 컴파일러에게는 두 형태가 같은 문자열이다.
+	 *
+	 * <p>그래서 정규화가 <b>인접한 리터럴을 먼저 잇는다</b>({@code inlineSqlText} — {@code " + "} 를 지우고
+	 * 나서 남은 따옴표를 공백으로 바꾼다). 아래 목록은 그 순서가 유지되는지를 잡아 둔다.
+	 */
+	@Test
+	void aStringSplitInTheMiddleOfAWordIsStillCaught() {
+		for (String planted : List.of(
+				"sql(\"DEL\" + \"ETE FROM Contents WHERE 1=1\")",
+				"sql(\"DELETE \" + \"FROM \" + \"Contents\")",
+				"sql(\"DR\" + \"OP TABLE User\")",
+				"sql(\"TRUN\" + \"CATE TABLE Article\")",
+				"sql(\"RE\" + \"PLACE INTO Contents VALUES (?)\")",
+				"new ProcessBuilder(\"mysql\", \"-e\", \"DR\" + \"OP DATABASE news\").start();",
+				"sql(\"delete\"\n\t\t+ \" from Contents\")")) {
+			assertTrue(matches(DESTRUCTIVE_SQL, planted) || matches(DROP_DATABASE, planted),
+					"낱말 가운데를 끊어 쓴 파괴 SQL 을 놓친다: " + planted);
+		}
+	}
+
+	/**
 	 * <b>M4 — 리터럴 안에 주석 형태로 감춘 SQL.</b>
 	 *
 	 * <p>{@code String s = "-- DROP TABLE User";} 는 실행되지 않는 문자열이지만 <b>잡힌다</b>(SQL 군은
@@ -321,6 +376,46 @@ class MigratorHasNoDestructiveSqlTest {
 				"Files . deleteIfExists ( source );")) {
 			assertTrue(matches(DESTRUCTIVE_API, planted),
 					"SQL 밖 파괴 경로를 놓친다 — 이 게이트는 이 모듈에서 공허하다: " + planted);
+		}
+	}
+
+	/**
+	 * <b>T2·T3·T4·T6·T7</b> — 2026-09-04 ④ 테스터 게이트가 <b>실제로 심어 통과시킨</b> 형태들이다.
+	 *
+	 * <p>그날의 배터리 결과: {@code new FileOutputStream(source.toFile())}(T2) ·
+	 * {@code Files.write(source, new byte[0])}(T3) · {@code RandomAccessFile...setLength(0)}(T4) ·
+	 * {@code new ProcessBuilder("mysql", "-e", ...)}(T6) · {@code cleanDisabled(Boolean.FALSE)}(T7) 이
+	 * <b>전부 green</b> 이었다(마이그레이터 스위트 13/13 통과). 셋(T2·T3·T4)은 SQL 도 {@code Files.delete}
+	 * 도 없이 <b>소스 news.db 를 0 바이트로 만든다</b> — 이 phase 의 완료 게이트를 정면으로 무너뜨리는
+	 * 경로다. 그래서 여기 못 박는다: 이 목록이 red 를 내지 못하면 그 우회는 다시 열린 것이다.
+	 */
+	@Test
+	void theApiScannerCatchesOverwritingTheSourceAndSpawningAnExternalClient() {
+		for (String planted : List.of(
+				// T2 — 여는 순간 파일이 길이 0 으로 잘린다(지우지 않았는데 내용이 사라진다).
+				"new java.io.FileOutputStream(source.toFile()).close();",
+				"try (OutputStream out = new FileOutputStream(file)) { }",
+				// T3 — Files.write 는 기본 옵션이 CREATE + TRUNCATE_EXISTING 이다.
+				"java.nio.file.Files.write(source, new byte[0]);",
+				"Files.write(target, bytes);",
+				"paths.forEach(Files::write);",
+				// T4 — setLength 는 StringBuilder 도 쓰는 이름이라 클래스 이름으로 막는다.
+				"try (RandomAccessFile raf = new RandomAccessFile(f, \"rw\")) { raf.setLength(0); }",
+				"new java.io.RandomAccessFile(source.toFile(), \"rw\").setLength(0L);",
+				// T5 — SQL 군의 truncate 낱말이 우연히 잡던 자리. API 군도 스스로 잡는다.
+				"FileChannel ch = FileChannel.open(source, StandardOpenOption.WRITE);",
+				"java.nio.channels.FileChannel.open(source);",
+				// T6 — 외부 클라이언트를 띄우면 자격·이름 규약·Flyway 잠금이 전부 우회된다.
+				"new ProcessBuilder(\"mysql\", \"-e\", command).start();",
+				"Runtime.getRuntime().exec(command);",
+				// T7 — 같은 뜻의 다른 철자. 소문자 리터럴만 보면 놓친다.
+				"configuration.cleanDisabled(Boolean.FALSE);",
+				"configuration.cleanDisabled(!true);",
+				// 이름에 기댄 얕은 방어(한계는 규칙 javadoc 에 적혀 있다).
+				"Files.writeString(source, \"\", StandardCharsets.UTF_8);",
+				"Files.copy(replacement, source, StandardCopyOption.REPLACE_EXISTING);")) {
+			assertTrue(matches(DESTRUCTIVE_API, planted),
+					"소스를 덮어쓰거나 외부 클라이언트를 띄우는 경로를 놓친다: " + planted);
 		}
 	}
 
@@ -387,7 +482,10 @@ class MigratorHasNoDestructiveSqlTest {
 				"UPDATE Contents SET status = 'x'"));
 		planted.put(DROP_DATABASE, List.of("DROP DATABASE news", "DROP SCHEMA news"));
 		planted.put(DESTRUCTIVE_API, List.of("flyway.clean();", "clean();", "cleanDisabled(false)",
-				"Files.deleteIfExists(p);", "deleteIfExists(p);", "Files::delete"));
+				"Files.deleteIfExists(p);", "deleteIfExists(p);", "Files::delete",
+				"new FileOutputStream(f)", "new RandomAccessFile(f, \"rw\")", "FileChannel.open(p)",
+				"Files.write(p, bytes);", "Files::write", "new ProcessBuilder(cmd)",
+				"Files.writeString(source, text);", "Files.copy(other, source);"));
 
 		for (Rule rule : RULES) {
 			assertFalse(rule.patterns().isEmpty(), rule.name() + " 패턴 목록이 비었다 — 그 군은 아무것도 막지 못한다");
@@ -465,12 +563,20 @@ class MigratorHasNoDestructiveSqlTest {
 	 *
 	 * <p>{@code "DROP TABLE " + TABLES.CONTENTS} 가 {@code DROP TABLE Contents} 가 되고,
 	 * {@code "delete from" + " Contents"} 가 {@code delete from Contents} 가 된다.
+	 *
+	 * <p><b>인접한 리터럴을 먼저 잇는다</b>(2026-09-04 T1). 따옴표를 공백으로 <b>먼저</b> 바꾸면 낱말
+	 * 가운데를 끊은 형태({@code "DEL" + "ETE FROM x"})가 {@code DEL ETE FROM x} 로 벌어져 어떤 패턴에도
+	 * 걸리지 않는다 — 컴파일러에게는 같은 문자열인데 스캐너만 눈을 감는다. 그래서 {@code " + "}(리터럴과
+	 * 리터럴 사이의 이음)를 <b>지운 뒤</b> 남은 따옴표·{@code +} 를 공백으로 바꾼다. 리터럴과 <b>식별자</b>
+	 * 사이의 {@code +}({@code "DROP TABLE " + TABLES.CONTENTS})는 이 이음에 해당하지 않으므로 종전대로
+	 * 공백이 되고, 상수 치환이 그 자리를 메운다.
 	 */
 	private static String inlineSqlText(String source) {
 		String out = source;
 		for (Map.Entry<String, String> constant : TABLE_CONSTANTS.entrySet()) {
 			out = out.replaceAll("\\b" + Pattern.quote(constant.getKey()) + "\\b", constant.getValue());
 		}
+		out = out.replaceAll("\"\\s*\\+\\s*\"", "");
 		return out.replaceAll("[\"'+]", " ").replaceAll("[ \\t]+", " ");
 	}
 

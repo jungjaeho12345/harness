@@ -149,6 +149,40 @@ class RowCopyOnMysqlTest {
 	}
 
 	/**
+	 * <b>후행 공백만 다른 두 PK 도 둘 다 남는다</b> — 이 축은 대소문자 축과 <b>같은 등급의 인증 축</b>이다.
+	 *
+	 * <p>왜 따로 재는가: 대소문자와 후행 공백은 collation 의 <b>다른 성질</b>이 정한다. 대소문자는
+	 * {@code _bin}/{@code _ai_ci} 가 갈리는 자리이고, 후행 공백은 <b>PAD SPACE / NO PAD</b> 가 갈리는
+	 * 자리다 — {@code utf8mb4_bin} 은 이름이 {@code _bin} 이라 안전해 보이지만 <b>PAD SPACE 라
+	 * {@code 'x' = 'x '} 가 참</b>이다(step1 축 3 실측). 그 collation 으로 기반선이 서면 이 이관은
+	 * {@code userId} 가 하나로 뭉개진 채 "성공" 한다 = <b>다른 계정으로 로그인</b>된다.
+	 *
+	 * <p>대소문자 테스트만으로는 그 사고를 잡지 못한다({@code utf8mb4_bin} 은 대소문자를 구분하므로 위
+	 * {@link #primaryKeysThatDifferOnlyInCaseBothSurvive} 는 green 이다). 그리고 step9 변이 M6 이 남긴
+	 * 정직한 기록에 따르면 기반선 collation 드리프트를 잡는 것은 프로브 3건뿐이었다 — 이 테스트가
+	 * <b>이관 경로 위에서</b> 같은 축을 한 겹 더 세운다(PAD SPACE 이면 두 번째 삽입이 중복 키로 죽는다).
+	 */
+	@Test
+	void primaryKeysThatDifferOnlyInATrailingSpaceBothSurvive() throws SQLException {
+		try (Connection connection = SqliteFixture.write(this.sourceFile);
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("INSERT INTO User (userId, name, password, role, department, departmentCode,"
+					+ " active, failedLoginCount) VALUES ('u-3 ', 'Trailing', 'pw-space', 'REPORTER', '사회부',"
+					+ " 'D3', 'Y', '0')");
+		}
+
+		migrate();
+
+		assertEquals("2", scalar("SELECT COUNT(*) FROM User WHERE userId IN ('u-3', 'u-3 ')"),
+				"후행 공백만 다른 PK 가 뭉개졌다 — 기반선 collation 이 PAD SPACE 계열이다(인증 축이 무너진다)");
+		assertEquals("Kim", scalar("SELECT name FROM User WHERE userId = 'u-3'"), "같은 키로 취급돼 값이 섞였다");
+		assertEquals("Trailing", scalar("SELECT name FROM User WHERE userId = 'u-3 '"),
+				"후행 공백이 있는 키가 없는 키의 행을 가리킨다");
+		RowVerifier.Result verified = verify();
+		assertTrue(verified.matched(), "후행 공백 PK 가 대조에서 갈렸다: " + verified.differences());
+	}
+
+	/**
 	 * <b>fail-closed</b> — 대상에 이미 행이 있으면 멈춘다. 비우고 다시 넣지 않는다.
 	 *
 	 * <p>멱등성을 삭제로 사는 것이 이 리포에서 가장 위험한 지름길이다. 재실행하려면 사람이 빈 대상을
