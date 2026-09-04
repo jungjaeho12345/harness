@@ -614,6 +614,14 @@ async function runSpringPass(profile, opts, ctx, label) {
     let passUrl = null;
     if (ctx.mysql) {
       ephemeralDb = requireEphemeralDbName(ephemeralDbName());
+      // "패스마다 새 DB"를 **단언**한다. 로그에 이름을 남기는 것만으로는 부족하다는 것이 실측이다
+      // (변이 M8 — 두 패스가 같은 이름을 쓰게 만들어도, 패스 사이의 드롭이 격리를 되살려 주는 바람에
+      // diff가 0으로 나왔다. 즉 그 규약은 구조에 기대고 있었을 뿐 아무도 검사하지 않았다).
+      if (ctx.usedDbNames.has(ephemeralDb)) {
+        diagnostics.push(`[${tag}] 임시 DB 이름이 이 실행에서 이미 쓰였다(패스마다 새 DB여야 자기 결정성이 성립한다): ${ephemeralDb}`);
+        return outcome;
+      }
+      ctx.usedDbNames.add(ephemeralDb);
       passUrl = urlForDatabase(ctx.mysql.url, ephemeralDb);
       ctx.ephemeralDbs.add(ephemeralDb); // 드롭에 성공해야 지운다 — 남으면 실행 끝에 실패로 보고한다.
       const loadStart = Date.now();
@@ -840,6 +848,7 @@ async function main() {
     secrets: mysql ? [mysql.password] : [],
     secretLeaks: [],
     ephemeralDbs: new Set(),
+    usedDbNames: new Set(), // 실행 전체에서 쓴 임시 DB 이름 — 재사용은 실패다(--dual-run의 전제).
     children: new Set(),
     secretFiles: new Set(),
     mkTmp(prefix) {
