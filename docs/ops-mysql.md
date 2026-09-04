@@ -335,3 +335,31 @@ curl -s -b cookies.txt http://127.0.0.1:3001/api/articles/<articleId>
    뒤 **파일 md5 가 그대로였다**(로그인 200 · 목록 77건 · 상세 200).
 5. **되돌린 뒤에도 MySQL 은 그대로 둔다**(지우지 않는다). 원인 조사가 남아 있고, 무엇보다 이 리포의
    최상위 규칙이다.
+
+## 10. 계약 하네스를 MySQL 로 돌리기 (step7)
+
+`scripts/spring-contract.mjs` 에 `--db <sqlite|mysql>` 이 있다. **기본은 `sqlite` 라 기존 커맨드는 한 글자도
+바뀌지 않는다.** `mysql` 이면 패스마다 임시 DB(`harness_ct_<16진수 16자리>`)를 만들어 시드를 마이그레이터로
+적재하고 Spring 을 `DB_KIND=mysql` 로 그 DB 에 붙인다.
+
+```bash
+# 준비: jar 둘을 먼저 빌드한다(하네스는 스스로 빌드하지 않는다)
+cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests
+cd tools/news-migrator && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests
+
+# §3 절차로 NEWS_CT_MYSQL_* 만 셸에 싣고(NEWS_DB_* 는 싣지 마라 — 모순 거부에 걸린다)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.mjs --db mysql --parity
+```
+
+**알아 둘 것 넷**
+
+1. **자격은 `news_ct` 다**(`NEWS_CT_MYSQL_*`). `news_app` 을 쓰면 안 된다 — 그 계정은 `harness_ct_%` 에
+   권한이 0이라 `SchemaGuard` 의 첫 조회에서 죽는다.
+2. **⚠ 그래서 이 하네스는 `news_app` 의 최소 권한을 검증하지 않는다.** 특히 §7 의
+   `GRANT DELETE ON <db>.ReceiverConfig` 가 없어도 **`--db mysql --parity` 는 green 이다**(2026-09-04 step7
+   실측 — 313 관측 diffs 0). 운영 배포의 판정은 §7 의 `SHOW GRANTS` 로 따로 하라.
+3. **환경변수가 없으면 즉시 실패한다**(sqlite 로 조용히 폴백하지 않는다). 폴백은 "green 인데 아무것도
+   검증하지 않은" 상태를 만든다.
+4. **임시 DB 는 성패와 무관하게 지워진다.** 정리에 실패하면 이름을 stderr 로 알리고 실행 자체가 실패한다 —
+   그 이름으로 직접 지워라: `java -jar tools/news-migrator/target/news-migrator.jar ephemeral-drop --name <이름>`.
+   실행 후 잔재 확인은 `SHOW DATABASES LIKE 'harness\_ct\_%';` 다.

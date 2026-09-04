@@ -151,6 +151,11 @@ public class ReceiverConfigRepository {
 	 * @return 영향 받은 행 수(0 또는 1)
 	 */
 	public int remove(double id) {
+		// NaN·무한대는 SQL 이전에 0행으로 수렴시킨다 — SQLite는 조용히 0행이지만 MySQL 은 문장 자체가
+		// 깨져 200 이 500 이 된다(근거는 ColumnValues.matchesNoRow · phase 75 step7 계약 패리티 실측).
+		if (ColumnValues.matchesNoRow(id)) {
+			return 0;
+		}
 		// 테이블 이름을 상수 연결이 아니라 리터럴로 쓴다: 정적 삭제 금지 스캔
 		// (NoSchemaSqlInMainSourcesTest)이 허용하는 유일한 예외가 소스 텍스트에 "DELETE FROM ReceiverConfig"로
 		// 그대로 드러나야 하기 때문이다(negative-lookahead가 그 하나만 통과시킨다). 이 이름은

@@ -5,7 +5,19 @@
 // 사용: node scripts/spring-contract.mjs [--profile <name>]... [--files <path>[,<path>]...]
 //                                       [--jar <path>] [--java-home <path>] [--out-dir <dir>]
 //                                       [--boot-check] [--parity] [--dual-run] [--keep]
-//                                       [--require-full-coverage] [--timeout <ms>]
+//                                       [--require-full-coverage] [--db <sqlite|mysql>] [--timeout <ms>]
+//
+// CRITICAL(--db mysql, phase 75 step7): package.json 이 무수정이라 이 하네스에 MySQL 드라이버를 넣을 수
+//   없다(내장 모듈과 자식 프로세스만 쓸 수 있다). 그래서 **MySQL 은 오직 마이그레이터 jar 를 통해서만**
+//   만진다: ① 지금과 똑같이 임시 DATA_DIR 에 SQLite 를 시드하고(스키마·시드의 단일 출처는 src/db/**)
+//   ② 패스 전용 ephemeral DB(harness_ct_<16hex>)를 만들어 그 SQLite 를 적재한 뒤 ③ Spring 을 DB_KIND=mysql
+//   로 그 DB 에 붙여 띄운다. 러너 호출은 **그대로**다(외부 대상 모드 — 러너는 대상이 어떤 저장소를 쓰는지
+//   알 필요가 없다). 부수 효과로 마이그레이터가 매 패리티 실행마다 도그푸딩된다.
+//   DB 이름은 **패스마다 다르다** — --dual-run 의 두 패스가 같은 DB 를 쓰면 자기 결정성 판정이 오염된다.
+// ⚠ 이 하네스는 `news_ct`(harness_ct_% 에 ALL) 자격으로 돈다 — **`news_app` 의 최소 권한을 검증하지 않는다.**
+//   특히 운영/스테이징 DB 에 `GRANT DELETE ON <db>.ReceiverConfig` 가 없으면 DELETE /api/receiver-config/:id
+//   이 200 이 아니라 **500 internal-error** 인데(phase 75 step6 ⑨-(라) 실측), 여기서는 자격이 ALL 이라
+//   그 축이 보이지 않는다. **MySQL 패리티 green 은 그 grant 가 붙어 있음을 뜻하지 않는다**(docs/ops-mysql.md §7).
 //
 // CRITICAL(DB 비파괴): 리포 news.db·uploads/에 절대 바인딩하지 않는다 — 프로파일(패스)마다 임시 DATA_DIR을
 //   새로 만들고 java 자식의 cwd도 그 임시 루트다(상대 경로 쓰기가 리포에 닿는 경로 원천 차단).
@@ -30,11 +42,18 @@ import net from 'node:net';
 import os from 'node:os';
 import nodePath from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers, SAMPLE_USERS } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
+// MySQL 모드의 순수 판정부 — 이름 규약·URL 조립·자격 판정·비밀 가리기. 이 파일은 import 시점에 main()을
+// 실행하므로 그 함수들을 여기 두면 단위 테스트가 불가능하다(node --test scripts/lib/mysqlHarness.test.mjs).
+import {
+  CT_KEY_SET, PASS_KEY_SET, ephemeralDbName, requireEphemeralDbName, urlForDatabase,
+  readMysqlCredentials, migratorChildEnv, springMysqlEnv, redactSecrets,
+} from './lib/mysqlHarness.mjs';
 // 비교 규칙은 재구현하지 않는다 — CLI diff와 이 하네스의 판정이 갈라지면 패리티 판정이 두 벌이 된다.
 import { compareReports, formatDiffLines } from './contract-diff.mjs';
 
@@ -59,6 +78,11 @@ const PORT_SPAN = 5000;
 // `release version 25 not supported`라 이 힌트가 잘못된 명령을 안내하고 있었다.
 const JDK_HINT = 'D:/agents/tools/jdk-25.0.4.1+1';
 const BUILD_HINT = `cd server-spring && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q package -DskipTests`;
+
+// 마이그레이터 jar — 경로는 pom 의 <finalName> 으로 고정이다. 디렉토리 스캔을 쓰지 않는 이유는 실측이다:
+// shade 플러그인이 original-news-migrator.jar 를 함께 남겨 후보가 늘 2개가 된다.
+const MIGRATOR_JAR = nodePath.join(REPO_ROOT, 'tools', 'news-migrator', 'target', 'news-migrator.jar');
+const MIGRATOR_BUILD_HINT = `cd tools/news-migrator && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q package -DskipTests`;
 
 // scope 표(phase 68 소유 — 후속 phase는 행만 추가한다). 파일 목록은 **알파벳 정렬 순서 그대로**여야
 // 러너가 디렉토리 스캔으로 도는 순서와 같고, auth.contract.js의 공용 세션 복구 규약이 뒤 파일에 이어진다.
@@ -154,6 +178,7 @@ const SCOPE = [
     extraEnv: { APP_ENV: 'production' }, // Node의 NODE_ENV는 Node 런타임 관용이라 Java에 재사용하지 않는다.
   },
 ];
+const DB_KINDS = ['sqlite', 'mysql'];
 const SCOPE_NAMES = SCOPE.map((p) => p.name);
 // bootOnly 행은 --profile 미지정(다중 프로파일 실행)에서 제외된다 — 조용히 빠뜨리지 않고 skip을 한 줄 보고한다.
 const BOOT_ONLY_NAMES = SCOPE.filter((p) => p.bootOnly).map((p) => p.name);
@@ -167,6 +192,7 @@ const BOOT_ONLY_USAGE = BOOT_ONLY_NAMES.length === 0 ? '' : `
 const USAGE = `사용법: node scripts/spring-contract.mjs [--profile <name>]... [--files <path>[,<path>]...]
                                       [--jar <path>] [--java-home <path>] [--out-dir <dir>]
                                       [--boot-check] [--parity] [--dual-run] [--keep] [--timeout <ms>]
+                                      [--db <sqlite|mysql>]
   --profile <name>   실행할 프로파일(반복 가능). 미지정=scope 표에서 bootOnly가 아닌 전부(${MULTI_RUN_NAMES.join('|')}).${BOOT_ONLY_USAGE}
   --files <p>[,<p>]  케이스 파일을 scope 표 대신 쓴다. **단일 프로파일 실행 전용**(케이스가 requireProfile로 죽는다).
   --jar <path>       Spring 실행 jar. 미지정=server-spring/target/*.jar 자동 탐색(자동 빌드는 하지 않는다).
@@ -179,7 +205,12 @@ const USAGE = `사용법: node scripts/spring-contract.mjs [--profile <name>]...
   --require-full-coverage
                      **Spring 리포트 5개를 합쳐** (routeId, expect 태그) 쌍 전수를 만족하는지 판정하고
                      미달이면 exit 1(미커버 쌍을 나열한다). 프로파일 전체 실행에서만 쓸 수 있다.
-  --timeout <ms>     health 대기·러너 단계 한도(기본 45000, 1000 이상 정수).`;
+  --timeout <ms>     health 대기·러너 단계 한도(기본 45000, 1000 이상 정수).
+  --db <kind>        Spring 대상 서버의 저장소(기본 sqlite — 기존 커맨드는 한 글자도 바뀌지 않는다).
+                     mysql 이면 패스마다 임시 DB(harness_ct_<16hex>)를 만들어 시드를 마이그레이터로
+                     적재하고 Spring 을 DB_KIND=mysql 로 그 DB 에 붙인다. ${CT_KEY_SET}_URL/_USERNAME/
+                     _PASSWORD 가 필요하고 없으면 즉시 실패한다(sqlite 로 폴백하지 않는다).
+                     Node 대조 패스(--parity)는 언제나 SQLite 다 = 이 green 은 Node(SQLite) vs Spring(MySQL) 비교다.`;
 
 function usageDie(msg) {
   process.stderr.write(`${msg}\n${USAGE}\n`);
@@ -201,6 +232,7 @@ function parseArgs(argv) {
     keep: false,
     requireFullCoverage: false,
     timeout: 45000,
+    db: 'sqlite',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -215,8 +247,11 @@ function parseArgs(argv) {
     else if (a === '--keep') opts.keep = true;
     else if (a === '--require-full-coverage') opts.requireFullCoverage = true;
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
+    else if (a === '--db') { opts.db = take(i, '--db'); i += 1; }
     else usageDie(`알 수 없는 인자: ${a}`);
   }
+  // 오타가 조용히 sqlite 로 흘러가면 "mysql 로 쟀다"는 거짓 기록이 남는다 — 형태 단계에서 죽인다.
+  if (!DB_KINDS.includes(opts.db)) usageDie(`--db 값이 유효하지 않다(${DB_KINDS.join('|')}): ${opts.db}`);
   for (const p of opts.profiles) {
     if (!SCOPE_NAMES.includes(p)) usageDie(`--profile 값이 scope 표에 없다(${SCOPE_NAMES.join('|')}): ${p}`);
   }
@@ -430,6 +465,47 @@ function repoDataSnapshot() {
   };
 }
 
+// 파일 한 개의 바이트 지문 — "mysql 모드의 Spring 이 임시 SQLite 를 열지 않았다"를 재는 자다.
+// 크기만으로는 부족하다(같은 크기의 다른 내용이 흔하다 — 페이지 단위로 쓰는 SQLite 는 특히 그렇다).
+function fileDigest(file) {
+  if (!fs.existsSync(file)) return null;
+  const bytes = fs.readFileSync(file);
+  return { size: bytes.length, md5: createHash('md5').update(bytes).digest('hex') };
+}
+
+// 자식이 뱉은 글은 우리 통제 밖이다 — 진단으로 붙는 순간 파일에 남는다. 가리고, 섞였다는 사실은 실패로 남긴다.
+// (하네스 자신은 값을 찍지 않는다. 이것은 "우리 코드가 위생적인가"가 아니라 "출력에 값이 나가는가"의 방어선이다.)
+function scrub(ctx, label, text) {
+  const result = redactSecrets(text, ctx.secrets);
+  if (result.hits > 0) {
+    ctx.secretLeaks.push(`${label} 출력에 비밀 값이 ${result.hits}회 섞여 나왔다 — 가려서 남겼지만 원인을 고쳐라(값은 싣지 않는다).`);
+  }
+  return result.text;
+}
+
+// --- 마이그레이터 자식 호출(--db mysql 전용) ---
+// 이 하네스가 MySQL 을 만지는 **유일한 통로**다(package.json 무수정 ⇒ 드라이버를 넣을 수 없다).
+// 비밀번호는 argv 가 아니라 자식 env 로만 흐른다(CLI 가 --password 류를 형태 단계에서 거부한다).
+function runMigrator(ctx, cwd, args, passUrl) {
+  return new Promise((resolve) => {
+    const child = spawn(ctx.javaBin, ['-jar', ctx.migratorJar, ...args], {
+      cwd, env: migratorChildEnv(javaChildEnv(), ctx.mysql, passUrl), stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const buf = collectOutput(child);
+    child.once('close', (code) => resolve({ ok: code === 0, code, out: buf.out, err: buf.err }));
+  });
+}
+
+// 성패와 무관하게 **항상** 출력을 훑는다 — 성공 경로로 새는 비밀이 가장 오래 남는다.
+async function migratorStep(ctx, cwd, args, passUrl, tag, diagnostics) {
+  const result = await runMigrator(ctx, cwd, args, passUrl);
+  const text = scrub(ctx, `[${tag}] migrator ${args[0]}`, `${result.out}${result.err}`);
+  if (!result.ok) {
+    diagnostics.push(`[${tag}] 마이그레이터 실패(${args[0]} exit=${result.code})\n--- migrator 출력 ---\n${text}`);
+  }
+  return result.ok;
+}
+
 // --- 실행 자산 해석(jar·JDK·리포트 디렉토리) ---
 
 // jar는 **자동 빌드하지 않는다**(금지사항) — Maven 실행이 계약 실패와 섞이면 진단이 무너진다.
@@ -452,6 +528,14 @@ function resolveJar(given) {
     usageDie(`Spring 실행 jar 후보가 여럿이다 — --jar로 지정하라: ${candidates.join(', ')}`);
   }
   return nodePath.join(SPRING_TARGET_DIR, candidates[0]);
+}
+
+// 마이그레이터 jar 도 **자동 빌드하지 않는다**(Spring jar 와 같은 규율).
+function resolveMigratorJar() {
+  if (!fs.existsSync(MIGRATOR_JAR)) {
+    usageDie(`--db mysql 에는 마이그레이터 jar 가 필요하다(${MIGRATOR_JAR} 없음). 먼저 빌드하라:\n  ${MIGRATOR_BUILD_HINT}`);
+  }
+  return MIGRATOR_JAR;
 }
 
 // 시스템 java(1.8)로 떨어지면 원인 불명 기동 실패가 된다 — 명시 JDK만 쓴다.
@@ -502,20 +586,47 @@ async function runSpringPass(profile, opts, ctx, label) {
   const root = ctx.mkTmp(`spring-contract-${tag}-`);
   const diagnostics = [];
 
+  // 반환값을 미리 만든다 — finally에서 판정을 뒤집을 수 있어야 한다(아래 7-c의 md5 단언).
+  const outcome = { ok: false, reportFile, diagnostics };
   let javaChild = null;
   let javaBuf = { out: '', err: '' };
   // 비밀 파일 2종 — finally에서 **항상** 지운다(성패·--keep 무관).
   let credentialsFile = null;
   let targetsFile = null;
+  // mysql 모드 전용 — finally에서 **항상** 드롭한다(성패·--keep 무관).
+  let ephemeralDb = null;
+  const seedFile = nodePath.join(root, 'data', 'news.db');
+  let seedDigest = null;
 
   try {
     // 1. 임시 DATA_DIR 시드 — 리포 news.db는 절대 열지 않는다.
+    //    mysql 모드에서도 이 경로를 그대로 쓴다: 스키마·시드의 단일 출처가 src/db/schema.js·seed.js라는
+    //    사실이 유지돼야 Node 대조 패스와 **같은 데이터**에서 출발한다(그 다음에 그것을 MySQL로 옮긴다).
     const dataDir = nodePath.join(root, 'data');
     fs.mkdirSync(dataDir);
-    const db = new DatabaseSync(nodePath.join(dataDir, 'news.db'));
+    const db = new DatabaseSync(seedFile);
     createSchema(db);
     seedUsers(db);
     db.close();
+
+    // 1-b. mysql 모드: 패스 전용 ephemeral DB를 만들고 그 시드를 마이그레이터로 적재한다.
+    //      이름은 **패스마다 다르다**(--dual-run의 두 패스가 같은 DB를 공유하면 자기 결정성이 깨진다).
+    let passUrl = null;
+    if (ctx.mysql) {
+      ephemeralDb = requireEphemeralDbName(ephemeralDbName());
+      passUrl = urlForDatabase(ctx.mysql.url, ephemeralDb);
+      ctx.ephemeralDbs.add(ephemeralDb); // 드롭에 성공해야 지운다 — 남으면 실행 끝에 실패로 보고한다.
+      const loadStart = Date.now();
+      if (!await migratorStep(ctx, root, ['ephemeral-create', '--name', ephemeralDb], null, tag, diagnostics)) {
+        return outcome;
+      }
+      if (!await migratorStep(ctx, root, ['migrate', '--source', seedFile, '--target', PASS_KEY_SET], passUrl, tag, diagnostics)) {
+        return outcome;
+      }
+      // 적재가 끝난 **이 시점**이 기준점이다. 여기서부터 이 파일은 아무도 열지 않아야 한다.
+      seedDigest = fileDigest(seedFile);
+      process.stdout.write(`  [${tag}] mysql 적재 db=${ephemeralDb} ${Date.now() - loadStart}ms seedDb=${seedDigest.md5}\n`);
+    }
 
     // 2. 빈 포트 확보(실제 listen) → 3. 명시 env로 기동. cwd도 임시 루트다(상대 경로 쓰기 격리).
     const port = await pickFreePort(profile.host);
@@ -532,6 +643,11 @@ async function runSpringPass(profile, opts, ctx, label) {
       env.DIST_SPOOL_DIR = spoolDir;
     }
     if (profile.token) env.COLLECTION_TOKEN = ctx.collectionToken; // 값은 로그·리포트에 남기지 않는다.
+    // mysql 축 — **필요한 키만 명시 대입**한다(키 이름·조립은 mysqlHarness가 소유한다: DB_KIND를 포함해
+    // 넷이고, 값은 리포 어디에도 없다). javaChildEnv()가 허용 목록이라 부모 셸의 NEWS_DB_*는 애초에 새지
+    // 않는다(그것이 새면 sqlite 패스가 kind/URL 모순으로 기동 거부된다 — phase 75 step5 ⑨).
+    // 자격은 news_ct다: news_app은 harness_ct_*에 권한이 0이라 SchemaGuard 첫 조회에서 죽는다.
+    if (ctx.mysql) Object.assign(env, springMysqlEnv(ctx.mysql, passUrl));
     Object.assign(env, profile.extraEnv);
 
     javaChild = spawn(ctx.javaBin, ['-jar', ctx.jar], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -543,6 +659,7 @@ async function runSpringPass(profile, opts, ctx, label) {
     // 도는지 눈으로 확인한다. 토큰은 **불리언만** 남긴다(값 출력 금지).
     process.stdout.write(
       `  [${tag}] spring 기동 pid=${javaChild.pid ?? '-'} port=${port} host=${profile.host}`
+      + ` db=${ephemeralDb ?? 'sqlite'}`
       + ` spool=${profile.spool ? 'yes' : 'no'} token=${profile.token ? 'yes' : 'no'} dataDir=${dataDir}`
       + `${spoolDir ? ` spoolDir=${spoolDir}` : ''}\n`,
     );
@@ -554,7 +671,7 @@ async function runSpringPass(profile, opts, ctx, label) {
         `[${tag}] spring 기동/health 실패(${Date.now() - bootStart}ms, exit=${javaChild.exitCode}, signal=${javaChild.signalCode}) ${baseUrl}/api/health\n`
         + `--- java stdout ---\n${javaBuf.out}\n--- java stderr ---\n${javaBuf.err}`,
       );
-      return { ok: false, reportFile, diagnostics };
+      return outcome;
     }
     process.stdout.write(`  [${tag}] health ok ${Date.now() - bootStart}ms\n`);
 
@@ -579,12 +696,13 @@ async function runSpringPass(profile, opts, ctx, label) {
     const code = await spawnRunner(args);
     if (code !== 0) {
       diagnostics.push(`[${tag}] 계약 러너 실패(exit=${code}) — 위 러너 출력의 FAIL 사유가 원인이다. report=${reportFile}`);
-      return { ok: false, reportFile, diagnostics };
+      return outcome;
     }
-    return { ok: true, reportFile, diagnostics };
+    outcome.ok = true;
+    return outcome;
   } catch (err) {
     diagnostics.push(`[${tag}] ${err && err.stack ? err.stack : err}`);
-    return { ok: false, reportFile, diagnostics };
+    return outcome;
   } finally {
     // 7-a. java 자식 종료 — 실패해도 반드시 시도한다(잔존 = 다음 패스 오염).
     if (javaChild) {
@@ -601,6 +719,33 @@ async function runSpringPass(profile, opts, ctx, label) {
       } catch (err) {
         // 경로만 알린다(내용은 절대 싣지 않는다).
         process.stderr.write(`warn 비밀 파일 삭제 실패(직접 삭제하라): ${secretFile} (${err && err.code})\n`);
+      }
+    }
+    // 7-c. java 자식의 출력을 훑는다 — 비밀이 섞여 나왔으면 그 사실을 실패로 남긴다(값은 싣지 않는다).
+    scrub(ctx, `[${tag}] java`, `${javaBuf.out}${javaBuf.err}`);
+    // 7-d. mysql 모드: 임시 DATA_DIR의 news.db가 **바이트 무변**인가.
+    //      = "DB_KIND=mysql로 띄운 서버가 SQLite를 열지 않았다"의 실증(index.json open_questions (9)).
+    //      계약은 저장소를 보지 않으므로, 서버가 실수로 sqlite로 떠도 313관측이 green일 수 있다 —
+    //      그 경로를 막는 것이 이 단언이다(변이 M1b가 비공허성을 실증한다).
+    if (seedDigest) {
+      const after = fileDigest(seedFile);
+      if (!after || after.md5 !== seedDigest.md5 || after.size !== seedDigest.size) {
+        outcome.ok = false;
+        diagnostics.push(
+          `[${tag}] --db mysql인데 임시 DATA_DIR의 news.db가 변했다 — 서버가 MySQL이 아니라 SQLite를 열었다.`
+          + ` before=${JSON.stringify(seedDigest)} after=${JSON.stringify(after)} file=${seedFile}`,
+        );
+      }
+    }
+    // 7-e. 임시 MySQL DB 드롭 — 성패·--keep 무관. 실패하면 이름을 남겨 사람이 지울 수 있게 한다
+    //      (비밀 파일 삭제 실패 처리와 같은 형태). 이름은 만들 때 이미 규약을 통과한 것뿐이다.
+    if (ephemeralDb) {
+      const dropped = await migratorStep(ctx, root, ['ephemeral-drop', '--name', ephemeralDb], null, tag, diagnostics);
+      if (dropped) {
+        ctx.ephemeralDbs.delete(ephemeralDb);
+      } else {
+        outcome.ok = false;
+        process.stderr.write(`warn 임시 MySQL DB 정리 실패(직접 지워라): ${ephemeralDb}\n`);
       }
     }
   }
@@ -672,12 +817,29 @@ async function main() {
 
   const jar = resolveJar(opts.jar);
   const javaBin = resolveJavaBin(opts.javaHome);
+  // --db mysql: 자격이 없으면 **여기서 죽는다**(조용한 sqlite 폴백 금지 — 그러면 게이트가 통째로 공허해진다).
+  // 값은 이 프로세스의 env에서만 읽고, 자식에게는 명시 대입으로만 넘긴다.
+  let mysql = null;
+  if (opts.db === 'mysql') {
+    try {
+      mysql = readMysqlCredentials(process.env);
+    } catch (err) {
+      usageDie(err.message); // 키 이름만 담긴 메시지다(값은 담기지 않는다).
+    }
+  }
+  const migratorJar = opts.db === 'mysql' ? resolveMigratorJar() : null;
 
   const tmpDirs = [];
   const ctx = {
     jar,
     javaBin,
     collectionToken,
+    mysql,
+    migratorJar,
+    // 자식 출력에서 가려야 할 값(값 자체는 어디에도 찍지 않는다 — 이 배열은 비교용이다).
+    secrets: mysql ? [mysql.password] : [],
+    secretLeaks: [],
+    ephemeralDbs: new Set(),
     children: new Set(),
     secretFiles: new Set(),
     mkTmp(prefix) {
@@ -701,10 +863,13 @@ async function main() {
     interrupted = true;
     for (const child of ctx.children) { try { child.kill('SIGKILL'); } catch { /* 이미 죽음 */ } }
     for (const f of ctx.secretFiles) { try { fs.rmSync(f, { force: true }); } catch { /* 최선 노력 */ } }
+    // 임시 MySQL DB는 자식 프로세스를 하나 더 띄워야 지울 수 있어 여기서 못 지운다 — 이름만 남긴다.
+    for (const name of ctx.ephemeralDbs) process.stderr.write(`warn 중단으로 남은 임시 MySQL DB(직접 지워라): ${name}\n`);
     process.exit(130);
   });
 
-  process.stdout.write(`spring-contract 시작 jar=${jar}\n  outDir=${ctx.outDir}\n`);
+  process.stdout.write(`spring-contract 시작 db=${opts.db} jar=${jar}\n  outDir=${ctx.outDir}\n`);
+  if (mysql) process.stdout.write(`  migratorJar=${migratorJar} (자격=${CT_KEY_SET}_* · 임시 DB는 패스마다 새로 만든다)\n`);
   // 사라진 프로파일은 "통과"로 오독된다 — skip을 반드시 한 줄로 보고한다.
   for (const name of skippedBootOnly) {
     process.stdout.write(`[${name}] skipped — bootOnly(케이스 미편입. 단독 실행: --profile ${name} --boot-check)\n`);
@@ -777,6 +942,12 @@ async function main() {
   if (JSON.stringify(repoBefore) !== JSON.stringify(repoAfter)) {
     failures.push(`리포 news.db/uploads 변동: before=${JSON.stringify(repoBefore)} after=${JSON.stringify(repoAfter)}`);
   }
+  // 임시 MySQL DB 잔존 — 실행마다 만들고 지운다는 규약이 깨지면 실행할수록 스키마가 쌓인다.
+  if (ctx.ephemeralDbs.size > 0) {
+    failures.push(`정리하지 못한 임시 MySQL DB ${ctx.ephemeralDbs.size}개(직접 지워라): ${[...ctx.ephemeralDbs].join(', ')}`);
+  }
+  // 비밀 위생 — 자식 출력에 비밀이 섞여 나왔으면 실패다(가려서 내보냈어도 원인은 고쳐야 한다).
+  failures.push(...ctx.secretLeaks);
 
   // 정리 — 성공 + !--keep일 때만 지운다(실패·--keep이면 진단 자산으로 보존). 비밀 파일은 이미 지워졌다.
   const ok = failures.length === 0;
@@ -795,7 +966,7 @@ async function main() {
 
   if (!ok) process.stderr.write(`${failures.map((f) => `FAIL ${f}`).join('\n')}\n`);
   process.stdout.write(
-    `spring-contract ${ok ? 'ok' : 'FAILED'} profiles=${profiles.length} `
+    `spring-contract ${ok ? 'ok' : 'FAILED'} db=${opts.db} profiles=${profiles.length} `
     + `reports=${reportFiles.join(',') || '-'} diffs=${diffTotal ?? '-'}\n`,
   );
   process.exit(ok ? 0 : 1);

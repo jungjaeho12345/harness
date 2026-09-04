@@ -92,8 +92,14 @@ public class DistributionTargetRepository {
 	/**
 	 * 단건 조회(전체 행). 존재 판정에 쓴다 — 비수치 id는 NaN으로 넘어와 어떤 행에도 매치되지 않아 빈
 	 * {@link Optional}이다(서비스가 not-found로 수렴시킨다).
+	 *
+	 * <p>그 "매치되지 않는다"를 <b>SQL 이전에</b> 판정한다 — 근거는 {@link ColumnValues#matchesNoRow(double)}
+	 * (MySQL은 NaN 바인딩에서 문장 자체가 깨져 404가 500이 된다. phase 75 step7 실측).
 	 */
 	public Optional<Map<String, Object>> findById(double id) {
+		if (ColumnValues.matchesNoRow(id)) {
+			return Optional.empty();
+		}
 		return this.jdbcClient.sql(SELECT_ALL_COLUMNS + " WHERE id = ?")
 				.param(ColumnValues.bind(Double.valueOf(id)))
 				.query(DistributionTargetRepository::mapRow)
@@ -163,6 +169,11 @@ public class DistributionTargetRepository {
 			}
 		}
 		if (assignments.isEmpty()) {
+			return 0;
+		}
+		// 유한하지 않은 id는 0행이다({@link ColumnValues#matchesNoRow}). 값 바인딩이 <b>먼저</b> 도는 순서를
+		// 지킨다 — 잘못된 값 타입은 여기서도 예외(500)여야 Node와 같은 답이 된다.
+		if (ColumnValues.matchesNoRow(id)) {
 			return 0;
 		}
 		params.add(ColumnValues.bind(Double.valueOf(id)));

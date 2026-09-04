@@ -44,4 +44,26 @@ final class ColumnValues {
 		throw new IllegalArgumentException(
 				"DB 컬럼에 바인딩할 수 없는 값 타입입니다: " + value.getClass().getName());
 	}
+
+	/**
+	 * 유한하지 않은 id({@code NaN}·±무한대)인가 — <b>그런 id는 어떤 행에도 매치되지 않는다.</b>
+	 *
+	 * <p>이 판정을 SQL <b>이전에</b> 하는 이유는 방언 실측이다(2026-09-04 · phase 75 step7이 MySQL 계약
+	 * 패리티에서 잡았다). 비수치 경로 파라미터는 Node 의미론({@code Number('abc')})을 따라 {@code NaN}으로
+	 * 넘어오는데, SQLite는 {@code id = NaN}을 조용히 0행으로 답하는 반면 <b>MySQL은 문장 자체가 깨진다</b>:
+	 * Connector/J가 {@code NaN}을 리터럴 {@code NaN}으로 보내고 서버는 그것을 컬럼 이름으로 읽어
+	 * {@code Unknown column 'NaN' in 'where clause'}를 낸다. 그 결과가
+	 * {@code PUT /api/distribution-targets/abc} <b>404 → 500</b>,
+	 * {@code DELETE /api/receiver-config/abc} <b>200 → 500</b> 이었다.
+	 *
+	 * <p>방언 분기로 고치지 않는다. "유한하지 않은 id는 매치되지 않는다"는 것은 <b>정본(Node·SQLite)의
+	 * 의미론</b>이고, 그것을 코드로 옮기면 두 방언이 같은 답을 주며 sqlite 경로의 동작은 한 톨도 바뀌지
+	 * 않는다. 무한대를 함께 막는 이유도 같다({@code Number('Infinity')}가 실제로 도달 가능한 경로다).
+	 *
+	 * <p>범위는 <b>{@code double}로 받는 id 파라미터</b>뿐이다 — 값 컬럼의 숫자 바인딩은 위
+	 * {@link #bind(Object)} 정책 그대로다(그쪽을 건드리면 저장 표현이 갈린다).
+	 */
+	static boolean matchesNoRow(double id) {
+		return !Double.isFinite(id);
+	}
 }
