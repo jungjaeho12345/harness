@@ -16,6 +16,7 @@ import {
   PASS_KEY_SET,
   EPHEMERAL_DB_NAME,
   MIN_REDACTED_LENGTH,
+  MIN_PASSWORD_LENGTH,
   ephemeralDbName,
   requireEphemeralDbName,
   urlForDatabase,
@@ -108,6 +109,59 @@ test('readMysqlCredentials 는 값을 다듬어 돌려주고 없으면 던진다
   assert.throws(() => readMysqlCredentials({}), new RegExp(`${CT_KEY_SET}_URL`));
 });
 
+// --- 비밀 길이 하한 (양방향으로 닫는다) ---
+//
+// 이 축은 두 개의 서로 다른 하한을 가진다. 하나로 뭉치면 반드시 한쪽이 깨진다.
+//   ① MIN_REDACTED_LENGTH — **가릴 수 있는가**의 하한. 이보다 짧으면 redactSecrets 가 지우지 못하고,
+//      종전에는 그 사실을 **아무에게도 알리지 않고** 건너뛰었다(조용히 꺼지는 보안 통제).
+//      이제 그런 값은 아예 실행 전에 거부한다 — 가릴 수 없는 비밀로는 하네스를 돌리지 않는다.
+//   ② MIN_PASSWORD_LENGTH — **정책** 하한(docs/ops-mysql.md §3). 짧은 비밀은 가릴 수는 있어도
+//      우연히 자식 출력(md5·16진수 DB 이름)에 나타나 **거짓 leak FAIL** 을 만든다. 그래서 거부가
+//      아니라 경고로 알리고 실행은 계속한다 — 게이트를 멈추는 것과 위생을 알리는 것은 다른 일이다.
+
+const ENV_WITH_PASSWORD = (password) => ({
+  [`${CT_KEY_SET}_URL`]: 'jdbc:mysql://127.0.0.1:3306/',
+  [`${CT_KEY_SET}_USERNAME`]: 'news_ct',
+  [`${CT_KEY_SET}_PASSWORD`]: password,
+});
+
+test('두 하한은 서로 다른 것을 재고 정책 하한이 더 크다', () => {
+  assert.ok(MIN_PASSWORD_LENGTH > MIN_REDACTED_LENGTH,
+    '정책 하한이 가림 하한보다 작거나 같으면 경고 구간이 사라진다');
+  assert.ok(MIN_PASSWORD_LENGTH >= 8, '정책 하한은 8자 이상이다');
+});
+
+test('readMysqlCredentials 는 가릴 수 없을 만큼 짧은 비밀번호로는 아예 돌지 않는다', () => {
+  for (let length = 1; length < MIN_REDACTED_LENGTH; length += 1) {
+    const password = 'z'.repeat(length);
+    assert.throws(() => readMysqlCredentials(ENV_WITH_PASSWORD(password)),
+      new RegExp(`${CT_KEY_SET}_PASSWORD`), `통과하면 안 된다(길이 ${length})`);
+  }
+});
+
+test('거부 메시지에 비밀 값도 그 길이도 실리지 않는다', () => {
+  assert.throws(() => readMysqlCredentials(ENV_WITH_PASSWORD('q7')), (err) => {
+    assert.ok(!err.message.includes('q7'), `값이 실렸다: ${err.message}`);
+    assert.match(err.message, new RegExp(String(MIN_PASSWORD_LENGTH)), '무엇을 만족해야 하는지 알려야 한다');
+    assert.match(err.message, /ops-mysql/, '어디를 보라고 알려야 한다');
+    return true;
+  });
+});
+
+test('정책 하한 미만이면 경고를 달고 통과시킨다(실행을 막지 않는다)', () => {
+  const creds = readMysqlCredentials(ENV_WITH_PASSWORD('a1b2'));
+
+  assert.equal(creds.password, 'a1b2');
+  assert.equal(creds.warnings.length, 1);
+  assert.ok(!creds.warnings[0].includes('a1b2'), `경고에 값이 실렸다: ${creds.warnings[0]}`);
+  assert.match(creds.warnings[0], new RegExp(String(MIN_PASSWORD_LENGTH)));
+  assert.match(creds.warnings[0], /ops-mysql/);
+});
+
+test('정책 하한 이상이면 경고가 없다', () => {
+  assert.deepEqual(readMysqlCredentials(ENV_WITH_PASSWORD('p@ss w0rd!')).warnings, []);
+});
+
 // --- 자식 env 는 명시 대입만 (부모 env 통째 상속 금지 · NEWS_DB_* 유입 금지) ---
 
 test('migratorChildEnv 는 필요한 키만 얹고 다른 키를 만들지 않는다', () => {
@@ -163,11 +217,20 @@ test('redactSecrets 는 비밀이 없으면 원문 그대로다', () => {
   assert.equal(r.text, '아무 일도 없다');
 });
 
-test('redactSecrets 는 너무 짧거나 빈 값은 무시한다(오탐으로 출력을 뭉개지 않는다)', () => {
+test('redactSecrets 는 가릴 수 없는 짧은 비밀을 조용히 건너뛰지 않고 센다', () => {
+  // 종전에는 그냥 continue 였다 — 가리지도, 알리지도 않는 상태가 조용히 만들어졌다.
+  // 지우지 않는 것 자체는 옳다(짧은 토막을 지우면 오탐으로 진단 출력을 통째로 뭉갠다).
+  // 옳지 않은 것은 **아무도 모르게** 그렇게 되는 것이다.
   const short = 'a'.repeat(MIN_REDACTED_LENGTH - 1);
   const r = redactSecrets(`x${short}y`, [short, '', null, undefined]);
   assert.equal(r.hits, 0);
   assert.equal(r.text, `x${short}y`);
+  assert.equal(r.unredactable, 1, '빈 값·null 은 비밀이 아니므로 세지 않고, 짧은 비밀만 센다');
+});
+
+test('redactSecrets 는 가릴 수 있는 비밀에는 unredactable 을 세지 않는다', () => {
+  assert.equal(redactSecrets('pw=p@ss w0rd', [CREDENTIALS.password]).unredactable, 0);
+  assert.equal(redactSecrets('아무 일도 없다', [CREDENTIALS.password]).unredactable, 0);
 });
 
 test('redactSecrets 는 정규식 특수문자가 든 비밀도 문자 그대로 지운다', () => {

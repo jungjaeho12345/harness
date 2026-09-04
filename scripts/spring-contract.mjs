@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -387,10 +387,14 @@ function javaChildEnv() {
 // 러너 자식 env — 러너는 자기 자식(서버·케이스)의 env를 스스로 정리하지만 CONTRACT_* 잔재는 지우지 않는다.
 // 스테일 CONTRACT_SESSIONS가 남아 있으면 세션 미준비 프로파일(auth-negative·prod-cookie)의 케이스가
 // 죽은 토큰 파일을 읽어 계약이 아니라 환경을 측정하게 된다.
+//
+// NEWS_*도 지운다(⑤ [low] 1). 이 자식은 부모 env를 통째로 물려받고 stdio가 'inherit'이라 **그 출력은
+// scrub을 타지 않는다** — NEWS_CT_MYSQL_PASSWORD를 손에 쥔 자식이 그 값을 어디든 찍으면 우리 stdout에
+// 그대로 나간다. 러너·Node 서버·케이스는 NEWS_* 를 하나도 읽지 않으므로(실측) 지우는 비용이 0이다.
 function runnerChildEnv() {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith('CONTRACT_')) delete env[key];
+    if (key.startsWith('CONTRACT_') || key.startsWith('NEWS_')) delete env[key];
   }
   for (const key of ['NODE_ENV', 'DATA_DIR', 'PORT', 'HOST', 'SPA_DIR', 'NODE_OPTIONS']) delete env[key];
   return env;
@@ -480,7 +484,38 @@ function scrub(ctx, label, text) {
   if (result.hits > 0) {
     ctx.secretLeaks.push(`${label} 출력에 비밀 값이 ${result.hits}회 섞여 나왔다 — 가려서 남겼지만 원인을 고쳐라(값은 싣지 않는다).`);
   }
+  // 가릴 수 없는 비밀이 있으면 이 방어선은 그 값에 대해 **꺼져 있다**. readMysqlCredentials가 그런 값을
+  // 이미 거부하므로 여기 걸릴 일은 없어야 한다 — 걸린다면 그 거부를 우회한 경로가 생긴 것이고, 조용히
+  // 지나가는 것이 정확히 이 항목이 고친 결함이다(⑤ [med] 5).
+  if (result.unredactable > 0) {
+    ctx.secretLeaks.push(`${label}: 가릴 수 없는 짧은 비밀이 ${result.unredactable}건 있다 — 이 출력에 대해 가리기가 꺼져 있다(docs/ops-mysql.md §3-1).`);
+  }
   return result.text;
+}
+
+// --- MySQL 판정부의 자기 검사(--db mysql 전용) ---
+// scripts/lib/mysqlHarness.mjs 의 순수 판정부는 **어떤 자동 게이트에도 없었다**(⑤ [low] 2):
+// `npm test`는 "test/**/*.test.js"만 훑고 package.json은 무수정 목록이다. 그런데 그 모듈이 하는 일은
+// 임시 DB 이름 규약·URL 조립·자격 하한·비밀 가리기 — **틀리면 조용히 엉뚱한 DB를 지우거나 비밀을
+// 흘리는** 종류다. 그래서 그 모듈을 실제로 쓰는 유일한 경로가 시작할 때 스스로 돌린다(약 0.1초).
+// 여기서 red면 아무것도 만지기 전에 멈춘다 — 임시 DB를 만든 뒤에 이름 규약이 깨졌음을 아는 것보다 낫다.
+const MYSQL_HARNESS_SELF_TEST = nodePath.join(nodePath.dirname(SCRIPT_PATH), 'lib', 'mysqlHarness.test.mjs');
+
+function runMysqlHarnessSelfTest() {
+  if (!fs.existsSync(MYSQL_HARNESS_SELF_TEST)) {
+    usageDie(`MySQL 판정부의 자기 검사 파일이 없다: ${MYSQL_HARNESS_SELF_TEST}`
+      + ' — 조용히 건너뛰지 않는다(그러면 이 축이 다시 무게이트가 된다).');
+  }
+  const result = spawnSync(process.execPath, ['--test', MYSQL_HARNESS_SELF_TEST], {
+    cwd: REPO_ROOT, env: javaChildEnv(), encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    process.stderr.write(String(result.stdout ?? '') + String(result.stderr ?? ''));
+    usageDie('--db mysql: MySQL 판정부 자기 검사가 실패했다'
+      + ` (node --test ${nodePath.relative(REPO_ROOT, MYSQL_HARNESS_SELF_TEST).replace(/\\/g, '/')})`
+      + ' — 이름 규약·자격 하한·비밀 가리기가 깨진 채로는 DB를 만들지 않는다.');
+  }
+  process.stdout.write('  판정부 자기 검사 통과 (node --test scripts/lib/mysqlHarness.test.mjs)\n');
 }
 
 // --- 마이그레이터 자식 호출(--db mysql 전용) ---
@@ -829,10 +864,11 @@ async function main() {
   // 값은 이 프로세스의 env에서만 읽고, 자식에게는 명시 대입으로만 넘긴다.
   let mysql = null;
   if (opts.db === 'mysql') {
+    runMysqlHarnessSelfTest(); // 자격을 읽기 전에 판정부부터 잠근다(⑤ [low] 2).
     try {
       mysql = readMysqlCredentials(process.env);
     } catch (err) {
-      usageDie(err.message); // 키 이름만 담긴 메시지다(값은 담기지 않는다).
+      usageDie(err.message); // 키 이름만 담긴 메시지다(값도 길이도 담기지 않는다).
     }
   }
   const migratorJar = opts.db === 'mysql' ? resolveMigratorJar() : null;
@@ -878,7 +914,12 @@ async function main() {
   });
 
   process.stdout.write(`spring-contract 시작 db=${opts.db} jar=${jar}\n  outDir=${ctx.outDir}\n`);
-  if (mysql) process.stdout.write(`  migratorJar=${migratorJar} (자격=${CT_KEY_SET}_* · 임시 DB는 패스마다 새로 만든다)\n`);
+  if (mysql) {
+    process.stdout.write(`  migratorJar=${migratorJar} (자격=${CT_KEY_SET}_* · 임시 DB는 패스마다 새로 만든다)\n`);
+    // 비밀 위생 경고는 실행을 막지 않는다(막으면 배포 하나가 이 리포의 모든 MySQL 게이트를 세운다).
+    // 값은 싣지 않는다 — 무엇을 고쳐야 하는지는 키 이름과 §3-1 링크로 충분하다.
+    for (const warning of mysql.warnings) process.stderr.write(`${warning}\n`);
+  }
   // 사라진 프로파일은 "통과"로 오독된다 — skip을 반드시 한 줄로 보고한다.
   for (const name of skippedBootOnly) {
     process.stdout.write(`[${name}] skipped — bootOnly(케이스 미편입. 단독 실행: --profile ${name} --boot-check)\n`);

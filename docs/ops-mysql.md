@@ -38,7 +38,16 @@ copy ops\mysql\bootstrap.sql ops\mysql\bootstrap.local.sql
 #    각각 다른 비밀번호로 바꾼다. 값은 당신이 정한다 — 이 리포의 누구도 그 값을 알 필요가 없다.
 
 # 3) 실행 (root 비밀번호는 프롬프트로 입력한다 — 아래 §5 참조)
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p < ops\mysql\bootstrap.local.sql
+#    ⚠ PowerShell 은 '<' 리디렉션을 지원하지 않는다(§11-4-b 실측: ParserError).
+#      반드시 -e "source <파일>" 형태를 쓴다. 경로는 슬래시로 적어라(source 는 셸이 아니라
+#      mysql 클라이언트가 해석하고, 현재 디렉토리 기준이다).
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p -e "source ops/mysql/bootstrap.local.sql"
+```
+
+cmd.exe 라면 `<` 가 동작하므로 아래도 같다(둘 중 하나만 쓰면 된다).
+
+```bat
+"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p < ops\mysql\bootstrap.local.sql
 ```
 
 **예상되는 정상 결과 2가지 중 하나다.**
@@ -83,6 +92,47 @@ NEWS_CT_MYSQL_PASSWORD=__CHANGE_ME_CT__
   없으면 서버 공개키를 받아 와야 한다. 이 인스턴스는 loopback 전용이라 TLS 를 쓰지 않는다.
 - **URL 에 사용자·비밀번호를 넣지 마라**(`//user:pw@host` 형태 금지). 자격은 언제나 별도 키로 넘긴다 —
   `SecretHygieneTest` 가 그 형태를 리포 전역에서 금지한다.
+
+### 비밀번호 최소 길이 — **8자** (규정)
+
+세 비밀번호 모두 **8자 이상**으로 정하라. 하한이 둘인데, **서로 다른 것을 재고 처분도 다르다**
+(`scripts/lib/mysqlHarness.mjs`).
+
+| 길이 | 계약 하네스(`--db mysql`)의 처분 | 왜 |
+|---|---|---|
+| **4자 미만** | **즉시 거부**(아무것도 만들기 전에 멈춘다) | 그 길이는 자식 출력에서 **가릴 수 없다**. 가리지도 leak 보고도 하지 않는 상태 = **조용히 꺼진 보안 통제**다. 가릴 수 없는 비밀로는 돌지 않는다. |
+| **4자 이상 8자 미만** | **경고 1줄 · 실행은 계속** | 가리기는 동작한다. 다만 짧은 값은 하네스 출력의 md5(32자 16진수)·임시 DB 이름(16자 16진수)에 **우연히** 나타나 **거짓 leak 실패**를 만든다. 하한을 하드 거부로 걸면 배포 하나가 이 리포의 모든 MySQL 게이트를 세우므로 거부하지 않는다. |
+| **8자 이상** | 조용히 통과 | — |
+
+> **현재 개발 환경의 세 비밀번호는 4자다**(2026-09-04 실측). 즉 지금 `--db mysql` 을 돌리면
+> `⚠ NEWS_CT_MYSQL_PASSWORD 가 최소 길이(8자) 규정에 못 미친다` 경고가 stderr 로 한 줄 나오고
+> **실행은 정상 진행된다**(313관측 diffs 0 그대로). 경고를 없애려면 아래 §3-1 로 교체하라.
+> 경고에도 거부 메시지에도 **값은 물론 그 길이도 싣지 않는다.**
+
+### 3-1. 비밀번호 교체 절차
+
+세 계정 중 하나만 바꿔도 되고 셋 다 바꿔도 된다. **순서가 중요하다** — env 파일을 먼저 고치면 그
+사이의 실행이 전부 인증 실패로 죽는다.
+
+1. **`ops/mysql/bootstrap.local.sql` 을 연다**(§2 에서 만든 사본. git 이 막는 파일이다).
+   `IDENTIFIED BY '...'` 우변 셋 중 바꿀 것을 **8자 이상**으로 고친다. 정본 템플릿
+   (`ops/mysql/bootstrap.sql`)에는 **절대 실값을 넣지 마라** — `SecretHygieneTest` 가 red 를 낸다.
+2. **root 로 적용한다.** `CREATE USER ... IDENTIFIED BY` 는 계정이 이미 있으면 비밀번호를 바꾸지
+   않으므로(멱등 형태다) `ALTER USER` 를 직접 쓴다. **이 문장은 root 소유라 자동화가 대신할 수 없다.**
+
+   ```powershell
+   # 비밀번호를 인자로 넘기지 마라(§5) — 프롬프트로 입력한다.
+   & $M -u root -p -e "ALTER USER 'news_ct'@'localhost' IDENTIFIED BY '<새 값>'; FLUSH PRIVILEGES;"
+   ```
+
+   > 위 한 줄에도 새 값이 argv 로 들어가므로 **셸 히스토리에 남는다.** 남기고 싶지 않으면 인자 없이
+   > `& $M -u root -p` 로 붙어 대화형 프롬프트에서 같은 문장을 입력하라(§5 와 같은 이유다).
+   > `bootstrap.local.sql` 전체를 다시 돌려도 되지만 **`ALTER USER` 를 그 파일에 넣어 두어야** 적용된다
+   > — 지금의 `CREATE USER ... IF NOT EXISTS` 계열만으로는 기존 계정의 비밀번호가 바뀌지 않는다.
+
+3. **`D:/agents/secrets/news-mysql.env` 의 해당 `*_PASSWORD` 를 같은 값으로 고친다.**
+   (이 파일이 값의 유일한 출처다. 리포 안에는 어디에도 두지 마라 — §4.)
+4. **확인**: `& $M -u news_ct -p -e "SELECT 1"` → `1`. 그 다음 `--db mysql` 실행에서 경고가 사라진다.
 
 ### 셸에 싣는 법
 
@@ -186,7 +236,7 @@ cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean v
 | 6 | 마이그레이터 스키마 권한 | `%M% -u news_migrator -p news_stage -e "CREATE TABLE zz_grant_probe(id INT); ALTER TABLE zz_grant_probe ADD COLUMN v INT; INSERT INTO zz_grant_probe VALUES (1,1); SELECT * FROM zz_grant_probe"` | 오류 없음 → `1 1` |
 | 7 | 마이그레이터 삭제 금지 | `%M% -u news_migrator -p news_stage -e "DELETE FROM zz_grant_probe"` | `ERROR 1142` (거부돼야 정상) |
 | 8 | **6·7 의 잔재 청소** (root) | `%M% -u root -p -e "DROP TABLE news_stage.zz_grant_probe"` | 오류 없음 |
-| 9 | 재실행 멱등 | `%M% -u root -p < ops\mysql\bootstrap.local.sql` (한 번 더) | §2 와 같은 결과 — 새 오류 없음 |
+| 9 | 재실행 멱등 | `%M% -u root -p -e "source ops/mysql/bootstrap.local.sql"` (한 번 더 · PowerShell 에서는 `<` 대신 이 형태다) | §2 와 같은 결과 — 새 오류 없음 |
 
 > **8 을 건너뛰지 마라.** `news_migrator` 에게는 일부러 `DROP` 이 없으므로 6 이 만든 표를 스스로 치우지
 > 못한다. 남겨 두면 step3 에서 Flyway 가 `news_stage` 를 "비어 있지 않은 스키마"로 보고 멈춘다.
@@ -233,8 +283,22 @@ step3 이 `news_stage` 에 스키마를 만든 **뒤에** 같은 파일을 한 �
 > ``GRANT DELETE ON `news_stage`.`ReceiverConfig` TO 'news_app'@'localhost';``
 
 ```powershell
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p --force < ops\mysql\bootstrap.local.sql
+# ⚠ '<' 를 쓰지 마라 — PowerShell 은 리디렉션을 지원하지 않는다(§11-4-b 실측: ParserError).
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p --force -e "source ops/mysql/bootstrap.local.sql"
 ```
+
+```bat
+REM cmd.exe 라면 이 형태도 같다.
+"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p --force < ops\mysql\bootstrap.local.sql
+```
+
+> **이 절을 건너뛰거나 여기서 조용히 실패하면 무슨 일이 나는가.** grant 가 붙지 않고, 그 상태는
+> **기동 성공 · 계약 하네스 green** 인 채로 `DELETE /api/receiver-config/:id` 하나만
+> **500 `internal-error`** 가 된다(계약이 동결한 값은 `200 {"ok":true,"changes":1}` 다). 하네스가 이것을
+> 못 보는 이유는 하네스가 `news_ct`(ALL 권한)로 돌기 때문이다 — **패리티 green 은 이 grant 의 부재를
+> 덮어 준다.** 그래서 판정은 아래 `SHOW GRANTS` 로 **눈으로** 해야 한다. ParserError 로 멈춘 것을
+> 「실행됐다」로 읽으면 정확히 그 상태에 도달한다(2026-09-03 에 부트스트랩이 한동안 실행되지 않은
+> 원인이 이 형태였다).
 
 **언제 필요한가**: step3 이 끝난 지금이다(`news_stage` 에 7테이블 + `flyway_schema_history` 가 있다 —
 2026-09-03 실측). `news` 쪽 예외는 그 DB 에 스키마가 선 뒤(=step8 런북의 컷오버 리허설/P3) 같은 파일을
@@ -368,6 +432,17 @@ SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.m
 4. **임시 DB 는 성패와 무관하게 지워진다.** 정리에 실패하면 이름을 stderr 로 알리고 실행 자체가 실패한다 —
    그 이름으로 직접 지워라: `java -jar tools/news-migrator/target/news-migrator.jar ephemeral-drop --name <이름>`.
    실행 후 잔재 확인은 `SHOW DATABASES LIKE 'harness\_ct\_%';` 다.
+5. **판정부 단위 테스트가 시작 시 자동으로 돈다**(2026-09-04 ⑤ [low] 2). `--db mysql` 은 자격을 읽기
+   **전에** 아래를 자식으로 돌리고, red 면 DB 를 하나도 만들지 않은 채 멈춘다. 따로 돌려 볼 수도 있다
+   (DB 도 자격도 필요 없다 · 약 0.1초):
+
+   ```bash
+   node --test scripts/lib/mysqlHarness.test.mjs
+   ```
+
+   이유: `package.json` 은 무수정 목록이고 `npm test` 는 `"test/**/*.test.js"` 만 훑는다. 그대로 두면
+   **임시 DB 이름 규약 · URL 조립 · 비밀 길이 하한 · 비밀 가리기** — 틀리면 조용히 엉뚱한 DB 를 지우거나
+   비밀을 흘리는 판정들이 **어떤 자동 게이트에도 없는** 상태가 된다.
 
 ## 11. 운영 컷오버 런북 (step8 — **절차 확정** · 실행은 P3)
 

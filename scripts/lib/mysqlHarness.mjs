@@ -34,8 +34,24 @@ export const EPHEMERAL_DB_NAME = /^harness_ct_[0-9a-f]{16}$/;
 /** 이름 접두사 — 부트스트랩의 GRANT 패턴(`harness\_ct\_%`)과 같은 문자열이어야 한다. */
 export const EPHEMERAL_PREFIX = 'harness_ct_';
 
-/** 이보다 짧은 값은 가리지 않는다 — 짧은 토막을 지우면 오탐으로 진단 출력을 통째로 뭉갠다. */
+/**
+ * **가릴 수 있는가**의 하한. 이보다 짧은 값은 지우지 않는다 — 짧은 토막을 지우면 오탐으로 진단 출력을
+ * 통째로 뭉갠다. 그러나 **지우지 않는다는 사실은 반드시 드러나야 한다**(아래 redactSecrets 의
+ * `unredactable`). 종전에는 그냥 건너뛰어서, 비밀이 짧으면 가리지도 leak 보고도 하지 않는
+ * **조용히 꺼지는 보안 통제**가 됐다. 그래서 이제 이보다 짧은 비밀번호로는 아예 돌지 않는다.
+ */
 export const MIN_REDACTED_LENGTH = 4;
+
+/**
+ * **정책** 하한(docs/ops-mysql.md §3). 이보다 짧아도 가릴 수는 있으므로 실행을 막지 않고 **경고**만
+ * 낸다 — 게이트를 멈추는 것과 위생을 알리는 것은 다른 일이다.
+ *
+ * 왜 짧은 비밀이 나쁜가(가려지는데도): 짧은 값은 자식 출력에 **우연히** 나타난다. 이 하네스의 출력에는
+ * 16진수가 흔하다(md5 지문 32자 · 임시 DB 이름의 16자). 4자 16진수 비밀이라면 md5 하나당 29개 창이
+ * 열리고, 그 우연이 곧 **거짓 leak FAIL** 이 되어 실행 전체가 실패로 뒤집힌다. 하한을 두는 이유는
+ * 유출 방지보다 먼저 "판정이 우연에 좌우되지 않게" 하는 데 있다.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
 
 const SCHEME_SEPARATOR = '://';
 
@@ -85,6 +101,16 @@ export function missingMysqlKeys(env) {
  * 자격 한 벌을 읽는다. 하나라도 없으면 **던진다** — `--db mysql` 이 조용히 sqlite 로 폴백하면
  * 이 게이트가 통째로 공허해진다(계획 금지사항).
  * 비밀번호는 다듬지 않는다(앞뒤 공백도 값일 수 있다).
+ *
+ * 길이는 **양방향으로** 닫는다.
+ *   - `MIN_REDACTED_LENGTH` 미만: **거부**한다. 그 값으로 돌면 자식 출력에 섞여 나와도 가려지지 않고
+ *     leak 보고도 되지 않는다(통제가 조용히 꺼진 상태). 가릴 수 없는 비밀로는 돌지 않는다.
+ *   - `MIN_PASSWORD_LENGTH` 미만: **경고**만 낸다. 가릴 수는 있으므로 실행을 막지 않는다 —
+ *     하한을 하드 거부로 걸면 기존 배포의 env 하나가 이 리포의 모든 MySQL 게이트를 세운다.
+ *
+ * 메시지에는 **값도 길이도** 싣지 않는다(어디를 고쳐야 하는지는 키 이름과 §3 링크로 충분하다).
+ *
+ * @returns {{ url: string, username: string, password: string, warnings: string[] }}
  */
 export function readMysqlCredentials(env) {
   const missing = missingMysqlKeys(env);
@@ -93,10 +119,23 @@ export function readMysqlCredentials(env) {
       + ' — docs/ops-mysql.md §3 절차로 리포 밖 env 파일의 NEWS_CT_MYSQL_* 만 셸에 실은 뒤 다시 실행하라.'
       + ' (sqlite 로 조용히 폴백하지 않는다.)');
   }
+  const password = env[CT_KEYS[2]];
+  if (String(password).length < MIN_REDACTED_LENGTH) {
+    throw new Error(`--db mysql: ${CT_KEYS[2]} 가 너무 짧아 자식 출력에서 가릴 수 없다`
+      + ` — 최소 ${MIN_PASSWORD_LENGTH}자로 바꾼 뒤 다시 실행하라(교체 절차: docs/ops-mysql.md §3-1).`
+      + ' 가릴 수 없는 비밀로는 돌지 않는다: 그 상태에서는 값이 새어도 아무도 알지 못한다.');
+  }
+  const warnings = [];
+  if (String(password).length < MIN_PASSWORD_LENGTH) {
+    warnings.push(`⚠ ${CT_KEYS[2]} 가 최소 길이(${MIN_PASSWORD_LENGTH}자) 규정에 못 미친다`
+      + ' — 가리기는 동작하지만 짧은 값은 md5·16진수 DB 이름에 우연히 나타나 거짓 leak 실패를 만든다.'
+      + ' 교체 절차: docs/ops-mysql.md §3-1.');
+  }
   return {
     url: String(env[CT_KEYS[0]]).trim(),
     username: String(env[CT_KEYS[1]]).trim(),
-    password: env[CT_KEYS[2]],
+    password,
+    warnings,
   };
 }
 
@@ -152,13 +191,22 @@ export function springMysqlEnv(credentials, passUrl) {
  * 하네스 자신은 값을 찍지 않지만 **자식의 출력은 우리 통제 밖**이다 — 진단으로 붙는 순간 파일로 남는다.
  * 정규식으로 해석하지 않고 문자 그대로 찾는다(비밀번호에 특수문자가 흔하다).
  *
- * @returns {{ text: string, hits: number }}
+ * `MIN_REDACTED_LENGTH` 미만은 여전히 지우지 않지만 **조용히 건너뛰지 않고 센다**(`unredactable`).
+ * 호출자는 그 수가 0이 아니면 실패로 남긴다 — 가리지도 알리지도 않는 상태를 만들지 않기 위해서다.
+ * 빈 문자열·null·비문자열은 애초에 비밀이 아니므로 세지 않는다.
+ *
+ * @returns {{ text: string, hits: number, unredactable: number }}
  */
 export function redactSecrets(text, secrets) {
   let out = String(text ?? '');
   let hits = 0;
+  let unredactable = 0;
   for (const secret of secrets ?? []) {
-    if (typeof secret !== 'string' || secret.length < MIN_REDACTED_LENGTH) continue;
+    if (typeof secret !== 'string' || secret.length === 0) continue;
+    if (secret.length < MIN_REDACTED_LENGTH) {
+      unredactable += 1;
+      continue;
+    }
     let index = out.indexOf(secret);
     while (index >= 0) {
       out = out.slice(0, index) + '<redacted>' + out.slice(index + secret.length);
@@ -166,5 +214,5 @@ export function redactSecrets(text, secrets) {
       index = out.indexOf(secret, index + '<redacted>'.length);
     }
   }
-  return { text: out, hits };
+  return { text: out, hits, unredactable };
 }
