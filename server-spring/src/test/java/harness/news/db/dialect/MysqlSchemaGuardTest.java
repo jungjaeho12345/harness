@@ -13,6 +13,7 @@ import harness.news.testsupport.EphemeralMysqlDb;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -44,13 +45,24 @@ class MysqlSchemaGuardTest {
 	/** 드리프트로 뺄 컬럼 — {@code Contents}에만 있고 편집 잠금 계약이 그 값을 읽는다. */
 	private static final String DROPPED_COLUMN = "lockerSessionId";
 
+	/**
+	 * collation 드리프트가 데려가는 값 — 대소문자·전각·자모를 <b>같다고</b> 보는 collation 이다
+	 * (축 3·4 실측). 이 값이 인증 컬럼에 붙으면 {@code WHERE userId = ?} 가 다른 계정을 고른다.
+	 */
+	private static final String DRIFTED_COLLATION = "utf8mb4_0900_ai_ci";
+
+	/** 기반선 밖 수기 변경 <b>한 줄</b> — 실제 위협의 형태 그대로다. 행을 지우지도 옮기지도 않는다. */
+	private static final String ALTER_USER_ID_TO_ACCENT_INSENSITIVE =
+			"ALTER TABLE User MODIFY userId VARCHAR(768) CHARACTER SET utf8mb4 COLLATE "
+					+ DRIFTED_COLLATION + " NOT NULL";
+
 	@Test
 	void theGuardAcceptsTheMigratorBaselineOnMysql() {
 		try (EphemeralMysqlDb db = EphemeralMysqlDb.create()) {
 			db.applyBaselineSchema();
 
 			try (HikariDataSource dataSource = NewsDataSource.create(db.dbProperties(), Path.of("."))) {
-				new SchemaGuard(dataSource, "mysql-baseline").verify();
+				new SchemaGuard(dataSource, "mysql-baseline", true).verify();
 			}
 		}
 	}
@@ -88,7 +100,7 @@ class MysqlSchemaGuardTest {
 			applyBaselineWithout(db, DROPPED_COLUMN);
 
 			try (HikariDataSource dataSource = NewsDataSource.create(db.dbProperties(), Path.of("."))) {
-				SchemaGuard guard = new SchemaGuard(dataSource, "mysql-drift");
+				SchemaGuard guard = new SchemaGuard(dataSource, "mysql-drift", true);
 
 				IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -122,16 +134,94 @@ class MysqlSchemaGuardTest {
 		}
 	}
 
+	/**
+	 * <b>인증을 정하는 컬럼의 collation 이 기반선 밖에서 바뀌면 기동을 거부한다</b>
+	 * (2026-09-04 ⑤ 코드리뷰 [med] 3).
+	 *
+	 * <h2>왜 세션 read-back 으로 충분하지 않은가</h2>
+	 * {@code NewsDataSource#verifySession} 은 {@code sql_mode}·문자셋·{@code collation_connection} 을
+	 * 읽어 확인하지만, <b>비교 의미론을 실제로 정하는 것은 컬럼 collation</b>이다(축 3·11 — 컬럼
+	 * collation 이 접속 collation 을 이긴다). 즉 세션은 전부 정상인데 {@code User.userId} 하나가
+	 * {@code utf8mb4_0900_ai_ci} 이면 {@code WHERE userId = ?} 가 대소문자·전각·자모를 같다고 보고,
+	 * {@code utf8mb4_bin} 이면 PAD SPACE 라 {@code 'x' = 'x '} 가 참이 된다 — <b>다른 계정으로 로그인이
+	 * 된다.</b> 그런데 서버는 정상 기동하고 계약 하네스도 green 이다(하네스는 같은 자격으로 자기가 만든
+	 * 계정만 쓴다). 기반선 밖 수기 {@code ALTER}/{@code CONVERT} 한 번이면 도달하는 상태다.
+	 *
+	 * <p>그래서 부팅에서 <b>텍스트 PK 3컬럼</b>의 실제 collation 을 카탈로그로 읽어 단언한다.
+	 * 이 테스트가 red 를 내지 못하면 그 축은 아무도 보지 않는 축이다.
+	 *
+	 * <p>드리프트를 {@code ALTER} 로 만드는 이유: 이것이 <b>실제 위협의 형태</b>다(사람이 손으로 한 번
+	 * 고친다). 대상은 {@code harness_ct_<16진수>}이고 자격은 {@code news_ct} 라 폭발 반경이 0이다 —
+	 * 행을 지우지도 옮기지도 않는다.
+	 */
+	@Test
+	void theGuardRefusesATextPrimaryKeyCollationThatWouldBreakAuthentication() {
+		try (EphemeralMysqlDb db = EphemeralMysqlDb.create()) {
+			db.applyBaselineSchema();
+			db.exec(ALTER_USER_ID_TO_ACCENT_INSENSITIVE);
+
+			try (HikariDataSource dataSource = NewsDataSource.create(db.dbProperties(), Path.of("."))) {
+				SchemaGuard guard = new SchemaGuard(dataSource, "mysql-collation", true);
+
+				IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
+
+				assertTrue(thrown.getMessage().contains("userId"),
+						"어느 컬럼인지 지목해야 한다: " + thrown.getMessage());
+				assertTrue(thrown.getMessage().contains(RequiredSchema.USER_TABLE),
+						"어느 테이블인지도 지목해야 한다: " + thrown.getMessage());
+				assertTrue(thrown.getMessage().contains(SchemaGuard.REQUIRED_PK_COLLATION),
+						"무엇이어야 하는지 지목해야 한다: " + thrown.getMessage());
+				assertTrue(thrown.getMessage().contains(DRIFTED_COLLATION),
+						"실제 값도 지목해야 한다(운영자가 무엇을 되돌려야 하는지 알아야 한다): " + thrown.getMessage());
+			}
+		}
+	}
+
+	/**
+	 * 위 드리프트가 <b>실제로</b> collation 을 바꿨는지 — 픽스처가 무해하면 그 red 는 공허하다
+	 * (step4 M4 · 위 {@link #theDriftFixtureReallyLacksTheColumn} 와 같은 규율).
+	 *
+	 * <p>같은 자리에서 <b>기반선이 정말 {@code utf8mb4_0900_bin} 인지</b>도 확인한다. 기반선이 이미
+	 * 다른 값이면 위 거부 테스트는 "무엇이든 거부한다"를 재는 것이 되어 버린다.
+	 */
+	@Test
+	void theCollationDriftFixtureReallyChangesTheColumnCollation() throws SQLException {
+		try (EphemeralMysqlDb db = EphemeralMysqlDb.create()) {
+			db.applyBaselineSchema();
+			assertEquals(SchemaGuard.REQUIRED_PK_COLLATION, collationOf(db, RequiredSchema.USER_TABLE, "userId"),
+					"기반선의 텍스트 PK collation 이 이 phase 가 확정한 값이 아니다");
+
+			db.exec(ALTER_USER_ID_TO_ACCENT_INSENSITIVE);
+
+			assertEquals(DRIFTED_COLLATION, collationOf(db, RequiredSchema.USER_TABLE, "userId"),
+					"ALTER 가 collation 을 바꾸지 못했다 — 위 거부 테스트가 공허하다");
+		}
+	}
+
 	/** 테이블 자체가 없으면 그것대로 지목한다(빈 DB로 조용히 뜨지 않는다). */
 	@Test
 	void theGuardNamesTheMissingTableOnMysql() {
 		try (EphemeralMysqlDb db = EphemeralMysqlDb.create()) {
 			try (HikariDataSource dataSource = NewsDataSource.create(db.dbProperties(), Path.of("."))) {
-				SchemaGuard guard = new SchemaGuard(dataSource, "mysql-empty");
+				SchemaGuard guard = new SchemaGuard(dataSource, "mysql-empty", true);
 
 				IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
 				assertTrue(thrown.getMessage().contains(RequiredSchema.USER_TABLE), thrown.getMessage());
+			}
+		}
+	}
+
+	/** 카탈로그가 말하는 컬럼의 실제 collation({@code information_schema}). 없으면 {@code null}. */
+	private static String collationOf(EphemeralMysqlDb db, String table, String column) throws SQLException {
+		try (Connection connection = db.openConnection();
+				PreparedStatement statement = connection.prepareStatement(
+						"SELECT COLLATION_NAME FROM information_schema.COLUMNS"
+								+ " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?")) {
+			statement.setString(1, table);
+			statement.setString(2, column);
+			try (ResultSet rs = statement.executeQuery()) {
+				return rs.next() ? rs.getString(1) : null;
 			}
 		}
 	}

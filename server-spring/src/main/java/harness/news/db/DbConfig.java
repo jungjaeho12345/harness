@@ -63,13 +63,17 @@ public class DbConfig {
 	 * 부팅 스키마 검증 지점. 여기서 던지면 컨텍스트 refresh가 실패하고 서버가 뜨지 않는다 —
 	 * 이 빈이 하는 일은 그 검증 하나뿐이다.
 	 *
-	 * <p>검증은 JDBC 카탈로그로만 하므로 방언을 가리지 않는다. 실패 메시지가 지목할 대상 표기만
+	 * <p>존재 검증은 JDBC 카탈로그로만 하므로 방언을 가리지 않는다. 실패 메시지가 지목할 대상 표기만
 	 * 방언마다 다르다({@link NewsDataSource#describeTarget}).
+	 *
+	 * <p>mysql 분기에서는 텍스트 PK의 <b>collation</b>까지 확인한다 — 그 판정을 {@link DbProperties}에서
+	 * <b>명시 주입</b>한다(가드가 URL이나 제품명을 보고 짐작하면 설정을 빠뜨린 배포가 조용히 검증을
+	 * 건너뛴다). 판정의 단일 출처는 여기서도 {@code app.db.kind} 하나다.
 	 */
 	@Bean
 	public SchemaGuard schemaGuard(DataSource dataSource, AppProperties properties, DbProperties db) {
 		SchemaGuard guard = new SchemaGuard(
-				dataSource, NewsDataSource.describeTarget(db, properties.dataDirPath()));
+				dataSource, NewsDataSource.describeTarget(db, properties.dataDirPath()), db.mysql());
 		guard.verify();
 		return guard;
 	}

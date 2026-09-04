@@ -109,6 +109,28 @@ class SchemaGuardTest {
 				RequiredSchema.TABLES.keySet());
 	}
 
+	/**
+	 * 텍스트 PK 표가 요구 컬럼 목록과 <b>어긋나지 않는다</b>(⑤ [med] 3).
+	 *
+	 * <p>손으로 적은 표는 정본이 바뀔 때 조용히 낡는다 — 그러면 부팅 collation 검증이 <b>없는 컬럼</b>을
+	 * 보게 되고, 그 실패는 "카탈로그에 없다"로 나타나 원인이 스키마 드리프트인지 표의 오타인지 구분되지
+	 * 않는다. 그래서 ① 세 항목뿐이고 ② 각각이 그 테이블 컬럼 목록의 <b>첫 항목</b>(=기본키)인지 잠근다.
+	 */
+	@Test
+	void theTextPrimaryKeyListStaysInSyncWithTheRequiredColumnLists() {
+		assertEquals(Set.of("User", "Article", "Contents"), RequiredSchema.TEXT_PRIMARY_KEYS.keySet(),
+				"텍스트 기본키를 가진 테이블은 셋뿐이다(나머지 넷의 PK는 정수이거나 이 축의 대상이 아니다)");
+		assertEquals("userId", RequiredSchema.TEXT_PRIMARY_KEYS.get("User"));
+		assertEquals("articleId", RequiredSchema.TEXT_PRIMARY_KEYS.get("Article"));
+		assertEquals("articleId", RequiredSchema.TEXT_PRIMARY_KEYS.get("Contents"));
+		RequiredSchema.TEXT_PRIMARY_KEYS.forEach((table, column) -> {
+			List<String> columns = RequiredSchema.TABLES.get(table);
+			assertTrue(columns != null && !columns.isEmpty(), "요구 목록에 없는 테이블이다: " + table);
+			assertEquals(columns.get(0), column,
+					table + " 의 기본키가 컬럼 목록의 첫 항목이 아니다 — 표가 낡았거나 정본 순서가 바뀌었다");
+		});
+	}
+
 	@Test
 	void missingPhotoColumnsAreNamedInTheFailure() {
 		// 다른 6테이블은 정본과 같고 Photo만 2컬럼(registeredBy·createdAt)이 빠진 DB — 결함이 그 둘뿐이라
@@ -116,7 +138,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.PHOTO_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -136,7 +159,8 @@ class SchemaGuardTest {
 		seedCanonicalWithoutPhoto();
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -168,7 +192,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.RECEIVER_CONFIG_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -186,7 +211,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DISTRIBUTION_TARGET_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -203,7 +229,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 			assertDoesNotThrow(guard::verify);
 		}
 	}
@@ -213,7 +240,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -233,7 +261,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.ARTICLE_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -252,7 +281,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.HISTORY_DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -270,7 +300,8 @@ class SchemaGuardTest {
 		TempNewsDb.seed(tempDir, TempNewsDb.DRIFT_FIXTURE);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
@@ -286,7 +317,8 @@ class SchemaGuardTest {
 		TempNewsDb.seedEmpty(tempDir);
 
 		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
-			SchemaGuard guard = new SchemaGuard(dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString());
+			SchemaGuard guard = new SchemaGuard(
+					dataSource, TempNewsDb.dbFile(tempDir).toAbsolutePath().toString(), false);
 
 			IllegalStateException thrown = assertThrows(IllegalStateException.class, guard::verify);
 
