@@ -336,6 +336,11 @@ curl -s -b cookies.txt http://127.0.0.1:3001/api/articles/<articleId>
 5. **되돌린 뒤에도 MySQL 은 그대로 둔다**(지우지 않는다). 원인 조사가 남아 있고, 무엇보다 이 리포의
    최상위 규칙이다.
 
+> **이 절차는 2026-09-04(step8)에 스테이징 대상으로 실제로 1회 리허설했다** — 무엇을 보았는지는 §11-⑦과
+> §12 결과표에 있다. ③의 왕복 대조에는 함정이 하나 있다(§11-⑦ 주석): **원본 `news.db` 와 대조하는 것은
+> "이관 직후"에만 유효**하고, 그 뒤로 운영이 진행됐다면 원본과 다른 것이 정상이다. 그때의 무결성 판정은
+> **산출물 ↔ 지금의 MySQL** 대조다(`verify --source <산출물> --target NEWS_MIGRATOR`).
+
 ## 10. 계약 하네스를 MySQL 로 돌리기 (step7)
 
 `scripts/spring-contract.mjs` 에 `--db <sqlite|mysql>` 이 있다. **기본은 `sqlite` 라 기존 커맨드는 한 글자도
@@ -363,3 +368,182 @@ SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spring-contract.m
 4. **임시 DB 는 성패와 무관하게 지워진다.** 정리에 실패하면 이름을 stderr 로 알리고 실행 자체가 실패한다 —
    그 이름으로 직접 지워라: `java -jar tools/news-migrator/target/news-migrator.jar ephemeral-drop --name <이름>`.
    실행 후 잔재 확인은 `SHOW DATABASES LIKE 'harness\_ct\_%';` 다.
+
+## 11. 운영 컷오버 런북 (step8 — **절차 확정** · 실행은 P3)
+
+> **이 phase 는 운영 데이터를 옮기지 않는다.** 컷오버는 정지 창·백업·사람의 승인이 붙는 별개 사건이다.
+> 아래 명령은 **운영 대상(`news`)에 대한 3·4·4-b·5 를 빼고 전부 스테이징에서 실제로 돌려 본 것**이고,
+> 무엇이 실행됐고 무엇이 미실행인지는 **§12 결과표**가 명령 단위로 밝힌다. 결과표에 없는 문장은
+> "이렇게 될 것이다"가 아니라 **미실측**으로 읽어라.
+
+### 0. 시작 전 체크리스트 (하나라도 비면 시작하지 마라)
+
+| # | 확인 | 커맨드 | 기대 |
+|---|---|---|---|
+| 0-1 | jar 둘이 있다 | `ls server-spring/target/server-spring-0.0.1-SNAPSHOT.jar tools/news-migrator/target/news-migrator.jar` | 둘 다 존재(하네스·런북 모두 **스스로 빌드하지 않는다**) |
+| 0-2 | 자격 3키가 셸에 있다 | §3 의 로드 절차 | `NEWS_MIGRATOR_*` 3키 (Spring 기동에는 `NEWS_DB_*` 3키) |
+| 0-3 | 서버·클라이언트 판본 | `%M% --version` · `%M% -u news_app -p -e "SELECT VERSION()"` | 실측 2026-09-04: **둘 다 8.0.46** |
+| 0-4 | **삭제 예외 grant** | `%M% -u news_app -p -e "SHOW GRANTS"` | ``GRANT DELETE ON `news`.`receiverconfig` `` 줄이 보인다 — **없으면 4-b 로 붙인다**(아래) |
+| 0-5 | 한글 출력 | java 커맨드에 `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` · Windows 콘솔은 `chcp 65001` | 실측: 옵션 없이는 마이그레이터의 한글 메시지가 **깨진다** |
+| 0-6 | 대상이 비어 있다 | `%M% -u news_migrator -p -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='news'"` | **빈 결과**(2026-09-04 실측: `news` 는 테이블 0개다) |
+
+> **0-4 를 건너뛰지 마라 — 이것이 이 런북에서 가장 조용한 실패다.** grant 가 없으면 서버는 정상 기동하고
+> 계약 하네스도 **green** 인데(하네스는 `news_ct`=ALL 로 돈다) `DELETE /api/receiver-config/:id` 만
+> **500 `internal-error`** 다. 2026-09-04 실측: `news_app` 으로 `news_stage.ReceiverConfig` 를 지우려 하면
+> `ERROR 1142 (42000): DELETE command denied to user 'news_app'@'localhost' for table 'receiverconfig'` 이고,
+> 예외가 붙어 있는 DB 에서는 같은 문장이 권한 검사를 **통과**한다(그쪽은 열 이름에서 걸린다 — `ERROR 1054`).
+> 즉 1142 인지 아닌지가 곧 grant 유무의 판정이다.
+
+### 1. 사전 — Node 정지 · 원본 사본 2벌
+
+```bash
+# ① Node 서버를 내린다(요청을 받는 프로세스가 없어야 이 스냅샷이 "그 순간의 전부"다)
+# ② 사본 2벌: 하나는 타임스탬프 이름으로 영구 보관, 하나는 즉시 되돌림용
+cp news.db  <리포 밖>/backup/news.db.$(date '+%Y%m%d-%H%M%S').bak
+cp news.db  <리포 밖>/backup/news.db.rollback-ready
+md5sum news.db <리포 밖>/backup/news.db.*        # 세 값이 같아야 한다
+```
+
+실측(2026-09-04): 606,208 B 사본 2벌에 **173 ms**, 세 파일 md5 전부 `7247e9e0dfe5cc8cd040ebb1dc9fb967`.
+**원본 `news.db` 는 옮기지도 이름을 바꾸지도 지우지도 않는다 — 복사만 한다.**
+
+### 2. 계정·부트스트랩 확인
+
+```powershell
+& $M -u news_app      -p -e "SELECT 1"      # 3계정 각각
+& $M -u news_migrator -p -e "SHOW GRANTS"
+& $M -u news_ct       -p -e "SHOW DATABASES"
+```
+
+실측(2026-09-04): 3/3 접속. `news_migrator` 는 `news`·`news_stage` 에 `SELECT,INSERT,UPDATE,CREATE,REFERENCES,INDEX,ALTER`
+(**`DELETE`·`DROP` 없음**), `news_ct` 에게는 `news`·`news_stage` 가 **`SHOW DATABASES` 에 보이지도 않는다**.
+
+### 3. 이관 — `migrate`
+
+```bash
+export NEWS_MIGRATOR_URL="${NEWS_MIGRATOR_URL/news_stage/news}"   # 대상 DB 를 운영으로 바꾼다(자격은 그대로)
+java -Dstdout.encoding=UTF-8 -jar tools/news-migrator/target/news-migrator.jar \
+  migrate --source news.db --target NEWS_MIGRATOR
+```
+
+- `--target` 은 **환경변수 키 집합 이름**이지 DB 이름이 아니다(DB 는 그 키 집합의 URL 이 정한다).
+- **빈 대상이 전제다.** 아니면 **비우지 않고 멈춘다**(exit 1). 이것은 실패가 아니라 설계다 — 멱등성을 삭제로 사지 않는다.
+- 출력의 테이블별 행 수와 `다음 id` 를 **캡처해 보관하라**(이관 직후 첫 삽입이 PK 충돌로 죽는지 여기서 갈린다).
+
+### 4. 대조 — `verify`
+
+```bash
+java -Dstdout.encoding=UTF-8 -jar tools/news-migrator/target/news-migrator.jar \
+  verify --source news.db --target NEWS_MIGRATOR
+```
+
+**exit 0 · "판정: 일치" · 불일치 0** 이어야 다음으로 간다. 행 수 표와 리포트 파일(OS 임시 디렉토리에 남는다)을
+**전환 기록으로 보관**하라. exit **4** 는 "대조는 돌았고 데이터가 다르다"이고 exit **1** 은 "대조를 못 돌렸다"다 — 처방이 다르다(§11-8).
+
+### 4-b. 삭제 예외 grant 를 `news` 에 붙인다 (root 1회 · **테이블이 생긴 지금에야 붙는다**)
+
+MySQL 은 테이블 단위 `GRANT` 를 **대상 테이블이 있을 때만** 받는다. 그래서 §2 의 부트스트랩은 이 문장에서
+`ERROR 1146` 으로 끝났고, 그것이 정상이었다. **3 이 끝난 지금 시나리오가 둘로 갈린다.**
+
+| 시나리오 | 상태 | 실행할 것 |
+|---|---|---|
+| (가) **컷오버 시점**(`news` 에 테이블이 생겼다) | §7 의 두 `GRANT` 가 **둘 다 붙는다** | `& $M -u root -p -e "source <경로>/ops/mysql/bootstrap.local.sql"` — **`--force` 가 필요 없다** |
+| (나) **지금(P2)** — `news` 는 비어 있고 `news_stage` 만 있다 | 첫 문장이 `ERROR 1146` 으로 죽고 배치가 **거기서 멈춘다**(뒤 문장이 실행되지 않는다) | `--force` 를 붙이거나 `news_stage` 한 줄만 실행한다 |
+
+```powershell
+# PowerShell 은 '<' 리디렉션을 지원하지 않는다(실측: "'<' 연산자는 나중에 사용하도록 예약되어 있습니다" ParserError).
+# 반드시 -e "source <파일>" 형태를 쓴다(실측: 이 형태는 정상 동작한다).
+& $M -u root -p -e "source D:/agents/harness/ops/mysql/bootstrap.local.sql"
+```
+
+확인: `& $M -u news_app -p -e "SHOW GRANTS"` 에 ``GRANT DELETE ON `news`.`receiverconfig` `` 줄이 보이면 완료다
+(테이블 이름이 **소문자**로 붙는다 — `lower_case_table_names=1`).
+
+### 5. Spring 기동 (`DB_KIND=mysql`)
+
+```bash
+DATA_DIR=<지금까지 쓰던 데이터 디렉토리> PORT=<포트> DB_KIND=mysql \
+  java -jar server-spring/target/server-spring-0.0.1-SNAPSHOT.jar
+curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
+```
+
+- **`DATA_DIR` 은 mysql 모드에서도 필수**이고 **같은 경로를 그대로 써야 한다** — `news.db` 를 열지 않을 뿐
+  **업로드 원본(`<DATA_DIR>/uploads/`)은 여전히 거기서 서빙**된다. 옮기면 기존 첨부·사진이 전부 404 다.
+- `NEWS_DB_URL` 이 `news` 를 가리키는지 확인하라. **`DB_KIND` 와 URL 이 모순이면 기동을 거부한다**(설계된 거부).
+- 육안 확인 목록(사람이 브라우저에서): **로그인 → 목록 → 상세 → 편집 잠금 → 송고 → 이력 → 사진 검색 →
+  수집 설정 생성·삭제**. 마지막 항목이 **0-4 grant 의 실사용 판정**이다(200 이어야 하고, 500 이면 grant 가 없는 것이다).
+
+### 6. **이 시점부터 Node 서버를 쓰지 않는다**
+
+> **경고 — 두 서버는 이제 서로 다른 저장소를 본다.** Node 는 SQLite `news.db`, Spring 은 MySQL `news` 다.
+> 컷오버 뒤에 Node 서버를 한 번이라도 띄워 **쓰기**가 일어나면 두 저장소가 갈리고, 그 갈림은 **자동으로
+> 합쳐지지 않는다**(어느 쪽이 정본인지 판정할 근거가 사라진다). 되돌릴 생각이면 **8 의 롤백 절차**로 가라 —
+> Node 를 그냥 켜는 것은 롤백이 아니다.
+
+### 7. 롤백 — Spring/MySQL → Node/SQLite (§9 의 절차 · **리허설 실측**)
+
+절차 자체는 **§9** 가 소유한다. 2026-09-04 에 **스테이징 대상으로 1회 리허설**했고 본 것은 아래가 전부다.
+
+| 단계 | 실행한 것 | 본 것 |
+|---|---|---|
+| ① Spring 정지 | (리허설에서는 기동 중이 아니었다) | — |
+| ② `export` | `export --target NEWS_MIGRATOR --out <리포 밖>/rollback/news-20260904.db` | **exit 0 · 1,575 ms** · 7테이블 **239행**(User 37 · Article 84 · Contents 84 · ArticleHistory 19 · ReceiverConfig 7 · DistributionTarget 0 · Photo 8) · 산출물 **618,496 B · md5 `3021afa5d7cd8a61e43a268b7321dc82`** · 부산물 0개 |
+| ②′ 같은 경로로 한 번 더 | 같은 커맨드 | **exit 1 · 201 ms** — `산출물이 이미 있다(덮어쓰지 않는다 — 되돌릴 수 없다)`. 되돌림 자산은 덮어쓰지 않는다 |
+| ③ 무결성 대조 | `verify --source <산출물> --target NEWS_MIGRATOR` | **exit 0 · 1,490 ms** · **판정: 일치** · 239행 = 239행 · 7테이블 **불일치 0** · 제외 `flyway_schema_history` |
+| ③′ 원본과의 대조 | `verify --source news.db --target-sqlite <산출물>` | **exit 4 · 1,170 ms** · 소스 178행 / 대상 239행 · **불일치 61** · 구조 문제 0 — **정상이다**(스테이징에 step6 스모크 행이 쌓여 있다). ⚠ 아래 주석 |
+| ④ 배치 | 산출물을 임시 `DATA_DIR` 에 `news.db` 로 복사 | md5 그대로 |
+| ⑤ Node 기동 | `DATA_DIR=<임시> PORT=3099 node server/index.js` | **부팅 761 ms · `GET /api/health` 200 `{"ok":true}`** |
+| ⑥ 검증 | 로그인 → 목록 → 상세 → 사진 검색 | **로그인 200**(sessionId 64자) · **목록 200 · 84건** · **상세 200**(`AKR20260904489113853`) · **사진 검색 200** |
+| ⑥′ 파일 무변 | 부팅·로그인·종료 후 md5 재측정 | **`3021afa5d7cd8a61e43a268b7321dc82` 동일** — Node 의 `createSchema` 가 컬럼을 하나도 더하지 않았고 부트 백필도 아무것도 쓰지 않았다 |
+| ⑥″ 잔재 | 임시 `DATA_DIR` 내용 | `news.db` 외에 `instance-lock.db`(0 B)와 `instance-lock.db-journal`(512 B) — ADR-012 의 잠금 표식이고 데이터가 아니다 |
+
+> **③ 와 ③′ 중 무엇이 무결성 판정인가.** 되돌릴 때 확인해야 하는 것은 "산출물이 **지금의 MySQL** 을 빠짐없이
+> 담았는가"이므로 **③**(산출물 ↔ MySQL)이 판정이다. **③′(원본 `news.db` 와의 대조)는 "이관 직후"에만 0 이고**,
+> 운영이 하루라도 진행됐다면 **다른 것이 정상**이다 — 그 자리에서 exit 4 를 롤백 실패로 읽으면 안 된다.
+> §9 ③이 "이관 직후라면"이라고 적은 조건이 이것이고, 리허설이 그 조건을 실제로 벗어난 상태에서 재현됐다.
+
+### 8. 실패 시나리오별 분기 (전부 **실측한 문구**다)
+
+| 무슨 일이 났는가 | 어떻게 드러나는가(실측) | 안전한 다음 수 |
+|---|---|---|
+| **대상이 비어 있지 않은데 `migrate`** | **exit 1** · `대상이 비어 있지 않다 [User, Article, Contents, ArticleHistory, ReceiverConfig, Photo] — 비우고 다시 넣지 않는다.` **아무것도 지우지 않았고 소스 md5 도 그대로다** | 대상을 비우는 것은 **사람(root)의 일**이다(`news_migrator` 에는 `DELETE`·`DROP` 이 없다). 빈 DB 를 준비해 재실행 |
+| **`verify` 불일치** | **exit 4** · `대조 불일치 N건 · 구조 문제 M건 — 리포트를 보세요.` 리포트에 테이블·PK·컬럼이 지목된다(값 원문은 싣지 않고 길이만) | **전환을 멈춘다.** Node 는 아직 정본이므로 그대로 되살리면 된다(6 을 시작하지 않았다면 아무 일도 없었다) |
+| **`verify` 를 못 돌렸다** | **exit 1**(접속·파일 오류) | 데이터 판정이 아니다 — 자격·경로를 고쳐 다시 돌려라. **exit 4 와 섞지 마라** |
+| **`DB_KIND` 누락/모순인 채 기동** | **exit 1** · `app.db.kind 와 app.db.url 이 서로 다른 저장소를 가리킵니다: kind=sqlite 인데 url 은 jdbc:mysql: 로 시작합니다` | 환경변수를 맞춘다. **URL 로 방언을 추론하지 않는 것이 설계다**(누락이 조용히 옛 파일로 되돌아가지 않게) |
+| **적재 전/부분 적재 상태로 기동** | **exit 1** · `DB 스키마가 이 서버의 요구를 만족하지 않습니다 (jdbc:mysql:): 테이블 없음 = DistributionTarget / … / 테이블 없음 = ArticleHistory` — **가장 먼저 깨지는 것은 관측이 아니라 부팅이다** | 3 으로 돌아간다. ⚠ 이 메시지의 마지막 문장("Node 서버로 데이터 디렉토리를 준비한 뒤")은 **sqlite 시절의 처방**이다 — mysql 모드의 처방은 **`migrate`** 다 |
+| **grant 누락** | 기동 성공 · 계약 하네스 **green** · 그러나 `DELETE /api/receiver-config/:id` 만 **500** | 0-4·4-b 로 붙인다. 감지는 `SHOW GRANTS` 또는 위 육안 확인 마지막 항목뿐이다 |
+| **`export` 가 중간에 실패** | 만들다 만 파일이 **남는다**(이 도구에는 파일을 지우거나 옮기는 경로가 **없다** — 그 금지가 원본 `news.db` 를 지키는 방어선이다). 메시지가 남은 파일의 경로를 밝히고 멈춘다 | 사람이 그 파일을 치운 뒤 **새 이름**으로 재실행 |
+| **임시 DB 잔재**(하네스 경로) | 실행이 실패하며 이름을 알린다 | `ephemeral-drop --name <이름>` · 확인은 `SHOW DATABASES LIKE 'harness\_ct\_%'` |
+
+## 12. 명령별 실행 결과표 (step8 · 2026-09-04 실측)
+
+**이 표에 없는 것은 미실측이다.** 「실행」 열이 `스테이징`인 줄은 대상만 `news_stage`/임시 파일로 바꿔 **같은 명령**을
+돌린 것이고, `미실행`인 줄은 이 phase 의 범위 밖(P3)이라 돌리지 않은 것이다.
+
+| # | 명령(런북 항목) | 실행 | 종료코드 · 관측값 | 실패 시 무엇이 일어났는가 |
+|---|---|---|---|---|
+| 1 | `cp news.db …` ×2 + `md5sum` (1) | **실행** | 173 ms · 사본 2벌 606,208 B · md5 3파일 전부 `7247e9e0…` | — |
+| 2 | 세 계정 `SELECT 1` / `SHOW GRANTS` (0-3·2) | **실행** | 3/3 접속 · 클라이언트·서버 **8.0.46** · `news_ct` 에게 `news`·`news_stage` 는 보이지 않는다 | — |
+| 3 | `SHOW GRANTS` 로 삭제 예외 확인 (0-4) | **실행** | **`news`·`news_stage` 에 `DELETE` 없음** · 있는 것은 `news_grant_probe.receiverconfig` 뿐 | 이 상태가 곧 "grant 누락" 시나리오다(아래 4) |
+| 4 | `DELETE FROM ReceiverConfig WHERE id = -1` (0-4 행동 판정) | **실행**(`news_stage`·`news_app`) | **`ERROR 1142` denied** · 대조군(예외가 붙은 DB)은 권한 검사를 통과해 `ERROR 1054` · `Contents` 는 1142 · **행 수 불변(7)** | 어떤 행도 지워지지 않았다(권한 거부는 문장 실행 전이다) |
+| 5 | `SELECT … information_schema.TABLES` (0-6) | **실행** | **`news` = 테이블 0개** · `news_stage` = 7테이블 + `flyway_schema_history` | — |
+| 6 | `migrate --source news.db --target <운영>` (3) | **미실행 — P3 소유** | — | 운영 컷오버는 정지 창·백업·승인이 붙는 별개 사건이다(step8 금지사항) |
+| 7 | `migrate` 를 **비어 있지 않은 대상**에 (3 의 fail-closed) | **스테이징** | **exit 1** · 1,720 ms · 점유 6테이블 지목 · `news.db` md5 **무변** | 비우지 않고 멈췄다. 대상에 아무 변화 없음 |
+| 8 | `verify --source news.db --target <운영>` (4) | **미실행 — P3 소유**(대상이 없다) | — | — |
+| 9 | `verify --source news.db --target <스테이징>` (4 의 불일치 분기) | **스테이징** | **exit 4** · 1,324 ms · 소스 178행 / 대상 239행 · **불일치 61 · 구조 문제 0** · 제외 `flyway_schema_history` | 스모크가 남긴 행이 테이블·PK 로 지목됐다(값 원문 없이). 소스 md5 무변 |
+| 10 | `bootstrap.local.sql` 재실행 (4-b) | **미실행 — root 자격이 없다** | — | 이 리포의 어떤 자동화도 root 로 접속하지 않는다(§0). 시나리오 (가)/(나) 구분은 §11-4-b |
+| 11 | PowerShell `<` 리디렉션 (4-b 형태) | **실행** | **ParserError** — `'<' 연산자는 나중에 사용하도록 예약되어 있습니다` | 부트스트랩이 한동안 실행되지 않은 원인이 이것이다 |
+| 12 | `mysql -e "source <파일>"` (4-b 대체 형태) | **실행** | **exit 0** — 파일 안의 두 문장이 실행됐다 | 이 형태를 쓰면 PowerShell 에서도 돈다 |
+| 13 | Spring `DB_KIND=mysql` 기동 + `/api/health` (5) | **스테이징**(`news_stage`·`news_app`) | 부팅 **4,239 ms** · **200 `{"ok":true}`** · 미인증 `GET /api/articles` **401** | — |
+| 14 | 5 의 육안 확인 목록(로그인·목록·상세·잠금·송고) | **부분 미실행** | 이 축은 **step6 `NewsAppMysqlWireTest`**(같은 자격·같은 DB 로 전 경로 통과)와 **`--db mysql --parity` 313관측**이 덮는다 | 리허설로 `news_stage` 를 더 오염시키지 않기 위해 이 step 에서는 쓰기 경로를 돌리지 않았다 |
+| 15 | `DB_KIND` 없이 기동 (8) | **실행** | **exit 1** · kind/url 모순 거부 메시지 | 기동 자체가 거부됐다(조용한 폴백 없음) |
+| 16 | 빈 스키마(`news`)에 mysql 기동 (8) | **실행** | **exit 1** · `SchemaGuard` 가 **7테이블을 이름으로 지목** | `news` 에 아무것도 만들지 않았다(이 서버는 DDL 0) |
+| 17 | `export --target <스테이징> --out <리포 밖>` (7-②) | **실행** | **exit 0** · 1,575 ms · 239행 · 618,496 B · md5 `3021afa5…` | — |
+| 18 | 같은 경로로 `export` 재실행 (7-②′) | **실행** | **exit 1** · 201 ms · 덮어쓰기 거부 | 기존 산출물이 그대로 남았다 |
+| 19 | `verify --source <산출물> --target <스테이징>` (7-③) | **실행** | **exit 0** · 1,490 ms · **일치** · 239=239 · 불일치 0 | — |
+| 20 | `verify --source news.db --target-sqlite <산출물>` (7-③′) | **실행** | **exit 4** · 1,170 ms · 불일치 61 | 스테이징 드리프트를 정확히 반영한 값이다(롤백 실패가 아니다 — §11-7 주석) |
+| 21 | 임시 `DATA_DIR` 배치 + Node 기동 (7-④⑤) | **실행** | 부팅 **761 ms** · `/api/health` **200** | — |
+| 22 | 로그인·목록·상세·사진검색 (7-⑥) | **실행** | **200 / 200(84건) / 200 / 200** · sessionId 64자 | — |
+| 23 | 부팅 전후 md5 (7-⑥′) | **실행** | **동일**(`3021afa5…`) | 스키마·백필이 파일을 한 바이트도 바꾸지 않았다 |
+| 24 | `SHOW DATABASES LIKE 'harness\_ct\_%'` (8) | **실행** | **잔재 0개** | — |
+| 25 | 한글 출력 인코딩 (0-5) | **실행** | 옵션 없이 **깨짐** · `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` 로 **정상** | Windows 콘솔의 `chcp 65001` 은 이 환경에서 실행할 수 없어 **미실측** |

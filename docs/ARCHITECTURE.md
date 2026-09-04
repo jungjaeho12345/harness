@@ -38,6 +38,10 @@ server-spring/          # Spring Boot 포팅 서버 (C++/Spring 포팅 P1 — No
     config/ db/ model/ service/ web/ controller/   # 계층은 Node와 동형: controller → service → repository(직접 SQL) → db
                                                    # web/ = 자체 서블릿 필터 체인(CORS·요청로그·CSRF·레이트리밋·경로 정책)과 와이어 포맷 정규화
   README.md             # 빌드·실행·계약 검증 커맨드 · 설정 키↔환경변수 표 · 구현/미구현 라우트
+tools/news-migrator/    # news.db(SQLite) → MySQL 8.0 이관 도구 (포팅 P2 · ADR-016 — 독립 Maven 프로젝트)
+  src/main/java/harness/newsmigrator/    # CLI(migrate·verify·export·ephemeral-*) · 행 복사 · 전 컬럼 대조 · 역방향 export
+  src/main/resources/db/migration/       # V1__baseline.sql = MySQL 측 스키마 정본 (SQLite 측 정본은 src/db/schema.js)
+  README.md             # CLI 계약 · 환경변수 키 집합 · 종료코드 · 비파괴 규율 3군 · 검증된 것/안 된 것
 news.db                 # SQLite 단일 파일 (User / Article / Contents)
 test/                   # 백엔드 테스트 (node --test)
 scripts/                # 실행 러너 (seed) + 배포 빌드/검증 (sea-build · dist-server · verify-server-exe · dist-client · verify-client · verify-integration · make-icon)
@@ -80,6 +84,15 @@ packaging/client/       # 클라이언트 배포 폴더에 그대로 복사되�
          고정된다(사유 변경·해소 후 재실패·재송고로 새 사이클이 열리면 새 행 → 갱신). Z의 재전송이 다시
          실패하는 경우는 억제 없이 항상 새 행이 생겨 failedAt이 갱신된다
 ```
+
+### 저장소 병존 — Node=SQLite / Spring=MySQL (포팅 P2 이후의 정상 상태)
+- 위 흐름의 `SQLite(news.db)`는 **Node 서버의 저장소**다. Spring 포팅 서버는 `DB_KIND=mysql`이면 같은 REST 계약을
+  **MySQL 8.0** 위에서 구현하고(`server-spring`은 여전히 DDL 0 — 부팅 시 존재만 읽기 검증), `DB_KIND=sqlite`(기본값)이면
+  종전대로 같은 파일을 연다. **Node 서버(`server/**`·`src/**`)는 무수정 SQLite 정본으로 남는다 — 그것이 롤백 레버다**(ADR-016 ②).
+- 대가로 새 위험이 생긴다: **두 저장소가 서로 다른 데이터를 갖는다.** 어느 쪽이 쓰기 정본인지는 기계가 아니라
+  **사람의 절차**가 지킨다 — 컷오버·롤백 런북은 `docs/ops-mysql.md` §11(절차)·§9(되돌리기)가 소유한다.
+- 이관·대조·역방향 export는 `tools/news-migrator/`가 담당한다(소스 `news.db`는 **읽기 전용**이고 실행 후 **바이트 무변**이다).
+  계약 하네스는 `node scripts/spring-contract.mjs --db mysql --parity`로 **Spring(MySQL) vs Node(SQLite)** 를 그대로 비교한다.
 
 ### SPA 동일 출처 서빙 (배포 배치)
 - 활성 조건: `SPA_DIR`(기본 서버 모듈 기준 `web/dist`)에 `index.html`이 존재할 때만 — 부재 시 비활성(현행 dev 동작 그대로, `npm run dev`는 계속 Vite `:5173`).

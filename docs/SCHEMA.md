@@ -100,3 +100,48 @@ ContentsVO에 대한 명세서
 - createdAt/updatedAt은 ISO-8601 UTC 문자열로 서버가 stamp한다.
 - ReceiverConfig(수집 inbound 전용)와 재사용하지 않는 별도 테이블이다 — ADR-008 (2).
 - 보조 인덱스/FK 제약 없음. 정합성은 애플리케이션이 유지.
+
+## MySQL 매핑 (phase 75 / P2 — 추가 절)
+위 명세는 **SQLite 정본**(`src/db/schema.js`)의 것이고 **컬럼의 의미는 이 절이 바꾸지 않는다.** 여기에는 같은 7테이블을
+MySQL 8.0으로 옮길 때의 **타입·collation 대응**과 **저장소가 달라서 갈리는 축**만 더한다. 배경·근거는 ADR-016,
+축별 실측은 `docs/db-mysql-mapping.md`, 운영 절차는 `docs/ops-mysql.md`다.
+
+- **정본이 둘이 된다**: SQLite 측은 `src/db/schema.js`, MySQL 측은 `tools/news-migrator`의 Flyway 기반선
+  (`src/main/resources/db/migration/V1__baseline.sql`)이다. 두 정본의 동형성은 사람 눈이 아니라 기계가 지킨다
+  (`BaselineMatchesCanonicalSchemaTest`가 컬럼 이름·선언 순서·타입·기본값을 규칙으로 계산해 대조한다 —
+  **정본에 컬럼이 늘면 그 테스트가 red다**). `server-spring`은 여전히 **DDL을 한 줄도 실행하지 않는다**.
+- **이 phase 이후 정상 상태는 Node=SQLite / Spring=MySQL 병존**이다. 전환기에 어느 쪽이 쓰기 정본인지는
+  **사람의 절차**가 지킨다(`docs/ops-mysql.md` §11-6).
+
+### 타입 대응 (규칙 넷 — 전부 실측된 오류코드가 근거다)
+| SQLite 정본 | MySQL | 근거 |
+|---|---|---|
+| 텍스트 PK 3종(`User.userId`·`Article.articleId`·`Contents.articleId`) | `VARCHAR(768) NOT NULL PRIMARY KEY` | `LONGTEXT`는 PK가 될 수 없고(1170), `VARCHAR(769)` PK는 키 상한 3072바이트를 넘어 거부된다(1071) |
+| 그 밖의 모든 텍스트(`VARCHAR`/`TEXT`) | `LONGTEXT` | `Article.markupVersion`이 165,802바이트라 `VARCHAR`가 원천 불가하고(1406), `Contents` 29컬럼을 `VARCHAR(768)`로 두면 행 크기 상한을 넘어 테이블이 만들어지지 않는다(1118) |
+| `INTEGER PRIMARY KEY`(ROWID alias — ArticleHistory·ReceiverConfig·Photo·DistributionTarget) | `BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` | 채번을 유지한다 |
+| `ArticleHistory.targetId INTEGER` | `BIGINT` | 숫자 id가 문자열이 되지 않게(정본의 타입 예외를 그대로 옮긴다) |
+| 기본값 5건(`User.active='Y'`·`User.failedLoginCount='0'`·`Contents.lockYN='N'`·`ReceiverConfig.active='Y'`·`DistributionTarget.active='Y'`) | **식 형태** `DEFAULT ('Y')` | `LONGTEXT`는 리터럴 기본값을 가질 수 없다(1101). 버리면 안 되는 이유는 삽입문이 **동적 컬럼 목록**이라 값 없는 컬럼이 문장에서 빠지기 때문이다 — 버리면 MySQL에서만 `NULL`이 되어 **이관이 동작을 바꾼다** |
+
+- **문자셋·collation은 전 테이블 `utf8mb4` / `utf8mb4_0900_bin`이다.** 세 후보 중 `=`(보안 축)와 `ORDER BY`가
+  SQLite BINARY와 **완전히 일치한 유일한 값**이다(`utf8mb4_bin`은 PAD SPACE라 `'x' = 'x '`가 참이 되어 인증이 무너지고,
+  `utf8mb4_0900_ai_ci`는 대소문자·전각·자모를 같다고 본다).
+- **엔진은 InnoDB.** **날짜·시각을 `DATETIME`으로 승격하지 않는다**(ISO-8601 문자열 그대로 — 승격하면 포맷·타임존이 왕복에서 갈린다).
+- **보조 인덱스·FK를 만들지 않는다** — 정본과 같이 **PK 자동 인덱스만**이다(성능 축은 P3).
+- **테이블 이름은 정본 표기로 적지만 카탈로그에는 소문자로 남는다**(`lower_case_table_names=1`). **컬럼 이름 표기는 보존**되므로
+  응답 키 집합(=계약)은 이관으로 바뀌지 않는다. 예약어 교집합은 **0건**이라 리포지토리 SQL은 무인용 식별자 그대로 돈다.
+- **대상 스키마에는 정본에 없는 테이블이 하나 생긴다** — `flyway_schema_history`(이관 도구의 원장). 전 행 대조는 이 테이블을 **명시적으로 제외**한다.
+
+### SQLite와 갈리는 축 (저장소가 다르면 답이 다르다)
+| 축 | SQLite | MySQL |
+|---|---|---|
+| `LIKE` 대소문자 | ASCII 대소문자 **무시** | **구분**(채택 collation의 대가 — 검색 결과가 좁아진다) |
+| 삭제된 id 재사용 | 최댓값 행 삭제 후 **재사용** | InnoDB는 **재사용하지 않는다** |
+| 롤백 후 id | 간격 **없음** | 간격 **1** |
+| 769자 텍스트 PK | **수락** | **거부**(1406) — 도달 경로는 `User.userId`(관리자 생성 API) |
+| `length()` 값 | **문자 수** | **바이트 수** (이 리포가 쓰는 유일한 자리인 `length(x) > 0` 술어는 **같은 행 집합**) |
+| 큰 수의 저장 표현 | `1e9` → `1000000000.0` | `1e9` → `1000000000` |
+| 대기 예산 | `busy_timeout` 5초 | `innodb_lock_wait_timeout` 50초 |
+| 유한하지 않은 id(`NaN`·무한대) | 조용히 0행 | 문장 자체가 깨진다 → **서버가 정본 의미론으로 먼저 막는다**(`ColumnValues.matchesNoRow`) |
+
+**정렬은 갈리지 않는다**(채택 collation이 SQLite BINARY와 일치한다). 각 축의 **유일 방어선(파일·메서드)** 목록은
+`docs/db-mysql-mapping.md` §7·§7-1이 소유한다 — 계약 스위트가 **보지 못하는** 축이 대부분이기 때문이다.

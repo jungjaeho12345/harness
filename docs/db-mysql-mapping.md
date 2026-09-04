@@ -391,6 +391,34 @@ DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버
 `photos-search` 의 반환 순서를 `assert.deepEqual` 로 직접 단언한다(`PhotoRepository` 의 `ORDER BY id DESC`
 는 이중 방어다). 나머지 테이블의 정렬은 `idsOf().sort()` 에 씻겨 계약이 보지 못한다.
 
+## 7-1. 「계약이 못 보는 축」 인계 목록 — **확정본**(step8)
+
+phase 74 forward_notes (8) ①이 P2 로 넘긴 숙제다. **각 축의 방어선을 파일·메서드 이름으로 적는다** —
+"테스트가 있다" 같은 서술은 인계가 아니다(그 문장으로는 다음 사람이 무엇이 깨졌는지 찾을 수 없다).
+경로는 별도 표기가 없으면 `server-spring/src/test/java/harness/news/` 하위다.
+
+| 축 | 계약이 보는가 | 유일 방어선(파일 · 메서드) |
+|---|---|---|
+| **정렬 순서** — Article(`createdAt DESC`) · History(`id DESC LIMIT ?`) · Photo(`id DESC`) · ReceiverConfig·DistributionTarget(`id` 오름차순) | Photo 만 본다(`contract/cases/default/media-upload.contract.js` **342행**이 `assert.deepEqual` 로 순서를 직접 단언한다). 나머지는 `idsOf().sort()` 에 씻겨 **못 본다** | `model/dialect/RepositoryOrderDifferentialTest` · `articleListOrdersByCreatedAtDescendingIdenticallyInBothDialects` · `historyListOrdersByIdDescendingIdenticallyInBothDialects` · `photoSearchOrdersByIdDescendingIdenticallyInBothDialects` · `distributionEventOrderAndLimitBindingAreIdenticalInBothDialects` · `receiverConfigAndDistributionTargetOrderByIdAscendingIdenticallyInBothDialects` · **부재 방어**(절이 없으면 두 엔진이 둘 다 PK 순서라 차등으로는 안 보인다) = `theAscendingOrderByIsGuardedStaticallyBecauseNoBehaviourTestCanSeeIt` · `theFixtureWouldHaveHiddenTheOrderingIfWeHadSortedIt` · `theOrderByCollationOfTheProductionStatementMatchesSqliteBinary` |
+| **`LIKE` 대소문자**(포기한 축) | 못 본다(`photos-search` 케이스가 소문자 랜덤 토큰만 쓴다) | `db/dialect/CollationSemanticsProbeTest.axis4_likeCaseSensitivityIsTheSacrificedAxis` · `axis4_wildcardsAndNullBehaveIdenticallyInBothDialects` · `model/dialect/RepositoryPredicateDifferentialTest.asciiCaseIsTheSacrificedAxisAndBothExpectationsAreStatedHere` · `articleTextSearchDivergesOnAsciiCaseInTheSameDirection` · `koreanNeedlesMatchIdenticallyInBothDialects` |
+| **id 재사용 · 롤백 간격** | 못 본다(`receiver-config` 케이스가 id 원값을 리포트에 싣지 않는다) | `db/dialect/IdentityAndSizeProbeTest.axis6_sqliteReusesDeletedIdsAndInnodbDoesNot` · `axis6_rollbackLeavesAGapInInnodbButNotInSqlite` · `model/dialect/RepositoryValueDifferentialTest.deletingTheMaxRowThenReinsertingReusesTheIdOnSqliteButNotOnMysql` · `aRolledBackInsertLeavesAGapOnMysqlButNotOnSqlite` |
+| **바인딩 표현**(`2.0` 같은 작은 값은 동형 · 큰 값에서 갈린다) | 못 본다(케이스가 문자열만 보낸다) | `db/dialect/ValueSemanticsProbeTest.axis1_boundValuesRenderAsTheSameTextInBothDialects` · `model/dialect/RepositoryValueDifferentialTest.numericBindingsLandAsTheSameTextUntilTheMagnitudeGrows` · `integerColumnBindingsLandTheSameWayInBothDialects` · `nonScalarBindingsAreRefusedBeforeTouchingEitherDialect` |
+| **NULL vs 빈 문자열** | 못 본다(둘 다 같은 `bodyKeys` 를 낸다) | `db/dialect/ValueSemanticsProbeTest.axis2_emptyStringAndNullStayDistinctInBothDialects` · `model/dialect/RepositoryValueDifferentialTest.nullAndEmptyStringSurviveTheRoundTripAsDistinctValuesInBothDialects` · `anEqualityFilterOnTheEmptyStringSelectsTheSameRowsInBothDialects` · `theContentsProjectionKeepsNullAndEmptyApartInBothDialects` |
+| **잠금 · 트랜잭션 · 풀 1** | 못 본다(하네스는 커넥션을 고갈시키지 않는다) | `model/dialect/RepositoryTransactionDifferentialTest.aFailedTwoTableInsertLeavesNothingBehindInEitherDialect` · `nestedRepositoryCallsInsideATransactionShareOneConnectionInBothDialects` · `concurrentInsertsNeverReceiveAnotherWritersIdOnMysql` · `theLockWaitBudgetsDifferAndTheDifferenceIsRecordedNotEqualised` · `db/dialect/ConnectionSemanticsProbeTest.axis11_autocommitAndRollbackBehaveLikeSqlite` · `axis11_aPoolOfOneSurvivesTheServerKillingItsIdleConnection` |
+| **`length()` 의미**(문자 vs 바이트) | 못 본다 | `db/dialect/ValueSemanticsProbeTest.axis9_lengthCountsCharactersInSqliteAndBytesInMysqlButThePredicateAgrees` · `model/dialect/RepositoryPredicateDifferentialTest.theLengthPredicateSelectsTheSameRowsInBothDialects` · `theLengthPredicateReallyFiltersAndIsNotAPassThrough` |
+| **769자 텍스트 PK**(Node 200 / Spring 500) | 못 본다(케이스가 없다) | `db/dialect/IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` — **해소는 P3** |
+| **유한하지 않은 id**(`NaN`·무한대) | **본다**(step7 의 `--db mysql --parity` 가 red 로 잡았다 — default 3관측) | `model/dialect/RepositoryNonFiniteIdDifferentialTest.findByIdWithANonFiniteIdIsEmptyInBothDialects` · `updateWithANonFiniteIdChangesNothingInBothDialects` · `removeWithANonFiniteIdIsZeroChangesInBothDialects` · `aFiniteIdStillReachesTheDatabaseInBothDialects`(대비군) |
+| **권한 오류의 응답**(grant 누락 시 삭제 라우트 500) | **못 본다** — 하네스는 `news_ct`(ALL) 로 돈다 | `controller/NewsAppMysqlWireTest.theWholeRouteChainRunsOnMysqlWithTheServerRuntimeCredential` · `db/dialect/MinimumPrivilegeBoundaryTest.everyOtherTableRefusesDeleteWithTheSameCredentialInTheSameDatabase` · `theTableScopedDeleteExceptionIsRealInTheProbeDatabase` · 운영 판정은 `docs/ops-mysql.md` §11-0-4 의 `SHOW GRANTS` |
+| **세션 read-back**(STRICT·문자셋이 배포 설정으로 흔들린다) | 못 본다 | `db/dialect/MysqlSessionGuardTest` · `db/dialect/MysqlSchemaGuardTest` |
+| **[74 승계] SSE 신호 유실**(구독 창의 경합) | 못 본다(하네스는 구독과 신호를 경합시키지 않는다) | `controller/StreamWireTest.signalsRaisedInsideTheReadyWindowAreNotLost` · `readyStaysTheFirstFrameEvenWhenSignalsRaceTheSubscription` · `controller/LogsStreamWireTest.logLinesRaisedInsideTheReadyWindowAreNotLost` · `logLinesRaisedRightAfterTheSnapshotAreNotLost` |
+| **[74 승계] seq 역전 · 전달 순서** | 못 본다 | `service/LogServiceTest.seqNeverArrivesOutOfOrderAcrossThreads` · `seqIsMonotonicAndIsNeverReusedAfterEviction` · `twoSubscribersBothReceiveInRegistrationOrder` · `controller/StreamWireTest.queuedSignalsDrainInPublishOrder` |
+| **[74 승계] 비연장 peek**(push 가 세션 만료를 밀어내면 안 된다) | 못 본다(계약이 시계를 주입하지 못한다) | `controller/StreamWireTest.pushRevalidationNeverExtendsTheSessionExpiry` · `controller/LogsStreamWireTest.pushRevalidationNeverExtendsTheSessionExpiry` · `theLogsControllerUsesNonExtendingPeekOnThePushPathAndHasNoTimerOrThread` · `controller/StreamWireTest.theStreamControllerNeverExtendsTheSessionAndHasNoTimerOrThread` |
+| **[74 승계] 단일 커넥션 순환 대기**(풀 1 · 통지 락) | 못 본다 | `controller/LogsStreamWireTest.aPushWaitingForTheOnlyDbConnectionDoesNotStallEveryOtherRequest`(요약들이 「항목 22」로 부르는 그것) · `service/LogServiceTest.theSingleConnectionDeadlockChainDoesNotForm` · `aSubscriberStuckInsideItsCallbackDoesNotBlockOtherThreadsFromLogging` |
+
+> **이 목록의 성질**: 위 축들은 **저장소를 바꿔도 계약 리포트가 침묵한다**. 그래서 MySQL 전환의 실질 게이트는
+> "313관측 diffs 0" 하나가 아니라 **이 표의 Java 테스트 + 313관측**이다. 표의 방어선이 지워지면 그 축은
+> **아무도 보지 않는 축**이 된다 — 삭제 전에 대체 방어선을 먼저 세워라.
+
 ## 8. 미측정 항목 (정직하게 남긴다)
 
 | 항목 | 이유 | 어디서 채울 것인가 |

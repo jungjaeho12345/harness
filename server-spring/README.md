@@ -231,6 +231,17 @@ curl -i http://127.0.0.1:15731/api/health   # 200 {"ok":true}
 
 의존성·mvnw 배포판은 `~/.m2`에 이미 캐시돼 있어 `-o`(오프라인)로도 `verify`가 통과한다.
 
+> **⚠ phase 75(P2) 이후 `verify`는 MySQL 서버를 요구한다 — 위 문장은 "의존성 해결"의 이야기이고 이제 그것만으로는 부족하다.**
+> MySQL 관련 테스트는 접속 설정이 없으면 **skip이 아니라 fail**이다(ADR-016 ⑧ · `MysqlConfiguredGuardTest`).
+> 조용한 skip을 택하면 다른 사람이 다른 날 이 스위트를 돌릴 때 P2의 모든 게이트가 **아무 말 없이 사라지기** 때문이다
+> (이 리포의 게이트가 실제로 뚫린 방식이 정확히 그것이다). 대가는 오프라인·MySQL 없는 개발이 불가해지는 것이고, 그 트레이드오프는 ADR-016이 기록한다.
+>
+> 스위트가 요구하는 환경변수는 **6개**다 — `NEWS_CT_MYSQL_URL`·`NEWS_CT_MYSQL_USERNAME`·`NEWS_CT_MYSQL_PASSWORD`(임시 DB 측정)와
+> `NEWS_APP_MYSQL_URL`·`NEWS_APP_MYSQL_USERNAME`·`NEWS_APP_MYSQL_PASSWORD`(최소 권한 계정의 스모크·권한 경계).
+> **`NEWS_DB_*`라는 이름 그대로 실으면 안 된다**: 그 이름은 서버가 읽는 키라서 `DB_KIND` 기본값(`sqlite`)과 모순되어
+> **모든 `@SpringBootTest`가 기동을 거부**한다(설계된 거부). 이름만 옮겨 싣는 정확한 형태는 `docs/ops-mysql.md` §3에 있다.
+> 빠진 키가 있으면 실패 메시지가 **어느 키를 옮겨야 하는지 지목**한다.
+
 ## 계약 스위트로 검증하기
 
 이 서버가 계약(`docs/api-contract/**`)을 만족하는지는 `scripts/spring-contract.mjs` 하나가 판정한다.
