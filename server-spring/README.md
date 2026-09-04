@@ -340,7 +340,11 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 
 | 설정 키 | 환경변수 | 기본값 | 설명 |
 |---|---|---|---|
-| `app.data-dir` | `DATA_DIR` | **없음(필수)** | 데이터 디렉토리 절대경로. 미설정이면 기동 실패(메시지에 키·환경변수 이름 포함). |
+| `app.data-dir` | `DATA_DIR` | **없음(필수)** | 데이터 디렉토리 절대경로. 미설정이면 기동 실패(메시지에 키·환경변수 이름 포함). **`app.db.kind=mysql` 에서도 여전히 필수다** — 아래 표 다음 문단 참조. |
+| `app.db.kind` | `DB_KIND` | `sqlite` | 저장소 방언. `sqlite` \| `mysql` 만 허용하며 **그 밖의 값은 기동 실패**다(허용 값을 지목한다). **URL 을 보고 추론하지 않는다**(ADR-016 · 포팅 불변식 7): 추론하면 `DB_KIND` 누락이 조용히 옛 파일로 되돌아가고, 그 누락이 이관 중 가장 흔한 사고다. `app.db.url` 의 스킴과 **모순이면 기동을 거부**한다. |
+| `app.db.url` | `NEWS_DB_URL` | 빈 값 | mysql 모드의 JDBC URL(`jdbc:mysql://호스트:포트/DB?파라미터`). **접속 파라미터는 이 값이 통째로 실어 온다 — 서버가 덧붙이지 않는다**(필수 파라미터가 없다는 것이 실측이고 선택 집합은 배포마다 다르다: `docs/db-mysql-mapping.md` §5). **자격을 URL 에 넣지 마라**(프로세스 목록·로그 유출 — `SecretHygieneTest` 가 그 형태를 리포 전역에서 금지한다). sqlite 모드에서는 무시하되 **스킴이 다르면 모순으로 거부**한다. |
+| `app.db.username` | `NEWS_DB_USERNAME` | 빈 값 | mysql 모드의 계정. 운영은 최소 권한 계정(`news_app` — `SELECT/INSERT/UPDATE` + `ReceiverConfig` 테이블 단위 `DELETE` 1건)이다. |
+| `app.db.password` | `NEWS_DB_PASSWORD` | 빈 값 | mysql 모드의 비밀번호. **다듬지 않는다**(앞뒤 공백도 비밀번호의 일부일 수 있다). `kind=mysql` 인데 위 3키 중 하나라도 비면 **없는 키 이름을 지목하며 기동 실패**한다 — 조용한 sqlite 폴백은 없다. |
 | `app.env` | `APP_ENV` | `development` | `production`이면 프로덕션 분기(쿠키 Secure·SameSite=None, CSRF allowlist 엄격). Node의 `NODE_ENV`를 읽지 않는다. |
 | `app.allowed-origins` | `ALLOWED_ORIGINS` | 빈 목록 | CORS allowlist(콤마 구분). |
 | `server.port` | `PORT` | `15000` | 계약 하네스는 **[15000, 20000)**에서 빈 포트를 프로브해 주입한다(러너·verify 구간과 서로소). |
@@ -357,6 +361,13 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 예외 메시지·원인 체인 어디에도 실리지 않는다(센티넬 키로 3면 단언) · **공백뿐인 값은 '미설정'으로 수렴한다**
 (JS truthy는 공백 1칸을 '설정됨'으로 보므로 이것은 **의도된 divergence**이고 `app.collection.token`과 반대 선택이다 —
 `.env` 오타가 조용한 egress로 번지지 않게 하는 쪽으로 틀렸다. 미설정 판정에만 다듬기를 쓰고 **설정된 키 값 자체는 원문 그대로** 쓴다).
+
+**`app.db.kind=mysql` 에서도 `DATA_DIR` 은 필수다.** 그 값이 내는 것은 DB 경로만이 아니라 **업로드 루트**
+(`AppProperties.uploadsDirPath()` = `<data-dir>/uploads/`)이기 때문이다 — mysql 모드에서는 `news.db` 파일을
+열지 않을 뿐, 첨부·사진 원본은 여전히 그 디렉토리에 저장되고 `/uploads/**` 가 거기서 서빙된다.
+업로드 루트에 전용 키를 만들지 않은 이유는 아래 문단과 같다(저장측과 서빙측이 갈리는 것을 막는다).
+mysql 모드로 뜬 서버의 `DATA_DIR` 을 sqlite 시절과 다른 곳으로 옮기면 **기존 업로드 파일이 404 가 된다** —
+컷오버 런북(`docs/ops-mysql.md`)이 그 경로를 함께 옮기는 항목을 갖는 이유다.
 
 **업로드 루트에는 전용 환경변수가 없다** — `POST /api/upload`의 저장 위치와 `/uploads/**` 정적 서빙 위치는 둘 다
 `app.data-dir` 하위의 `uploads/`이고, 그 경로를 도출하는 **유일한 지점이 `AppProperties.uploadsDirPath()`**다

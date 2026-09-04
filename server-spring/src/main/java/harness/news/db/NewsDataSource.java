@@ -8,6 +8,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * DataSource 팩토리 — <b>이 서버에서 저장소 방언을 아는 유일한 파일</b>(ADR-016 · phase 75 step5).
@@ -52,6 +54,15 @@ public final class NewsDataSource {
 	/** MySQL JDBC URL 접두사 — 위와 같은 자리. */
 	public static final String MYSQL_URL_PREFIX = "jdbc:mysql:";
 
+	/**
+	 * MySQL 세션에 <b>반드시</b> 있어야 하는 SQL 모드 — 없으면 상한 초과 값이 거부 대신 절단된다
+	 * ({@link #verifySession}의 근거 1).
+	 */
+	public static final String REQUIRED_SQL_MODE = "STRICT_TRANS_TABLES";
+
+	/** MySQL 세션 문자셋 — 기반선이 {@code utf8mb4}이므로 접속도 같아야 한다. */
+	public static final String REQUIRED_CHARSET = "utf8mb4";
+
 	private static final String SQLITE_DRIVER = "org.sqlite.JDBC";
 
 	private static final String MYSQL_DRIVER = "com.mysql.cj.jdbc.Driver";
@@ -70,7 +81,18 @@ public final class NewsDataSource {
 	 * @throws IllegalStateException sqlite 모드에서 DB 파일이 없거나 열 수 없을 때(기동 실패)
 	 */
 	public static HikariDataSource create(DbProperties db, Path dataDir) {
-		return db.mysql() ? new HikariDataSource(mysqlConfig(db)) : create(dataDir);
+		if (!db.mysql()) {
+			return create(dataDir);
+		}
+		HikariDataSource dataSource = new HikariDataSource(mysqlConfig(db));
+		try {
+			verifySession(dataSource, describeTarget(db, dataDir));
+		}
+		catch (RuntimeException ex) {
+			dataSource.close();
+			throw ex;
+		}
+		return dataSource;
 	}
 
 	/**
@@ -114,8 +136,8 @@ public final class NewsDataSource {
 	 * 몰래 붙이면 운영자가 URL을 고쳐도 그 값이 이기지 못한다. 자격은 <b>언제나 별도 키</b>다 —
 	 * URL에 섞으면 프로세스 목록·로그로 샌다.
 	 *
-	 * <p>연결 초기화 SQL을 두지 않는다: {@code busy_timeout}은 SQLite 전용이고, MySQL 세션 설정의
-	 * read-back 검증은 step6이 붙인다(이 step은 배선만 만들고 동작을 바꾸지 않는다).
+	 * <p>연결 초기화 SQL을 두지 않는다: {@code busy_timeout}은 SQLite 전용이고, 여기서 필요한 것은
+	 * 값을 <b>세우는</b> 일이 아니라 세워진 값을 <b>확인</b>하는 일이다({@link #verifySession}).
 	 */
 	static HikariConfig mysqlConfig(DbProperties db) {
 		HikariConfig config = new HikariConfig();
@@ -142,6 +164,68 @@ public final class NewsDataSource {
 		String url = db.url();
 		int authority = url.indexOf("//");
 		return (authority < 0) ? url : url.substring(0, authority);
+	}
+
+	/**
+	 * MySQL 세션 read-back — <b>의도한 설정으로 떴는지 읽어 확인하고, 아니면 뜨지 않는다.</b>
+	 *
+	 * <p>SQLite 쪽 {@link #verifyBusyTimeout}과 같은 규율이다(조용히 다른 설정으로 도는 것을 금지). 다만
+	 * 확인 대상은 우리가 <b>세운</b> 값이 아니라 서버·드라이버·URL이 <b>합의한</b> 값이다 — 이 서버는 접속
+	 * 파라미터를 덧붙이지 않으므로({@link #mysqlConfig}) 세션 설정의 출처가 배포 환경이고, 그래서 더더욱
+	 * 읽어 봐야 한다.
+	 *
+	 * <p>확인하는 것은 넷이고 각각의 근거가 실측이다(docs/db-mysql-mapping.md).
+	 * <ol>
+	 *   <li><b>{@code STRICT_TRANS_TABLES}</b> — 이 모드가 빠지면 상한을 넘는 값이 <b>거부되는 대신 조용히
+	 *       잘려서</b> 저장된다. 축 8이 "769자는 MySQL이 1406으로 거부하고 절단하지 않는다"를 확인했고
+	 *       텍스트 PK를 {@code VARCHAR(768)}로 옮기는 결정이 그 사실 위에 서 있다 — 절단이 살아나면
+	 *       {@code userId} 하나가 다른 계정과 충돌하는 형태의 데이터 손상이 된다.</li>
+	 *   <li><b>{@code character_set_client}</b>·<b>{@code character_set_connection}</b> = {@code utf8mb4} —
+	 *       한글 본문·제목이 왕복에서 깨지지 않는 최소 조건이다({@code characterEncoding} 오타 하나가
+	 *       이 자리를 바꾼다).</li>
+	 *   <li><b>{@code collation_connection}</b>의 문자셋 계열 — 값 자체는 배포 선택이라 고정하지 않는다
+	 *       (실측: 이 서버 기본은 {@code utf8mb4_0900_ai_ci}이고 <b>컬럼 collation이 우선</b>하므로
+	 *       비교 의미론은 기반선이 정한다 — 축 3·11). 다른 <b>문자셋</b>이면 그 전제가 깨지므로
+	 *       계열만 본다.</li>
+	 * </ol>
+	 *
+	 * <p>메시지에 자격을 싣지 않는다 — 대상 표기는 {@link #describeTarget}가 만든 값이다.
+	 */
+	private static void verifySession(HikariDataSource dataSource, String target) {
+		try (Connection connection = dataSource.getConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rs = statement.executeQuery("SELECT @@session.sql_mode, @@session.character_set_client,"
+						+ " @@session.character_set_connection, @@session.collation_connection")) {
+			if (!rs.next()) {
+				throw new IllegalStateException("MySQL 세션 설정을 읽지 못했습니다 (" + target + ")");
+			}
+			String sqlMode = rs.getString(1);
+			List<String> problems = new ArrayList<>();
+			if (sqlMode == null || !List.of(sqlMode.split(",")).contains(REQUIRED_SQL_MODE)) {
+				problems.add("sql_mode 에 " + REQUIRED_SQL_MODE + " 가 없습니다(actual=" + sqlMode + ")");
+			}
+			requireValue(problems, "character_set_client", rs.getString(2), REQUIRED_CHARSET);
+			requireValue(problems, "character_set_connection", rs.getString(3), REQUIRED_CHARSET);
+			String collation = rs.getString(4);
+			if (collation == null || !collation.startsWith(REQUIRED_CHARSET + "_")) {
+				problems.add("collation_connection 이 " + REQUIRED_CHARSET
+						+ " 계열이 아닙니다(actual=" + collation + ")");
+			}
+			if (!problems.isEmpty()) {
+				throw new IllegalStateException("MySQL 세션 설정이 의도와 다릅니다 (" + target + "): "
+						+ String.join(" / ", problems)
+						+ ". 접속 URL 파라미터와 서버 설정을 확인하세요 — 이 서버는 다른 설정으로 조용히 뜨지 않습니다.");
+			}
+		}
+		catch (SQLException ex) {
+			throw new IllegalStateException("DB 연결에 실패했습니다: " + target, ex);
+		}
+	}
+
+	private static void requireValue(List<String> problems, String name, String actual, String expected) {
+		if (!expected.equals(actual)) {
+			problems.add(name + " 이 " + expected + " 가 아닙니다(actual=" + actual + ")");
+		}
 	}
 
 	/** 적용 후 read-back — Node {@code applyConnectionPragmas}와 같은 규율(조용한 no-op 금지). */

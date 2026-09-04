@@ -1,5 +1,7 @@
 package harness.news.testsupport;
 
+import harness.news.db.DbProperties;
+import harness.news.db.NewsDataSource;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -158,6 +160,33 @@ public final class EphemeralMysqlDb implements AutoCloseable {
 	/** 이 DB를 가리키는 JDBC URL(비밀번호는 담기지 않는다 — 인자로만 흐른다). */
 	public String jdbcUrl() {
 		return this.jdbcUrl;
+	}
+
+	/**
+	 * 이 DB를 <b>서버의 mysql 분기로</b> 열기 위한 설정({@code app.db.*}).
+	 *
+	 * <p>비밀번호 getter를 따로 두지 않는 이유는 위생이다 — 값이 필요한 곳은 "서버가 받는 형태"
+	 * ({@link DbProperties})뿐이고 그 레코드는 {@code toString()}으로 비밀을 흘리지 않는 자리에서만 쓰인다.
+	 * 측정이 실제 프로덕션 경로({@link NewsDataSource#create(DbProperties, Path)})를 타야 세션 read-back
+	 * 검증까지 같은 코드로 돈다(phase 75 step6 A).
+	 */
+	public DbProperties dbProperties() {
+		return dbProperties("");
+	}
+
+	/**
+	 * 위와 같되 <b>URL에 파라미터를 덧붙인</b> 설정 — "다른 세션 설정으로 뜨는" 상황을 재현하는 자리다.
+	 *
+	 * @param extraQuery 덧붙일 질의 문자열({@code &} 없이 {@code key=value} 형태). 빈 값이면 그대로다
+	 */
+	public DbProperties dbProperties(String extraQuery) {
+		requireConfigured();
+		String url = this.jdbcUrl;
+		if (extraQuery != null && !extraQuery.isBlank()) {
+			url = url + (url.indexOf('?') < 0 ? "?" : "&") + extraQuery;
+		}
+		return new DbProperties(DbProperties.MYSQL, url,
+				System.getenv(USERNAME_KEY), System.getenv(PASSWORD_KEY));
 	}
 
 	/** 이 DB로 새 연결을 연다. 호출자가 닫는다. */

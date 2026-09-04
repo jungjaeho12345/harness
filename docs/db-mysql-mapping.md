@@ -373,8 +373,18 @@ DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버
 | 2 | 삭제된 id 재사용 — SQLite 재사용 / InnoDB 미재사용 | **못 본다**(`receiver-config` 케이스는 id 원값을 안 싣는다) | `IdentityAndSizeProbeTest.axis6_sqliteReusesDeletedIdsAndInnodbDoesNot` |
 | 3 | 롤백 후 id 간격 — SQLite 없음 / InnoDB 있음 | 못 본다 | `IdentityAndSizeProbeTest.axis6_rollbackLeavesAGapInInnodbButNotInSqlite` |
 | 4 | 769자 PK — Node 200 수락 / Spring 500 거부(1406) | 못 본다(케이스가 없다) | `IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` |
-| 5 | `length()` 값 — 문자 수 / 바이트 수 (**술어는 동형**) | 못 본다 | `ValueSemanticsProbeTest.axis9_*` |
+| 5 | `length()` 값 — 문자 수 / 바이트 수 (**술어는 동형**) | 못 본다 | `ValueSemanticsProbeTest.axis9_*` · `RepositoryPredicateDifferentialTest.theLengthPredicateSelectsTheSameRowsInBothDialects` |
 | 6 | 성능(보조 인덱스 0 유지) | 못 본다 | (미측정 — P3) |
+| **7** | **큰 수의 저장 표현** — `1e9` 가 SQLite `1000000000.0` / MySQL `1000000000` · `1.2345678901234567e19` 가 SQLite `1.23456789012346e+19`(15자리) / MySQL `1.2345678901234567e19`(17자리) **[step6]** | 못 본다(케이스가 문자열만 보낸다) | `RepositoryValueDifferentialTest.numericBindingsLandAsTheSameTextUntilTheMagnitudeGrows` |
+| **8** | **권한 오류의 응답** — `GRANT DELETE ON <db>.ReceiverConfig` 가 없으면 `DELETE /api/receiver-config/:id` 가 **500 `internal-error`** 다(Node 는 200 `{ok:true,changes:1}`) **[step6]** | 하네스가 `news_ct`(ALL) 로 돌아 **못 본다** | `NewsAppMysqlWireTest.theWholeRouteChainRunsOnMysqlWithTheServerRuntimeCredential` |
+
+> **[step6] 7번은 step1 축 1의 정정이다.** 축 1은 작은 값(`0`·`2.0`)만 재고 "바인딩 표현 divergence 0"으로
+> 끝냈는데, 크기를 키우면 갈린다(2026-09-04 실측 · 위 표). 도달 경로가 있다 — JSON 본문의 숫자 리터럴
+> (`{"port": 1000000000}`)이 그대로 `ColumnValues` 까지 온다. **고치지 않는다**: 자체 숫자 포매터를 만들면
+> `ColumnValues` 의 근거("같은 변환 코드가 돌게 둔다")가 무너지고 `server/**` 는 무수정 정본이다.
+>
+> **[step6] 8번은 grant 가 하드닝이 아니라 계약 필수 조건임을 뜻한다.** 그 grant 가 빠진 배포는 수집 설정
+> 삭제 라우트에서 **패리티가 깨진다**(200 → 500). 절차는 `docs/ops-mysql.md` §7이다.
 
 **정렬**은 divergence 가 아니다(채택 collation 이 SQLite 와 일치한다). 참고로 정렬 축에서 계약이
 실제로 보는 자리가 정확히 하나 있다 — `contract/cases/default/media-upload.contract.js` 342행이
@@ -401,7 +411,25 @@ DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버
 | `db/dialect/IdentityAndSizeProbeTest.java` | 6 · 7 · 8 | 5 |
 | `db/dialect/CatalogSemanticsProbeTest.java` | 10 · 12 · **기반선 단일 출처(step2)** | **4** |
 | `db/dialect/ConnectionSemanticsProbeTest.java` | 11 | 4 |
-| **합계** | | **28** |
+| **[step6]** `db/dialect/MysqlSessionGuardTest.java` | 접속 후 세션 read-back(STRICT·문자셋)·거부 메시지 위생 | **5** |
+| **[step6]** `db/dialect/MysqlSchemaGuardTest.java` | MySQL 카탈로그로 7테이블·컬럼 결손 지목 | **5** |
+| **[step6]** `db/dialect/MinimumPrivilegeBoundaryTest.java` | 최소 권한 경계(6/6 삭제 거부 · 예외 1건) | **3** |
+| **[step6]** `model/dialect/RepositoryOrderDifferentialTest.java` | B-1 정렬(5리포지토리 · `LIMIT ?`) | **7** |
+| **[step6]** `model/dialect/RepositoryPredicateDifferentialTest.java` | B-2 `LIKE` · B-7 `length()` 술어 | **7** |
+| **[step6]** `model/dialect/RepositoryValueDifferentialTest.java` | B-3 id · B-4 바인딩 표현 · B-5 NULL/빈 문자열 | **9** |
+| **[step6]** `model/dialect/RepositoryTransactionDifferentialTest.java` | B-6 트랜잭션·잠금·풀 1 | **5** |
+| **[step6]** `controller/NewsAppMysqlWireTest.java` | `news_app` 자격 · `news_stage` 전 경로 스모크 | **2** |
+| **합계** | | **71** |
+
+**[step6] 세션 read-back의 실측 하나** — Connector/J는 기본 `jdbcCompliantTruncation=true`일 때 세션
+`sql_mode` 에 `STRICT_TRANS_TABLES` 를 **스스로 다시 붙인다**(`sessionVariables=sql_mode='NO_ENGINE_SUBSTITUTION'`
+로 세워도 결과가 `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION` 이었다). 즉 절단 방어선은 **두 겹**이고
+STRICT 없는 세션을 만들려면 `jdbcCompliantTruncation=false` 까지 꺼야 한다. 그럼에도 서버가 읽어 확인하는
+이유는 두 값 다 **배포 환경이 정하는 것**이기 때문이다.
+
+**[step6] 정렬 축의 결론** — 5리포지토리의 실제 문장(`ORDER BY createdAt DESC` · `id DESC` · `id` ·
+`id DESC LIMIT ?`)이 24건 한글 표본과 대소문자만 다른 정렬 키 위에서 **두 방언 같은 순서**를 냈다
+(`RepositoryOrderDifferentialTest`). 정렬은 여전히 divergence가 아니다.
 
 **[step2] 마이그레이터 모듈 쪽 방어선**(`tools/news-migrator` — 별도 Maven 프로젝트라 위 스위트와 함께
 돌지 않는다. `cd tools/news-migrator && ./mvnw -B clean verify`):

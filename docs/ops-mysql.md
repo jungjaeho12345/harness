@@ -106,12 +106,35 @@ Get-Content D:/agents/secrets/news-mysql.env |
   ForEach-Object { $k,$v = $_ -split '=',2; [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim(), 'Process') }
 ```
 
-> ⚠ **`mvnw verify` 와 계약 하네스에는 `NEWS_CT_MYSQL_*` 만 실어라**(2026-09-03 step5 실측). step5 부터
-> Spring 은 `DB_KIND`(기본 `sqlite`)와 `NEWS_DB_URL` 이 **서로 다른 저장소를 가리키면 기동을 거부**한다.
-> 그래서 위 절차로 파일을 통째로 싣고 `mvnw verify` 를 돌리면 `DB_KIND` 없이 `NEWS_DB_URL`(MySQL)만
+> ⚠ **`mvnw verify` 와 계약 하네스에 `NEWS_DB_*` 를 그대로 실으면 안 된다**(2026-09-03 step5 실측).
+> step5 부터 Spring 은 `DB_KIND`(기본 `sqlite`)와 `NEWS_DB_URL` 이 **서로 다른 저장소를 가리키면 기동을
+> 거부**한다. 위 절차로 파일을 통째로 싣고 `mvnw verify` 를 돌리면 `DB_KIND` 없이 `NEWS_DB_URL`(MySQL)만
 > 남아 **모든 `@SpringBootTest` 가 컨텍스트 기동 실패**로 red 다(실측: `DbBootGuardTest` 3 red +
-> `DbPropertiesBindingTest` 1 red). 코드 회귀가 아니라 **설계된 거부**다 — 셸을 좁히거나
-> (`case "$k" in NEWS_CT_MYSQL_*)`) `DB_KIND=mysql` 을 함께 실어라.
+> `DbPropertiesBindingTest` 1 red). 코드 회귀가 아니라 **설계된 거부**다.
+
+### `mvnw verify` 를 돌리는 정확한 형태 (step6 이후)
+
+step6 부터 스위트는 **두 자격**을 쓴다: `news_ct`(임시 DB 측정)와 **`news_app`**(최소 권한 구성 자체를
+시험하는 스모크·권한 경계 — `news_stage` 대상). 그래서 `NEWS_DB_*` 의 **값**은 필요하지만 그 **이름**은
+환경에 남아 있으면 안 된다(위 모순 거부). 이름만 옮겨 싣는다 — 비밀의 출처는 여전히 env 파일 하나다.
+
+```bash
+# 위 §3 로드 절차 다음에 이어서
+export NEWS_APP_MYSQL_URL="$NEWS_DB_URL"
+export NEWS_APP_MYSQL_USERNAME="$NEWS_DB_USERNAME"
+export NEWS_APP_MYSQL_PASSWORD="$NEWS_DB_PASSWORD"
+unset NEWS_DB_URL NEWS_DB_USERNAME NEWS_DB_PASSWORD
+
+cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B clean verify
+```
+
+빠진 키가 있으면 **skip 이 아니라 fail** 이고, 실패 메시지가 어느 키를 옮겨야 하는지 지목한다
+(decisions (14) — 조용한 skip 은 이 phase 의 게이트를 전부 공허하게 만든다).
+
+> ⚠ **이 스위트는 `news_stage` 에 행을 추가한다**(계정 3 · 기사 1 · 사진 1 · 수집 설정 1 정도, 실행마다).
+> 지우지는 않는다. step3·step4 의 왕복 대조를 다시 돌리려면 `news_stage` 를 비우고 재적재해야 하고,
+> 그것은 `news_migrator`·`news_app` 어느 자격으로도 할 수 없다(둘 다 `DELETE`·`DROP` 이 없다) — **사람의
+> 일이다**(root).
 
 ## 4. 리포에 비밀을 남기지 않는 규칙 (기계가 지킨다)
 
@@ -224,7 +247,17 @@ step3 이 `news_stage` 에 스키마를 만든 **뒤에** 같은 파일을 한 �
 ```
 
 `GRANT DELETE ON `news_stage`.`receiverconfig` TO ...` 줄이 보이면 완료다.
-이 grant 가 없으면 step6·step7 에서 수신설정 삭제 라우트가 권한 오류로 무너져 계약 패리티가 깨진다.
+
+> **⚠ 이 grant 는 하드닝이 아니라 계약 필수 조건이다 (2026-09-04 step6 실측).** 없으면
+> `DELETE /api/receiver-config/:id` 가 계약이 동결한 `200 {"ok":true,"changes":1}` 대신
+> **500 `internal-error`** 를 낸다(권한 오류가 전역 핸들러로 새어 나온다 — `NewsAppMysqlWireTest` 가 그
+> 응답을 실측해 고정한다). 그리고 **계약 하네스는 이 축을 보지 못한다** — 하네스는 `news_ct`(ALL 권한)로
+> 돌기 때문이다. 즉 "패리티 green" 은 이 grant 의 부재를 덮어 준다. 운영 DB(`news`)로 컷오버할 때
+> **같은 grant 를 반드시 함께 붙여라**(step8 런북 항목).
+>
+> 붙기 전에도 스위트는 red 가 되지 않는다: 판정이 "우리가 기대한 표와 같은가"가 아니라
+> **"서버가 자기 `SHOW GRANTS` 표대로 실제로 막는가"** 이기 때문이다(`MinimumPrivilegeBoundaryTest`).
+> 다만 그 상태에서는 **"삭제 성공" 절반이 실증되지 않은 채**이고, 그 사실은 step6 summary 에 적혀 있다.
 
 ## 8. collation — **확정됐다**(step1 실측, 2026-09-03)
 
