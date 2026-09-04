@@ -29,7 +29,9 @@ import org.junit.jupiter.api.Test;
  * <li>{@code Files.deleteIfExists(source)} 한 줄이면 <b>소스 news.db 파일 자체</b>가 사라진다 —
  * "원본 바이트 무변" 이라는 이 phase 의 완료 게이트가 SQL 한 줄 없이 무너진다.</li>
  * </ul>
- * 그래서 금지 패턴을 <b>두 군</b>으로 둔다: SQL 텍스트를 보는 군과 <b>API 호출</b>을 보는 군이다.
+ * 그래서 금지 패턴을 <b>네 군</b>으로 둔다: 파괴적 SQL(예외 0) · 데이터베이스 드롭(예외 1파일) ·
+ * SQL 밖 파괴 경로(예외 0) · <b>파일 쓰기</b>(예외 1파일). 정규화는 그 넷이 <b>둘</b>을 나눠 쓴다 —
+ * SQL 텍스트를 보는 것과 실행되는 토큰만 보는 것이다.
  * 71a(12/12 통과) · 72(11/11 통과) · 73(8/10 통과) · 74({@code ScopedValue})가 전부 "게이트 green 인
  * 채로" 뚫린 전례가 있으므로, 각 군마다 <b>심어 본 우회 형태</b>를 자기 검사로 남긴다.
  *
@@ -65,6 +67,14 @@ class MigratorHasNoDestructiveSqlTest {
 
 	/** 예외 판정의 키는 {@link #MAIN} 기준 상대 경로다(이름이 아니다 — 아래 오배치 테스트가 그 이유다). */
 	private static final String EPHEMERAL_DROP_FILE = "java/harness/newsmigrator/EphemeralDatabase.java";
+
+	/**
+	 * 파일 쓰기가 허용되는 <b>유일한 자리</b> — 대조 리포트를 OS 임시 디렉토리에 남긴다(경로 등재).
+	 *
+	 * <p>{@link #FILE_WRITE} 의 근거는 이 상수 하나다. 이름이 아니라 <b>경로</b>인 이유는
+	 * {@link #EPHEMERAL_DROP_FILE} 과 같다(다른 패키지의 동명 파일이 예외를 가져가면 안 된다).
+	 */
+	private static final String REPORT_WRITE_FILE = "java/harness/newsmigrator/RowVerifier.java";
 
 	/** 정규화 방식 — 무엇을 지우고 무엇을 남길 것인가. */
 	private enum Normalization {
@@ -132,8 +142,9 @@ class MigratorHasNoDestructiveSqlTest {
 	 * 막는 비용이 0 이고, 열어 두면 SQL 도 {@code Files.delete} 도 없는 채로 소스가 사라진다.
 	 * <ul>
 	 * <li>{@code new FileOutputStream(source.toFile())} — 여는 순간 길이 0 으로 잘린다(T2).</li>
-	 * <li>{@code Files.write(source, new byte[0])} — {@code writeString} 과 달리 괄호가 바로 붙어
-	 * 구분된다(T3). 리포트를 쓰는 {@code RowVerifier} 의 {@code writeString} 은 계속 허용된다.</li>
+	 * <li>{@code Files.write(source, new byte[0])} — 이 군은 예외가 0 이라 {@code RowVerifier} 안에서도
+	 * 막힌다(T3). 리포트에 필요한 것은 {@code writeString} 뿐이고 그것은 {@link #FILE_WRITE} 의
+	 * 경로 예외가 좁게 연다.</li>
 	 * <li>{@code new RandomAccessFile(f, "rw").setLength(0)} — {@code setLength} 는
 	 * {@code StringBuilder} 도 쓰는 이름이라({@code BaselineSchema} 229행) <b>클래스 이름</b>을 막는다(T4).</li>
 	 * <li>{@code FileChannel.open(...).truncate(0)} — 지금은 SQL 군의 {@code truncate} 낱말이 우연히
@@ -142,10 +153,22 @@ class MigratorHasNoDestructiveSqlTest {
 	 * {@code ProcessBuilder}·{@code Runtime.getRuntime()} 도 같은 이유로 막는다 — 외부 {@code mysql}
 	 * 클라이언트를 띄우면 이 모듈의 자격·이름 규약·Flyway 잠금이 <b>전부 우회</b>된다(T6).
 	 *
-	 * <p><b>{@code source} 라는 이름에 기댄 얕은 방어가 하나 있다</b>: {@code Files.writeString} 은
-	 * {@code RowVerifier} 가 리포트를 쓸 때 실제로 필요하므로 통째로 막을 수 없다(막으면 예외 목록이
-	 * 늘고, 그 목록의 크기가 곧 아키텍처 단언이다). 그래서 "첫 인자가 {@code source} 인 쓰기" 만 막는다.
-	 * 변수 이름을 바꾸면 통과한다 — 그 한계를 알고 두는 것이지 모르고 두는 것이 아니다.
+	 * <h3>{@code FileOutputStream} 과 <b>동급인데 열려 있던 철자</b> 셋 (2026-09-04 ⑤ [med] 1)</h3>
+	 * <ul>
+	 * <li>{@code new FileWriter(source.toFile())} — {@code FileOutputStream} 과 똑같이 여는 순간 절단한다.</li>
+	 * <li>{@code new PrintWriter(source.toFile())} — 내부에서 그 스트림을 연다. 결과가 같다.</li>
+	 * <li>{@code Files.newByteChannel(source, WRITE)} — {@code FileChannel} 을 막고도 같은 일을 하는
+	 * 철자가 남아 있었다.</li>
+	 * </ul>
+	 * 셋 다 main 사용 <b>0 건</b>이라 막는 비용이 0 이다. 종전 그물
+	 * ({@code \b(write|…)\(\s*source})이 이것들을 못 잡은 이유는 구조적이다 — {@code FileWriter(} 는
+	 * 대문자로 시작하고 낱말 경계가 {@code write} 앞이 아니다. {@code Files.copy} 도 같은 이유로
+	 * <b>통째로</b> 막는다(종전에는 "둘째 인자가 {@code source} 인 복사" 만 봤다 — 변수 이름에 기댄 방어).
+	 *
+	 * <p><b>{@code source} 라는 이름에 기댄 그물이 하나 남아 있는데, 이제 그것은 주 방어선이 아니다.</b>
+	 * 파일 쓰기 전면 금지는 {@link #FILE_WRITE}(경로 예외 1파일)가 맡는다. 여기 남은
+	 * {@code …(source} 패턴은 <b>그 예외 파일 안까지</b> 덮는 잔여 그물이다(이 군은 예외가 0이므로
+	 * {@code RowVerifier} 에서도 {@code Files.writeString(source, …)} 는 막힌다).
 	 */
 	private static final Rule DESTRUCTIVE_API = new Rule("SQL 밖 파괴 경로", List.of(
 			Pattern.compile("\\.\\s*clean\\s*\\("),
@@ -157,14 +180,37 @@ class MigratorHasNoDestructiveSqlTest {
 			Pattern.compile("\\bFileOutputStream\\b"),
 			Pattern.compile("\\bRandomAccessFile\\b"),
 			Pattern.compile("\\bFileChannel\\b"),
+			Pattern.compile("\\b(FileWriter|PrintWriter)\\b"),
+			Pattern.compile("\\bnewByteChannel\\b"),
 			Pattern.compile("\\bFiles\\s*\\.\\s*write\\s*\\("),
 			Pattern.compile("\\bFiles\\s*::\\s*write\\b"),
+			Pattern.compile("\\bFiles\\s*\\.\\s*copy\\s*\\("),
+			Pattern.compile("\\bFiles\\s*::\\s*copy\\b"),
 			Pattern.compile("\\b(ProcessBuilder|Runtime\\s*\\.\\s*getRuntime)\\b"),
-			Pattern.compile("\\b(write|writeString|newOutputStream|newBufferedWriter)\\s*\\(\\s*source\\b"),
-			Pattern.compile("\\bFiles\\s*\\.\\s*copy\\s*\\([^;)]*,\\s*source\\b")),
+			Pattern.compile("\\b(write|writeString|newOutputStream|newBufferedWriter)\\s*\\(\\s*source\\b")),
 			Normalization.CODE_TOKENS, List.of());
 
-	private static final List<Rule> RULES = List.of(DESTRUCTIVE_SQL, DROP_DATABASE, DESTRUCTIVE_API);
+	/**
+	 * 4군 — <b>파일 쓰기 전면 금지</b>(예외 정확히 1파일 {@link #REPORT_WRITE_FILE}).
+	 *
+	 * <p>종전에는 이 축이 "첫 인자가 {@code source} 인 쓰기" 라는 <b>이름 기반</b> 방어였다. 그 방어는
+	 * {@code Path victim = source;} 한 줄이면 통과한다. 이 모듈 main 의 파일 쓰기 지점은
+	 * {@code RowVerifier} 의 대조 리포트 <b>한 곳뿐</b>이므로(실측), 2군({@link #DROP_DATABASE})이 이미
+	 * 쓰는 <b>경로 예외</b> 기제로 뒤집는다: 쓰기 API 를 통째로 막고 그 한 파일만 경로로 등재한다.
+	 *
+	 * <p>군을 3군에서 쪼갠 이유도 2군과 같다 — 예외를 3군에 넣으면 {@code RowVerifier} 안에서
+	 * {@code flyway.clean()} 과 {@code Files.deleteIfExists} 까지 열린다. 군을 쪼개면 예외의 면적이
+	 * 정확히 "리포트를 쓴다" 만큼만 열린다.
+	 *
+	 * <p>맨이름({@code import static java.nio.file.Files.writeString;})과 메서드 참조까지 본다 —
+	 * 3군에서 이미 실측된 우회 형태다.
+	 */
+	private static final Rule FILE_WRITE = new Rule("파일 쓰기", List.of(
+			Pattern.compile("\\b(write|writeString|newOutputStream|newBufferedWriter)\\s*\\("),
+			Pattern.compile("\\bFiles\\s*::\\s*(write|writeString|newOutputStream|newBufferedWriter)\\b")),
+			Normalization.CODE_TOKENS, List.of(REPORT_WRITE_FILE));
+
+	private static final List<Rule> RULES = List.of(DESTRUCTIVE_SQL, DROP_DATABASE, DESTRUCTIVE_API, FILE_WRITE);
 
 	/**
 	 * 테이블 이름 상수 → 실제 이름. 정본({@code src/db/schema.js})에서 읽어 만든다 — 이 표를 손으로 적으면
@@ -213,43 +259,54 @@ class MigratorHasNoDestructiveSqlTest {
 	// --- 예외 목록의 크기와 구성 ---
 
 	/**
-	 * 예외는 <b>정확히 1파일</b>이고 그 자리(경로)와 소속 군까지 고정이다.
+	 * 예외는 <b>정확히 2파일</b>이고 각각의 자리(경로)와 소속 군까지 고정이다.
 	 *
 	 * <p>{@code Adr008DisciplineTest.theExceptionListIsExactlyFourFiles} 의 규율이다 — 예외가 늘어나면
 	 * 그 사실이 반드시 diff 와 red 로 드러난다. 목록을 넓히는 것은 그 자체가 아키텍처 결정이다.
+	 *
+	 * <p>둘인 이유는 이 모듈이 실제로 하는 일이 둘이기 때문이다: 임시 DB 를 버리는 자리와 대조 리포트를
+	 * 쓰는 자리. 그 둘 말고는 지우지도 쓰지도 않는다(2026-09-04 ⑤ [med] 2 — 이름 기반 방어를 경로 예외로
+	 * 뒤집으면서 예외가 0 개에서 1 개로 늘었고, 그 사실이 이 단언에 드러난다).
 	 */
 	@Test
-	void theExceptionListIsExactlyOneFile() {
+	void theExceptionListIsExactlyTwoFilesOneForEachThingThisModuleActuallyDoes() {
 		List<String> allExemptions = RULES.stream().flatMap((rule) -> rule.exemptPaths().stream()).toList();
 
-		assertEquals(List.of(EPHEMERAL_DROP_FILE), allExemptions,
-				"파괴 경로의 예외는 임시 DB 를 버리는 파일 하나뿐이고 그 경로까지 고정이다");
-		assertEquals(1, allExemptions.size(), "예외 목록 크기");
+		assertEquals(List.of(EPHEMERAL_DROP_FILE, REPORT_WRITE_FILE), allExemptions,
+				"예외는 임시 DB 를 버리는 파일과 대조 리포트를 쓰는 파일 둘뿐이고 그 경로까지 고정이다");
+		assertEquals(2, allExemptions.size(), "예외 목록 크기");
 		assertEquals(List.of(), DESTRUCTIVE_SQL.exemptPaths(), "파괴적 SQL 은 예외 0이다");
 		assertEquals(List.of(), DESTRUCTIVE_API.exemptPaths(),
-				"SQL 밖 파괴 경로는 예외 0이다 — 여기에 예외를 열면 1·2군 목록이 통째로 무의미해진다");
+				"SQL 밖 파괴 경로는 예외 0이다 — 여기에 예외를 열면 나머지 군 목록이 통째로 무의미해진다");
 		assertEquals(List.of(EPHEMERAL_DROP_FILE), DROP_DATABASE.exemptPaths(), "데이터베이스 드롭 예외는 하나다");
+		assertEquals(List.of(REPORT_WRITE_FILE), FILE_WRITE.exemptPaths(), "파일 쓰기 예외는 하나다");
 		for (String exempt : allExemptions) {
 			assertTrue(exempt.contains("/"),
 					"예외 항목이 경로가 아니라 이름이다 — 이름 매칭이면 다른 패키지의 동명 파일이 예외를 가져간다: " + exempt);
 		}
 	}
 
-	/** 예외 이름을 가진 파일은 리포에 <b>정확히 하나</b>이고 그 하나는 <b>등재된 자리</b>에 있다. */
+	/**
+	 * 예외 이름을 가진 파일은 리포에 <b>정확히 하나</b>이고 그 하나는 <b>등재된 자리</b>에 있다.
+	 *
+	 * <p>등재된 <b>모든</b> 예외를 돈다 — 한 항목만 확인하면 새 예외가 이 단언 없이 들어온다.
+	 */
 	@Test
-	void theExemptNameResolvesToExactlyOneFileAtItsDeclaredPath() throws IOException {
-		String fileName = EPHEMERAL_DROP_FILE.substring(EPHEMERAL_DROP_FILE.lastIndexOf('/') + 1);
-		List<String> found;
-		try (Stream<Path> files = Files.walk(MAIN)) {
-			found = files.filter(Files::isRegularFile)
-					.filter((file) -> file.getFileName().toString().equals(fileName))
-					.map(MigratorHasNoDestructiveSqlTest::relativePath)
-					.sorted()
-					.toList();
-		}
+	void everyExemptNameResolvesToExactlyOneFileAtItsDeclaredPath() throws IOException {
+		for (String exempt : RULES.stream().flatMap((rule) -> rule.exemptPaths().stream()).toList()) {
+			String fileName = exempt.substring(exempt.lastIndexOf('/') + 1);
+			List<String> found;
+			try (Stream<Path> files = Files.walk(MAIN)) {
+				found = files.filter(Files::isRegularFile)
+						.filter((file) -> file.getFileName().toString().equals(fileName))
+						.map(MigratorHasNoDestructiveSqlTest::relativePath)
+						.sorted()
+						.toList();
+			}
 
-		assertEquals(List.of(EPHEMERAL_DROP_FILE), found,
-				"예외 이름이 붙은 파일은 등재된 자리에 정확히 하나여야 한다(0 또는 여럿·오배치는 red): " + found);
+			assertEquals(List.of(exempt), found,
+					"예외 이름이 붙은 파일은 등재된 자리에 정확히 하나여야 한다(0 또는 여럿·오배치는 red): " + found);
+		}
 	}
 
 	/**
@@ -272,6 +329,16 @@ class MigratorHasNoDestructiveSqlTest {
 				"다른 패키지의 동명 파일이 드롭 예외를 가져간다(이름 매칭의 잔재)");
 		assertFalse(violations(DROP_DATABASE, "EphemeralDatabase.java", "DROP DATABASE IF EXISTS x",
 				"planted").isEmpty(), "패키지 없이 소스 루트에 둔 동명 파일이 예외를 가져간다");
+		assertTrue(violations(FILE_WRITE, REPORT_WRITE_FILE, "Files.writeString(file, text);", "planted").isEmpty(),
+				"리포트를 쓰는 자기 자리에서도 막힌다 — 그러면 대조 리포트를 남길 수 없다");
+		assertFalse(violations(FILE_WRITE, EPHEMERAL_DROP_FILE, "Files.writeString(file, text);", "planted").isEmpty(),
+				"드롭 예외 파일이 쓰기 예외까지 가져간다 — 군을 쪼갠 이유가 사라진다");
+		assertFalse(violations(DROP_DATABASE, REPORT_WRITE_FILE, "DROP DATABASE IF EXISTS x", "planted").isEmpty(),
+				"쓰기 예외가 드롭 군으로 새어 나간다");
+		assertFalse(violations(DESTRUCTIVE_API, REPORT_WRITE_FILE, "flyway.clean();", "planted").isEmpty(),
+				"쓰기 예외가 API 군으로 새어 나간다 — RowVerifier 안에서 스키마를 통째로 지울 수 있게 된다");
+		assertFalse(violations(DESTRUCTIVE_SQL, REPORT_WRITE_FILE, "sql(\"DELETE FROM Contents\")", "planted").isEmpty(),
+				"쓰기 예외가 행 삭제 군으로 새어 나간다");
 	}
 
 	// --- 자기 검사: 스캐너가 공허하지 않다 ---
@@ -420,6 +487,79 @@ class MigratorHasNoDestructiveSqlTest {
 	}
 
 	/**
+	 * <b>T8·T9·T10</b> — {@code FileOutputStream}(T2)과 <b>동급인데 막히지 않았던 철자</b>들이다
+	 * (2026-09-04 ⑤ 코드리뷰 [med] 1).
+	 *
+	 * <p>{@code new FileWriter(f)} 와 {@code new PrintWriter(f)} 는 {@code FileOutputStream} 과 똑같이
+	 * <b>여는 순간</b> 파일을 길이 0 으로 자른다(append 인자를 주지 않으면 그렇다). 그런데도 통과했던
+	 * 이유는 {@link #DESTRUCTIVE_API} 의 얕은 그물이
+	 * {@code \b(write|…)\(\s*source} 형태였기 때문이다 — {@code FileWriter(} 는 대문자로 시작하고
+	 * 낱말 경계가 {@code write} 앞이 아니라 {@code FileWriter} 앞에 있어 <b>구조적으로</b> 걸리지 않는다.
+	 * {@code Files.newByteChannel(source, WRITE)} 도 같은 자리다({@code FileChannel} 은 막았는데
+	 * 같은 일을 하는 {@code newByteChannel} 은 열려 있었다).
+	 *
+	 * <p>셋 다 이 모듈 main 에 <b>0 건</b>이므로(실측) 막는 비용이 0 이다. {@code Files.copy} 도 같은
+	 * 이유로 통째로 막는다 — 종전에는 "둘째 인자가 {@code source} 인 복사" 만 봤는데 그것은 변수 이름에
+	 * 기댄 방어였다.
+	 */
+	@Test
+	void theApiScannerCatchesTruncatingWritersAndWriteChannels() {
+		for (String planted : List.of(
+				// T8 — FileWriter: 여는 순간 절단된다(append=false 가 기본이다).
+				"new FileWriter(source.toFile());",
+				"try (Writer w = new java.io.FileWriter(source.toFile())) { }",
+				// T9 — PrintWriter(File): 내부에서 FileOutputStream 을 열므로 결과가 같다.
+				"new PrintWriter(source.toFile()).close();",
+				"try (PrintWriter out = new java.io.PrintWriter(file)) { }",
+				// T10 — newByteChannel: FileChannel 을 막고도 같은 일을 하는 철자가 열려 있었다.
+				"Files.newByteChannel(source, StandardOpenOption.WRITE);",
+				"java.nio.file.Files.newByteChannel(source, WRITE, TRUNCATE_EXISTING);",
+				// 이름에 기대지 않는 Files.copy — 목적지가 무엇이든 덮어쓰기다.
+				"Files.copy(replacement, source, StandardCopyOption.REPLACE_EXISTING);",
+				"Files.copy(a, b);",
+				"pairs.forEach(Files::copy);")) {
+			assertTrue(matches(DESTRUCTIVE_API, planted),
+					"여는 순간 파일을 자르는 철자를 놓친다 — FileOutputStream 과 동급인데 열려 있다: " + planted);
+		}
+	}
+
+	/**
+	 * <b>[med] 2 — 이름에 기댄 얕은 방어를 경로 예외 기제로 뒤집는다.</b>
+	 *
+	 * <p>종전 규칙은 "첫 인자가 {@code source} 인 쓰기" 만 막았다. 그 방어는 <b>변수 이름 하나만 바꾸면</b>
+	 * 통과한다({@code Path victim = source; Files.writeString(victim, "");}). 이 모듈 main 의 파일 쓰기
+	 * 지점은 {@code RowVerifier} 의 리포트 한 곳뿐이므로(실측), 2군({@code DROP DATABASE})이 이미 쓰는
+	 * <b>경로 예외</b> 기제로 뒤집는다: <b>파일 쓰기 API 전면 금지 + 예외 1파일(경로 등재)</b>.
+	 *
+	 * <p>판정은 특정 군이 아니라 <b>게이트 전체</b>로 한다 — 군을 어떻게 나누든 "예외 파일 밖에서는
+	 * 쓸 수 없다"가 이 테스트가 지키는 사실이다.
+	 */
+	@Test
+	void everyFileWriteOutsideTheOneReportWriterIsRefused() {
+		for (String planted : List.of(
+				"Files.writeString(report, text, StandardCharsets.UTF_8);",
+				"writeString(report, text);",
+				"java.nio.file.Files.writeString(report, text);",
+				"try (BufferedWriter w = Files.newBufferedWriter(report)) { }",
+				"try (OutputStream out = Files.newOutputStream(report)) { }",
+				"reports.forEach(Files::writeString);")) {
+			assertFalse(allViolations("java/harness/newsmigrator/RowCopier.java", planted).isEmpty(),
+					"등재되지 않은 파일의 파일 쓰기를 허용한다(이름을 바꾼 변수로 소스를 덮어쓸 수 있다): " + planted);
+			assertTrue(allViolations(REPORT_WRITE_FILE, planted).isEmpty(),
+					"리포트를 쓰는 그 한 파일에서도 막힌다 — 그러면 대조 리포트를 남길 수 없다: " + planted);
+		}
+
+		assertFalse(allViolations("java/harness/other/RowVerifier.java", "Files.writeString(report, text);").isEmpty(),
+				"다른 패키지의 동명 파일이 쓰기 예외를 가져간다(이름 매칭의 잔재)");
+		assertFalse(allViolations("RowVerifier.java", "Files.writeString(report, text);").isEmpty(),
+				"패키지 없이 소스 루트에 둔 동명 파일이 쓰기 예외를 가져간다");
+		assertFalse(allViolations(REPORT_WRITE_FILE, "Files.writeString(source, \"\");").isEmpty(),
+				"예외 파일 안에서 소스를 덮어쓰는 형태까지 열려 있다 — 잔여 그물(이름 기반)이 사라졌다");
+		assertFalse(allViolations(REPORT_WRITE_FILE, "new FileOutputStream(source.toFile());").isEmpty(),
+				"예외 파일 안에서 절단 스트림이 열린다 — 쓰기 예외가 3군 전체로 새어 나갔다");
+	}
+
+	/**
 	 * <b>리터럴 속 {@code //} 뒤에 숨은 API 호출</b>도 잡는다(2026-08-25 실측 우회의 재적용).
 	 *
 	 * <p>줄 주석을 정규식 한 방으로 지우면 {@code "jdbc:mysql://127.0.0.1"} 의 {@code //} 가 주석 시작으로
@@ -451,9 +591,33 @@ class MigratorHasNoDestructiveSqlTest {
 				"String text = Files.readString(file, StandardCharsets.UTF_8);",
 				"try (Connection connection = DriverManager.getConnection(url, user, password)) { }",
 				"Files.createDirectories(out.getParent());",
-				"try (OutputStream stream = Files.newOutputStream(out)) { }")) {
+				"try (InputStream stream = Files.newInputStream(source)) { }",
+				"if (Files.isRegularFile(source)) { return Files.size(source); }")) {
 			assertFalse(matches(DESTRUCTIVE_API, allowed),
 					"API 스캔이 정상 코드·문서화까지 막고 있다: " + allowed);
+		}
+	}
+
+	/**
+	 * 4군도 반대 방향을 못 박는다 — <b>읽기</b>와 <b>디렉토리 만들기</b>는 쓰기가 아니고, 규칙을 javadoc 에
+	 * 적을 수 있어야 한다(리터럴·주석은 실행되는 토큰이 아니다).
+	 *
+	 * <p>이 단언이 없으면 4군이 "이름에 write 가 들어간 모든 것"으로 넓어져 {@code writeReport} 같은
+	 * 자기 메서드 이름까지 막는 쪽으로 드리프트한다.
+	 */
+	@Test
+	void theFileWriteScannerAllowsReadsDirectoryCreationAndItsOwnDocumentation() {
+		for (String allowed : List.of(
+				"String text = Files.readString(file, StandardCharsets.UTF_8);",
+				"try (InputStream stream = Files.newInputStream(source)) { }",
+				"Files.createDirectories(directory);",
+				"public static Path writeReport(Result result, Path source, TargetCredentials target) {",
+				"return writeReport(result, source.toAbsolutePath().toString(), target.describe());",
+				"/** {@code Files.writeString} 은 리포트를 쓰는 한 파일에서만 허용된다. */",
+				"// Files.newBufferedWriter( 는 이 모듈의 다른 자리에 두지 않는다.",
+				"String note = \"Files.writeString\";")) {
+			assertFalse(matches(FILE_WRITE, allowed),
+					"파일 쓰기 스캔이 읽기·문서화·자기 메서드 이름까지 막고 있다: " + allowed);
 		}
 	}
 
@@ -484,8 +648,11 @@ class MigratorHasNoDestructiveSqlTest {
 		planted.put(DESTRUCTIVE_API, List.of("flyway.clean();", "clean();", "cleanDisabled(false)",
 				"Files.deleteIfExists(p);", "deleteIfExists(p);", "Files::delete",
 				"new FileOutputStream(f)", "new RandomAccessFile(f, \"rw\")", "FileChannel.open(p)",
+				"new FileWriter(f)", "new PrintWriter(f)", "Files.newByteChannel(p, WRITE)",
 				"Files.write(p, bytes);", "Files::write", "new ProcessBuilder(cmd)",
-				"Files.writeString(source, text);", "Files.copy(other, source);"));
+				"Files.copy(a, b);", "Files::copy", "Files.writeString(source, text);"));
+		planted.put(FILE_WRITE, List.of("Files.writeString(report, text);", "Files.newBufferedWriter(report)",
+				"Files.newOutputStream(report)", "write(report, bytes);", "Files::writeString"));
 
 		for (Rule rule : RULES) {
 			assertFalse(rule.patterns().isEmpty(), rule.name() + " 패턴 목록이 비었다 — 그 군은 아무것도 막지 못한다");
@@ -542,6 +709,18 @@ class MigratorHasNoDestructiveSqlTest {
 			if (pattern.matcher(text).find()) {
 				hits.add(label + " ~ " + pattern.pattern());
 			}
+		}
+		return hits;
+	}
+
+	/**
+	 * <b>게이트 전체</b>를 파일 하나에 적용한다 — 군이 어떻게 나뉘어 있든 "이 자리에서 이 코드가
+	 * 통과하는가"만 본다. 군 구성을 바꿔도 판정이 따라오게 하려는 것이다.
+	 */
+	private static List<String> allViolations(String path, String source) {
+		List<String> hits = new ArrayList<>();
+		for (Rule rule : RULES) {
+			hits.addAll(violations(rule, path, source, "planted"));
 		}
 		return hits;
 	}
