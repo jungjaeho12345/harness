@@ -165,6 +165,32 @@ class NewsAppMysqlWireTest {
 	}
 
 	/**
+	 * <b>보안 축을 MySQL 위에서 직접 확인한다</b> — {@code WHERE userId = ?}가 대소문자와 후행 공백을
+	 * 구분하는가(step6 변이 M3).
+	 *
+	 * <p>이 축이 무너지면 <b>다른 계정으로 로그인</b>된다. collation 선택이 정확히 이 피해를 피하려고
+	 * {@code utf8mb4_0900_bin}을 고르고 {@code LIKE} 대소문자를 포기한 것이므로(축 3·4), 그 선택이 실제
+	 * 기반선 위에서 성립하는지는 프로브가 아니라 <b>로그인 라우트로</b> 확인해야 한다.
+	 *
+	 * <p>{@code utf8mb4_bin}(PAD SPACE)이었다면 후행 공백 쪽이 통과했을 것이고, {@code ai_ci}였다면
+	 * 대문자 쪽이 통과했을 것이다 — 둘 다 401이어야 한다.
+	 */
+	@Test
+	void loginRejectsCaseAndTrailingSpaceVariantsOfTheUserIdOnMysql() {
+		String userId = "smoke-c-" + RUN;
+		createUser(userId, "R", "스모크기자");
+
+		for (String variant : new String[] { userId.toUpperCase(Locale.ROOT), userId + " " }) {
+			Wire.Response response = Wire.json(this.port, "POST", "/api/login", Map.of(),
+					"{\"userId\":\"" + variant + "\",\"password\":\"" + PASSWORD + "\"}");
+
+			assertFalse(SESSION_ID.matcher(response.body()).find(),
+					"userId 변형 [" + variant + "] 으로 세션이 발급됐다 — collation 이 보안 축을 잃었다");
+			assertEquals(401, response.status(), "변형 로그인은 401 이어야 한다: " + response.body());
+		}
+	}
+
+	/**
 	 * 열린 SSE 스트림이 <b>무관한 요청을 막지 않는다</b> — 풀 상한 1에서 락 순서가 뒤집히면 여기서 멈춘다
 	 * ({@code LogsStreamWireTest} 항목 22가 SQLite에서 세운 방어선의 MySQL 판본 · step6 B-6).
 	 */
