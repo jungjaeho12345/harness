@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, net, screen, session, shell } from 'electron';
 import { normalizeServerUrl, healthUrl, appUrl, interpretHealthResponse, resolveFinalOrigin } from './lib/serverUrl.js';
-import { configPath, readConfigFileSync, writeConfigFile, sanitizeBounds } from './lib/clientConfig.js';
+import { configPath, readConfigFileSync, writeConfigFile, sanitizeBounds, resolveBootServerUrl } from './lib/clientConfig.js';
 import { FEATURE_SWITCH, decideSecureOriginSwitches, requiresRestartForOrigin } from './lib/secureOrigin.js';
 import {
   APP_WINDOW, LOCAL_WINDOW, buildWindowOptions, decideWindowOpen, decideNavigation, isExternallyOpenable,
@@ -69,7 +69,13 @@ function wireApp() {
   // Chromium에 반영되지 않아 조용히 무효가 된다. 판정은 secureOrigin.js 단일 출처 — 여기서는 append만 한다.
   // 설정도 여기서 동기로 1회만 읽고(whenReady가 재사용) 같은 부팅에서 두 번 읽어 갈라지는 경로를 만들지 않는다.
   const bootConfig = readConfigFileSync(configFile, { readFileSync: (f, enc) => fs.readFileSync(f, enc) });
-  const secureDecision = decideSecureOriginSwitches(bootConfig.serverUrl, {
+  // 실효 부팅 대상: 저장된 serverUrl 우선, 없을 때만 배포 기본값(NEWS_SERVER_URL)을 기존 정규화 경로로 적용
+  // (phase 76 step4 · decisions (6)). env 기본값도 저장하지 않는다 — 매 부팅 env에서 재계산한다(자동 저장 금지).
+  const bootServerUrl = resolveBootServerUrl({
+    savedServerUrl: bootConfig.serverUrl,
+    envServerUrl: process.env.NEWS_SERVER_URL,
+  });
+  const secureDecision = decideSecureOriginSwitches(bootServerUrl, {
     existingFeatures: app.commandLine.getSwitchValue(FEATURE_SWITCH), // 덮어쓰기 금지 — 병합은 순수 모듈이 했다.
   });
   if (secureDecision.apply) {
@@ -172,8 +178,9 @@ function wireApp() {
     diag.log('config-loaded', { hasServerUrl: cfg.serverUrl !== null });
     const workAreas = screen.getAllDisplays().map((d) => d.workArea);
     savedBounds = sanitizeBounds(cfg.bounds, workAreas); // 모니터가 떨어진 배치는 기본 배치로.
-    if (cfg.serverUrl) {
-      serverOrigin = cfg.serverUrl;
+    // bootServerUrl은 저장값(있으면) 또는 배포 env 기본값(없을 때만·정규화 통과 시)이다 — 그 판정은 위에서 1회 했다.
+    if (bootServerUrl) {
+      serverOrigin = bootServerUrl;
       createAppWindow(serverOrigin, savedBounds);
     } else {
       showLocalWindow('setup', 'no-config');

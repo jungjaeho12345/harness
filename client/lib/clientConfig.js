@@ -82,6 +82,19 @@ export function sanitizeBounds(bounds, workAreas) {
   return visible ? shaped : null;
 }
 
+// 부팅 실효 서버 주소 판정 (phase 76 step4) — 저장값 우선, 없으면 배포 env 기본값(NEWS_SERVER_URL).
+//   savedServerUrl: parseConfig 결과의 serverUrl(null 가능 · 이미 정규화된 origin)
+//   envServerUrl:   process.env.NEWS_SERVER_URL (미설정 시 undefined/'')
+// 반환: 실효 origin 문자열 | null(둘 다 없거나 env가 정규화를 통과 못 함).
+// CRITICAL(decisions (6)): 저장값이 있으면 env를 보지 않는다(사용자·이전 설정 우선). env 기본값도
+//   normalizeServerUrl을 반드시 경유한다 — 자격 포함·미허용 스킴은 거부(null)해 잘못된 배포값이
+//   조용히 접속불능을 만들지 않는다. env를 config.json에 저장하는 것은 이 함수의 책임이 아니다(호출부도 안 한다).
+export function resolveBootServerUrl({ savedServerUrl, envServerUrl } = {}) {
+  if (typeof savedServerUrl === 'string' && savedServerUrl) return savedServerUrl;
+  const norm = normalizeServerUrl(envServerUrl);
+  return norm.ok ? norm.origin : null;
+}
+
 // 읽기 실패(ENOENT·권한·깨진 파일)는 전부 기본값으로 수렴한다 — throw 금지.
 // 프로덕션 소비자는 readConfigFileSync(부팅 1회)다 — 이 async 버전은 테스트/미래 소비자용으로 의도적으로 유지한다(제거 금지 — phase 64 decisions (13)).
 export async function readConfigFile(filePath, { readFile }) {
