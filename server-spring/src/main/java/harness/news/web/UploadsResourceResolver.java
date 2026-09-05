@@ -1,13 +1,9 @@
 package harness.news.web;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Locale;
-import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.springframework.core.io.Resource;
 import org.springframework.web.servlet.resource.PathResourceResolver;
-import org.springframework.web.util.UriUtils;
 
 /**
  * {@code /uploads/**} 리소스 조회 — <b>libuv가 보는 파일만</b> 보이게 만든다.
@@ -44,64 +40,17 @@ import org.springframework.web.util.UriUtils;
 final class UploadsResourceResolver extends PathResourceResolver {
 
 	/**
-	 * Win32 예약 장치명 — 확장자가 붙어도({@code CON.txt}) 장치로 해석된다. 2026-08-29 실측상 정본은
-	 * 이 전부에 404다. {@code CLOCK$}는 이 호스트의 Java에서도 이미 404였으므로 넣지 않는다(실측하지 않은
-	 * 이름을 목록에 넣지 않는다 — 목록이 정본보다 넓어지면 그 자체가 새 divergence다).
+	 * 이름 판정은 {@link LibuvNames}가 소유한다 — 2026-09-05(phase 76 step2)에 뽑아냈다. SPA 정적 서빙
+	 * ({@link SpaResourceResolver})이 같은 파일시스템 위에서 같은 별칭 문제를 만나므로, 두 리졸버가 각자
+	 * 규칙을 들면 한쪽만 늙는다. 규칙 원문과 실측 표는 그 클래스의 javadoc에 있다.
 	 */
-	private static final Set<String> RESERVED_DEVICE_NAMES = Set.of(
-			"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
-			"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9");
-
 	@Override
 	protected @Nullable Resource getResource(String resourcePath, Resource location) throws IOException {
-		if (!visibleToLibuv(resourcePath)) {
+		if (!LibuvNames.visible(resourcePath)) {
 			// null이면 상위가 NoResourceFoundException을 던지고 전역 핸들러가 404 + 비-JSON을 낸다(정본 동형).
 			return null;
 		}
 		return super.getResource(resourcePath, location);
-	}
-
-	/**
-	 * libuv({@code \\?\} 장문 경로)가 이 이름을 열 수 있는가. 세그먼트 단위로 본다 — 후행 점·공백은
-	 * <b>디렉토리 세그먼트에도</b> 같은 별칭을 만들기 때문이다(실측: {@code /uploads/<dir>./<파일>}이 200이었다).
-	 *
-	 * <p><b>먼저 퍼센트 디코딩한다</b>: 이 층에 오는 {@code resourcePath}는 아직 인코딩된 원문이라
-	 * ({@code PathContainer#value}), 디코딩 없이 마지막 글자만 보면 {@code .png%2e}·{@code .png%20}이
-	 * 그대로 통과한다(2026-08-29 실측: 디코딩 전 규칙으로는 이 둘이 200이었다 — 실제로 밟은 함정이다).
-	 * 아래 {@code createRelative}가 보는 이름과 <b>같은 문자열</b>을 봐야 판정이 어긋나지 않는다.
-	 * 디코더는 {@link UriUtils} 하나만 쓴다 — {@code URLDecoder}는 {@code '+'}를 공백으로 바꿔 URL 경로
-	 * 의미론과 다르다.
-	 *
-	 * <p>디코딩 뒤에 {@code /}로 다시 자르는 이유: {@code %2f}가 실제 경로 구분자가 되어 세그먼트를
-	 * 늘리므로, 파일시스템이 보는 것과 같은 단위로 봐야 후행 점이 숨지 못한다.
-	 */
-	private static boolean visibleToLibuv(String resourcePath) {
-		String decoded;
-		try {
-			decoded = UriUtils.decode(resourcePath, StandardCharsets.UTF_8);
-		}
-		catch (IllegalArgumentException ex) {
-			// 깨진 퍼센트 시퀀스 — 열 수 있는 이름이 아니다. 500이 아니라 404로 수렴시킨다.
-			return false;
-		}
-		for (String segment : decoded.split("/")) {
-			if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
-				// 상대 세그먼트는 상위가 이미 처리한다(위치 밖 탈출은 PathResourceResolver의 검사가 막는다).
-				continue;
-			}
-			char last = segment.charAt(segment.length() - 1);
-			if (last == '.' || last == ' ') {
-				// Win32는 후행 점·공백을 조용히 잘라 "다른 이름"이 같은 파일을 열게 한다. libuv는 자르지 않는다.
-				return false;
-			}
-			int dot = segment.indexOf('.');
-			String base = (dot < 0) ? segment : segment.substring(0, dot);
-			if (RESERVED_DEVICE_NAMES.contains(base.toUpperCase(Locale.ROOT))) {
-				return false;
-			}
-		}
-		return true;
 	}
 
 }

@@ -1,6 +1,7 @@
 package harness.news.web;
 
 import harness.news.config.AppProperties;
+import harness.news.config.SpaProperties;
 import harness.news.service.LogService;
 import harness.news.service.SessionGuard;
 import jakarta.servlet.Filter;
@@ -8,6 +9,7 @@ import java.time.Clock;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -81,6 +83,32 @@ public class WebConfig {
 						.addResolver(new UploadsResourceResolver());
 			}
 		};
+	}
+
+	/**
+	 * SPA 동일 출처 서빙({@code GET /} · {@code /assets/**} · {@code .do} 폴백) — Node
+	 * {@code server/index.js} 1219~1238행과 같은 자리다(ADR-017 결정 1).
+	 *
+	 * <h2>활성 판정은 여기서 <b>한 번</b> 한다</h2>
+	 * {@link SpaProperties#spaRootPath()}는 {@code <dir>/index.html} <b>파일</b>을 본다(디렉토리가 아니다 —
+	 * 파일이 없는데 폴백을 켜면 404가 500으로 뒤집힌다). 요청마다 stat 하지 않는다: 부트 이후 dist를
+	 * 새로 빌드했다면 재기동해야 반영된다(Node도 같다 — 개발 흐름은 Vite :5173이라 실사용 영향이 없다).
+	 *
+	 * <p><b>미설정이 기본(비활성)</b>이고 그때는 핸들러를 하나도 등록하지 않으므로 런타임 동작이 이 step
+	 * 이전과 완전히 같다. 계약 하네스는 {@code SPA_DIR}을 자식에게 넘기지 않으므로 313관측 × 2축이 바로 그
+	 * 상태로 돈다({@link SpaProperties} javadoc).
+	 *
+	 * <p>부팅 로그는 <b>활성일 때만</b> INFO 1줄이다(Node 1354행과 같은 자리·같은 문구). 대부분의 부트는
+	 * 비활성이라 매번 남기면 링 버퍼 소음이 된다. 경로는 비밀이 아니다(Node 주석).
+	 */
+	@Bean
+	public SpaHandlerMapping spaHandlerMapping(SpaProperties properties, ApplicationContext context, LogService logs) {
+		return properties.spaRootPath()
+				.map((root) -> {
+					logs.info("serving SPA from " + root);
+					return SpaHandlerMapping.serving(root, context);
+				})
+				.orElseGet(SpaHandlerMapping::disabled);
 	}
 
 	/** 세션 쿠키 조립기 — dev/prod 두 변형 중 하나로 고정해서 만든다. */
