@@ -630,3 +630,140 @@ curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
 > **239행 → 257행**(User 37→45 · Article 84→86 · Contents 84→86 · ArticleHistory 19→21 · ReceiverConfig 7→9 · Photo 8→10 ·
 > DistributionTarget 0)이 됐고 **지운 행은 0** 이다. 되돌리려면 스테이징을 비우고 재적재해야 하는데 그 권한은 root 에만 있다
 > (§3 의 같은 경고 · P3 항목). **운영 컷오버 전에는 대상이 비어 있어야 하므로**(§11-0-6) 이 사실이 컷오버를 막지는 않는다.
+
+## 13. P3 컷오버 실행 체크리스트 (phase 76 정본화 · 실행은 P3 사람 몫)
+
+> **이 절은 §11 명령 런북 위에 얹는 "실행 순서·게이트" 체크리스트다.** §11 은 각 명령이 무엇을 하고
+> 무엇이 스테이징에서 실측됐는지를, §12 는 명령별 종료코드·관측값을 소유한다. 이 §13 은 **그 명령들을
+> 컷오버 사건 하나로 엮는 순서**와, phase 76 이 새로 만든 도구·플래그를 그 순서에 배치한다. 명령 본문·
+> 종료코드는 **§11/§12 를 링크로 재사용한다**(같은 절차를 두 번 적지 않는다 — 두 벌이 갈리면 운영자가
+> 조용한 실패에 빠진다).
+>
+> **정직한 미실행 표시(§12 규약과 일관).** 운영 대상(`news`) 명령 — `migrate --target NEWS_MIGRATOR`
+> (대상 URL 을 `news` 로) · 운영 `verify` · 운영 `SHOW GRANTS` 판정 · Spring 운영 기동 — 은 이 phase 에서
+> **미실행이며 사람 몫(P3)** 이다(정지 창·백업·승인·root 가 붙는 별개 사건 · index.json decisions (1) ·
+> excluded (a)(b)). §12 의 「실행」 열에서 `미실행 — P3 소유`로 표기된 줄이 이 항목들이다. 아래 체크리스트는
+> 그 사건을 **사람이 따르는 절차**로만 정본화한다.
+
+### 13-0. 선결 조건 게이트 (go/no-go — 하나라도 no 면 컷오버를 시작하지 않는다)
+
+| # | 게이트 | 어떻게 판정하나 | go 기준 |
+|---|---|---|---|
+| G-1 | **[GRANT] 삭제 예외** | 아래 13-1 의 `SHOW GRANTS` **육안 판정** | 운영 `news` 에 `GRANT DELETE ON news.ReceiverConfig` 줄이 보인다 |
+| G-2 | **[검증 게이트] 시나리오 하네스** | 아래 13-2 의 이중 대조 리허설 | 배부 스풀 **diff 0** (exit 0) |
+| G-3 | **[대상 비어있음]** | §11-0-6 (`information_schema.TABLES`) | 운영 `news` 가 테이블 0 (또는 빈 스키마) |
+| G-4 | **[백업]** | §11-1 (원본 `news.db` 사본 2벌 · md5 일치) | 세 파일 md5 동일 · 원본은 복사만(옮기지·이름바꾸지 않음) |
+| G-5 | **[판본·자격]** | §11-0-1·0-2·0-3 | jar 둘 존재 · 자격 3키 로드 · 클라/서버 8.0.46 |
+
+### 13-1. [GRANT] go/no-go 게이트 — 계약 필수 조건이며 하네스가 못 본다
+
+> **이것이 이 컷오버에서 가장 조용한 실패다.** `GRANT DELETE ON news.ReceiverConfig TO 'news_app'@'localhost';`
+> 는 **하드닝 옵션이 아니라 계약 필수 조건**이다(index.json decisions (2) · §7). 없으면 서버는 **정상 기동**
+> 하고 계약 하네스도 **green** 인데 `DELETE /api/receiver-config/:id` **한 라우트만** 계약이 동결한
+> `200 {"ok":true,"changes":1}` 대신 **500 `internal-error`** 를 낸다(권한 오류가 전역 핸들러로 샌다 · Node 는 200).
+
+**왜 자동 게이트로 대체할 수 없나.** 계약 하네스와 `node scripts/operation-scenario.mjs --dual --db mysql`
+(§13-2)은 **ephemeral `harness_ct_<16hex>` 에 `news_ct`(ALL 권한)** 로 돈다 — 이 축을 **구조적으로 못 본다**.
+"패리티 green" 은 이 grant 의 부재를 **덮어 준다**. 따라서 판정은 **사람이 `SHOW GRANTS` 로 눈으로** 한다.
+
+```powershell
+# 운영 자격(news_app)으로 붙어 자기 권한표를 본다 (비밀번호는 프롬프트 · §5)
+& $M -u news_app -p -e "SHOW GRANTS"
+```
+
+- ``GRANT DELETE ON `news`.`receiverconfig` TO 'news_app'@'localhost'`` 줄이 보이면 **go**
+  (테이블 이름이 소문자로 붙는다 — `lower_case_table_names=1`).
+- 안 보이면 **no-go**. 붙이는 것은 **root 의 일이고 이 phase 는 자동으로 붙이지 않는다**(excluded (b)).
+  §11-4-b 처럼 `migrate` 로 `news` 에 테이블이 **생긴 뒤** root 로 §7 절차를 적용한다(멱등 재실행 또는 한 줄):
+  ``GRANT DELETE ON `news`.`ReceiverConfig` TO 'news_app'@'localhost';`` → `FLUSH PRIVILEGES;`
+
+**부재 시 증상(육안 확인 마지막 항목과 같은 축)**: §11-5 의 브라우저 육안 목록에서 **수집 설정 삭제**가
+`500` 이면 grant 가 없는 것이다(생성=200 인데 삭제만 500). 자동 방어선은 이 축을 스테이징에서 이렇게 실증한다:
+`NewsAppMysqlWireTest`(같은 자격·같은 DB 로 `DELETE` 응답을 실측해 고정) · `MinimumPrivilegeBoundaryTest`
+(판정이 "우리가 기대한 표와 같은가"가 아니라 **"서버가 자기 `SHOW GRANTS` 표대로 실제로 막는가"** 다 —
+그래서 grant 가 없어도 red 가 아니라, "삭제 성공" 절반이 실증되지 않은 채로 통과한다). 즉 **운영 판정은
+`SHOW GRANTS` 육안뿐**이다.
+
+### 13-2. [검증 게이트] 시나리오 하네스로 컷오버 리허설
+
+정지 창에 들어가기 전에, **배부 스풀 직렬화 파리티**를 먼저 통과시킨다. 이 게이트는 "작성→송고→배부→수집"
+전체 루프를 두 서버(Node/SQLite · Spring/MySQL)에서 **동일 seed 행**으로 구동하고, `POST /api/distribution/tick`
+1회로만 쓴 배부 스풀 파일을 **정규화 후 바이트 대조**한다(diff 0).
+
+```bash
+# ephemeral MySQL 대조 게이트 (phase 76 step2 산출물 · harness_ct_<16hex> 사용 · 운영 news 무접촉)
+node scripts/operation-scenario.mjs --dual --db mysql
+```
+
+- 이 하네스는 **아키텍처의 「외부 cron / 운영 tick pull」 역할을 하는 외부 트리거**다(ADR-008 · decisions (4)) —
+  앱 안에 타이머·egress·재시도·큐를 만들지 않고 `POST /api/distribution/tick`(body 무시)을 HTTP 로 부를 뿐이다.
+- 단일 대상 전체 루프(`node scripts/operation-scenario.mjs --server node`)는 이미 컨테이너에서 돈다(step1);
+  **이중 바이트 대조 diff 0** 이 컷오버 리허설의 판정이다.
+- **한계(정직히)**: 이 게이트는 `news_ct`=ALL 로 돌아 **13-1 의 GRANT 축을 못 본다** — 그래서 G-1 이 별도 게이트다.
+
+### 13-3. 정지 창 순서 (§11 을 참조 · 명령 본문은 중복하지 않는다)
+
+아래는 순서만 정한다. 각 단계의 명령·종료코드·실측값은 괄호의 §11 항목이 소유한다.
+
+1. **Node 정지 + 원본 사본 2벌** — §11-1 (원본 `news.db` 는 **복사만**).
+2. **`migrate`** — §11-3 (빈 대상 전제 · 대상 URL 을 `news` 로).
+3. **`verify`** — §11-4 (**exit 0 · 판정 일치 · 불일치 0** 이어야 다음으로).
+4. **GRANT 부착 + `SHOW GRANTS` 확인** — §11-4-b · §13-1 (테이블이 생긴 지금에야 붙는다 · root 1회).
+5. **Spring `DB_KIND=mysql` 기동** — §11-5 (`DATA_DIR` 는 같은 경로 유지 — uploads 서빙).
+6. **육안 확인** — §11-5 목록. **마지막 항목=수집 설정 생성·삭제**가 곧 **GRANT 실사용 판정**(삭제 200 이어야 함).
+7. **클라이언트 재지정** — §13-4.
+8. **운영 cron(tick) 전환** — §13-5.
+9. **Node 은퇴 표시** — §13-6.
+
+### 13-4. 클라이언트 재지정 절차 (P3 "clients at Spring" · 세 경로)
+
+컷오버 후 클라이언트가 Spring 을 보게 하는 정본 경로는 셋이다(index.json decisions (6) · ADR-011 승계 —
+`NEWS_SERVER_URL` 은 **저장된 serverUrl 이 없을 때만** 적용되고 기존 `normalizeServerUrl`·health 프로브·
+fail-safe 를 그대로 경유한다 · 원격 페이지에 Node 권한을 주지 않는다).
+
+| 경로 | 무엇을 하나 | 되돌림(원복) |
+|---|---|---|
+| **(a) 동일 host:port 교체** — **강권장** | Spring 이 Node 가 쓰던 **같은 주소를 승계**한다(Node 정지 후 그 포트로 기동). **클라이언트 무변경** — 저장된 serverUrl 이 그대로 유효하다. | 그 주소에 다시 Node 를 올린다(§13-7 롤백). 클라 무변경. |
+| **(b) 배포/설정으로 일부 클라만** | 병행 창에서 일부 클라를 Spring 으로: **설정 화면에서 serverUrl 변경** 하거나, 저장값이 없는 배포에 **`NEWS_SERVER_URL`**(step4)을 주입해 부팅 기본 서버 URL 을 Spring 오리진으로 준다. `NEWS_SERVER_URL` 은 `config.json` 에 자동 저장되지 않아 매 부팅 재계산된다. | 설정 화면에서 serverUrl 을 원복하거나 `NEWS_SERVER_URL` 을 제거/원복한다(저장된 serverUrl 이 있으면 env 는 무시되므로, 저장값을 지우거나 원 주소로 되돌린다). |
+| **(c) 브라우저 SPA** | Spring 오리진으로 접속한다(정적 자산·API 를 Spring 이 같은 오리진에서 서빙). | 이전 오리진(Node)으로 접속한다. |
+
+### 13-5. 운영 cron(tick) 전환 (ADR-008 — 외부 pull · 중복 방지)
+
+배부는 **앱 안의 타이머가 아니라 외부 cron 이 Z 세션으로 `POST /api/distribution/tick` 을 pull** 해서 일으킨다
+(ADR-008 · body 무시). 컷오버는 그 **cron 의 대상 URL 을 Node→Spring 으로 재지정**하는 절차일 뿐이다 —
+**앱에 `@Scheduled`·타이머·egress·재시도·큐를 넣지 않는다**(넣는 순간 ADR-008 위반).
+
+- **규율(중복 배부 방지)**: 병행 운영 창에서 **두 서버가 동시에 tick pull 되지 않게** cron 을 **한쪽만** 겨누게 한다.
+  둘 다 tick 을 받으면 각자 자기 저장소에 스풀을 써서 **같은 기사가 두 번 배부**된다(두 저장소가 갈린다 · §11-6).
+- **전환 순서**: cron 을 **잠시 멈춤 → 대상 URL 을 Spring 으로 교체 → 재개**. (동일 host:port 교체(13-4-a)라면
+  cron 의 URL 도 바뀌지 않아 재지정이 불필요하다 — 대상이 그대로 Spring 이 승계한 주소다.)
+- **되돌림**: cron 대상 URL 을 Node 로 원복(또는 승계 주소 그대로 두고 Node 를 그 주소로 롤백 · §13-7).
+
+### 13-6. Node 은퇴 표시 (sqlite 분기는 유지 — 롤백 레버)
+
+컷오버 확정 후에도 **sqlite 분기·`node:sqlite`·`TempNewsDb` 계열은 제거하지 않는다**(index.json excluded (c) ·
+decisions (5) — 제거는 롤백 능력과 무회귀 판정을 함께 잃는다 · 제거 판단은 P3 후속).
+
+- 컷오버 뒤 Node 를 **다시 띄울 일이 있으면** `NODE_SERVER_DEPRECATED=1` 로 기동해 **은퇴 예고 배너**를 남긴다
+  (step5 · opt-in · 기본 off · HTTP 응답·헤더·상태 무변경).
+
+  ```bash
+  NODE_SERVER_DEPRECATED=1 DATA_DIR=<경로> PORT=<포트> node server/index.js
+  ```
+
+- **⚠ 이 배너는 터미널/콘솔 stdout 에 찍히지 않는다.** `logService.warn` 을 통해 **앱 로그 스트림 / 인메모리
+  링 버퍼(ADR-007 로그 SSE)** 로 흐른다 — 운영자는 **콘솔이 아니라 앱 로그 스트림(관리자 로그 뷰/매일 다이제스트)**
+  에서 이 배너를 확인한다. 터미널을 쳐다보며 배너를 기다리지 마라(거기엔 안 나온다).
+- **경고 재인용(§11-6)**: 컷오버 뒤 Node 에 **쓰기**가 한 번이라도 일어나면 두 저장소(SQLite `news.db` /
+  MySQL `news`)가 **갈리고 자동으로 합쳐지지 않는다**. 되돌릴 생각이면 §13-7 롤백으로 가라 — Node 를 그냥
+  켜는 것은 롤백이 아니다.
+
+### 13-7. 롤백 포인터
+
+문제가 생기면 **§9(되돌리기 절차)** 와 **§11-7(스테이징 리허설 실측)** 으로 간다 —
+export → verify(**산출물 ↔ 지금의 MySQL** 이 무결성 판정 · exit 0) → 임시 `DATA_DIR` 배치 → Node 기동.
+동일 host:port 교체(13-4-a)였다면 **클라이언트 무변경**으로 복귀한다.
+
+- **되돌린 뒤에도 MySQL `news` 도 원본 `news.db` 도 지우지 않는다**(이 리포 최상위 규칙 · 원인 조사·비교 기준).
+- ③ 왕복 대조 함정(§11-7 주석): 원본 `news.db` 와의 대조는 "이관 직후"에만 0 이고, 운영이 진행됐다면
+  **다른 것이 정상**이다 — 그때 판정은 **산출물 ↔ MySQL** 대조다(exit 4 를 롤백 실패로 읽지 마라).
