@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>시스템 구성도 수정본</title>
+    <style>
+      html, body {
+        margin: 0;
+        background: #efefef;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        font-family: 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+      }
+      .frame {
+        background: #f4f4f4;
+        padding: 12px;
+        border: 1px solid #d9d9d9;
+        box-shadow: 0 3px 12px rgba(0,0,0,0.06);
+      }
+      svg { display: block; width: min(88vw, 760px); height: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <svg xmlns="http://www.w3.org/2000/svg" width="700" height="520" viewBox="0 0 700 520" role="img" aria-label="시스템 구성도 수정본">
+        <defs>
+          <style>
+            .title { font: 700 28px 'Malgun Gothic', 'Noto Sans KR', sans-serif; fill: #0c3b79; }
+            .label { font: 700 18px 'Malgun Gothic', 'Noto Sans KR', sans-serif; fill: #1d1d1d; }
+            .small { font: 600 15px 'Malgun Gothic', 'Noto Sans KR', sans-serif; fill: #1d1d1d; }
+            .tiny { font: 500 13px 'Malgun Gothic', 'Noto Sans KR', sans-serif; fill: #1d1d1d; }
+            .box { fill: #eef5ff; stroke: #1d74d9; stroke-width: 2; }
+            .box-mid { fill: #edf4ff; stroke: #1d74d9; stroke-width: 2; }
+            .line { stroke: #1d74d9; stroke-width: 2; fill: none; }
+            .arrow { marker-end: url(#arrow); }
+          </style>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3 z" fill="#1d74d9"/>
+          </marker>
+        </defs>
+
+        <rect width="700" height="520" fill="#f2f2f2"/>
+        <text x="350" y="38" text-anchor="middle" class="title">시스템 구성도</text>
+
+        <rect x="90" y="80" width="90" height="70" class="box" rx="8"/>
+        <line x1="135" y1="150" x2="135" y2="170" class="line"/>
+        <line x1="135" y1="170" x2="230" y2="170" class="line"/>
+        <text x="135" y="120" text-anchor="middle" class="small">PC</text>
+
+        <rect x="250" y="80" width="90" height="70" class="box" rx="8"/>
+        <line x1="295" y1="150" x2="295" y2="170" class="line"/>
+        <line x1="295" y1="170" x2="230" y2="170" class="line"/>
+        <text x="295" y="120" text-anchor="middle" class="small">Mobile</text>
+        <text x="295" y="136" text-anchor="middle" class="tiny">(Android/iOS) 승인</text>
+
+        <rect x="180" y="170" width="220" height="70" class="box-mid" rx="10"/>
+        <text x="290" y="210" text-anchor="middle" class="label">FW</text>
+        <text x="290" y="232" text-anchor="middle" class="small">(PA-440)</text>
+
+        <path d="M135 150 L135 170 L220 170" class="line arrow"/>
+        <path d="M295 150 L295 170 L360 170" class="line arrow"/>
+
+        <line x1="290" y1="240" x2="290" y2="270" class="line"/>
+        <text x="290" y="290" text-anchor="middle" class="small">인증 요청</text>
+
+        <rect x="155" y="300" width="140" height="80" class="box-mid" rx="10"/>
+        <text x="225" y="338" text-anchor="middle" class="label">VPN-AUTH</text>
+        <text x="225" y="360" text-anchor="middle" class="small">(RADIUS)</text>
+
+        <rect x="365" y="300" width="140" height="80" class="box-mid" rx="10"/>
+        <text x="435" y="338" text-anchor="middle" class="label">LDAP</text>
+        <text x="435" y="360" text-anchor="middle" class="small">(Google OTP 기반)</text>
+
+        <path d="M290 240 L290 275 L225 275 L225 300" class="line arrow"/>
+        <path d="M290 240 L290 275 L435 275 L435 300" class="line arrow"/>
+
+        <path d="M225 380 C225 380, 200 380, 200 350 L200 330 C200 285, 160 285, 160 260 L160 250 C160 244, 170 240, 180 240" class="line arrow"/>
+        <path d="M435 380 C435 380, 250 380, 250 350 L250 330 C250 285, 160 285, 160 260 L160 250 C160 244, 170 240, 180 240" class="line arrow"/>
+        <text x="290" y="360" text-anchor="middle" class="label">Accept / Reject</text>
+
+        <text x="350" y="490" text-anchor="middle" class="tiny">(맨 아래 PA-440 제거, Accept/Reject는 첫 번째 PA-440로 자연스럽게 좌회전 연결)</text>
+      </svg>
+    </div>
+  </body>
+</html>
