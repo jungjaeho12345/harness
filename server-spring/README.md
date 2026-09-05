@@ -210,6 +210,51 @@ tick 응답에는 **스풀 절대경로도 스풀 파일명도 실리지 않는�
 필터 순서는 계약의 일부다: **CORS(10) → 요청 로그(15) → CSRF Origin/Referer(20) → 로그인 레이트리밋(30) → 경로 정책(40)**
 (`FilterOrder` 상수 단일 지점, `FilterWiringTest`가 순서를 잠근다).
 
+## SPA 동일 출처 서빙 (`SPA_DIR` — 미설정이 기본이고 그때는 비활성이다)
+
+phase 76 step2가 붙였다(ADR-017 결정 1). Node `server/index.js` **174~250행**(규칙 3함수)과 **1219~1238행**
+(`express.static` + 폴백)의 동형이며, 규칙의 정본은 `test/spa-serving.test.js` **25항(A1~F25)**이다.
+**이식하지 않으면 Electron 클라가 붙을 수 없다** — `client/lib/serverUrl.js`의 `appUrl(origin)`은 `${origin}/`이고
+`client/main.js` 303행이 그것을 `loadURL`한다(클라는 자기 안에 화면이 없다).
+
+- **설정 키는 `app.spa-dir`(환경변수 `SPA_DIR`) 하나**다. 미설정·공백·`<dir>/index.html` 부재면 **비활성**이고
+  그때는 핸들러를 **하나도 등록하지 않는다** — 런타임 동작이 이 step 이전과 완전히 같다(되돌림 비용이 구조적으로 0).
+  판정은 **부팅 시 1회**이고 기준은 디렉토리가 아니라 **`index.html` 파일**이다: 파일이 없는데 폴백을 켜면
+  미정의 GET마다 파일 부재가 전역 에러 핸들러로 흘러 **404가 500으로 뒤집힌다**(Node `resolveSpaRoot`의 CRITICAL 주석).
+- **jar에 임베드하지 않는다**(파일시스템 경로다). 화면 갱신이 jar 재빌드를 요구하지 않아야 하고, 롤백 시 Node exe 배치와
+  **같은 `web/dist`를 두 서버가 공유**한다(open_questions (7)).
+- **폴백 3게이트**(`SpaFallbackRules` — 순수 판정, `SpaFallbackRulesTest`가 A1~A4를 잠근다):
+  ① `GET`·`HEAD`만 ② 경로를 **소문자화**해 `/api`·`/uploads`와 정확히 같거나 그 하위면 폴백 금지
+  (`/apidocs`는 폴백 대상이다 — 단순 `startsWith` 금지) ③ `Accept`에 `text/html` 포함일 때만.
+  `GET /`는 예외적으로 `Accept`를 보지 않는다(정본에서 `express.static`의 `index` 옵션이 처리하는 자리다).
+- **인벤토리 밖이다**: `SpaHandlerMapping`(`SimpleUrlHandlerMapping`)이라 `HandlerInventoryTest`가 보는
+  `RequestMappingHandlerMapping`에 나타나지 않는다(`/uploads/**` 선례). `@RequestMapping`·`@EnableWebMvc` 금지.
+- **404 규약은 한 글자도 바뀌지 않는다**: SPA가 맡지 않기로 한 요청에는 매핑이 `null`을 돌려주어 요청이 **기존 경로
+  그대로** 흐른다(`/uploads/**` 정적 → Boot 기본 `/**` → `NoResourceFoundException` → `GlobalErrorHandler` →
+  `HtmlErrors.notFound`). 404를 직접 만들지 않는 이유가 그것이다 — 바이트가 갈리지 않는 유일한 방법이다.
+  매핑 순서는 `RequestMappingHandlerMapping`(0) → **SPA(`LOWEST_PRECEDENCE-2`)** → 리소스 핸들러(`-1`)다.
+- **dotfiles·Win32 이름 별칭**: 점으로 시작하는 세그먼트는 (하위까지) 서빙되지 않고(Node `dotfiles:'ignore'`),
+  Win32 별칭 판정은 `/uploads`와 **같은 `LibuvNames`**를 쓴다(`x.png.`·`CON` 등 — 후자를 빼면 `/NUL`이
+  **실재 장치로 열려 500**이 된다).
+- **CSP는 SPA 응답에만 싣는다**(`ContentSecurityPolicy.NODE_ORIGINAL` — 값의 단일 소유 지점). Node helmet 원문과
+  **바이트 동일**(344바이트)이며 **지시자는 7종이 아니라 14종**이다: `server/index.js` 494~506행이 명시한 7종 뒤에
+  helmet 기본 6종(`base-uri`·`font-src`·`form-action`·`object-src`·`script-src-attr`·`upgrade-insecure-requests`)이
+  따라 붙고 구분자는 **공백 없는 `;`**다(2026-09-05 원시 소켓 실측 — 소스만 읽고 조립하면 갈린다).
+  **`/api`·`/uploads` 응답에는 붙이지 않았다**(나머지 보안 헤더 10종과 함께 이월 — `excluded` (d) ②) 그리고
+  **HSTS는 넣지 않았다**(Node도 `forceHttps`일 때만 켠다. 평문 LAN 배치에 보내면 이후 접속이 깨진다).
+- **계약은 이 면을 보지 않는다 — 실측이다.** `scripts/spring-contract.mjs`의 `javaChildEnv()`는 허용목록 방식이라
+  `SPA_DIR`을 자식에게 넘기지 않는다. 2026-09-05 변이 실측: **예약 접두사에서 `/api`를 지워 미정의 `/api` 경로가
+  SPA 200으로 뒤집힌 상태에서도 `--parity`는 313관측 diffs 0**이었고, **CSP를 통째로 떼어낸 상태에서도 313관측
+  diffs 0**이었다. 그래서 이 축의 **유일 방어선**은 다음 파일들이다:
+  `SpaFallbackRulesTest`(규칙) · `SpaServingWireTest`(와이어 20항 — 404 바이트·CSP 경계·`/uploads` 무손상) ·
+  `SpaDisabledWireTest`/`SpaEmptyRootWireTest`/`SpaMissingRootWireTest`(비활성 3종) ·
+  `SpaRealDistWireTest`(실제 `web/dist` — 인라인 스크립트 0·동일 출처 절대 경로) · `SpaPropertiesTest`(활성 판정).
+- **`SpaRealDistWireTest`는 `web/dist`를 요구한다**(skip 하지 않는다 — 조용한 skip은 "실제 산출물을 한 번도 서빙해
+  보지 않은 green"을 만든다). 그 디렉토리는 `.gitignore` 대상이므로 **`npm run build`를 먼저 돌려라**.
+- **문서화된 divergence**(맞추지 않는다 · step3 대조기가 리포트에 출력한다): 문서·자산의 `Content-Type`에
+  **charset 파라미터가 없다**(Node `text/html; charset=UTF-8` · 여기 `text/html`), `ETag`·`Cache-Control`이 없다,
+  그리고 Node가 함께 싣는 **보안 헤더 10종**(HSTS 제외 · `X-Content-Type-Options` 등)이 없다.
+
 ## 이 서버는 스키마를 만들지 않는다
 
 DDL을 **한 줄도 실행하지 않는다**: `ddl-auto`·`schema.sql`·`data.sql`·Flyway·Liquibase 전부 금지이고 코드에도
@@ -371,6 +416,7 @@ Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lin
 | `server.address` | `HOST` | `127.0.0.1` | **미설정이면 loopback 바인드** — `HOST` 명시 설정 시에만 LAN에 열린다(Node 서버와 동일 규율). 수집 fail-closed 판정의 입력이기도 하다(바로 아래). |
 | `app.collection.token` | `COLLECTION_TOKEN` | 빈 값(미설정) | 수집 토큰. **미설정이면 `x-collection-token` 헤더를 아예 읽지 않는다**(어떤 값이 와도 무시 — loopback 바인드에서 개방). 설정돼 있으면 불일치·부재가 401이다. 빈 문자열이 '미설정'이고 **공백 1칸은 '설정됨'**이다(Node truthy 판정 그대로 — 다듬지 않는다). |
 | `app.distribution.spool-dir` | `DIST_SPOOL_DIR` | 빈 값(미설정) | 배부 스풀 루트(phase 72 배선 · `AppProperties`가 아니라 별도 `SpoolProperties` record로 분리했다 — `CollectionProperties` 선례). **미설정이면 배부가 전면 비활성**이다: `POST /api/distribution/tick`·`POST /api/distribution/retry`는 **인가를 통과한 뒤** 503 `spool-disabled`, `GET /api/distribution/failures`는 **200**(스풀과 무관), 송고 즉시 배부 훅은 **결선되지 않는다**. **기본값을 하드코딩하지 않는다**(cwd·`DATA_DIR` 하위 추정 금지 — 모르면 배부하지 않는다). 값은 `NodeString.trim`으로 다듬으며 **공백만 있는 값은 '미설정'으로 수렴한다**(Node truthy 판정과 갈리는 지점 · 계약 미관측 · 방향은 안전측). |
+| `app.spa-dir` | `SPA_DIR` | 빈 값(미설정) | SPA 정적 루트(phase 76 · ADR-017 결정 1 · `SpaProperties`). **미설정이면 SPA 서빙이 전면 비활성**이고 미정의 경로는 전부 기존 404 그대로다. 활성 판정은 **`<dir>/index.html` 파일 존재**이며 부팅 시 1회다(디렉토리만 있으면 비활성 — 켜면 404가 500으로 뒤집힌다). **파일시스템 경로**이고 jar 임베드는 없다. 파싱조차 불가능한 값(따옴표 포함 등)은 경고 1줄과 함께 **비활성으로 수렴**한다(기동을 죽이지 않는다). 계약 하네스는 이 키를 자식에게 넘기지 않는다. |
 | `app.media.google-api-key` | `GOOGLE_API_KEY` | 빈 값(미설정) | 미디어 검색 이미지(Google CSE)용 서버 보유 키(ADR-014 · `MediaProperties`). **이미지는 키와 엔진 id가 둘 다 있어야** 외부 호출이 열린다. |
 | `app.media.google-cse-id` | `GOOGLE_CSE_ID` | 빈 값(미설정) | 위와 짝이 되는 CSE 엔진 id. |
 | `app.media.youtube-api-key` | `YOUTUBE_API_KEY` | 빈 값(미설정) | 미디어 검색 영상(YouTube Data v3)용 서버 보유 키. **영상은 키 하나면** 열린다. |
