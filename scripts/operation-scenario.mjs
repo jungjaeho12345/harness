@@ -263,25 +263,29 @@ async function runScenario(origin, token, opts, checks) {
   return { spoolSlug, articleId };
 }
 
+// 임시 디렉토리 추적·정리는 모듈 스코프에 둔다 — main() 이 서버 기동 전(mkTmp·시드·포트 선점)에서
+// 던져도 main().catch 가 같은 cleanup() 을 불러 os.tmpdir() 누수를 막는다(--keep 이면 보존).
+const tmpDirs = [];
+let keepTmp = false;
+const mkTmp = (prefix) => {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), prefix));
+  tmpDirs.push(dir);
+  return dir;
+};
+const cleanup = () => {
+  if (keepTmp) {
+    if (tmpDirs.length) process.stdout.write(`keep 임시 디렉토리 보존: ${tmpDirs.join(', ')}\n`);
+    return;
+  }
+  for (const dir of tmpDirs) {
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+    catch (err) { process.stderr.write(`warn 임시 디렉토리 정리 실패: ${dir} (${err && err.code})\n`); }
+  }
+};
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-
-  const tmpDirs = [];
-  const mkTmp = (prefix) => {
-    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), prefix));
-    tmpDirs.push(dir);
-    return dir;
-  };
-  const cleanup = () => {
-    if (opts.keep) {
-      process.stdout.write(`keep 임시 디렉토리 보존: ${tmpDirs.join(', ')}\n`);
-      return;
-    }
-    for (const dir of tmpDirs) {
-      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
-      catch (err) { process.stderr.write(`warn 임시 디렉토리 정리 실패: ${dir} (${err && err.code})\n`); }
-    }
-  };
+  keepTmp = opts.keep;
 
   // 사전 스냅샷 — 종료 후 무변(부재 포함) 단언의 기준점.
   const repoBefore = repoDataSnapshot();
@@ -393,6 +397,9 @@ async function main() {
 }
 
 main().catch((err) => {
+  // main() 이 서버 기동 전 단계(mkTmp·DatabaseSync·시드·포트 선점)에서 던지면 여기로 온다 —
+  // 정상/실패 종료 경로는 이미 cleanup() 을 부른 뒤 process.exit 하므로 이 경로만 남은 누수를 정리한다.
+  cleanup();
   process.stderr.write(`operation-scenario 실패: ${err && err.stack ? err.stack : err}\n`);
   process.exit(1);
 });

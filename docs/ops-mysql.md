@@ -649,7 +649,7 @@ curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
 
 | # | 게이트 | 어떻게 판정하나 | go 기준 |
 |---|---|---|---|
-| G-1 | **[GRANT] 삭제 예외** | 아래 13-1 의 `SHOW GRANTS` **육안 판정** | 운영 `news` 에 `GRANT DELETE ON news.ReceiverConfig` 줄이 보인다 |
+| G-1 | **[GRANT] 삭제 예외** | 아래 13-1 (§11-0-4 와 같은 취지) | grant 가 (재컷오버라) **이미 붙어 있거나**, **§13-3 step 4(§11-4-b)에서 붙인다고 운영자가 확인하고 root 가 대기 중**이다. 빈 대상 전제(G-3)에서는 테이블이 아직 없어 grant 가 이 시점 `SHOW GRANTS` 에 **안 보이는 게 정상**이므로 여기서 "지금 보인다"를 요구하지 않는다 — **하드 육안 판정(`SHOW GRANTS` 에 그 줄이 실제로 보임)은 테이블이 생긴 뒤 step 6** |
 | G-2 | **[검증 게이트] 시나리오 하네스** | 아래 13-2 의 이중 대조 리허설 | 배부 스풀 **diff 0** (exit 0) |
 | G-3 | **[대상 비어있음]** | §11-0-6 (`information_schema.TABLES`) | 운영 `news` 가 테이블 0 (또는 빈 스키마) |
 | G-4 | **[백업]** | §11-1 (원본 `news.db` 사본 2벌 · md5 일치) | 세 파일 md5 동일 · 원본은 복사만(옮기지·이름바꾸지 않음) |
@@ -666,15 +666,24 @@ curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
 (§13-2)은 **ephemeral `harness_ct_<16hex>` 에 `news_ct`(ALL 권한)** 로 돈다 — 이 축을 **구조적으로 못 본다**.
 "패리티 green" 은 이 grant 의 부재를 **덮어 준다**. 따라서 판정은 **사람이 `SHOW GRANTS` 로 눈으로** 한다.
 
+> **판정 시점에 주의하라 — G-1(선결 게이트)과 육안 판정을 헷갈리지 마라.** grant 는 `news`.`ReceiverConfig`
+> **테이블에 걸리는데, 그 테이블은 `migrate`(§13-3 step 3) 전에는 없다** — 그래서 빈 대상 전제(G-3)에서
+> **컷오버 시작 시점의 `SHOW GRANTS` 에 이 줄이 안 보이는 게 정상**이고, root 는 §13-3 step 4(§11-4-b)에서
+> 테이블이 생긴 **뒤에야** 붙인다(§11-0-4 의 "없으면 4-b 로 붙인다"와 같은 취지). 그러므로 **선결 게이트 G-1 은
+> "지금 보인다"를 요구하지 않는다**: grant 가 (재컷오버라) 이미 붙어 있거나, **step 4 에서 붙인다고 운영자가
+> 확인하고 root 가 대기 중**이면 go 다. **하드 육안 판정 — 아래 `SHOW GRANTS` 에 그 줄이 실제로 보여야 한다 —
+> 은 테이블이 생긴 뒤인 §13-3 step 6 에서** 한다(명령·기준은 그 step 이 이 절을 재사용한다).
+
 ```powershell
-# 운영 자격(news_app)으로 붙어 자기 권한표를 본다 (비밀번호는 프롬프트 · §5)
+# (§13-3 step 6 · 테이블·grant 부착 뒤) 운영 자격(news_app)으로 붙어 자기 권한표를 본다 (비밀번호는 프롬프트 · §5)
 & $M -u news_app -p -e "SHOW GRANTS"
 ```
 
 - ``GRANT DELETE ON `news`.`receiverconfig` TO 'news_app'@'localhost'`` 줄이 보이면 **go**
   (테이블 이름이 소문자로 붙는다 — `lower_case_table_names=1`).
-- 안 보이면 **no-go**. 붙이는 것은 **root 의 일이고 이 phase 는 자동으로 붙이지 않는다**(excluded (b)).
-  §11-4-b 처럼 `migrate` 로 `news` 에 테이블이 **생긴 뒤** root 로 §7 절차를 적용한다(멱등 재실행 또는 한 줄):
+- 안 보이면 **멈춤**(테이블이 생긴 뒤인데도 안 보이면 step 4 로 되돌아가 부착). 붙이는 것은 **root 의 일이고
+  이 phase 는 자동으로 붙이지 않는다**(excluded (b)). §11-4-b 처럼 `migrate` 로 `news` 에 테이블이 **생긴 뒤**
+  root 로 §7 절차를 적용한다(멱등 재실행 또는 한 줄):
   ``GRANT DELETE ON `news`.`ReceiverConfig` TO 'news_app'@'localhost';`` → `FLUSH PRIVILEGES;`
 
 **부재 시 증상(육안 확인 마지막 항목과 같은 축)**: §11-5 의 브라우저 육안 목록에서 **수집 설정 삭제**가
@@ -710,7 +719,9 @@ node scripts/operation-scenario.mjs --dual --db mysql
 3. **`verify`** — §11-4 (**exit 0 · 판정 일치 · 불일치 0** 이어야 다음으로).
 4. **GRANT 부착 + `SHOW GRANTS` 확인** — §11-4-b · §13-1 (테이블이 생긴 지금에야 붙는다 · root 1회).
 5. **Spring `DB_KIND=mysql` 기동** — §11-5 (`DATA_DIR` 는 같은 경로 유지 — uploads 서빙).
-6. **육안 확인** — §11-5 목록. **마지막 항목=수집 설정 생성·삭제**가 곧 **GRANT 실사용 판정**(삭제 200 이어야 함).
+6. **GRANT 하드 육안 판정(G-1 확정) + 육안 확인** — 테이블이 생긴 지금에야 §13-1 의 `SHOW GRANTS` 로
+   ``GRANT DELETE ON `news`.`receiverconfig` …`` 줄이 **실제로 보이는지** 눈으로 확정한다(안 보이면 **멈춤** — step 4 로
+   되돌아가 부착). 이어 §11-5 목록을 확인한다. **마지막 항목=수집 설정 생성·삭제**가 곧 **GRANT 실사용 판정**(삭제 200 이어야 함).
 7. **클라이언트 재지정** — §13-4.
 8. **운영 cron(tick) 전환** — §13-5.
 9. **Node 은퇴 표시** — §13-6.
