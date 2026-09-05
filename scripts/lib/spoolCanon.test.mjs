@@ -139,6 +139,45 @@ test('한쪽에 파일이 빠지면 only-in diff 로 잡는다', async () => {
   assert.equal(swapped.diffs[0].kind, 'only-in-b');
 });
 
+// --- 7. name-kind diff: 같은 key·같은 content 인데 canonName 만 다르면 'name' diff (보강) ---
+// 한 서버는 정상 stamp(`_<compactStamp>.json`)를, 다른 서버는 비패턴 파일명을 쓰면 articleId(마지막 '_' 앞)는
+// 같아 key 가 겹치지만 canonName 은 갈린다 — diffManifests 가 이를 'name' kind 로 드러내야 한다(원문 값 그대로 진단).
+test('canonName 만 다르면 diffManifests 가 name diff 로 잡는다(content 는 무변)', () => {
+  const a = [{ key: 'r/AKR1', canonName: `AKR1_${STAMP}.json`, canonContent: 'X' }];
+  const b = [{ key: 'r/AKR1', canonName: 'AKR1_notastamp.json', canonContent: 'X' }];
+  const { equal, diffs } = diffManifests(a, b);
+  assert.equal(equal, false);
+  assert.equal(diffs.length, 1);
+  assert.equal(diffs[0].kind, 'name');
+  assert.equal(diffs[0].key, 'r/AKR1');
+  assert.equal(diffs[0].a, `AKR1_${STAMP}.json`);
+  assert.equal(diffs[0].b, 'AKR1_notastamp.json');
+});
+
+// --- 8. readSpoolManifest 는 .json 이 아닌 항목(원자적 게시 전의 .tmp 등)을 매니페스트에서 제외한다(보강) ---
+// spoolWriter 는 tmp→rename 으로 원자 게시한다 — 반쯤 써진 .tmp 가 매니페스트에 새면 두 서버 대조가 거짓 diff 를 낸다.
+test('readSpoolManifest 는 .json 이 아닌 항목(.tmp 등)을 건너뛴다', async () => {
+  const tree = {
+    [`root/receiverA/AKR1_${COMPACT}.json`]: CONTENT_1,
+    [`root/receiverA/AKR9_${COMPACT}.json.tmp`]: '{"partial":true}',
+    ['root/receiverA/README.txt']: 'not a spool file',
+  };
+  const manifest = await readSpoolManifest('root', makeFakeFs(tree));
+  assert.deepEqual(manifest.map((e) => e.key), ['receiverA/AKR1']);
+});
+
+// --- 9. stableArticleId 는 articleId 자체의 '_' 를 보존한다(마지막 '_' 앞만 stamp 로 취급) (보강) ---
+// 파일명 `${articleId}_${compactStamp}.json` 에서 마지막 '_' 앞이 articleId 다 — articleId 안의 '_' 는 key 에 남는다.
+test('readSpoolManifest 는 articleId 내부의 밑줄을 보존한다(마지막 밑줄만 stamp 경계)', async () => {
+  const tree = {
+    [`root/pressZ/PRESS_A_${COMPACT}.json`]: `{"articleId":"PRESS_A","distributedAt":"${ISO}"}`,
+  };
+  const manifest = await readSpoolManifest('root', makeFakeFs(tree));
+  assert.equal(manifest.length, 1);
+  assert.equal(manifest[0].key, 'pressZ/PRESS_A');
+  assert.equal(manifest[0].canonName, `PRESS_A_${STAMP}.json`);
+});
+
 // --- 6. content diff 리포트에 스풀 값 원문이 실리지 않는다(길이/해시만) ---
 
 test('content diff 리포트는 스풀 값 원문을 싣지 않고 길이/해시만 싣는다', () => {
