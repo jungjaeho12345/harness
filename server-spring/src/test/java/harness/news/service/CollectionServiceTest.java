@@ -86,7 +86,7 @@ class CollectionServiceTest {
 				new ArticleHistoryRecorder(new ArticleHistoryRepository(this.client), clock, (error) -> {
 					// 이력 통지는 이 축의 관심사가 아니다(수집 create는 이력을 남기지 않는다).
 				}), clock);
-		this.configs = new ReceiverConfigRepository(this.client, transactions);
+		this.configs = new ReceiverConfigRepository(this.client);
 		this.fetcher = new RecordingFetcher();
 		this.service = new CollectionService(this.configs, writes, this.fetcher);
 	}

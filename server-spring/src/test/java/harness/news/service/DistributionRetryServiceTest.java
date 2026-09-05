@@ -140,7 +140,7 @@ class DistributionRetryServiceTest {
 		this.clock = new MutableClock(FIXED.toEpochMilli());
 		this.articles = new ArticleRepository(this.jdbc, this.transactions, this.clock);
 		this.history = new ArticleHistoryRepository(this.jdbc);
-		this.targets = new DistributionTargetRepository(this.jdbc, this.transactions);
+		this.targets = new DistributionTargetRepository(this.jdbc);
 	}
 
 	@AfterEach
@@ -308,8 +308,8 @@ class DistributionRetryServiceTest {
 
 		private final AtomicInteger findById = new AtomicInteger();
 
-		CountingTargets(JdbcClient jdbc, TransactionTemplate transactions) {
-			super(jdbc, transactions);
+		CountingTargets(JdbcClient jdbc) {
+			super(jdbc);
 		}
 
 		@Override
@@ -590,7 +590,7 @@ class DistributionRetryServiceTest {
 		long target = seedTarget("언론사1", PRESS, "press-a", "Y");
 		seedFailure(ARTICLE_ID, PRESS, target, SPOOL_WRITE_FAILED);
 		seedFailure(ARTICLE_ID, NONPRESS, target, SPOOL_WRITE_FAILED);
-		CountingTargets spy = new CountingTargets(this.jdbc, this.transactions);
+		CountingTargets spy = new CountingTargets(this.jdbc);
 		DistributionRetryService service = service(realWriter(), this.history, spy, this.articles);
 
 		assertEquals(2, items(service.list(null)).size());
@@ -624,7 +624,7 @@ class DistributionRetryServiceTest {
 	void spoolDisabledIsDecidedWithoutTouchingTheDatabase() {
 		long failureId = seedRetryableFailure();
 		CountingHistory historySpy = new CountingHistory(this.jdbc);
-		CountingTargets targetSpy = new CountingTargets(this.jdbc, this.transactions);
+		CountingTargets targetSpy = new CountingTargets(this.jdbc);
 		CountingArticles articleSpy = new CountingArticles(this.jdbc, this.transactions, this.clock);
 
 		Map<String, Object> result = serviceReading(null, historySpy, targetSpy, articleSpy)
@@ -1050,7 +1050,7 @@ class DistributionRetryServiceTest {
 		assertEquals("123", SpoolDir.sanitizeSpoolDir("123"), "전제 확인");
 
 		Map<String, Object> result = service(realWriter(),
-				this.history, new IntegerSpoolDirTargets(this.jdbc, this.transactions), this.articles)
+				this.history, new IntegerSpoolDirTargets(this.jdbc), this.articles)
 						.retry(Long.valueOf(failureId), ACTOR);
 
 		assertEquals(Boolean.FALSE, result.get("ok"), "비문자열 spoolDir로 재전송이 성공했다: " + result);
@@ -1062,8 +1062,8 @@ class DistributionRetryServiceTest {
 	/** {@code spoolDir}만 비문자열로 바꿔 돌려주는 수신처 리포지토리(리포지토리 판독 변경의 대역). */
 	private static final class IntegerSpoolDirTargets extends DistributionTargetRepository {
 
-		IntegerSpoolDirTargets(JdbcClient jdbc, TransactionTemplate transactions) {
-			super(jdbc, transactions);
+		IntegerSpoolDirTargets(JdbcClient jdbc) {
+			super(jdbc);
 		}
 
 		@Override

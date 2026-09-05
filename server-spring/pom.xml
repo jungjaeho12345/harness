@@ -55,6 +55,21 @@
 		</dependency>
 
 		<!--
+			phase 75 step1(dialect-semantics-probe) — MySQL 드라이버. sqlite-jdbc와 **같은 자리**다.
+			scope는 test가 아니라 runtime이다: step1은 측정만 하지만 step6이 서버 실기동에 그대로 쓰므로
+			test로 넣으면 그때 pom을 다시 고쳐야 한다(의존성 표면의 소유가 두 step으로 흩어진다).
+			판본은 명시 고정한다 — 부모 BOM이 관리하더라도 캐시에 있는 판본과 어긋나면 오프라인에서 죽는다.
+			**Flyway는 여기 넣지 않는다**: NoSchemaSqlInMainSourcesTest.FORBIDDEN이 main 소스·리소스에서
+			`flyway` 철자를 금지하고, Flyway는 별도 모듈 tools/news-migrator가 소유한다(decisions (2)).
+		-->
+		<dependency>
+			<groupId>com.mysql</groupId>
+			<artifactId>mysql-connector-j</artifactId>
+			<version>9.1.0</version>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!--
 			step4(auth-domain) — BCrypt 하나만 쓴다.
 			**spring-boot-starter-security가 아니다**: 스타터를 넣는 순간 전 라우트가 기본 잠금이 되고
 			프레임워크 기본 401/403 shape이 계약({ok:false, reason:...} JSON)과 충돌한다(decisions (10)).

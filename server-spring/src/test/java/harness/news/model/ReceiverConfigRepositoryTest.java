@@ -24,8 +24,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.jdbc.support.JdbcTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * ReceiverConfig 리포지토리 — 리포 루트 {@code src/models/receiverConfigModel.js}와 1:1 대응하는 3연산의
@@ -50,8 +48,7 @@ class ReceiverConfigRepositoryTest {
 	void setUp() {
 		TempNewsDb.seed(this.tempDir);
 		this.dataSource = NewsDataSource.create(this.tempDir);
-		this.configs = new ReceiverConfigRepository(JdbcClient.create(this.dataSource),
-				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)));
+		this.configs = new ReceiverConfigRepository(JdbcClient.create(this.dataSource));
 	}
 
 	@AfterEach

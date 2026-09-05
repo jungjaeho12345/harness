@@ -139,6 +139,24 @@ public final class RequiredSchema {
 			DISTRIBUTION_TARGET_TABLE, DISTRIBUTION_TARGET_COLUMNS,
 			PHOTO_TABLE, PHOTO_COLUMNS);
 
+	/**
+	 * <b>텍스트 기본키</b> 세 자리 — 테이블 → 컬럼(phase 75 · ⑤ [med] 3).
+	 *
+	 * <p>나머지 두 테이블의 PK({@code ArticleHistory.id}·{@code Photo.id})는 정수라 여기 없다. 이 셋만
+	 * 따로 이름을 붙이는 이유는 <b>이 컬럼들의 비교 의미론이 곧 인증·조회의 의미론</b>이기 때문이다:
+	 * {@code WHERE userId = ?}가 로그인을 정하고 {@code WHERE articleId = ?}가 어느 기사를 여는지 정한다.
+	 * 값이 아니라 <b>비교 규칙</b>이 흔들리면 어떤 행 단위 검증도 그것을 보지 못한다 —
+	 * {@link SchemaGuard}가 부팅에서 이 목록의 실제 collation 을 읽어 확인한다.
+	 *
+	 * <p>목록은 {@link #TABLES}의 부분집합이고 컬럼은 각 컬럼 목록의 첫 항목과 같다(그 사실은
+	 * {@code SchemaGuardTest.theTextPrimaryKeyListStaysInSyncWithTheRequiredColumnLists}가 잠근다 —
+	 * 손으로 적은 표가 정본이 바뀔 때 조용히 낡지 않게).
+	 */
+	public static final Map<String, String> TEXT_PRIMARY_KEYS = Map.of(
+			USER_TABLE, "userId",
+			ARTICLE_TABLE, "articleId",
+			CONTENTS_TABLE, "articleId");
+
 	private RequiredSchema() {
 	}
 }

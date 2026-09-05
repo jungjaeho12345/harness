@@ -190,6 +190,12 @@ public class ArticleHistoryRepository {
 	 * 사라져 폴백 대상을 식별할 수 없다 — 금지. WHERE의 {@code markupVersion}은 CASE 별칭이 아니라
 	 * 실컬럼이다(SQLite 이름 해석은 FROM 테이블 우선) — <b>별칭 이름을 바꾸지 마라</b>. 바꾸면 필터가
 	 * 가리키는 대상이 달라질 수 있다.
+	 *
+	 * <p><b>{@code length()}는 두 방언에서 값이 다르지만 이 술어는 갈리지 않는다</b>(phase 75 step1 측정 9:
+	 * {@code '가나다'}가 SQLite에서는 <b>3</b>(문자), MySQL {@code LENGTH()}에서는 <b>9</b>(바이트)다).
+	 * 여기 쓰인 비교는 {@code > 0} = "비어 있지 않은가"라 NULL·빈 문자열·ASCII·한글 어느 행에서도 같은
+	 * 결과를 낸다(4행으로 실측 — docs/db-mysql-mapping.md 축 9). 그래서 방언 분기를 두지 않는다.
+	 * <b>이 술어를 길이 비교로 바꾸지 마라</b>(예: {@code > 10}) — 그 순간 두 서버가 다른 행 집합을 준다.
 	 */
 	public List<Map<String, Object>> querySnapshotTitlesByArticle(String articleId) {
 		return this.jdbcClient.sql("SELECT id, snapshotTitle,"

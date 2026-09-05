@@ -64,9 +64,9 @@ public class PhotoRepository {
 	/**
 	 * 사진 1행 적재. 화이트리스트 컬럼 중 <b>키가 주어진 것만</b> 넣는다.
 	 *
-	 * <p>id 회수는 {@link GeneratedKeyHolder}로 <b>같은 문장에서</b> 한다 — {@code last_insert_rowid()}를
-	 * 별도 문장으로 부르면 두 문장 사이에서 커넥션이 반납되고(풀 상한 1) 동시 삽입에서 남의 id를
-	 * 돌려준다(phase 70 실측). 이 id는 {@code {ok,id}} 응답으로 나가 클라이언트가 행을 지목하는
+	 * <p>id 회수는 {@link GeneratedKeyHolder}로 <b>같은 문장에서</b> 한다 — 방금 넣은 id를 별도 문장으로
+	 * 되읽으면 두 문장 사이에서 커넥션이 반납되고(풀 상한 1) 동시 삽입에서 남의 id를 돌려준다(phase 70
+	 * 실측). 이 id는 {@code {ok,id}} 응답으로 나가 클라이언트가 행을 지목하는
 	 * 식별자라 오배정은 곧 오식별이다.
 	 *
 	 * @return 새 행의 id(정수)

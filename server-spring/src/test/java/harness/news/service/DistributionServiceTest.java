@@ -117,7 +117,7 @@ class DistributionServiceTest {
 		this.clock = new MutableClock(FIXED.toEpochMilli());
 		this.articles = new ArticleRepository(this.jdbc, this.transactions, this.clock);
 		this.history = new ArticleHistoryRepository(this.jdbc);
-		this.targets = new DistributionTargetRepository(this.jdbc, this.transactions);
+		this.targets = new DistributionTargetRepository(this.jdbc);
 	}
 
 	@AfterEach
@@ -525,7 +525,7 @@ class DistributionServiceTest {
 		long target = seedTarget("언론사1", PRESS, "press-1", "Y");
 		// 전제 — 강제변환된 문자열은 슬러그 화이트리스트를 통과한다(그래서 타입 게이트가 필요하다).
 		assertEquals("123", SpoolDir.sanitizeSpoolDir("123"), "전제 확인");
-		this.targets = new IntegerSpoolDirTargets(this.jdbc, this.transactions);
+		this.targets = new IntegerSpoolDirTargets(this.jdbc);
 
 		Result result = service(realWriter()).distribute(ARTICLE_ID, List.of(PRESS), ACTOR);
 
@@ -540,8 +540,8 @@ class DistributionServiceTest {
 	/** {@code spoolDir}만 비문자열로 바꿔 돌려주는 수신처 리포지토리(리포지토리 판독 변경의 대역). */
 	private static final class IntegerSpoolDirTargets extends DistributionTargetRepository {
 
-		IntegerSpoolDirTargets(JdbcClient jdbc, TransactionTemplate transactions) {
-			super(jdbc, transactions);
+		IntegerSpoolDirTargets(JdbcClient jdbc) {
+			super(jdbc);
 		}
 
 		@Override

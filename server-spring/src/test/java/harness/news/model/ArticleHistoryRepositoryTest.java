@@ -24,8 +24,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.jdbc.support.JdbcTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 이력 리포지토리 — 리포 루트 {@code src/models/articleHistoryModel.js}의 삽입·조회 3종과 1:1인 동작 계약.
@@ -430,8 +428,7 @@ class ArticleHistoryRepositoryTest {
 	@Test
 	void distributionEventTargetIdRoundTripsComparableWithDistributionTargetIds() {
 		// 이 축은 계약이 절대 보지 못한다: targetId가 "3"이나 3.0으로 돌아오면 수신처 매칭이 조용히 깨진다.
-		DistributionTargetRepository targets = new DistributionTargetRepository(JdbcClient.create(dataSource),
-				new TransactionTemplate(new JdbcTransactionManager(dataSource)));
+		DistributionTargetRepository targets = new DistributionTargetRepository(JdbcClient.create(dataSource));
 		int targetId = targets.insert(Map.of("name", "조판", "kind", "press",
 				"spoolDir", "press-a", "active", "Y", "createdAt", "c0"));
 		long id = history.insert(row("articleId", "A1", "eventType", "distribute-failed",

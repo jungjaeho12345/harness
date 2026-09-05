@@ -86,7 +86,7 @@ class CollectionPreservationTest {
 				new ArticleHistoryRecorder(new ArticleHistoryRepository(this.client), clock, (error) -> {
 					// 이력 통지는 이 축의 관심사가 아니다.
 				}), clock);
-		this.configs = new ReceiverConfigRepository(this.client, transactions);
+		this.configs = new ReceiverConfigRepository(this.client);
 		this.fetcher = new StubFetcher();
 		this.service = new CollectionService(this.configs, this.writes, this.fetcher);
 	}

@@ -60,8 +60,7 @@ class DistributionTargetServiceTest {
 				Clock.fixed(Instant.parse("2026-08-20T12:34:56.789Z"), ZoneOffset.UTC));
 		this.guard = new SessionGuard(new SessionStore(new MutableClock(1_700_000_000_000L)), users);
 		Authorization authorization = new Authorization(this.guard, articles);
-		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource),
-				new TransactionTemplate(new JdbcTransactionManager(this.dataSource)));
+		this.targets = new DistributionTargetRepository(JdbcClient.create(this.dataSource));
 		this.clock = new MutableClock(Instant.parse("2026-08-22T00:00:00.000Z").toEpochMilli());
 		this.service = new DistributionTargetService(this.targets, authorization, this.clock);
 		insertUser("dt-z", "Z");

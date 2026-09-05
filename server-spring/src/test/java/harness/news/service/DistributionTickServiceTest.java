@@ -124,7 +124,7 @@ class DistributionTickServiceTest {
 		this.clock = new MutableClock(FIXED.toEpochMilli());
 		this.articles = new ArticleRepository(this.jdbc, this.transactions, this.clock);
 		this.history = new ArticleHistoryRepository(this.jdbc);
-		this.targets = new DistributionTargetRepository(this.jdbc, this.transactions);
+		this.targets = new DistributionTargetRepository(this.jdbc);
 	}
 
 	@AfterEach
