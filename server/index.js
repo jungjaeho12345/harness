@@ -31,6 +31,7 @@ import { snapshotTitle } from '../src/services/historyMeta.js';
 import { createSessionService } from '../src/services/sessionService.js';
 import { createControllers } from '../src/controllers/index.js';
 import { createFtpWatcher } from './ftpWatcher.js';
+import { deprecationBanner } from './deprecationBanner.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -1355,6 +1356,10 @@ export function bootstrap({
   app.listen(port, host, () => {
     // 실제 바인드 host를 찍는다 — 하드코딩 문자열이면 운영자가 로그만 보고 노출 범위를 오판한다.
     logService.info(`API server on http://${host}:${port}`);
+    // Node 은퇴 예고(opt-in) — NODE_SERVER_DEPRECATED=1일 때만 경고 1줄(76-server-cutover-ops step5).
+    // 응답·헤더·상태·라우트·미들웨어 무변경 · sqlite 분기 유지(롤백 레버 · ADR-016 · decisions (5)).
+    const banner = deprecationBanner(process.env);
+    if (banner) logService.warn(banner);
   });
 
   // 배부 스풀(ADR-008) — DIST_SPOOL_DIR 미설정 시 배부 비활성(createControllers가 판정).
