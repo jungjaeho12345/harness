@@ -485,6 +485,12 @@ mysql 모드로 뜬 서버의 `DATA_DIR` 을 sqlite 시절과 다른 곳으로 �
 - `service/SpoolWriter.java` — ④의 예외 ①. 배부 스풀 outbound 어댑터이고 파일 쓰기가 **기능 그 자체**다
   (ADR-008 (2)의 "전송은 파일 게시로만"). 같은 디렉토리의 `.tmp`에 쓰고 `ATOMIC_MOVE`로 게시 · 일반 move 폴백 없음
   · UTF-8 명시 · **throw 0**(모든 실패는 `{ok:false, reason}` 고정 토큰).
+  **이 파일이 쓰는 바이트가 Node(`src/services/spoolWriter.js`)와 같은가의 유일 방어선은 `node scripts/spool-parity.mjs`
+  (+ `--db mysql`)다**(phase 76 step5 · `docs/cutover-p3.md` §4). `SpoolWriterTest`는 **자기 기대값**과의 바이트 단언이고
+  계약 스위트는 응답에 스풀 경로가 **없음**을 단언하며 `--parity`는 HTTP만 본다 — 실측(2026-09-07): allowlist 키 제거·
+  키 순서 변경·`internalComment` 노출을 한 jar에 심은 채 `spring-contract.mjs --parity`는 **313관측 diffs 0**이고(Node `npm test`는
+  Java를 구조적으로 보지 못한다) `SpoolWriterTest`는 자기 기대값으로 6 red를 내지만 **Node가 바뀌는 쪽**은 그 테스트도 계약도 못 본다 —
+  `spool-parity.mjs`만 양쪽을 함께 본다(diffs 11/11). 파일 shape·순서·이스케이프를 바꾸면 그 스크립트를 먼저 돌려라.
 - `service/UploadStore.java` — ④의 예외 ②(**phase 73 신설**). `POST /api/upload`의 저장 어댑터다. **경로를 밖에서 받지 않는다** —
   루트는 `AppProperties.uploadsDirPath()`에서 스스로 도출하고 파일명은 서버 발급 32-hex이며 `CREATE_NEW`로만 만든다
   (문자열을 경로에 이어 붙이는 API를 노출하지 않는다는 것을 `UploadStoreTest`가 단언한다).

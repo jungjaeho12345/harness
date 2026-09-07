@@ -444,3 +444,120 @@ netsh 안내의 `program=` 이 `java.exe` 라는 것뿐이다. **이 머신에�
 
 추가 실측: 실행 후 `java.exe` 0 · 이 step 의 실행이 남긴 임시 디렉토리 0(`%TEMP%` 의 `verify-integ-*` 3개는 07:42/07:47 타 세션 산출물 — 이 스크립트는 자기가 만든 경로 밖을 지우지 않으므로 남겨 둔다) ·
 `test/verify-integration-portrange.test.js`(텍스트 잠금) 6/6 green — 숫자 `pickFreePort(` 호출은 여전히 2건이다.
+
+## 4. 배부 스풀 산출물 바이트 대조 하네스 (`scripts/spool-parity.mjs` — step5 · 로드맵 P3 완료 게이트 ②)
+
+> **한 줄**: Node 서버와 Spring 서버를 **각각의** 임시 `DATA_DIR`·`DIST_SPOOL_DIR` 로 나란히 띄우고 같은 시나리오 5축을 기사 1건씩 순차 재생한 뒤,
+> 두 스풀 루트의 파일을 (수신처 폴더 집합 · 폴더별 파일 수 · **정규화 후 전 바이트**)로 대조한다. 이 바이트를 보는 자리는 여기뿐이다 — 계약 스위트는
+> 응답에 스풀 경로가 **없음**을 단언하고(`distribution-tick.contract.js` `assertNoSpoolPath` 4단언), `--parity` 는 HTTP 만 보며, Java `SpoolWriterTest` 는
+> **자기 기대값**과의 대조다(§4-7 추가 실측이 그것을 수치로 확정한다). 판정부는 `scripts/lib/spoolParity.mjs`(순수), 자기검사는
+> `scripts/lib/spoolParity.self-test.mjs`(17항 — 시작 시 자동 실행 · 빨간 채로는 서버를 띄우지 않는다).
+
+### 4-1. 실행
+
+```bash
+cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q clean package -DskipTests   # jar 최신화(하네스는 빌드하지 않는다)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spool-parity.mjs                          # sqlite 축 · exit 0 · diffs 0
+# §3 절차로 NEWS_CT_MYSQL_* 3키만 셸에 실은 뒤(NEWS_DB_* 금지)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spool-parity.mjs --db mysql               # Spring=MySQL 축(75 경로 그대로)
+node --test scripts/lib/spoolParity.self-test.mjs                                                          # 자기검사 단독(17)
+```
+
+옵션: `--db <sqlite|mysql>` · `--keep`(스풀 파일까지 보존 — 첫 실행은 이것으로 파일 하나를 눈으로 봐라) · `--out-dir <리포 밖>` · `--jar` · `--java-home` · `--timeout`.
+요약 줄 형식: **`spool-parity A=node B=spring 폴더 F · 파일 N · diffs D · 눈감은 자리 A=x B=y → ok|FAILED db=<kind>`** — 다섯 수치를 **항상** 낸다.
+**기준값(2026-09-07 · HEAD 소스 · sqlite 연속 2회 동일 · mysql 1회)**: **폴더 3 · 파일 11 · diffs 0 · 눈감은 자리 66/66** (양 축 동일).
+
+절차(`spa-parity.mjs`·`spring-contract.mjs` 의 규율을 베꼈고 그 파일들은 고치지 않았다): 자기검사 → 리포 밖 임시 루트 → 서버별 임시 `DATA_DIR`
+시드(`src/db/**`) + 서버별 `spool/` → [mysql: `ephemeral-create` → `migrate --source <seed> --target NEWS_CT_PASS` → Spring `DB_KIND=mysql` ·
+적재 후 임시 `news.db` md5 무변 단언 · finally `ephemeral-drop`] → 빈 포트 2개 → `node server/index.js` + `java -jar`(env = OS 허용목록 +
+`DATA_DIR`·`PORT`·`HOST`·`DIST_SPOOL_DIR` 4키 · **`SPA_DIR` 미주입**) → `/api/health` → 시나리오 재생(D·Z 로그인은 `SAMPLE_USERS`) → 스풀 수집 →
+시나리오 자기 점검(폴더별 기대 파일 수 `{sp-press:5, sp-nonpress:4, sp-retry:2}`) → 실패 원장 투영 대조 → 순수 판정부 → 자식 종료 → 정리.
+
+### 4-2. 시나리오 5축 (`buildScenarioPlan` — 입력은 한 번 만들어 두 서버에 **같은 값**으로 재생한다)
+
+| 순번 | 축 | 무엇을 | 기대 |
+|---|---|---|---|
+| ga | (가) 엠바고 없음 | D 작성·송고 | 즉시 press+nonpress → `DPS` · `sp-press`·`sp-nonpress` 1건씩 |
+| na | (나) 2차 엠바고만(30분 전) | 송고 → `DES` 응답 → press 즉시 → `EPS` → Z tick | tick `kinds=[nonpress]`·`DPS` · `sp-press`(송고 시)·`sp-nonpress`(tick 시) |
+| da | (다) 1차 엠바고(1시간 전) | 송고 → `DES`(즉시 배부 없음) → Z tick | tick `kinds=[press]`·`DPS` · `sp-press` 1건 |
+| ra | (라) 재전송 | `<spool>/sp-retry` 자리에 **일반 파일**을 놓고 press 수신처 `sp-retry` 생성 → 송고 → 양쪽 `spool-write-failed` → `GET /api/distribution/failures` → 파일 제거 → `POST /api/distribution/retry {historyId}` | 원장 1건(사유·kind·targetKind·targetActive·kindDistributed·targetName·키 집합)이 **두 서버에서 같은 모양** · 재전송 후 원장 해소 · `sp-retry` 1건 |
+| ma | (마) 이스케이프 축 | 제목·keyword·externalComment 에 **제어문자 9자 전부**(0x0B·0x0E·0x0F·0x1A~0x1F) + 한글·이모지(서로게이트 쌍)·따옴표·개행·탭·백슬래시·`U+2028`·DEL·`<>&/` · **비어 있지 않은 `internalComment`** · 본문에도 같은 표본 | 송고 전 `GET /api/articles/:id` 로 **저장 왕복 동일** 단언(갈리면 스풀 대조 전에 그것이 발견) · 3폴더 1건씩 |
+
+기사 id 는 서버가 만들어 양쪽이 다르므로 **짝짓기는 정렬이 아니라 (수신처 폴더, 시나리오 순번)** 이다 — 재생기가 순번→articleId 표를 양쪽 각각 만들고,
+표에 없는 articleId 의 파일은 실패다(Q8 의 방어선). Node 는 송고 응답 **뒤에** 스풀을 쓰므로(fire-and-forget) 되읽기 폴링(`distributedAt` 확정)으로 흡수한다.
+
+### 4-3. 무엇을 눈감고 대신 무엇을 단언하는가 (decisions (8) · `PLACEHOLDER_KEYS` 한 곳)
+
+계획은 자리표시자 **3종**(`distributedAt` · 파일명 stamp · `articleId`)이었다. **그 3종만으로 1회 실측하자 11쌍 전부가 `createdAt` 자리에서 갈렸다**
+(첫 차이 자리 `createdAt` 11/11 · `createdAt`·`sentAt` 두 값을 지우면 전부 동일 — `articleService` 가 서버 시각을 stamp 하는 컬럼이라 두 서버의
+시계가 다르다). 그래서 **`createdAt`·`sentAt` 을 더해 4종**이 됐고(+ 파일명 2자리 = 파일당 6자리 · 11파일 = **66**), 늘린 대가로 **눈감는 대신 단언**한다:
+
+| 눈감는 자리 | 대신 단언하는 것(양쪽 각각 · `normalizeFile`) |
+|---|---|
+| `distributedAt` | ① ISO-8601 밀리초 UTC(`YYYY-MM-DDTHH:MM:SS.sssZ`) ② **파일명 stamp == `distributedAt` 에서 `[-:.]` 제거값**(같은 `stamp` 에서 나왔다) |
+| 파일명 stamp | ②와 같다 · 파일명 형태 `<articleId>_<8자리>T<9자리>Z.json`(`.tmp` 잔존은 실패) |
+| `articleId` | ④ 파일명 articleId == 페이로드 articleId · 시나리오 순번 표에 있는 값 |
+| `createdAt` · `sentAt` (추가) | ① 같은 형식 · ③ **단조성 `createdAt ≤ sentAt ≤ distributedAt`**(같은 ms 허용 — 송고와 배부가 한 ms 안에 끝나는 서버가 있다. tick·재전송 파일은 `sentAt < distributedAt` 이 뚜렷하다) |
+
+치환은 **최상위 키의 문자열 값만** 바꾼다(전용 JSON 스캐너 — 제목 안에 `"distributedAt":"…"` 같은 글자가 있어도 손대지 않는다 · 자기검사가 그 경우를 박아 둔다).
+그 밖의 키(`title`·`markupVersion`·`embargoAt`·`secondEmbargoAt`·`status`·`keyword`·`author` …)는 **클라가 준 값이거나 양쪽이 같아야 하는 값**이라 자리표시자 금지 —
+자기검사가 **집합**(순서까지)을 잠그고 그 7키가 목록에 없음을 함께 단언한다. 자리표시자를 늘리는 것은 결정이다(Q6 가 그 대가를 실증한다).
+
+### 4-4. 육안 확인 (2026-09-07 · `--keep` 첫 실행 · (마) `sp-press` 파일 · 양쪽 **757 B**)
+
+키 순서 13개 양쪽 동일: `articleId,title,author,department,departmentCode,category,keyword,externalComment,createdAt,sentAt,status,markupVersion,distributedAt`
+(값이 NULL 인 `coAuthor`·`region`·`attribute`·`attachmentFile`·`referenceFile`·`embargoAt`·`secondEmbargoAt` 는 **키 자체가 없다** — pick 의미론).
+제목 원문: `"ESC:\u001b VT:\u000b US:\u001f 한글 😀 \"따옴표\" \\백슬래시 \n개행 \t탭 <>&/ 줄분리:<U+2028 raw> DEL:<0x7F raw> 끝"` — 한글·이모지·`U+2028`·DEL 은 **raw**,
+따옴표·백슬래시·개행·탭은 짧은 이스케이프, 9자 제어문자는 **소문자** `\u00xx`(Node `JSON.stringify` = Spring `LowercaseHexEscapes`). `markupVersion` 은 JSON-in-JSON 이라
+같은 표본이 `\\u001b`·`\\\"` 로 한 번 더 이스케이프된다. `internalComment` 는 어느 쪽에도 없다. 실패 원장 투영도 양쪽 동일(`spool-write-failed`·press·`retry-target`·10키).
+
+### 4-5. 무엇을 보지 않는가
+
+- **외부 전송기가 파일을 집어가는 경로·발송 결과** — 이 리포 밖이다(ADR-008). 원자 게시의 원자성 자체(단위 테스트가 호출 **순서**만 잠근다).
+- **표본에 없는 값** — 예: `title` 폴백(`Contents.title` NULL 이고 `Article.title` 만 있는 행)·`attachmentFile` 등 파일 참조·`coAuthor` 가 있는 기사(na 만) ·
+  `embargoAt`/`secondEmbargoAt` 가 **둘 다** 있는 기사 · 미래 엠바고. 필요하면 `buildScenarioPlan` 에 순번을 **추가**하고 `expectedFolderCounts`·자기검사를 함께 고쳐라.
+- 두 서버가 **다른 기사**를 다르게 저장하는 경우(저장 왕복 단언은 (마) 4필드뿐이다).
+- 시각 값 자체의 동등성(눈감는다 — 위 표의 형식·정합·단조성만).
+
+### 4-6. 실패했을 때 읽는 법
+
+1. **`FAIL [node|spring] <폴더>/<파일>: …`** 가 먼저 나오면 정합 3겹 위반이다(형식·stamp 정합·단조성·순번 표 밖 articleId·`.tmp` 잔존) — 바이트 비교 **전**이라 `파일 0` 으로 요약된다.
+2. **`파일 수가 다르다`·`스풀 파일 수가 시나리오 기대와 다르다`** — 구현 차이보다 **시나리오를 먼저 의심**하라(대상 활성·엠바고 판정·tick 순서 · 재생 로그의 `[label] <순번> … → ok` 줄 어디서 끊겼는지).
+3. **`DIFF <폴더>/<순번>#<n> bytes@<offset> (len A= B=): A="…" B="…"`** + `keys A/B`·`only-in-A/B` — 첫 차이 바이트 주변 64자와 키 집합 차이를 보여 준다. 길이가 같고 offset 이 2 면 키 순서다(Q2).
+4. `--keep`/`--out-dir` 로 남는 것: `node.json`·`spring.json`(폴더·파일명·순번·바이트 수·sha256 — 본문 없음)·`diff.json`·`*-boot.log`(경로는 `<tmp>`/`<repo>` 로 가림) · `--keep` 이면 스풀 파일 원본까지.
+5. 자기검사 red 면 자리표시자 집합·정합 단언·시나리오 표본 중 하나가 바뀐 것이다 — 하네스는 그 상태로 서버를 띄우지 않는다(Q6·Q7).
+6. `Spring 실행 jar가 없다`·`Unresolved compilation problem` — 무효 jar(§2-6 6항). **이 step 실측**: `clean package` 조차 IDE 언어 서버가 `target/classes` 를 건드리는 순간
+   `class file for List not found` 로 테스트 컴파일이 죽는다(7회 중 1회) — 재빌드 1회로 해소되고 회귀가 아니다.
+7. `--db mysql` 에서 `NEWS_CT_MYSQL_PASSWORD 가 최소 길이 … 못 미친다` 경고는 실행을 막지 않는다(§3 · 사용자 실행 항목 U2).
+
+### 4-7. 변이 결과표 (2026-09-07 · Java 변이는 심기 → `clean package` → 대조 → `git checkout` 원복 → pristine 사본과 `cmp` 동일 → 마지막에 재빌드 · 기대≠실제는 굵게)
+
+| # | 심은 것 | 기대 | 실제 | 원복 |
+|---|---|---|---|---|
+| Q1 | Java `CONTENTS_FIELDS` 에서 `keyword` 제거 | 그 키가 있는 파일에서 diff | **diffs 8/11**(ga 2·ra 3·ma 3 — `keyword` 없는 na·da 는 0) · `only-in-A=[keyword]` · 길이 401→381 | cmp 동일 |
+| Q2 | Java `payload()` 에서 `markupVersion` 루프를 앞으로 | 전 파일 diff | **diffs 11/11** · 전건 `bytes@2` · **길이 동일**(401/401 …) — 순서만 바뀐 산출물은 길이·의미로는 안 보인다 | cmp 동일 |
+| Q3 | Java `MAPPER` 에서 `LowercaseHexEscapes` 제거 | (마) 파일에서만 diff | **diffs 3/11** — (마) 3파일 `\u001B`↔`\u001b`(길이 710 동일). **함정 확인**: 이 표본이 없었다면 0 = 무해 | cmp 동일 |
+| Q4 | Java pick 의미론 뒤집기(null 이어도 키 유지) | 전 파일 diff | **diffs 11/11** · `"coAuthor":null,"category":null…` 이 끼어 길이 336→505 등 | cmp 동일 |
+| Q5 | Java allowlist 에 `internalComment` 추가(보안 축) | 그 값이 있는 파일에서 diff | **diffs 5/11**(ga 2·ma 3) · `only-in-B=[internalComment]` · **새 키 증가를 잡는다**(집합 비교가 아니라 바이트 비교라 allowlist/blacklist 구분이 필요 없다). 표본이 비어 있었다면 0 | cmp 동일 |
+| Q6 | 대조기 `PLACEHOLDER_KEYS` 에 `title` 추가 | 자기검사 red · 우회하면 제목 차이가 조용히 통과 | (a) **자기검사 red → 하네스 기동 거부**(집합 단언 + 「제목 안 글자 무접촉」·「6/6 tally」·「\uAC00 표본이 title 에 있음」 3곳이 더 red — 게이트를 우회하려면 자기검사 **9곳** 을 고쳐야 했다). (b) 우회한 채 **제목만 바꾼 Spring 변이**(`title + " "` · 정상 대조기로는 diffs 11/11)를 돌리면 **diffs 0 · exit 0 = 공허화 실증** — 남는 흔적은 `눈감은 자리 66→77` 뿐 | 판정부 `git checkout` |
+| Q7 | Java 파일명 stamp = `distributedAt`+1ms(페이로드는 그대로) + 대조기 정합 단언 제거 | 정상 대조기는 정합 실패 · 단언 없으면 통과 | (a) 정상 대조기: **`FAIL [spring] … 파일명 stamp(…164Z)가 distributedAt(…162Z)와 정합하지 않는다` ×11**(node 0) · 바이트 비교 전 중단. (b) 단언 제거 → 자기검사 red → 기동 거부. (c) 자기검사도 우회 → **diffs 0 · FAIL 0 · exit 0 = 2겹째가 하중을 진다** | cmp 동일 · 판정부 checkout |
+| Q8 | 드라이버에서 Spring 스풀 루트 = Node 스풀 루트 | 즉시 실패 | (a) 조립 가드가 **기동 전** 거부(`두 서버의 DIST_SPOOL_DIR 이 같다 — 짝짓기가 붕괴한다(조립 거부)` · exit 1). (b) 가드를 지우면 Spring 재생이 (라)에서 **`EISDIR`**(Node 가 이미 만든 `sp-retry` 디렉토리 자리에 차단 파일을 쓰려다) 로 죽어 `비교 불가` exit 1 — 판정부의 「순번 표 밖 articleId」 검사까지 가지도 않는다(그 검사는 자기검사가 잠근다) | 드라이버 checkout |
+
+**추가 실측 — Q1·Q2·Q5 를 한 jar 에 함께 심은 채**: `spool-parity.mjs` **diffs 11/11**(exit 1) · `spring-contract.mjs --parity` **313관측 diffs 0**(246·55·4·5·3 — exit 0) ·
+`npm test` **1328 중 1326**(2 fail 은 아래 §4-8 의 `bad port` 플레이크 — Java 변이와 무관 · 같은 트리에서 재실행 **1328/1328**) · Java `SpoolWriterTest` 단독 **23 중 6 red**(`thePayloadIsTheAllowlistInTheAssemblyOrder`·`internalCommentAndLockColumnsNeverLeaveTheServer`·
+`thePayloadIsByteIdenticalToTheNodeWriter` 등 — **기대≠실제**: 계획은 "backend 테스트도 못 본다"였지만 Java 자기 기대값 테스트는 잡는다).
+⇒ 확정 문장은 이렇게 좁아진다: **계약(`--parity`)은 스풀 바이트를 구조적으로 못 본다(313 diffs 0 그대로)** · Node `npm test` 는 Java 를 볼 수 없다(구조) ·
+Java `SpoolWriterTest` 는 **자기 기대값** 위반은 잡지만 **Node 산출물과 대조한 적이 없다** — Node `spoolWriter.js` 가 바뀌면 그 테스트도 계약도 green 인 채 두 산출물이 갈리고,
+그것을 보는 자리는 `spool-parity.mjs` 뿐이다.
+
+**3종만 눈감았을 때(계획 원안)**: 11쌍 전부 diff · 첫 차이 자리 `createdAt` 11/11 · `createdAt`·`sentAt` 을 지우면 전부 동일 — §4-3 의 근거.
+**자기 결정성**: sqlite 연속 2회 요약 줄 동일(`폴더 3 · 파일 11 · diffs 0 · 66/66`) · mysql 축 동일 수치(`harness_ct_ca8e89aaa1c14814` 적재 3.1s → 드롭 · 실행 후 `harness_ct_*` 잔존 0).
+실행 전후 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 무변 · 자식 프로세스·임시 디렉토리 잔존 0(실패 실행은 진단용으로 보존 — 변이 실험 뒤 직접 지웠다).
+
+### 4-8. 이 step 이 잡은 환경 함정 — `npm test` 의 `fetch failed: bad port` (회귀가 아니다)
+
+변이 실험 중 `npm test` 가 세 번 연속 **서로 다른** 통합 케이스에서 1~3건씩 죽었다(`spa-serving` B7/B8 · `editLock` · `session-revalidation` 회귀 7 · `sse-reauth` 회귀 6/9 — 전부
+`TypeError: fetch failed / cause: Error: bad port`). 원인: 이 머신의 Windows 는 ephemeral 포트를 **순차**로 내주고(실측 `6819,6820,…`), 하네스 실행이 수천 개 포트를 소비해 카운터가
+fetch 표준의 **차단 포트 묶음**(`6000` · `6566` · `6665~6669` · `6697` · `10080`)을 지나던 중이었다 — `listen(0)` 으로 뜬 테스트 서버가 그 포트를 받으면 undici `fetch` 가 **접속 전에** 거부한다.
+카운터를 10080 뒤로 보내고(3,208 포트 소진 · `6834 → 10100`) 재실행하니 **1328/1328**. 처방: 재실행(카운터가 지나간다) 또는 위 소진 — **코드를 고칠 일이 아니다.** 하네스 4종의 포트
+구간([15000,20000)·[45000,49152)·[20000,35000))은 차단 목록 밖이라 이 함정을 맞지 않는다.

@@ -77,7 +77,8 @@
     {
       "step": 5,
       "name": "spool-byte-parity",
-      "status": "pending"
+      "status": "completed",
+      "summary": "**배부 스풀 산출물 바이트 대조 하네스 `scripts/spool-parity.mjs` — sqlite·mysql 양 축 폴더 3 · 파일 11 · diffs 0 · 눈감은 자리 66/66(sqlite 연속 2회 동일)**. 순수 판정부 `scripts/lib/spoolParity.mjs` + 자기검사 `spoolParity.self-test.mjs` 17건(시작 시 자동 실행). 시나리오 5축을 기사 1건씩 순차 재생((가) 즉시 DPS · (나) 2차만→EPS→tick nonpress · (다) 1차 과거→DES→tick press · (라) sp-retry 자리에 일반 파일을 놓아 spool-write-failed 유도→failures→retry · (마) 제어문자 9자 전부+한글·이모지·U+2028·DEL + 비어 있지 않은 internalComment — 송고 전 저장 왕복 단언) · 짝짓기는 (폴더, 순번). **자리표시자 최종 집합 = articleId·createdAt·sentAt·distributedAt(+파일명 2자리)**: 계획의 3종만으로는 11쌍 전부 createdAt 자리에서 갈려(서버 시각 stamp) createdAt·sentAt 을 더했고 대신 ISO 밀리초 Z 형식 · 파일명 stamp==compactStamp(distributedAt) · createdAt≤sentAt≤distributedAt · 파일명 articleId==페이로드 를 양쪽 각각 단언한다. 변이 Q1~Q8 전건 red(Q1 8/11 · Q2 11/11 길이 동일 · Q3 3/11 (마)에서만 · Q4 11/11 · Q5 5/11 새 키 증가 포착 · Q6 자기검사 red→기동 거부, 9곳 우회 시 제목만 바꾼 변이가 diffs 0 통과(공허화 실증·흔적은 66→77) · Q7 정합 FAIL×11, 단언 제거+우회 시 통과 · Q8 조립 가드 즉시 거부, 가드 제거 시 EISDIR 재생 실패) · Java 원복 전건 cmp 동일 · 최종 jar 재빌드. **추가 실측(기대≠실제 포함)**: Q1+Q2+Q5 를 심은 채 `--parity` 313관측 diffs 0 · `npm test` 는 Java 를 구조적으로 못 봄 · Java `SpoolWriterTest` 는 자기 기대값으로 6 red(계약만 못 본다로 좁혀 기록). 환경 함정 발견: Windows 순차 ephemeral 포트가 fetch 차단 목록(6000·6566·6665~6669·6697·10080)을 지날 때 `npm test` 가 `bad port` 로 1~3건 죽는다 — 카운터 소진 후 1328/1328(§4-8). 게이트: `mvnw clean verify` 1521/0 · `--parity` 양 축 313 diffs 0 · `spa-parity` 38·0·516 · `npm test` 1328 · 무접촉 diff 0 · `news.db` md5 무변 · `harness_ct_*` 0. 문서 `docs/cutover-p3.md` §4(4-1~4-8) · `server-spring/README.md` ADR-008 절에 유일 방어선 명시."
     },
     {
       "step": 6,

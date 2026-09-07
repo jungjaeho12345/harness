@@ -35,7 +35,7 @@ import {
   readMysqlCredentials, migratorChildEnv, springMysqlEnv, redactSecrets,
 } from './lib/mysqlHarness.mjs';
 import {
-  PLACEHOLDER_KEYS, SPOOL_FOLDERS, buildScenarioPlan, compareSpools, expectedFolderCounts, formatDiffLines,
+  PLACEHOLDER_KEYS, buildScenarioPlan, compareSpools, expectedFolderCounts, formatDiffLines,
   formatSummary, parseSpoolFileName, stepsByArticle,
 } from './lib/spoolParity.mjs';
 
