@@ -134,3 +134,10 @@ git diff --stat -- contract docs/api-contract scripts/contract-run.mjs scripts/c
 **해제 절차**: 답을 받으면 `docs/cutover-p3.md` §0-5의 값과 §0-2 Q1 행에 **값·출처(누가·언제)**를 적고,
 `phases/76-spring-cutover/index.json`의 `open_questions` (3)을 「해소 — 답: …」으로 갱신한 뒤 이 절을 지우지 말고
 **「해제됨(날짜·답)」**을 덧붙여라(무엇이 왜 막혀 있었는지가 기록이다).
+
+### 해제됨 (2026-09-05 · 답: **쓴다**)
+
+- 출처: 사용자 답변(오케스트레이터 AskUserQuestion · 2026-09-05). 운영 서버는 FTP 스풀 수집을 **실제로 쓴다**.
+- 따라서 이 step의 위치는 위 표의 **「쓰고 있다」 행** — **컷오버의 필수 선행**이다. Spring 기동과 **같은 정지 창 안에서** 스위퍼 등록까지 끝낸다(step10 런북 순서에 반영).
+- 아직 모르는 것(운영기에서 읽는다 — step7·step10 사용자 항목): 정확한 `RCV_SPOOL_DIR` 값 · 그 폴더의 실제 파일 유입 주기 · 외부 FTPd 주체. **이 step은 그 값 없이 구현·검증한다**(스위퍼는 폴더 경로를 인자로 받고, 검증은 임시 폴더로 한다).
+- `status`: `blocked` → `pending`.
