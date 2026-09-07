@@ -236,6 +236,16 @@ phase 76 step2가 붙였다(ADR-017 결정 1). Node `server/index.js` **174~250�
 - **dotfiles·Win32 이름 별칭**: 점으로 시작하는 세그먼트는 (하위까지) 서빙되지 않고(Node `dotfiles:'ignore'`),
   Win32 별칭 판정은 `/uploads`와 **같은 `LibuvNames`**를 쓴다(`x.png.`·`CON` 등 — 후자를 빼면 `/NUL`이
   **실재 장치로 열려 500**이 된다).
+- **Content-Type 원문은 Node(`send@0.19.2` + `mime@1.6.0`)의 규칙이다 — 컨테이너의 확장자 표가 아니다**(phase 76 step3
+  대조기의 발견 · 2026-09-07). 두 서버를 같은 `web/dist`로 나란히 치니 SPA 200 응답의 Content-Type이 전부 갈렸다:
+  Node `text/html; charset=UTF-8`·`text/css; charset=UTF-8`·`application/javascript; charset=UTF-8` 대 여기
+  `text/html`·`text/css`·`text/javascript`(charset 파라미터 없음 · `.js`는 **기저 타입까지** 다름). 값은 `SpaContentTypes`
+  (Node `mime@1.6.0` 실측표 — 모르는 확장자는 `application/octet-stream`)가 만들고, 기록은 `RawContentType` seam을 지난다
+  (`SpaResourceHandler.setHeaders`가 고정 → 프레임워크의 서블릿 API 지정을 응답 래퍼가 가로채 seam으로 되돌린다).
+  **그래서 `RawContentType.set` 호출 파일이 넷이 됐다**(`HtmlErrors`·`JsonHttp`·`SseHttp` + `SpaResourceHandler` —
+  `SseHttpTest.exactlyFourFilesWriteTheContentTypeBytes`가 집합을 잠근다). 잠금: `SpaContentTypesTest`(규칙) ·
+  `SpaServingWireTest.contentTypeLinesAreNodeOriginal`·`SpaRealDistWireTest.theRealAssetsCarryNodeOriginalContentTypes`(와이어).
+  Node 정본이 바뀌면(express 5 = `send@1`은 `text/javascript`를 낸다) `node scripts/spa-parity.mjs`가 실패 diff로 알려 준다.
 - **CSP는 SPA 응답에만 싣는다**(`ContentSecurityPolicy.NODE_ORIGINAL` — 값의 단일 소유 지점). Node helmet 원문과
   **바이트 동일**(344바이트)이며 **지시자는 7종이 아니라 14종**이다: `server/index.js` 494~506행이 명시한 7종 뒤에
   helmet 기본 6종(`base-uri`·`font-src`·`form-action`·`object-src`·`script-src-attr`·`upgrade-insecure-requests`)이
@@ -246,7 +256,7 @@ phase 76 step2가 붙였다(ADR-017 결정 1). Node `server/index.js` **174~250�
   `SPA_DIR`을 자식에게 넘기지 않는다. 2026-09-05 변이 실측: **예약 접두사에서 `/api`를 지워 미정의 `/api` 경로가
   SPA 200으로 뒤집힌 상태에서도 `--parity`는 313관측 diffs 0**이었고, **CSP를 통째로 떼어낸 상태에서도 313관측
   diffs 0**이었다. 그래서 이 축의 **유일 방어선**은 다음 파일들이다:
-  `SpaFallbackRulesTest`(규칙) · `SpaServingWireTest`(와이어 20항 — 404 바이트·CSP 경계·`/uploads` 무손상) ·
+  `SpaFallbackRulesTest`(규칙) · `SpaServingWireTest`(와이어 21항 — 404 바이트·CSP 경계·`/uploads` 무손상·Content-Type 원문) ·
   `SpaDisabledWireTest`/`SpaEmptyRootWireTest`/`SpaMissingRootWireTest`(비활성 3종) ·
   `SpaRealDistWireTest`(실제 `web/dist` — 인라인 스크립트 0·동일 출처 절대 경로) · `SpaPropertiesTest`(활성 판정).
 - **`SpaRealDistWireTest`는 `web/dist`를 요구한다**(skip 하지 않는다 — 조용한 skip은 "실제 산출물을 한 번도 서빙해

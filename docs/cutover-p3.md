@@ -250,3 +250,101 @@ Q1 없이도 그대로 진행할 수 있다(전부 리포 안 자산으로 완�
    CSP 1종**뿐이고 나머지 10종(HSTS·nosniff·frame-options 등)과 `/api`·`/uploads` 의 CSP 는 **또 미룬다**
    (3연속 이월 — ADR-013 트레이드오프 → phase 74 → 이 phase). 동일 출처 loopback 배치라는 전제 위에서만
    허용되는 공백이다.
+
+## 2. SPA 응답 바이트 패리티 하네스 (`scripts/spa-parity.mjs` — step3)
+
+> **한 줄**: Node 서버와 Spring 서버를 **같은 `web/dist`** 로 나란히 띄우고 같은 요청 표(원문 요청줄 38건)를 보내 응답을
+> 바이트로 대조한다. 계약 하네스(`--parity` 313관측)는 SPA 를 **구조적으로 보지 않으므로**(`SPA_DIR` 을 자식에게 넘기지
+> 않는다 — §2-5 실측) 이 하네스가 **SPA 축의 유일한 기계 판정**이다. 판정부는 `scripts/lib/spaParity.mjs`(순수),
+> 자기검사는 `scripts/lib/spaParity.self-test.mjs`(26항 — 시작 시 자동 실행, 빨간 채로는 서버를 띄우지 않는다).
+
+### 2-1. 실행
+
+```bash
+cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests   # jar 최신화(하네스는 빌드하지 않는다)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spa-parity.mjs                       # exit 0 · diffs 0
+node --test scripts/lib/spaParity.self-test.mjs                                                       # 자기검사 단독
+```
+
+옵션: `--spa-dir <dir>`(기본 리포 `web/dist` — `<dir>/index.html` 필수) · `--out-dir <리포 밖>`(리포트 보존) · `--keep` · `--jar` · `--java-home` · `--timeout`.
+요약 줄 형식: **`spa-parity A=node B=spring 관측 N · diffs F · 허용 diff A건 → ok|FAILED`** — 세 수치를 **항상** 낸다.
+**기준값(2026-09-07 · HEAD 소스 · 연속 2회 동일 · 리포트 3파일 바이트 동일)**: **관측 38 · diffs 0 · 허용 diff 516건.**
+
+절차(`spring-contract.mjs` 의 규율을 베꼈고 그 파일은 고치지 않았다): 자기검사 → 리포 밖 임시 루트 → 서버별 **별도** 임시
+`DATA_DIR`(스키마·시드 = `src/db/**` · `uploads/<32hex>.png` 픽스처 1개 · mtime 고정) → 빈 포트 2개([15000,20000) 실제 listen)
+→ `node server/index.js` + `java -jar` (env 는 OS 허용목록 + `DATA_DIR`·`PORT`·`HOST`·`SPA_DIR` 4키 · `.env` 미로드)
+→ `/api/health` → **SPA 활성 확인**(`GET /` 가 200 + `index.html` 바이트 — 한쪽만 켜진 대조를 즉시 거부한다. 계획의 「기동 로그의 SPA 활성 1줄」은
+쓸 수 없다: `serving SPA from …` 은 Node 에서는 콘솔 무출력 계약(README-배포 12절)이라, Spring 에서는 `LogService` 링 버퍼라 **둘 다 stdout 에 나오지 않는다** —
+그래서 판정을 바이트로 했고 기동 로그는 진단용으로만 저장한다)
+→ 요청 표 → 리포트 2벌(`node.json`·`spring.json`) + `diff.json` → 자식 종료(kill → 확인 → SIGKILL) → 임시 디렉토리 삭제.
+실행 전후 리포 `news.db`·`uploads/`·`web/dist` 지문 무변을 단언한다.
+
+### 2-2. 무엇을 보는가
+
+- **요청 표 38건**(`REQUESTS` — 중복 name 은 즉시 실패, 30건 미만도 실패): `/` · `.do` 7경로 · `?query` · `HEAD` · 실제 자산 2종
+  (`index.html` 에서 추출 — 해시 미하드코딩) · 없는 자산 · `/index.html` · `/assets`(디렉토리)·`/assets/` · `/api` 6종(200·401·401·404×3) ·
+  `/uploads` 2종(404·**200** 픽스처) · `POST /list.do` · 경로 탈출 7종(`/../`·`%2f`·`%2e%2e`·이중 인코딩·**진짜 백슬래시**·`%5c`·`%00`) ·
+  후행 슬래시 · dotfile 2종 · `;a=b` · `/List.do` · `/NUL`.
+- **항목마다 비교하는 것**: `status` · `content-type` **원문** · `content-length` 유무 · 본문 **sha256** · 본문 길이 · `isIndex`(본문 = `index.html` 바이트) ·
+  `leaks.packageJson`/`leaks.sqlite`(루트 밖 내용 노출 **불리언** — 본문 자체는 리포트에 싣지 않는다) ·
+  **보안 헤더 12종 원문**(계획의 11종 + `x-xss-protection` — Node 실측으로 확정) · 캐시 4종(`accept-ranges`·`cache-control`·`etag`·`last-modified`).
+- **판정 = (scope × 필드) 상수 `ALLOWED_DIFFS`** — 자기검사가 **집합**을 잠근다. 실패 diff 는 그 표에 없는 모든 차이다.
+
+### 2-3. 허용 diff 목록 전문 (이 phase 가 알고도 남겨 둔 차이 — 런북 §0 낭독·§10 분기의 입력)
+
+| scope | 허용 필드 | 현재 값(2026-09-07 실측) | 이유 | 대체 방어선 |
+|---|---|---|---|---|
+| `group:spa` | 보안 헤더 **10종**(CSP 제외) + 캐시 4종 | Node: COOP/CORP `same-origin` · OAC `?1` · Referrer `no-referrer` · nosniff · DNS-prefetch `off` · Download `noopen` · XFO `SAMEORIGIN` · XPCDP `none` · XSS `0` · `Cache-Control: public, max-age=0` · `ETag: W/"…"` — Spring: **전부 없음**(`Accept-Ranges`·`Last-Modified` 는 양쪽 동일) | helmet 등가 10종 3연속 이월(`excluded` (d) ②) · 캐시는 `/uploads` 선례대로 켜지 않음 | **CSP 는 이 경로군에서 실패 diff**(변이 N7) · 상태·content-type·sha256 실패 diff |
+| `group:api` | CSP + 위 10종 + 캐시 4종 | Node 는 `/api` 응답에도 helmet 전부 + JSON `ETag` — Spring 없음 | 「Spring `/api` 응답에는 보안 헤더가 없다」(§1 낭독 2) | 39 라우트 shape 은 계약 313관측 |
+| `group:uploads` | CSP + 위 10종 + 캐시 4종 | 〃(`/uploads/<hex>.png` 200 에서 실측) | 〃 | `UploadsStaticWireTest` + 상태·content-type·sha256 실패 diff · **변이 N9 가 이 행의 필요를 실증** |
+| `status:404`(양쪽 404) | `bodySha256`·`bodyLength`·CSP | Node 404 = express finalhandler(`Cannot GET <경로>` 반향 · 147~163 B · **CSP `default-src 'none'`**) — Spring 404 = `HtmlErrors`(고정 136 B · SPA 경로의 404 는 helmet 값, `POST` 는 없음) | 본문은 계약이 아니다(`HtmlErrors` 의 입력 비반향 결정 · P1) · **발견**: Node 의 404/301 CSP 는 helmet 이 아니라 finalhandler 의 값이다 | 상태 404 · content-type 원문 `text/html; charset=utf-8` · `isIndex=false` 는 실패 diff(변이 N1·N2) |
+| `class:malformed`(6건) | `status`·`contentType`·본문·`isIndex`·CSP | Tomcat 커넥터 **400**(435 B · `text/html;charset=utf-8`) — Express 는 fallthrough 로 **200 index.html** | 커넥터 완화(`allowEncodedSlash`·`allowBackslash`)는 보안 하향 — 맞추지 않는다 | **`leaks.*` 는 실패 diff**(양쪽 다 루트 밖 내용 0건 — 2-6 육안 확인) |
+| `class:directory`(1건 `/assets`) | `status`·`contentType`·본문·`isIndex`·CSP | Node **301 → `/assets/`**(express.static `redirect:true`) — Spring **200 index.html** | 리소스 핸들러에 디렉토리 리다이렉트가 없다(추가는 새 표면) | `/assets/` 는 양쪽 200 index 로 strict · 디렉토리 목록은 양쪽 0 |
+
+**늘리는 것은 결정이다** — 행을 더하려면 이 표와 `ALLOWED_DIFFS`·자기검사를 함께 고쳐라. 표에 없는 차이는 전부 실패 diff 다.
+
+### 2-4. 이 하네스가 잡은 것 (Spring 을 고쳤다)
+
+**SPA 200 응답의 `Content-Type` 이 전부 갈렸다** — Node(`send@0.19.2`+`mime@1.6.0`) `text/html; charset=UTF-8` · `text/css; charset=UTF-8` ·
+`application/javascript; charset=UTF-8` 대 Spring `text/html` · `text/css` · **`text/javascript`**(charset 없음 · `.js` 는 기저 타입까지). step2 는 이것을
+「기록만」으로 남겼으나 step3 계획은 content-type 을 **실패 diff** 로 못 박았고(허용에 넣으면 대조가 공허해진다 — 변이 N4), `RawContentType` seam 이 정확히
+이 용도이므로 **Spring 을 고쳤다**: `SpaContentTypes`(Node `mime@1.6.0` 실측 확장자표 · 미지 확장자 = `application/octet-stream`) + `SpaResourceHandler` 의
+응답 래퍼(프레임워크의 서블릿 API 지정을 seam 으로 되돌린다). 그 결과 `RawContentType.set` 호출 파일이 **넷**이 됐고
+`SseHttpTest.exactlyFourFilesWriteTheContentTypeBytes` 가 집합을 잠근다. 잠금: `SpaContentTypesTest`(6) · `SpaServingWireTest.contentTypeLinesAreNodeOriginal` ·
+`SpaRealDistWireTest.theRealAssetsCarryNodeOriginalContentTypes`. **Node 정본이 바뀌면**(express 5 = `send@1` 은 `text/javascript`) 이 하네스가 실패 diff 로 알린다.
+
+### 2-5. 무엇을 보지 않는가
+
+- **계약 하네스는 SPA 축을 구조적으로 보지 않는다 — 실측(§2-7 N1+N2)**: Accept 게이트와 `/api` 예약 접두사를 함께 지워 없는 자산·미정의 `/api` 경로가 SPA 200 으로
+  뒤집힌 상태에서도 `node scripts/spring-contract.mjs --parity` 는 **313관측 diffs 0** 이다. 이 하네스가 그 축의 유일 방어선이다.
+- 상태줄 **이유구**(Node `200 OK` · Spring `200 `) — 상태 정수만 비교한다(계약과 같다). `Vary`·`Access-Control-Allow-Credentials`(양쪽 동일) · `Date` · `Content-Language`(Tomcat 400 만) 는 관측하지 않는다.
+- **조건부 요청(304)** · Range 요청 · 인증된 세션의 SPA 요청 · 실제 브라우저 렌더링(step4 실기 시나리오의 몫).
+- `SPA_DIR` 이 리포 `web/dist` 와 **다른 산출물**인 배치(§0-3묶음 — 운영 `web\` 의 md5 를 먼저 대조하라. 다르면 이 하네스는 다른 파일을 비교한 것이다).
+- 표에 없는 확장자의 Content-Type(`SpaContentTypes` 표는 `mime@1.6.0` 실측 27종 — `web/dist` 의 실물은 html·css·js 3종뿐이다).
+
+### 2-6. 실패했을 때 리포트 읽는 법
+
+1. 요약 줄의 **`diffs F`** 가 0 이 아니면 위쪽 `FAIL <항목> <필드>: A=<node> B=<spring>` 줄이 원인이다(`FAIL only-in-A/B` 는 한쪽 리포트에 항목이 없는 것 — 관측 수 자체가 줄었다).
+2. `--out-dir` 을 주면 `node.json`·`spring.json`(항목별 레코드 — 본문 내용·절대경로·토큰 없음)·`diff.json`(`failures`/`allowed` 전문)·`*-boot.log`(기동 로그 — 경로는 `<tmp>`/`<repo>` 로 가림)가 남는다. 실패 시 임시 루트는 자동 보존된다(경로를 출력한다).
+3. **`[spring] SPA 가 켜져 있지 않다`** 로 즉시 실패하면 대조 전 단계다 — `SPA_DIR`(`<dir>/index.html`)을 확인하라(변이 N6).
+4. **허용 diff 건수가 516 에서 움직였다면** 그 자체가 신호다: 늘었으면 Node 가 새 헤더를 내기 시작했거나 Spring 이 무언가를 잃은 것이고, 줄었으면 Spring 이 새 헤더를 내기 시작한 것이다. `diff.json` 의 `allowed` 를 (scope, field) 로 묶어 어느 항목이 움직였는지 본다.
+5. 판정부 자기검사가 red 면 `ALLOWED_DIFFS`·`OBSERVED_HEADERS`·요청 표 중 하나가 바뀐 것이다 — 하네스는 그 상태로 서버를 띄우지 않는다(변이 N4·N5·N8·N9).
+6. `[spring] jar 에 IDE 가 컴파일한 클래스가 섞여 있다(Unresolved compilation problem)` 는 회귀가 아니라 **무효 jar** 다 — VS Code 의 java language server 가
+   `target/classes` 에 JDT 산출물을 남기고 `package` 가 그것을 싣는다(2026-09-07 실측: `clean` 없는 `package` 는 매번, `clean package` 도 3회 중 1회꼴).
+   `clean package` 로 다시 굽고, 필요하면 jar 안의 클래스에서 그 문구를 grep 해 확인한다.
+
+### 2-7. 변이 결과표 (2026-09-07 · 전건 원복 후 md5 확인 — 기대≠실제는 굵게)
+
+| # | 심은 것 | 기대 | 실제 | 원복 |
+|---|---|---|---|---|
+| N1+N2 | Spring `SpaFallbackRules`: `Accept` 게이트 제거 + 예약 접두사에서 `/api` 제거(한 빌드에 함께) | `asset-missing`·`/api` 미정의 3종에서 diff | **실패 diff 21건**(`asset-missing` 6필드 · `api-unknown`·`api-does-not-exist`·`api-upper` 각 5필드 — 전부 `404→200`·`isIndex false→true`) · **그 상태로 `spring-contract.mjs --parity` = 313관측 diffs 0**(246·55·4·5·3) ⇒ 계약은 SPA 축을 구조적으로 못 본다 | md5 `ad2e85bc…` 동일 |
+| N3 | Spring 폴백이 `index.html`+1바이트를 돌려줌 — 1차: `ByteArrayResource` | 본문 sha256 diff | **1차는 500**(`lastModified()` 가 `FileNotFoundException` → `GlobalErrorHandler` JSON) → 99건. **2차(N3b · `lastModified` 위임)**: **실패 diff 48건 = 폴백 16항목 × (`bodySha256`·`bodyLength` 413→414·`isIndex`)** — `root`·`/index.html`·자산·`HEAD`(본문 없음)는 무변 | md5 `5c12d1b1…` 동일 |
+| N4a | 대조기 `ALLOWED_DIFFS` 의 `group:spa` 에 CSP 추가 | CSP 부재가 조용히 통과 | **자기검사 red 3건 → 하네스가 기동 거부.** 잠금을 우회해 규칙만 바꾼 채 N7 리포트에 적용하면 **diffs 0 · 허용 537건** — 공허화 실증(N9 역방향과 동일) | md5 `bd1a1261…` 동일 |
+| N4b | ① 대조기 `RECORD_FIELDS` 에서 `contentType` 제거 ② Spring 응답 래퍼 우회(charset 없는 컨테이너 값) | ①은 자기검사 red · ②는 content-type 실패 diff | ① **자기검사 red 3건 → 기동 거부** · ② **실패 diff 21건**(SPA 200 전건 `contentType`: `text/html; charset=UTF-8` 대 `text/html` 등) · ①+② 를 함께 심어 리포트에 적용하면 **diffs 0 · 허용 510건** — 공허화 실증 | md5 동일 |
+| N5 | 요청 표에서 `do-list` 제거 | 관측 수 감소가 드러남 | **자기검사 red(`.do 7경로 중 list 가 없다`) → 기동 거부.** 필수가 아닌 `win-device-name` 을 빼면 **`관측 37 · diffs 0 · 허용 504건`** 으로 수치가 요약 줄에 드러난다 | md5 동일 |
+| N6 | Spring 에만 `SPA_DIR` 미주입 | 대규모 diff | **SPA 활성 확인에서 즉시 실패**(`[spring] SPA 비활성(GET / = 404)` · 비교 전 단계 · exit 1). 그 확인을 빼면 **실패 diff 121건** | md5 동일 |
+| N7 | Spring CSP 헤더 제거(step2 작업 D 되돌리기) | SPA 경로군 실패 diff | **실패 diff 21건 — SPA 200 응답 21건 전부 `headers.content-security-policy`(허용 diff 아님)** · 404·malformed·directory 항목은 규칙대로 허용 | md5 동일 |
+| N8 | `SECURITY_HEADERS` 에서 `x-download-options` 삭제 | 자기검사 red | **자기검사 red 1건(집합 deep-equal) → 기동 거부** | md5 동일 |
+| N9 | `ALLOWED_DIFFS` 에서 `group:uploads` 제거 | `/uploads` 항목 오탐 | **자기검사 red 2건 → 기동 거부.** 규칙만 바꿔 기준 리포트에 적용하면 **diffs 23**(`uploads-missing` 보안 헤더 10 · `uploads-existing` CSP+10+`cache-control`+`etag`) — 오탐 실증. **역방향**(`group:spa` 에 CSP 허용)은 N7 리포트를 diffs 0 으로 통과시킨다(N4a) | md5 동일 |
+
+추가 실측: 자기 결정성 — HEAD 소스로 **연속 2회** `관측 38 · diffs 0 · 허용 diff 516건`, `node.json`·`spring.json`·`diff.json` **바이트 동일**. 두 자식 프로세스는 매 실행 `kill → 확인` 으로 종료를 확인하고 임시 루트를 지운다(성공 시 `정리: 자식 2 종료 확인 · 임시 디렉토리 삭제` 출력 · 실패 시 보존 경로 출력). 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 무변.

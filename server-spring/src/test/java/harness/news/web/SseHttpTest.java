@@ -206,9 +206,15 @@ class SseHttpTest {
 	 * 실제 호출자는 {@code JsonHttp}(JSON)와 {@code HtmlErrors}(404 {@code text/html} · 429)
 	 * <b>2개</b>이고, {@code SseHttp}를 더하면 <b>3개</b>다(step0 summary가 인계한 정정). 잠그는 것은
 	 * 개수가 아니라 <b>집합</b>이다.
+	 *
+	 * <p><b>[2026-09-07 phase 76 step3 — 넷째 지점]</b> {@code SpaResourceHandler}(SPA 정적 파일 · ADR-017)가
+	 * 더해졌다. Node 대조기가 SPA 200 응답의 Content-Type 이 전부 갈린 것을 잡았고({@code text/html} 대
+	 * {@code text/html; charset=UTF-8} · {@code .js}는 기저 타입까지), 프레임워크의 서블릿 API 지정을 seam 으로
+	 * 되돌리는 길밖에 없었다({@code SpaContentTypes} · {@code SpaServingWireTest.contentTypeLinesAreNodeOriginal}).
+	 * 이 단언이 그 확장을 <b>보이게</b> 한 것이 목적대로다 — 다섯째가 생기면 다시 여기서 보인다.
 	 */
 	@Test
-	void exactlyThreeFilesWriteTheContentTypeBytes() throws IOException {
+	void exactlyFourFilesWriteTheContentTypeBytes() throws IOException {
 		List<String> callers = new ArrayList<>();
 		Path root = Path.of("src", "main", "java");
 		try (var files = Files.walk(root)) {
@@ -221,9 +227,10 @@ class SseHttpTest {
 		}
 		callers.sort(String::compareTo);
 
-		assertEquals(List.of("HtmlErrors.java", "JsonHttp.java", "SseHttp.java"), callers,
-				"와이어 지점 집합이 달라졌다 — ADR-015는 지점을 JsonHttp(JSON)·HtmlErrors(HTML)·SseHttp(SSE) "
-						+ "셋으로 못 박았다. 넷째가 생기면 헤더 바이트를 만드는 곳이 갈린다");
+		assertEquals(List.of("HtmlErrors.java", "JsonHttp.java", "SpaResourceHandler.java", "SseHttp.java"), callers,
+				"와이어 지점 집합이 달라졌다 — ADR-015의 JsonHttp(JSON)·HtmlErrors(HTML)·SseHttp(SSE) 셋에 "
+						+ "ADR-017의 SpaResourceHandler(SPA 정적 파일)를 더한 넷이 전부다. "
+						+ "다섯째가 생기면 헤더 바이트를 만드는 곳이 갈린다 — 근거를 적고 이 목록을 고쳐라");
 	}
 
 	// --- replay-gate -----------------------------------------------------------------------------
