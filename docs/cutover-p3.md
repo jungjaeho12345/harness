@@ -348,3 +348,99 @@ node --test scripts/lib/spaParity.self-test.mjs                                 
 | N9 | `ALLOWED_DIFFS` 에서 `group:uploads` 제거 | `/uploads` 항목 오탐 | **자기검사 red 2건 → 기동 거부.** 규칙만 바꿔 기준 리포트에 적용하면 **diffs 23**(`uploads-missing` 보안 헤더 10 · `uploads-existing` CSP+10+`cache-control`+`etag`) — 오탐 실증. **역방향**(`group:spa` 에 CSP 허용)은 N7 리포트를 diffs 0 으로 통과시킨다(N4a) | md5 동일 |
 
 추가 실측: 자기 결정성 — HEAD 소스로 **연속 2회** `관측 38 · diffs 0 · 허용 diff 516건`, `node.json`·`spring.json`·`diff.json` **바이트 동일**. 두 자식 프로세스는 매 실행 `kill → 확인` 으로 종료를 확인하고 임시 루트를 지운다(성공 시 `정리: 자식 2 종료 확인 · 임시 디렉토리 삭제` 출력 · 실패 시 보존 경로 출력). 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 무변.
+
+## 3. 실기 통합 시나리오의 Spring 모드 (`scripts/verify-integration.mjs --server spring` — step4)
+
+> **한 줄**: phase 63 의 실기 스모크(서버 exe + **Electron 클라 exe** 를 함께 띄워 CDP 로 로그인→SSE→작성→팝업→송고를 판정)를
+> **서버 자식을 만드는 자리 하나만** 분기해 Spring 에 겨눈다(decisions (9) — 739줄 정본을 복제하지 않는다 · `export` 0 유지).
+> "Electron 클라가 Spring 에 붙는다" 가 사람 눈이 아니라 **exit code** 로 판정되고, step2 의 SPA 서빙이 **실제 Chromium** 에서
+> 동작하는지(자산 로딩·history 라우팅·SSE)가 여기서 처음 실증된다. 순수 판정부는 `scripts/lib/integrationMode.mjs`
+> (인자 허용값 · env 허용목록 조립 · 스풀 파일명 판정 — `node --test scripts/lib/integrationMode.test.mjs` 9항).
+
+### 3-1. 실행 (두 모드)
+
+```bash
+cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q package -DskipTests   # jar 최신화(하네스는 빌드하지 않는다)
+node scripts/verify-integration.mjs --scenario loopback                                               # exe 모드(기본) — 기존과 동일
+node scripts/verify-integration.mjs --server exe --scenario loopback                                  # 같은 것(명시)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/verify-integration.mjs --server spring --scenario loopback
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/verify-integration.mjs --server spring --scenario lan
+node --test scripts/lib/integrationMode.test.mjs                                                       # 순수 판정부 단독
+```
+
+옵션(spring 전용 — exe 모드에 오면 조용한 무시가 아니라 die): `--jar <path>`(기본 `server-spring/target/server-spring-0.0.1-SNAPSHOT.jar` · 없으면
+빌드 커맨드를 안내하고 죽는다) · `--java-home <path>`(기본 `SPRING_JAVA_HOME` → `JAVA_HOME` · 시스템 java 폴백 없음) · `--spa-dir <dir>`(기본 리포 `web/dist` ·
+`<dir>/index.html` 필수). 공통 옵션(`--scenario`·`--cdp-port`·`--show`·`--keep`·`--timeout`)은 그대로다. `--server` 허용값 밖은 즉시 `die()`(변이 P4).
+
+**spring 모드에서 다른 것은 정확히 이것뿐이다**: 서버 자식 = `<JDK>/bin/java -jar <jar>`(cwd 임시) · env = **OS 허용목록**(win32 10키 — `spring-contract.mjs`
+`javaChildEnv` 동형) **+ 5키**(`DATA_DIR`(임시 시드 = `src/db/**` · sqlite 기본) · `PORT` · `HOST` · `SPA_DIR` · `DIST_SPOOL_DIR`(임시)) — **`APP_ENV` 는 어떤 경로로도
+실리지 않는다** · 헬스 판정은 기존 `healthOk`(200 + 본문 `{ok:true}` — 클라 `probeOrigin` 과 같은 판정) · 종료는 기존 `killChild` · 데이터 안전 스냅샷 4종
+(리포 `news.db`·`uploads/`·`%APPDATA%\기사작성기`·`dist/*/data`)은 시나리오 공통이라 **spring 모드에도 그대로 돈다**. 방화벽 안내(`netsh … program=`)만
+`java.exe` 를 가리킨다(실제 listen 하는 실행 파일이 그것이다).
+
+**기준값(2026-09-07 · HEAD)**: spring loopback **연속 2회 exit 0**(Spring 기동 5613ms / 5309ms · 30초 한도 안 · 전체 25.6s / 36.6s) · exe 인자 없음·명시 **exit 0**
+(기동 1961ms / 392ms) · **lan 양 모드 exit 0**(§3-5) · `--server foo` **exit 1** · 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 무변 · 실행 후 java 프로세스 0.
+
+### 3-2. 무엇을 자동 판정하는가 (두 모드 공통)
+
+기존 판정 전부(diag 시퀀스 `app-ready→config-loaded→app-window→did-navigate 200→did-finish-load` · `secure-origin-switch` 양성/음성 · `isSecureContext` ·
+클립보드 표면 · desk 로그인 · 목록 `실시간`(SSE) · 작성 → 행 등장(SSE) · 상세보기 팝업 720×800 · `window-open allow` · 송고 `DPS` → 행 소멸(SSE)) **+ 이 step 이 더한 2단계**:
+
+- **배부 대상 생성(Z, press)** — 시드에는 활성 `DistributionTarget` 이 없다(`src/db/seed.js` 는 users 뿐). 송고 전에 **Node 측 fetch 로 Z 로그인** →
+  `POST /api/distribution-targets {name, kind:'press', spoolDir:'vi-<scenario>-<ts>'}`(계약 정본 `contract/cases/default/distribution-targets.contract.js`) → `{ok,id}`.
+  렌더러 세션(desk)과 무관하다. 세션 토큰은 로그·notes 에 남지 않는다.
+- **배부 스풀 관측 1단계** — 송고 뒤 `<DIST_SPOOL_DIR>/<spoolDir>/<articleId>_<YYYYMMDDTHHMMSSmmmZ>.json` **1건 이상**(재귀 탐색 · 파일명 정확 일치 ·
+  `.<name>.tmp` 임시 파일 불인정). `DIST_SPOOL_DIR` 미주입 · 대상 없음 · 0건은 **skip 이 아니라 실패**다(변이 P2). 바이트 대조는 step5 가 한다.
+  실측: 두 모드 모두 송고 응답 직후 1건(관측 2~4ms — 송고 훅이 응답 전에 스풀을 쓴다).
+
+### 3-3. 무엇을 못 보는가 (정직한 공백)
+
+- **스풀 파일의 내용**(step5 소유) · **클립보드 실왕복**(비표시 창은 `Document is not focused` → `unverified` · `--show` 소유) · 팝업 크기는 비표시 스로틀로 `unverified` 가 남을 수 있다(§5 사전 승인).
+- **MySQL 축** — `--db mysql` 을 **추가하지 않았다**(§3-6). 이 시나리오의 Spring 은 언제나 `DB_KIND=sqlite`(임시 `news.db`)다.
+- **수집**(HTTP 수집 라우트 · FTP 스위퍼 — step6) · **엠바고 tick 배부**(step7) · 브라우저(비-Electron) 접속 · 운영 `web\` 산출물이 리포 `web/dist` 와 같은가(§0-3묶음 md5 대조가 먼저다).
+- **`APP_ENV=production` 함정은 이 시나리오가 구조적으로 못 본다 — 실측(§3-7 P5)**: Chromium 은 `http://127.0.0.1` 을 potentially-trustworthy 로 취급해 **`Secure` 쿠키를 받아들이고**,
+  lan 시나리오의 Electron 도 `secure-origin-switch` 로 같은 취급을 만든다. 그래서 production 쿠키(`Secure; SameSite=None`)로도 로그인·SSE 가 **통과**한다.
+  브라우저 + LAN 평문 HTTP 에서만 죽는 결함이며, 방어선은 **허용목록 env 조립 하나**다(우회하면 이 시나리오는 알리지 않는다 — 쿠키 속성으로만 보인다).
+- 방화벽 **exit 2** 의 실제 모습(이 머신은 두 모드 모두 차단이 없었다 — §3-5).
+
+### 3-4. 실패했을 때 진단 순서
+
+1. **`Spring 실행 jar가 없다`** / 기동 실패 stderr 에 `Unresolved compilation problem`·`cannot access` — 회귀가 아니라 **무효 jar**(IDE 의 `target/` 오염 · §2-6 6항) → `clean package`.
+2. **health ok 인데 `diag … did-navigate 200` 이 `missing=did-navigate` 로 실패하고 이어서 `CDP page 타깃을 찾지 못했다`** — `GET /` 가 404 = **`SPA_DIR` 미주입 또는 `<dir>/index.html` 부재**(변이 P1 의 정확한 모습).
+   서버는 죽지 않는다(설계 — README「SPA 동일 출처 서빙」). `--spa-dir` 과 `npm run build` 를 확인하라.
+3. **`서버가 기동하지 않았다(loopback health 실패)`** 30초 — 포트 충돌(로그의 `ports server=`) · JDK 홈(`--java-home`) · `DATA_DIR` 시드 실패. 30초를 넘기면 **그것이 발견이다**(한도를 올리지 마라 — 실측 4.3~5.6s).
+4. **`배부 대상 생성(Z, press)` 실패** — Z 로그인(`admin`) 또는 라우트 인가 회귀. **`배부 스풀 파일 … 0건`** — `DIST_SPOOL_DIR` 미주입(Spring 은 미설정이면 송고 훅 자체가 결선되지 않고
+   송고는 `DPS` 로 **정상 응답**한다 — 변이 P2c) 또는 대상이 비활성. 관측은 `--timeout` 까지 기다린 뒤 실패한다(기본 45s).
+5. **로그인은 되는데 SSE `실시간` 이 안 온다** — 이 시나리오에서는 `APP_ENV` 가 원인일 수 없다(§3-3). 세션 쿠키 경로·CSRF 출처 판정(`server.forward-headers-strategy=none`)을 보라.
+6. diag JSONL(실패 시 notes 에 전부 첨부)에서 셸 부팅 시퀀스가 **어디서 끊겼는지** 읽는다 — `local-window` 가 `did-navigate` 뒤에 오면 클라가 오류 화면으로 떨어진 것이다.
+
+### 3-5. `--scenario lan` 3분법 실측 (2026-09-07 · 이 머신 `10.10.91.90`)
+
+| 모드 | exit | 관측 |
+|---|---|---|
+| exe | **0** | loopback health 283ms · LAN origin health ok · `secure-origin-switch{origin:http://10.10.91.90:<port>}` 존재 · 스풀 1건 |
+| spring | **0** | loopback health 4891ms · LAN origin health ok · 같은 switch 이벤트 · 스풀 1건 |
+
+3분법(skip=0 / 제품 실패=1 / **환경 차단=2**)의 코드 경로는 두 모드가 **공통**이다(loopback 프로브 성공 + 같은 포트 LAN origin 도달 불가 → `blocked`). spring 모드에서 달라지는 것은
+netsh 안내의 `program=` 이 `java.exe` 라는 것뿐이다. **이 머신에서는 두 모드 모두 방화벽 차단이 없어 exit 2 를 실제로 관측하지 못했다** — 차단이 나는 머신에서는 안내대로 허용 후 재실행이 답이며 제품 결함이 아니다.
+
+### 3-6. `--db mysql` 을 추가하지 않은 이유 (결정)
+
+이 step 의 판정 대상은 **클라 ↔ 서버 결합**(SPA 서빙 · 쿠키/SSE · 팝업 · 송고 훅)이고 저장소 방언은 그 판정에 영향을 주는 축이 아니다. MySQL 축은 이미 `scripts/spring-contract.mjs --db mysql --parity`
+(313관측 diffs 0)가 **같은 sqlite 시드를 마이그레이터로 적재해** 39 라우트를 대조하고 있고, 여기에 더하면 마이그레이터 자식 호출 · `harness_ct_<16hex>` 드롭 장부 · `news_ct` 자격 파일 수명 관리가
+**서버 기동부 분기 하나** 라는 이 step 의 경계를 넘는다(decisions (9)). 필요해지면 `spring-contract.mjs` 의 `runSpringPass` 1-b 절차를 그대로 옮기되, 이 step 은 그 결정을 **하지 않았다** 고 적는다.
+
+### 3-7. 변이 결과표 (2026-09-07 · 전건 원복 후 `scripts/verify-integration.mjs` md5 `f941650c…` 확인 — 기대≠실제는 굵게)
+
+| # | 심은 것 | 기대 | 실제 | 원복 |
+|---|---|---|---|---|
+| P1 | spring 자식 env 에서 `SPA_DIR` 제거(조립 뒤 delete — 서버는 뜬다) | spring 모드 실패(클라가 화면을 못 받는다) | **exit 1** — health ok 4884ms → `diag … did-navigate 200` **missing=did-navigate**(이벤트 순서 `did-navigate, local-window, …` = 404 뒤 오류 창) → `CDP page 타깃을 찾지 못했다` · 전체 96.6s(타임아웃 누적) | md5 동일 |
+| P2a | exe 경로에서 `DIST_SPOOL_DIR` 주입 줄 제거 | 배부 관측 명시 실패 | **exit 1** — 다른 판정 전부 ok · `FAIL 배부 스풀 파일 … 스풀 파일 0건(디렉토리 내 파일 0건)`(45s 대기 후) | md5 동일 |
+| P2c | spring 자식 env 에서 `DIST_SPOOL_DIR` 제거(조립 뒤 delete) | 배부 관측 명시 실패 | **exit 1** — 송고는 `DPS` **정상 응답**(Spring 은 미설정이면 훅 미결선) · `FAIL … 0건`(45s) | md5 동일 |
+| P2b | `springServerEnv({spoolDir: undefined})` | 조립 거부 | 단위 테스트가 잠근다(`DIST_SPOOL_DIR` 지목 throw) · 본체는 `spring 서버 env 조립 실패` 로 기동 전 실패 | — |
+| P3 | `healthOk` 를 상태코드만 보게(`if (res.status === 200) return true`) | 잘못된 서버에도 붙는다 | 스크립트의 실제 `healthOk` 원문을 가짜 서버 4종에 적용: **원본** = `200 {}` false · `200 {"ok":false}` false · `200 text/html`(캡티브 포털) false · `{"ok":true}` true — **변이** = **4종 전부 true**(빈 JSON·`ok:false`·HTML 포털에 붙는다). 클라 `interpretHealthResponse` 와 같은 판정이어야 하는 이유 실증 | md5 동일 |
+| P4 | `--server foo` | 즉시 die | **exit 1** `--server 값이 유효하지 않다(exe|spring): "foo"` · `--server`(값 없음) · `--server exe --jar x` · `--server spring --server-exe x` 도 각각 die | 코드 무변 |
+| P5 | spring env 를 `{ ...process.env, ...허용목록 }` 로 + 부모 셸 `APP_ENV=production` | 결정성 훼손 관측(로그인/SSE 실패) | **exit 0 — 통과했다(기대≠실제).** 로그인 ok · SSE `실시간` 273ms. 원인 실측(쿠키 프로브): 변이 자식 env **118키 · `APP_ENV=production` 도달** · `Set-Cookie: …; HttpOnly; **Secure; SameSite=None**` — 허용목록 자식 env **12키 · APP_ENV 없음** · `…; HttpOnly; SameSite=Lax`. 서버는 production 으로 갔는데 **Chromium 이 `http://127.0.0.1` 에서 Secure 쿠키를 받아들여** 시나리오가 통과한다 ⇒ 이 함정은 **이 시나리오가 못 본다**(§3-3). 대조군(원본 + 부모 `APP_ENV=production`)도 exit 0 — exit code 로는 둘을 가를 수 없고 쿠키 속성으로만 갈린다 | md5 동일 |
+
+추가 실측: 실행 후 `java.exe` 0 · 이 step 의 실행이 남긴 임시 디렉토리 0(`%TEMP%` 의 `verify-integ-*` 3개는 07:42/07:47 타 세션 산출물 — 이 스크립트는 자기가 만든 경로 밖을 지우지 않으므로 남겨 둔다) ·
+`test/verify-integration-portrange.test.js`(텍스트 잠금) 6/6 green — 숫자 `pickFreePort(` 호출은 여전히 2건이다.
