@@ -2,8 +2,14 @@
 // 함께 기동해 전체 업무 루프를 CDP로 자동 판정한다: secure context/클립보드 표면 → 로그인(desk) →
 // 목록 SSE '실시간' → 기사 작성 → 목록 행 등장(SSE) → 상세보기 팝업(720×800) → 송고(RDS→DPS) →
 // 행 소멸(SSE) → 클립보드 왕복(best-effort).
-// 사용: node scripts/verify-integration.mjs [--scenario loopback|lan|all] [--server-exe <path>] [--client-exe <path>]
+// 사용: node scripts/verify-integration.mjs [--scenario loopback|lan|all] [--server exe|spring] [--server-exe <path>]
+//                                           [--client-exe <path>] [--jar <path>] [--java-home <path>] [--spa-dir <dir>]
 //                                           [--cdp-port <n>] [--show] [--keep] [--timeout <ms>]
+// 서버 모드(phase 76 step4 · decisions (9)): --server exe(기본)는 서버 SEA exe, spring은 `java -jar server-spring/target/*.jar`
+//   — 바뀌는 것은 **서버 자식을 만드는 자리 하나**뿐이고 시나리오(클라 exe·CDP·판정)는 두 모드가 같은 코드를 탄다.
+//   spring 자식 env는 허용목록 조립(scripts/lib/integrationMode.mjs — APP_ENV는 어떤 경로로도 실리지 않는다).
+//   송고 뒤 배부 스풀 관측 1단계(<DIST_SPOOL_DIR>/<target.spoolDir>/<articleId>_<stamp>.json 1건 이상)는 두 모드 공통이다
+//   — 활성 DistributionTarget은 시드에 없으므로 시나리오가 Z 세션(Node측 fetch)으로 press 대상을 먼저 만든다.
 // 측정 원칙(decisions (10)): 로그인·작성·송고는 렌더러 동일 출처 fetch로, 화면 반영은 DOM으로 단언한다.
 // 주의(창 표시): CLIENT_SELFTEST=1이 억제하는 것은 셸이 만드는 창의 show()뿐이다 — SPA가 window.open으로
 //   여는 상세보기 자식 창은 Chromium이 만들고 outlivesOpener로 뜨므로 검증 중 720×800 팝업이 잠깐
@@ -29,15 +35,26 @@ import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
 import { seedUsers } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
+import { judgeSpool, listFilesRecursive, parseServerMode, springServerEnv } from './lib/integrationMode.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
+// spring 모드 정본(spa-parity.mjs 40~60행 동형): 자동 빌드 금지 · 시스템 java 폴백 금지 · SPA 루트 기본 = 리포 web/dist.
+const JDK_HINT = 'D:/agents/tools/jdk-25.0.4.1+1';
+const SPRING_BUILD_HINT = `cd server-spring && JAVA_HOME="${JDK_HINT}" ./mvnw -B -q package -DskipTests`;
+const DEFAULT_SPRING_JAR = nodePath.join(REPO_ROOT, 'server-spring', 'target', 'server-spring-0.0.1-SNAPSHOT.jar');
+const DEFAULT_SPA_DIR = nodePath.join(REPO_ROOT, 'web', 'dist');
 
-const USAGE = `사용법: node scripts/verify-integration.mjs [--scenario loopback|lan|all] [--server-exe <path>] [--client-exe <path>]
+const USAGE = `사용법: node scripts/verify-integration.mjs [--scenario loopback|lan|all] [--server exe|spring] [--server-exe <path>]
+                                          [--client-exe <path>] [--jar <path>] [--java-home <path>] [--spa-dir <dir>]
                                           [--cdp-port <n>] [--show] [--keep] [--timeout <ms>]
   --scenario      loopback | lan | all(기본). lan은 3분법(skip=0 / 제품 실패=1 / 환경 차단=2)으로 끝난다.
-  --server-exe    서버 exe 경로(기본: dist/기사작성기-server/의 한글→ASCII 폴백 자동 해석).
+  --server        exe(기본) | spring. exe=서버 SEA exe, spring=java -jar(서버 자식 생성 자리만 다르다 — 시나리오는 공통).
+  --server-exe    서버 exe 경로(기본: dist/기사작성기-server/의 한글→ASCII 폴백 자동 해석). --server exe 전용.
   --client-exe    클라이언트 exe 경로(기본: dist/기사작성기/의 한글→ASCII 폴백 자동 해석).
+  --jar <path>    Spring 실행 jar(기본 server-spring/target/server-spring-0.0.1-SNAPSHOT.jar — 자동 빌드하지 않는다). --server spring 전용.
+  --java-home     JDK 홈(기본 SPRING_JAVA_HOME → JAVA_HOME 순 · 시스템 java 폴백 금지). --server spring 전용.
+  --spa-dir <dir> Spring이 서빙할 SPA 루트(기본 <리포>/web/dist · <dir>/index.html 필수). --server spring 전용.
   --cdp-port <n>  원격 디버깅 포트 고정(기본: 35000~44999 랜덤 — 서버 포트 20000~34999와 범위 분리.
                   20000~34999는 서버 범위라 거부한다).
   --show          CLIENT_SELFTEST를 주지 않아 창을 실제로 띄운다(클립보드 왕복·포커스 확인용).
@@ -56,12 +73,16 @@ function parseArgs(argv) {
     if (!v.ok) die(v.message);
     return v.value;
   };
-  const opts = { scenario: 'all', show: false, keep: false, timeout: 45000 };
+  const opts = { scenario: 'all', server: 'exe', show: false, keep: false, timeout: 45000 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--scenario') { opts.scenario = takeValue(i, '--scenario'); i += 1; }
+    else if (a === '--server') { opts.server = takeValue(i, '--server'); i += 1; }
     else if (a === '--server-exe') { opts.serverExe = takeValue(i, '--server-exe'); i += 1; }
     else if (a === '--client-exe') { opts.clientExe = takeValue(i, '--client-exe'); i += 1; }
+    else if (a === '--jar') { opts.jar = takeValue(i, '--jar'); i += 1; }
+    else if (a === '--java-home') { opts.javaHome = takeValue(i, '--java-home'); i += 1; }
+    else if (a === '--spa-dir') { opts.spaDir = takeValue(i, '--spa-dir'); i += 1; }
     else if (a === '--cdp-port') { opts.cdpPort = Number(takeValue(i, '--cdp-port')); i += 1; }
     else if (a === '--show') opts.show = true;
     else if (a === '--keep') opts.keep = true;
@@ -69,6 +90,14 @@ function parseArgs(argv) {
     else die(`알 수 없는 인자: ${a}`);
   }
   if (!['loopback', 'lan', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(loopback|lan|all): ${opts.scenario}`);
+  // --server 허용값 밖은 즉시 die(조용한 기본값 폴백 금지 — 판정은 순수 모듈, 종료 규약은 이 CLI의 die).
+  const mode = parseServerMode(opts.server);
+  if (!mode.ok) die(mode.message);
+  // 모드 전용 플래그가 다른 모드에 오면 조용한 무시가 아니라 거부다(값을 줬는데 아무 효과가 없는 실행 금지).
+  if (opts.server === 'exe' && (opts.jar !== undefined || opts.javaHome !== undefined || opts.spaDir !== undefined)) {
+    die('--jar / --java-home / --spa-dir 는 --server spring 에서만 유효하다.');
+  }
+  if (opts.server === 'spring' && opts.serverExe !== undefined) die('--server-exe 는 --server exe 에서만 유효하다.');
   if (!Number.isInteger(opts.timeout) || opts.timeout < 1000) die(`--timeout 값이 유효하지 않다(ms, 1000 이상 정수): ${opts.timeout}`);
   if (opts.cdpPort !== undefined && (!Number.isInteger(opts.cdpPort) || opts.cdpPort < 1024 || opts.cdpPort > 65535)) {
     die(`--cdp-port 값이 유효하지 않다(1024~65535 정수): ${opts.cdpPort}`);
@@ -93,6 +122,21 @@ function resolveExe(given, candidates, buildHint) {
   const found = candidates.map((p) => nodePath.join(REPO_ROOT, p)).find((p) => fs.existsSync(p));
   if (!found) die(`실행 파일이 없다(${candidates.join(' | ')}) — ${buildHint} 를 먼저 실행하라.`);
   return found;
+}
+
+// spring 모드 해석(spa-parity.mjs resolveJar/resolveJavaBin/resolveSpaDir 동형) — 자동 빌드 금지 · 시스템 java 폴백 금지.
+function resolveSpring(opts) {
+  const jar = nodePath.resolve(opts.jar ?? DEFAULT_SPRING_JAR);
+  if (!fs.existsSync(jar)) die(`Spring 실행 jar가 없다: ${jar} — 하네스는 빌드하지 않는다. 먼저 빌드하라:\n  ${SPRING_BUILD_HINT}`);
+  const home = opts.javaHome || process.env.SPRING_JAVA_HOME || process.env.JAVA_HOME;
+  if (!home || String(home).trim() === '') die(`JDK 홈을 찾지 못했다 — --java-home <path> 또는 SPRING_JAVA_HOME/JAVA_HOME 을 설정하라(예: ${JDK_HINT}).`);
+  const javaBin = nodePath.join(nodePath.resolve(home), 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+  if (!fs.existsSync(javaBin)) die(`JDK 홈에 java 실행 파일이 없다: ${javaBin}`);
+  const spaDir = nodePath.resolve(opts.spaDir ?? DEFAULT_SPA_DIR);
+  if (!fs.existsSync(nodePath.join(spaDir, 'index.html'))) {
+    die(`SPA 루트에 index.html 이 없다: ${spaDir} — 리포 web/dist 라면 'npm run build' 를 먼저 돌려라. (Spring은 이 파일이 없으면 SPA 비활성으로 뜨고 클라는 GET / 404 를 받는다)`);
+  }
+  return { jar, javaBin, spaDir };
 }
 
 // 자식 env 정리 — verify-client.mjs cleanEnv()와 동형(그 파일은 import 금지 — CLI 즉시 실행).
@@ -184,6 +228,47 @@ async function healthOk(origin, timeoutMs, child) {
     await sleep(100);
   }
   return false;
+}
+
+// 배부 관측의 전제 — 활성 DistributionTarget은 시드(src/db/seed.js는 users뿐)에 없다. Z 전용 POST /api/distribution-targets
+// (body·응답 정본 = contract/cases/default/distribution-targets.contract.js)로 press 대상 1건을 만든다. 시나리오의 렌더러
+// 세션은 desk(D)라 이 호출만 Node측 fetch + Z 로그인이다(x-session-id 헤더 — 계약 스위트와 같은 경로).
+// 세션 토큰은 반환값·로그·notes 어디에도 싣지 않는다(로그인 프로브 규율). 반환 { ok, id } | { ok:false, reason }.
+async function createDistributionTarget(origin, spoolSlug) {
+  const post = async (path, body, sid) => {
+    const headers = { 'content-type': 'application/json' };
+    if (sid) headers['x-session-id'] = sid;
+    const res = await fetch(`${origin}${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+    let json;
+    try { json = await res.json(); } catch { json = undefined; }
+    return { status: res.status, json };
+  };
+  try {
+    const login = await post('/api/login', { userId: 'admin', password: 'admin123' });
+    if (login.status !== 200 || login.json?.ok !== true || typeof login.json.sessionId !== 'string') {
+      return { ok: false, reason: `Z 로그인 실패 status=${login.status} reason=${login.json?.reason ?? '-'}` };
+    }
+    const created = await post('/api/distribution-targets', { name: `verify-integration ${spoolSlug}`, kind: 'press', spoolDir: spoolSlug }, login.json.sessionId);
+    if (created.status !== 200 || created.json?.ok !== true || !Number.isInteger(created.json.id)) {
+      return { ok: false, reason: `대상 생성 실패 status=${created.status} reason=${created.json?.reason ?? '-'}` };
+    }
+    return { ok: true, id: created.json.id };
+  } catch (err) {
+    return { ok: false, reason: `대상 생성 요청 실패: ${err && err.message ? err.message : err}` };
+  }
+}
+
+// 배부 스풀 관측 1단계 — 판정은 순수 모듈(judgeSpool)이고 여기서는 한도까지 재관측만 한다. 전제 부재는 즉시 실패다.
+async function pollSpool(spoolDir, articleId, timeoutMs) {
+  const started = Date.now();
+  let verdict = judgeSpool({ spoolDir, articleId, files: listFilesRecursive(spoolDir) });
+  while (!verdict.ok && Date.now() - started < timeoutMs) {
+    // 전제(주입·articleId) 부재는 기다려도 바뀌지 않는다 — 조용한 대기 대신 즉시 실패로 돌린다.
+    if (/DIST_SPOOL_DIR 미주입|articleId 없음/.test(verdict.reason)) break;
+    await sleep(250);
+    verdict = judgeSpool({ spoolDir, articleId, files: listFilesRecursive(spoolDir) });
+  }
+  return { ...verdict, elapsedMs: Date.now() - started };
 }
 
 // --- 데이터 안전 스냅샷(비교 판정 — 절대 규칙 금지) ---
@@ -406,11 +491,32 @@ async function runScenario(name, opts, ctx) {
   const origin = name === 'lan' ? `http://${lanIp.address}:${port}` : `http://127.0.0.1:${port}`;
   const loopbackOrigin = `http://127.0.0.1:${port}`;
 
-  const serverEnv = cleanEnv();
-  serverEnv.PORT = String(port);
-  serverEnv.HOST = host;
-  serverEnv.DATA_DIR = dataDir; // SPA_DIR은 주지 않는다 — exe 옆 web/ 배포 기본값 자체가 검증 대상.
-  const serverChild = spawn(ctx.serverExe, [], { cwd: serverCwd, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  // 배부 스풀 루트 — 두 모드 공통 주입(phase 76 step4). 송고 뒤 관측 1단계의 전제이고 step5 바이트 대조의 대칭 전제다.
+  const spoolDir = ctx.mkTmp(`verify-integ-spool-${name}-`);
+  // 서버 자식 생성 — 모드 분기는 **이 자리 하나**뿐이다(decisions (9)). 나머지 시나리오는 두 모드가 같은 코드를 탄다.
+  let serverChild;
+  if (ctx.serverMode === 'spring') {
+    // 허용목록 조립(부모 env 통째 상속 금지 · APP_ENV 는 어떤 경로로도 실리지 않는다). 5키 중 하나라도 비면 조립이 거부되고
+    // 그것은 기동 전 명시 실패다(임시 디렉토리 정리는 main 이 그대로 한다). DB 축은 sqlite 기본 — 위 임시 시드를 그대로 연다
+    // (spring-contract sqlite 패스와 같은 원리).
+    let serverEnv;
+    try {
+      serverEnv = springServerEnv({
+        parentEnv: process.env, platform: process.platform, dataDir, port, host, spaDir: ctx.spring.spaDir, spoolDir,
+      });
+    } catch (err) {
+      failures.push(`spring 서버 env 조립 실패: ${err && err.message ? err.message : err}`);
+      return { name, status: 'fail', notes, failures, unverified };
+    }
+    serverChild = spawn(ctx.spring.javaBin, ['-jar', ctx.spring.jar], { cwd: serverCwd, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  } else {
+    const serverEnv = cleanEnv();
+    serverEnv.PORT = String(port);
+    serverEnv.HOST = host;
+    serverEnv.DATA_DIR = dataDir; // SPA_DIR은 주지 않는다 — exe 옆 web/ 배포 기본값 자체가 검증 대상.
+    serverEnv.DIST_SPOOL_DIR = spoolDir;
+    serverChild = spawn(ctx.serverExe, [], { cwd: serverCwd, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  }
   let serverOut = '';
   let serverErr = '';
   serverChild.stdout.on('data', (c) => { serverOut += c; });
@@ -422,6 +528,7 @@ async function runScenario(name, opts, ctx) {
   // 선택된 두 포트를 notes로 남긴다 — 범위 분리를 실행 로그로 증명하는 유일한 수단이자 실패 진단
   // 입력이다. 포트 번호는 비밀이 아니다(세션·토큰류는 절대 넣지 않는다 — 로그인 프로브 규율).
   note(`ports server=${port} cdp=${cdpPort}`);
+  note(`server mode=${ctx.serverMode} pid=${serverChild.pid ?? '-'} spoolDir=${spoolDir}`);
   const diagFile = nodePath.join(userData, 'diag.jsonl');
 
   try {
@@ -438,11 +545,17 @@ async function runScenario(name, opts, ctx) {
       if (!lanHealthy) {
         // loopback 성공 + 같은 포트 LAN origin만 도달 불가 = 환경 차단(방화벽 인바운드) — 제품 결함 단정 금지.
         note(`BLOCKED loopback health ok + LAN origin ${origin} 도달 불가 — 방화벽 인바운드 차단으로 판정(exit 2)`);
-        note(`허용 커맨드(관리자 권한): ${NETSH_HINT(ctx.serverExe)}`);
+        note(`허용 커맨드(관리자 권한): ${NETSH_HINT(ctx.serverProgram)}`);
         return { name, status: 'blocked', notes, failures, unverified };
       }
       note(`ok LAN origin health ${origin}`);
     }
+
+    // 배부 대상 생성(Z · press 1건) — 송고 전에, 렌더러(desk) 세션과 무관한 Node측 fetch로. 실패는 명시 실패다
+    // (대상이 없으면 스풀이 비는 것이 정상 동작이라 아래 관측이 원인을 구분하지 못한다 — 여기서 먼저 가른다).
+    const targetSlug = `vi-${name}-${Date.now()}`;
+    const distTarget = await createDistributionTarget(loopbackOrigin, targetSlug);
+    check('배부 대상 생성(Z, press) ok + id', distTarget.ok, distTarget.ok ? `id=${distTarget.id} spoolDir=${targetSlug}` : distTarget.reason);
 
     // 클라이언트 기동 — config 사전 배치 + CDP 포트.
     fs.writeFileSync(nodePath.join(userData, 'config.json'), `${JSON.stringify({ schemaVersion: 1, serverUrl: origin })}\n`);
@@ -585,6 +698,12 @@ async function runScenario(name, opts, ctx) {
       const disappeared = await pollEval(page, rowExpr, (v) => v === false, opts.timeout);
       check('목록 행 소멸(송고 후 deskUnsent 밖)', disappeared.ok, disappeared.ok ? `${disappeared.elapsedMs}ms` : 'timeout');
 
+      // 8-b. 배부 스풀 관측 1단계(phase 76 step4) — "배부가 실제로 일어났다"만 본다: <DIST_SPOOL_DIR>/<target.spoolDir>/
+      // <articleId>_<stamp>.json 1건 이상. 바이트 대조는 step5. 전제(주입·대상·articleId) 부재는 skip이 아니라 실패다.
+      const spool = await pollSpool(spoolDir, articleId, opts.timeout);
+      check('배부 스풀 파일 <articleId>_<stamp>.json 1건 이상', spool.ok,
+        spool.ok ? `${spool.matched.length}건 [${spool.matched.join(', ')}] ${spool.elapsedMs}ms` : `${spool.reason} (${spool.elapsedMs}ms)`);
+
       // 9. 클립보드 왕복(best-effort) — 비표시 창은 포커스가 없어 거부될 수 있다(open (d)).
       if (opts.show) {
         // 표시 모드 — 앱 창을 전면·포커스로 올린다. 창이 화면에 떠 있어도 포커스가 터미널에 있으면
@@ -635,16 +754,22 @@ async function runScenario(name, opts, ctx) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const serverExe = resolveExe(opts.serverExe, [
+  // 서버 해석은 모드별로 하나만 — exe 모드는 jar·JDK 를, spring 모드는 서버 exe 를 요구하지 않는다.
+  const serverExe = opts.server === 'exe' ? resolveExe(opts.serverExe, [
     'dist/기사작성기-server/기사작성기-server.exe', 'dist/기사작성기-server/article-server.exe',
-  ], 'npm run dist:server && npm run dist:client');
+  ], 'npm run dist:server && npm run dist:client') : null;
+  const spring = opts.server === 'spring' ? resolveSpring(opts) : null;
   const clientExe = resolveExe(opts.clientExe, [
     'dist/기사작성기/기사작성기.exe', 'dist/기사작성기/article-client.exe',
   ], 'npm run dist:server && npm run dist:client');
 
   const tmpDirs = [];
   const ctx = {
+    serverMode: opts.server,
     serverExe,
+    spring,
+    // 방화벽 안내(netsh)의 program= 은 실제로 listen 하는 실행 파일이다 — spring 모드에서는 java.exe.
+    serverProgram: spring ? spring.javaBin : serverExe,
     clientExe,
     mkTmp(prefix) {
       const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), prefix));

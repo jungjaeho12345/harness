@@ -47,6 +47,36 @@ npm run dist:client   # → dist/기사작성기/         (클라이언트 폴�
 5. `기사작성기-server.bat`으로 기동하고 브라우저에서 `http://<서버IP>:<PORT>/api/health`가
    `{"ok":true}`인지 확인한다.
 
+## 3-1. Spring 서버로 기동 (P3 전환 — Node exe 절(3절)은 롤백 자산으로 그대로 둔다)
+
+phase 76(ADR-017)부터 같은 화면·같은 클라이언트를 **Spring 서버**가 서빙할 수 있다. 3절과 이 절은 **나란히
+유효**하며, 지금 어느 쪽이 운영인지는 컷오버 런북(`docs/cutover-p3.md`)이 가리킨다. 클라이언트 쪽은 **아무것도
+바뀌지 않는다**(같은 주소·같은 config.json — 클라는 화면을 서버에서 받아 온다).
+
+1. **전제**: JDK 25(예: `D:\agents\tools\jdk-25.0.4.1+1`) · 실행 jar `server-spring\target\server-spring-0.0.1-SNAPSHOT.jar`
+   (개발 리포에서 `cd server-spring && JAVA_HOME="<JDK>" ./mvnw -B -q package -DskipTests` — 서버는 스스로 빌드하지 않는다) ·
+   화면 파일 폴더 `web\`(3절의 exe 옆 `web\`과 **같은 `web/dist` 산출물** — 별도 빌드가 아니다).
+2. **기동** — 설정은 전부 환경변수다(`.env`를 읽지 않는다 · 키 전체 표는 `server-spring/README.md`「설정 키 ↔ 환경변수」):
+
+   ```bat
+   set DATA_DIR=<배포 폴더>\data          rem 필수. exe 배치와 **같은 data\** 를 가리킨다(uploads\ 공유 — ADR-017 ⑤)
+   set PORT=3001                            rem Node exe와 **같은 포트**(같은 host:port 원자적 교체 — ADR-017 ②)
+   set SPA_DIR=<배포 폴더>\web              rem **필수**. 없으면 서버는 뜨지만 화면(GET /)이 404다 — 클라가 빈 화면/오류
+   set DIST_SPOOL_DIR=<배포 폴더>\data\dist-spool   rem 배부를 쓰면(미설정 = 배부 전면 비활성)
+   rem set HOST=0.0.0.0                     rem LAN 개방 시 — COLLECTION_TOKEN 동반(3절 4항과 같은 규율)
+   rem APP_ENV=production 은 **금지** — Node의 NODE_ENV=production과 같은 함정(평문 HTTP에서 로그인이 조용히 실패)
+   "<JDK>\bin\java.exe" -jar server-spring-0.0.1-SNAPSHOT.jar
+   ```
+
+   DB는 기본 `DB_KIND=sqlite`(`DATA_DIR\news.db`)다. 운영 MySQL로 붙이는 키(`DB_KIND=mysql` + `NEWS_DB_URL`·
+   `NEWS_DB_USERNAME`·`NEWS_DB_PASSWORD`)와 그 절차는 `docs/ops-mysql.md`·컷오버 런북이 소유한다 — 이 절은 기동 형태만 적는다.
+3. **확인 두 가지**: `http://<서버IP>:<PORT>/api/health`가 `{"ok":true}` **그리고** `http://<서버IP>:<PORT>/`가 화면(로그인
+   페이지)인지. 두 번째가 404면 `SPA_DIR`이 `index.html`이 있는 폴더를 가리키지 않는 것이다(서버는 죽지 않는다 — 설계).
+4. **전환 규율**: Node exe를 **내리고 → Spring을 올린다**(롤백은 그 역순). 두 서버를 **다른 포트로 동시에 띄우지 마라** —
+   Spring에는 3절 exe의 "이미 실행 중" 단일 인스턴스 잠금(ADR-012)이 **없어** 같은 `data\`·스풀에 둘이 붙으면 중복 배부가 난다.
+5. **검증(개발 리포)**: `SPRING_JAVA_HOME=<JDK> node scripts/verify-integration.mjs --server spring --scenario loopback` —
+   9절의 실기 시나리오를 Spring에 겨눈 것이다(같은 클라 exe · 같은 판정 · 송고 뒤 배부 스풀 파일까지).
+
 ## 4. 클라이언트 배포
 
 상세: 클라이언트 배포 폴더의 **`README-배포-클라이언트.md`** (1~10절). 요약 — PC 1대당:
@@ -121,6 +151,16 @@ LAN 시나리오가 종료 코드 2로 끝나면 제품 결함이 아니라 방�
 netsh 안내를 따라 허용 후 재실행). 창을 띄워 눈으로 보며 돌리려면 `--show`를 붙인다.
 출력에 `unverified`(팝업 크기 미검증 — 비표시 모드의 렌더 스로틀)가 보이면 `--show`로
 1회 재실행한다 — 그 실행이 팝업 720×800 검증의 소유자다.
+
+같은 시나리오를 **Spring 서버**에 겨누려면 `--server spring`을 붙인다(3-1절 · 기본은 `--server exe`로 위와 동일):
+
+```bash
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/verify-integration.mjs --server spring --scenario loopback
+```
+
+서버 자식이 exe 대신 `java -jar server-spring/target/*.jar`(임시 `DATA_DIR`·`SPA_DIR`=리포 `web/dist`·임시 `DIST_SPOOL_DIR`)로
+뜨는 것 말고는 같은 클라 exe·같은 판정이고, 두 모드 모두 송고 뒤 **배부 스풀 파일이 실제로 생겼는지**까지 본다.
+jar는 스스로 빌드하지 않는다(없으면 빌드 커맨드를 안내하고 멈춘다). 실행법·한계·진단 순서: `docs/cutover-p3.md` §3.
 
 ## 10. 관련 문서
 
