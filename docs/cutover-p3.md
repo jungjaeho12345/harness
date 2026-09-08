@@ -159,15 +159,23 @@
   **Spring 에는 ADR-012 단일 인스턴스 잠금이 없다**(Node 의 잠금은 포트가 아니라 `DATA_DIR` 범위였다).
   두 인스턴스가 같은 MySQL·같은 `uploads`·같은 `DIST_SPOOL_DIR` 에 붙으면 **tick 중복 배부**가 난다(step7 이 수량으로 잰다).
 
-### U5. 작업 스케줄러 tick 작업 **교체** (운영)
+### U5. 작업 스케줄러 tick 작업 **교체** (운영) — 근거·실측은 §6
 
 - **왜 사람이 해야 하는가**: 스케줄러 등록은 운영 권한이고, **추가가 아니라 교체**여야 한다 —
-  옛 작업이 남으면 같은 tick 이 두 번 돈다.
-- **정확한 명령**: step7 이 검증한 스크립트로 기존 작업의 **동작(Action)만 교체**하거나, 기존 작업을 **비활성화한 뒤**
-  새 작업을 등록한다(`schtasks /change /tn <이름> /disable` → `schtasks /create ...`). **삭제보다 비활성화가 먼저다**(되돌림).
-- **성공 판정**: `schtasks /query /fo list /v /tn <이름>` 에서 **활성 작업이 정확히 하나**이고, 다음 실행 이후
-  배부 스풀 파일 수가 **주기당 한 벌만** 는다.
-- **실패 시 분기**: 두 벌이 늘면 옛 작업이 살아 있는 것이다 — 즉시 하나를 비활성화한다(파일은 지우지 않는다).
+  옛 작업이 남으면 같은 tick 이 두 번 돈다. 그리고 §0-6 의 작업 이름·주기·스크립트 경로·자격 위치가 **전부 미상**이라 에이전트가 대신 고를 수 없다.
+- **먼저 읽을 것**: 운영 머신에서 `schtasks /Query /FO LIST /V` 로 기존 tick 작업의 **이름·트리거 주기·실행 계정·동작(Action)** 을 읽어 §0-6 에 적는다(값이 아니라 위치만).
+  **주기가 90초 미만이면 그대로 옮기지 마라** — 새 스크립트는 호출마다 로그인하고 로그인 한도가 15분/10회라 90초 미만 주기는 15분 안 11번째부터 429 로 멈춘다(§6-4 산술표 · 권장 5분).
+- **정확한 명령**(step7 이 검증한 `packaging/server/tick-distribution-spring.ps1` — README-배포 §6-1):
+  1. 실행 계정의 환경변수에 자격을 둔다: `setx NEWS_TICK_USER <Z계정ID>` · `setx NEWS_TICK_PASSWORD <비밀번호>` · (포트가 3001 이 아니면) `setx NEWS_TICK_BASE http://127.0.0.1:<PORT>` —
+     **그 계정으로 로그인한 세션에서** 실행한다(사용자 변수). bat·ps1·작업 인자에 값을 두지 않는다.
+  2. 기존 작업 비활성화: `schtasks /Change /TN "<기존 작업명>" /DISABLE` (**삭제가 아니다** — 되돌림 레버).
+  3. 새 작업 등록: `schtasks /Create /TN "기사작성기-distribution-tick" /SC MINUTE /MO 5 /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <배포폴더>\tick-distribution-spring.ps1 -LogFile <배포폴더>\data\tick.log" /RU <실행 계정> /F`
+     → 작업 속성에서 "이미 실행 중이면 새 인스턴스를 시작하지 않음" 을 켠다.
+  4. 즉시 1회 실행해 본다: `schtasks /Run /TN "기사작성기-distribution-tick"` → `tick.log` 마지막 줄이 `tick ok distributed=<n> …` 이고 마지막 실행 결과가 `0`.
+- **성공 판정**: (a) `schtasks /Query /FO LIST /V` 에 **활성 tick 작업이 정확히 하나**(옛 것은 `Disabled`) (b) `tick.log` 에 주기마다 한 줄 · 마지막 실행 결과 `0`
+  (c) 다음 주기 이후 `DIST_SPOOL_DIR` 파일 수가 **주기당 한 벌만** 는다.
+- **실패 시 분기**: 두 벌이 늘면 옛 작업이 살아 있는 것이다 — 즉시 하나를 비활성화한다(파일은 지우지 않는다). 마지막 실행 결과가 `3` 이면 자격/한도(429 면 주기를 늘린다) ·
+  `4` 면 비-Z 자격이거나 `DIST_SPOOL_DIR` 미설정(503) · `5` 면 서버 미기동/포트 · `6` 이 반복되면 이전 실행이 안 끝난 것(§6-6 6). 롤백은 2↔3 을 역순으로(Spring용 `/DISABLE` → 옛 작업 `/ENABLE`).
 
 ### U6. **부분 적재 상태의 복구 — root 전용 · 기본은 무삭제 경로다**
 
@@ -724,3 +732,156 @@ Node 시절 앱 안에 있던 「깨어남·중복 방지 없음·실패 로그�
 - LAN 바인딩 + 토큰 미설정의 503 `collection-disabled` 는 계약 `failclosed` 프로파일이 소유한다(무접촉). 스위퍼는 그것을 `failed:collection-disabled` 로 분류하고 재시도한다.
 - Spring 의 MySQL 축은 이 왕복이 띄우지 않는다(sqlite) — 수집 라우트 자체는 `--db mysql --parity` 313관측이 본다. 스위퍼는 서버 저장소를 모른다.
 - 여러 스위퍼 인스턴스의 장부 append 경합 — 작업은 하나만(§5-3 5).
+
+## 6. 운영 tick 의 Spring 전환 (`scripts/tick-cutover-probe.mjs` · `packaging/server/tick-distribution-spring.ps1` — step7 · 로드맵 P3 완료 게이트 ③)
+
+> **한 줄**: 엠바고 시점 배부는 앱 안에 타이머가 없다(ADR-008 (3)). 외부 스케줄러가 `POST /api/login`(Z) 으로 세션을 얻어
+> `POST /api/distribution/tick` 을 `x-session-id` 헤더로 부른다. Spring 은 쿠키 우선·**헤더 폴백**(`SessionTokens`)이고 `Origin`·`Referer`
+> 가 **둘 다 없는** 서버-서버 요청을 통과시키므로(ADR-009 관용 · `CsrfOriginFilter` 72~80행) **README-배포 §6 의 Node 스크립트 형태가 그대로 통한다** —
+> `scripts/tick-cutover-probe.mjs` 가 임시 Node·Spring 을 나란히 띄워 실측했다(왕복 **17행 · Node=Spring · diffs 0**).
+>
+> **이 절은 U5(작업 스케줄러 tick 교체)의 근거다. 전환은 작업의 _교체_ 이지 추가가 아니다** — 두 작업이 동시에 살아 있으면 같은 tick 이 두 번 돈다.
+> `server-spring/src/main` 은 **0줄** 바뀌었다(ADR-008 '주기 실행'·'락' 예외 0 그대로 · `RoutePolicy`·계약 무접촉).
+
+### 6-1. 실행
+
+```bash
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/tick-cutover-probe.mjs                 # A(왕복 표 17행) + S6(Node 2개) · Spring 은 sqlite
+SPRING_JAVA_HOME=... node scripts/tick-cutover-probe.mjs --db mysql [--rounds 5]                        # + A-2(Spring 2개 · 같은 임시 MySQL DB) — NEWS_CT_MYSQL_* 3키
+node --test scripts/lib/tickCutover.self-test.mjs                                                       # 순수 판정부 + ps1 정적 검사 16건(프로브가 시작 시 스스로 돌린다)
+```
+
+임시 인스턴스 5~6개(Node 2 + 무스풀 Node · Spring 1~2 + 무스풀 Spring)를 리포 밖 임시 `DATA_DIR`·`DIST_SPOOL_DIR` 로 띄우고, 끝나면 자식 종료 → `harness_ct_*` 드롭 →
+임시 디렉토리 삭제 · 리포 `news.db`/`uploads` 무변 단언. 로그인 수는 인스턴스당 세어 두었다(왕복 대상 7 · 무스풀 대상 11 — 11번째 429 실측이 목적). 리포트(`tables.md`·`report.json`·기동 로그)는
+`--out-dir`(리포 밖) 또는 실패 시 보존되는 임시 루트에 남고, 세션 토큰·비밀번호·MySQL 자격·스풀 절대경로는 어디에도 쓰지 않는다.
+
+### 6-2. 왕복 실측표 (2026-09-08 · 09-09 재실행 동일 · `--db mysql` · 전 행 = 기대치 대조 **그리고** Node=Spring · 하나라도 다르면 red)
+
+| 축 | 기대(=Node=Spring 실측) |
+|---|---|
+| `POST /api/login`(Z) — 응답 본문 `sessionId` 필드(README 의 `$login.sessionId`) | `200 sessionId=string` |
+| `POST /api/distribution/tick` + `x-session-id` 헤더(쿠키 없음) | `200 ok=true` |
+| 응답 shape(6키 · `distributed` 원소 3키 · press/DPS) | `keys=at,distributed,failed,invalid,ok,scanned item=articleId,kinds,status kinds=press status=DPS` |
+| 응답에 스풀 경로 비노출(`spoolDir` 키·슬러그·`.json`·경로 구분자) | `leaks=0` |
+| 같은 tick 2회 — **스풀 파일 수로** 멱등(기사 1건) | `tick1=distributed tick2=not-distributed files=1/1` |
+| `Origin`·`Referer` 없이 통과(ADR-009) · 대조: 타 출처 `Origin` | `none=200 evil=403:forbidden-origin` |
+| 비-Z 세션(R·D) → 403 | `R=403:forbidden D=403:forbidden` |
+| 무세션 → 401 | `401:unauthenticated` |
+| `DIST_SPOOL_DIR` 미설정 인스턴스 → 503 | `503:spool-disabled` |
+| 같은 IP 연속 로그인 — 몇 번째가 429 인가(한도 10) | `429@11` |
+| `ps1` 정상(도래 기사 1건 · 출력 위생) | `exit=0 distributed=1 files=1 leaks=0` |
+| 같은 `ps1` 재실행 — 재배부 0 · 파일 수 유지 | `exit=0 distributed=0 files=1 leaks=0` |
+| `ps1` 자격 오류 | `exit=3 stage=login` |
+| `ps1` 비-Z 자격(tick 403) | `exit=4 stage=tick status=403` |
+| `ps1` 환경변수 없음 | `exit=2 stage=config` |
+| `ps1` 락 점유 중(이중 실행 방지) | `exit=6` |
+| `ps1` 서버 미도달 | `exit=5 stage=network` |
+
+**Node 와 다른 행은 하나도 없었다** — 운영 스크립트는 `$base` 만 바꾸면 Spring 에 붙는다. 「타 출처 Origin 403」 대조 행은 「무출처 통과」가 게이트 부재 때문이 아님을 보인다(비공허성).
+
+### 6-3. Spring 용 스크립트 (`packaging/server/tick-distribution-spring.ps1` — README §6 의 Node 예시를 **삭제하지 않고 나란히** 둔다 · 롤백 시 Node용이 필요하다)
+
+- **자격은 스크립트·인자에 평문으로 두지 않는다.** 작업 실행 계정의 **환경변수** `NEWS_TICK_USER` / `NEWS_TICK_PASSWORD` 에서만 읽는다. 선택 근거(스크립트 머리말에도 있다):
+  (a) 사용자 환경변수는 그 계정으로만 읽히고 **argv·스케줄러 이력·프로세스 목록에 남지 않는다** (b) Windows 자격 증명 관리자는 PowerShell 5.1 에 표준 cmdlet 이 없어 모듈 의존이 생긴다
+  (c) 리포 밖 파일은 ACL 을 하나 더 관리해야 하고 백업본에 딸려 나간다. 세 후보 중 관리 표면이 가장 작은 (a). 대상 주소는 `NEWS_TICK_BASE`(없으면 `http://127.0.0.1:3001`) 또는 `-BaseUrl`.
+- **종료코드**: `0` 성공 · `2` 설정(환경변수 없음) · `3` 로그인 실패(401/423/429) · `4` tick 비-200(403/503) · `5` 네트워크 · `6` 이중 실행(락 점유 — 스킵이지만 비0 으로 보인다).
+  작업 스케줄러의 "마지막 실행 결과" 가 이 값이다 — **`0` 이 아니면 경보를 건다.**
+- **로그**: 한 줄 — 시각(UTC)·결과·`distributed`/`scanned`/`failed`/`invalid` 건수·실패 단계·사유 토큰. **세션 토큰·자격·스풀 경로는 한 글자도 쓰지 않는다**(tick 응답에 경로가 없는 것이
+  계약인데 로그가 밖에서 그 계약을 깨면 안 된다). 프로브가 ps1 출력 7종에서 비밀번호·세션 토큰·스풀 경로·`sessionId`·`.json`·경로 구분자 부재를 실측한다(`leaks=0`). `-LogFile` 로 같은 줄을 append.
+- **이중 실행 방지**: 락 파일(`%TEMP%\tick-distribution-spring.lock`)을 `FileShare None` 으로 독점 열어 둔다 — 프로세스가 죽으면 OS 가 푼다(잔류 없음 · PID 파일 아님 · ADR-012 와 같은 원리).
+  열기는 **1초 안에 5회만** 재시도한다(백신·인덱서의 순간 점유로 거짓 6 을 내지 않기 위해 — 상주 루프가 아니다. 정적 검사가 초 단위 대기·`while($true)`·타이머를 막는다). **앱 안에 락·타이머를 만들지 않는다.**
+  스케줄러 쪽에서도 "이미 실행 중이면 새 인스턴스를 시작하지 않음" 을 켜라(두 겹).
+- **세션 재사용 없음**: 호출마다 로그인한다. 세션(1시간 슬라이딩)을 파일에 저장해 재사용하면 로그인 한도 문제는 사라지지만 **그 파일이 Z 토큰 유출 표면**이 된다 — 택하지 않았다.
+  대가는 §6-4 의 주기 하한이다.
+- **인코딩**: 파일은 **UTF-8 BOM** 이다 — Windows PowerShell 5.1 은 BOM 없는 한글 스크립트를 ANSI 로 읽어 문자열이 깨진다(자기검사가 BOM 을 단언한다).
+
+### 6-4. 레이트리밋 산술 (로그인 **10회 / 15분** 고정 창 · `LoginRateLimit.java` = `server/index.js` 609~614 · 클라이언트(IP)별 · 실측 `429@11`)
+
+호출마다 로그인하므로 **주기 = 로그인 간격**이다. 15분(900초) 고정 창에 들어가는 로그인 수 = `ceil(900 ÷ 주기초)`. 창 안 **11번째**가 429(양 서버 실측). §0-6 의 실제 주기는 **미상**이므로 주기를 매개변수로 적는다:
+
+| 주기 | 15분 창 안 로그인 수 | 한도 10 대비 |
+|---|---|---|
+| 30초 | 30 | **초과 → 11번째부터 429**(tick 은 exit 3 으로 멈춘다) |
+| 60초 | 15 | **초과** |
+| 89초 | 11 | **초과**(임계 바로 아래) |
+| **90초** | **10** | **통과 — 임계 주기** |
+| 120초 | 8 | 통과 |
+| **300초(권장)** | 3 | 통과 |
+| 600초 | 2 | 통과 |
+| 900초 | 1 | 통과 |
+
+**임계 주기 = 900 ÷ 10 = 90초.** 주기가 90초보다 짧으면 tick 이 스스로 한도를 먹어 429 로 멈춘다. **주기는 90초 이상, 권장 5분**(엠바고 지연 상한 = 주기). 두 가지 주의:
+(1) 한도는 **IP 별**이라 서버 PC 에서 브라우저로 로그인하는 관리자(같은 127.0.0.1)가 tick 과 버킷을 **공유**한다 — 실패 로그인·잠금(423)도 센다. (2) 주기를 90초 아래로 줄여야 하면 세션 재사용을 검토하되
+§6-3 의 토큰 유출 트레이드오프를 감수해야 한다 — 이 스크립트는 재사용하지 않는 쪽을 택했다.
+
+### 6-5. **A-2. 다중 인스턴스 — 이 전환이 잃는 것을 수량으로 잰다** (2026-09-08 · `--db mysql --rounds 5` · 임시 DB `harness_ct_*` finally 드롭 · 임시 스풀)
+
+**Spring 에는 ADR-012 단일 인스턴스 잠금이 없다**(main 소스 철자 0건 — ADR-017 결정 2 · open_questions (9) `GET_LOCK` 은 넣지 않는다). 그 공백의 크기를 「그럴 것이다」가 아니라 **숫자로** 쟀다:
+Spring 2개(**다른 포트 · 같은 MySQL 임시 DB · 같은 `DIST_SPOOL_DIR` · 같은 `DATA_DIR`**)와 Node 2개(같은 `DATA_DIR` · 다른 포트)를 띄워 스풀 파일 수를 **파일시스템에서 셌다**(응답 신뢰 금지).
+
+| 축 | Node (같은 `DATA_DIR` · 다른 포트) | Spring (같은 MySQL · 같은 `DIST_SPOOL_DIR` · 같은 `DATA_DIR` · 다른 포트) |
+|---|---|---|
+| **2번째 인스턴스 기동** | **`exit 1` — 506·600ms(2회) · ADR-012 잠금 안내(stderr) · 첫 인스턴스 health 유지** | **health-ok — 둘 다 뜬다**(2회 동일) |
+| 교차 세션(A 에서 로그인한 토큰으로 B 에 tick) | (2번째가 뜨지 않아 성립 불가) | **`401 unauthenticated`** · B 자기 세션은 `200` |
+| **순차** tick(A 먼저 끝난 뒤 B) | (성립 불가) | A `distributed` · B `not-distributed` · **파일 1 → 1** |
+| **동시** tick(A·B 동시 발화 · 5회) | (성립 불가) | **중복 회차 5/5 · 기사당 파일 최대 2** — 매 회차 A·B **둘 다** `distributed`(회차:파일수 1:2 2:2 3:2 4:2 5:2) |
+
+**실측이 확정한 사실 셋**:
+1. **Node 는 같은 `DATA_DIR` 로 두 번째가 뜨지 못한다**(`exit 1`). **Spring 은 둘 다 뜬다.** 이 **비대칭이 이 전환이 잃는 보호**이고(S6 대조 실험), 막는 자동 게이트는 없다.
+2. **세션은 프로세스 로컬이다** — 한 인스턴스의 토큰은 다른 인스턴스에서 401 이다(`SessionStore` in-process · 단일 세션 정책). **그래서 로드밸런서·이중화 구성은 불가능하다**(같은 사용자가 요청마다 다른 서버에 떨어지면 로그인이 갈린다).
+3. **이력 기준 멱등은 직렬 tick 은 막지만 동시 tick 은 못 막는다.** 멱등의 근거인 배부 이력이 스풀 쓰기 **뒤**에 남고, 프로세스 내 single-flight(`DistributionTickService.running`)는 프로세스가 둘이면 무력하다.
+   두 인스턴스가 같은 순간 tick 하면 같은 기사가 **두 번** 스풀된다(5/5). 중복 스풀은 ADR-008 트레이드오프가 「미발송보다 낫다」고 판단한 방향이지만 **의도하지 않은 중복은 다르다** — 운영이 절차로 막는다(§6-6·§6-7).
+
+### 6-6. 전환 절차 — 스케줄러 작업 **교체**(추가가 아니다) · 검증 · 롤백 · 실패 알림 책임
+
+1. **교체이지 추가가 아니다.** 기존 Node용 tick 작업의 **동작(Action)만** `tick-distribution-spring.ps1` 로 바꾸거나, 기존 작업을 **비활성화한 뒤** 새 작업을 등록한다. **삭제보다 비활성화가 먼저다**(되돌림 레버). 명령·판정은 §0-1 **U5**.
+2. **자격**: 작업 실행 계정의 환경변수에 `NEWS_TICK_USER`·`NEWS_TICK_PASSWORD`(Z 계정) 를 넣는다. `NEWS_TICK_BASE` 는 같은 host:port(`http://127.0.0.1:<PORT>`). **bat·ps1·작업 인자에 자격을 두지 마라.**
+3. **주기**: §6-4 — **90초 이상**(권장 5분). 기존 주기가 90초 미만이면 **그대로 옮기지 말고** 늘려라(옮기는 순간 429 로 멈춘다).
+4. **검증**(한 주기 뒤): (a) 작업 "마지막 실행 결과" = `0` (b) `DIST_SPOOL_DIR` 하위 파일 수가 **주기당 한 벌만** 는다 (c) 활성 tick 작업이 **정확히 하나**(`schtasks /query /fo list /v /tn <이름>`).
+   두 벌이 늘면 옛 작업이 살아 있는 것이다 — 즉시 하나를 비활성화한다(**파일은 지우지 않는다** — 외부 전송기가 이미 읽었을 수 있다).
+5. **롤백**(역순 1회): Spring용 작업 비활성화 → Node용 작업 되살림. **tick 작업은 언제나 정확히 하나만 활성**이어야 한다. 수집 스위퍼를 함께 운영 중이면 **롤백 시 스위퍼를 먼저 끈다**(§5-5).
+6. **실패 알림 책임은 운영이 소유한다**(앱은 자동 재시도·알림이 없다 — ADR-008 (6)). 스케줄러의 종료코드(≠0) 를 경보 조건으로 걸고 **그 경보를 받는 사람을 정한다**. 그 사람이 없으면 배부가
+   조용히 멈춰도 아무도 모른다 — 수집 스위퍼(§5-4)와 같은 성질이다. 종료코드 `6`(락 점유)이 반복되면 이전 실행이 안 끝난 것이다(서버 무응답 → `-TimeoutSec` 30초 뒤 exit 5 로 풀린다).
+
+### 6-7. 런북 §0 낭독 · §10 분기 — 「**Spring 은 두 번 뜬다**」
+
+- **§0 낭독(전환 전 소리 내어 읽는다)**: 「**Spring 에는 단일 인스턴스 잠금이 없다. 서로 다른 포트로 서버를 두 개(Node+Spring 이든 Spring 2개든) 동시에 띄우지 마라.** 두 인스턴스가 같은 MySQL·같은 `uploads`·같은 `DIST_SPOOL_DIR`
+  에 붙어 tick 이 양쪽에서 돌면 **같은 기사가 두 번 배부된다**(실측: 동시 tick 5/5 회차 파일 2). 이것을 막는 자동 게이트는 없다 — **지키는 것은 사람이다.**」
+- **§10 분기 — 서버가 하나만 떠 있는지 확인하는 법(운영자 언어)**:
+  1. `netstat -ano | findstr LISTENING` 에서 서버 포트가 **한 줄**인지. 같은 포트를 두 프로세스가 못 잡으므로 **같은 포트 이중 기동은 애초에 불가** — 위험은 언제나 **다른 포트**다.
+  2. 작업 관리자·`tasklist` 에서 `java.exe`(Spring) 와 `기사작성기-server.exe`(Node) 가 **동시에** 떠 있지 않은지. 전환 후에는 서버로서의 `java.exe` 하나만 있어야 한다(IDE·언어 서버의 `java.exe` 와 구분 — 명령줄에 jar 이름이 보인다).
+  3. **`/api/health` 로는 두 인스턴스를 구분할 수 없다** — 둘 다 `{ok:true}` 이고 인스턴스 식별자가 없다. 포트·프로세스 목록이 유일한 구분 수단이다.
+  4. `DIST_SPOOL_DIR` 파일 수가 **주기당 한 벌보다 많이** 늘면 tick 작업이 둘이거나 서버가 둘이다 — 둘 중 하나를 즉시 비활성화한다(파일은 지우지 않는다).
+
+### 6-8. 변이 결과표 (2026-09-08 · S1~S6 · 심기 → 측정 → 백업 원복 → 자기검사 16/16 확인 · 기대≠실제는 굵게)
+
+방어선은 세 겹이다: **판정부 자기검사**(`ps1StaticFindings`·`judgeRoundtrip`·`judgeMultiInstance` — 프로브는 이것이 빨간 채로는 서버를 띄우지 않는다) → **프로브 왕복 + 스풀 파일 수** → **A-2 실측**. 앞 겹이 닫히면 뒤 겹은 돌지 않는다(관측 부재가 아니라 방어선이 앞에서 닫혔다는 뜻이다).
+
+| 변이 | 심은 것 | 기대 | 실제 | 원복 |
+|---|---|---|---|---|
+| **S1** tick 에서 `x-session-id` 제거 | (a) 프로브 고정 행: 무세션 tick (b) ps1 의 tick 헤더를 `@{}` 로 | 401 · 검증이 잡는가 | (a) **직접 측정** `tick-no-session` = `401:unauthenticated`(Node·Spring 동일). (b) 헤더를 지우면 자기검사의 앵커(`'x-session-id' =`)가 사라져 **자기검사 red → 프로브 기동 거부**(exit 1 · 게이트가 앞에서 닫힘) | 백업 원복 · 16/16 |
+| **S2** 비-Z 계정으로 로그인 | 프로브 고정 행: R·D 세션 tick + ps1 을 R 자격으로 | 403 forbidden(ADR-004) | **직접 측정** `tick-non-z` = `R=403:forbidden D=403:forbidden` · `ps1-non-z` = `exit=4 stage=tick status=403`. 비공허성: 자기검사 「두 서버가 같은 방향으로 틀리면 red」가 인가 완화(양쪽 200)를 잡는다 | 고정 행(변이 없음) |
+| **S3** tick 2회 → 재배부 0 | (변이 아님 — 파일 수 검사의 비공허성) | **스풀 파일 수**로 재배부 0 | 단일 인스턴스 `files=1/1`(양 서버) · A-2 순차 `1→1` · **같은 실행 안에서 동시 tick 은 `2`** — 파일 수 검사가 1 과 2 를 실제로 구분했다(응답 `distributed` 만 보면 A·B 둘 다 「배부했다」고 답해 중복을 못 본다) | — |
+| **S4** 종료코드 처리 제거(항상 0) | ps1 `exit $code` → `exit 0` | 실패가 스케줄러에 안 보인다 — 검증이 잡는가 | **`ps1StaticFindings` red = `no-nonzero-exit`**(실제 파일 스캔 · 자기검사 15/16) → 프로브 기동 거부. 뚫고 돌려도 `ps1-bad-password`·`ps1-non-z`·`ps1-no-env` 행이 `exit=0` 으로 뒤집혀 red | 백업 원복 · 16/16 |
+| **S5** 자격을 ps1 에 평문으로 | `$secret = "…평문…"` | `SecretHygieneTest` 범위에 `packaging/**` 이 드는가 | **실측: `SecretHygieneTest` 는 `packaging/**` 을 _스캔은 한다_(가지치기 목록 밖) 그러나 6/6 green** — 세 패턴(jdbc-URL 자격 · `NEWS_*_PASSWORD=` 대입 · bootstrap SQL `IDENTIFIED BY`)이 PowerShell 리터럴 대입을 잡지 않는다 → **리포 Java 게이트는 못 잡는다(공백)**. 스크립트 자체 방어 `ps1StaticFindings` 는 red(`literal-password`·`password-not-from-env`) | 백업 원복 · 16/16. **테스트 범위 확대는 이 step 에서 하지 않는다**(별도 판단) |
+| **S6** Node 2개 같은 `DATA_DIR` | (변이 아님 — 잃은 보호의 대조 실험) | 2번째가 ADR-012 잠금에 막힌다 | **Node 2번째 `exit 1`(506ms · stderr 안내 · 첫 인스턴스 health 유지) · Spring 2번째 health-ok** — 그 비대칭이 §6-5 첫 줄. sqlite·mysql 두 실행 모두 동일 | — |
+
+**S5 공백 기록**: `tools/**`·`packaging/**` 스크립트의 앱 자격은 리포 전역 Java 게이트가 구조적으로 보지 못한다(패턴이 jdbc·env-대입·SQL 에 특화 — step6 R5 의 `tools/**` 공백과 같은 계열).
+이 step 은 스크립트 **자체 정적 검사**(자기검사 16건 · 프로브 기동 게이트)로 닫았고, `SecretHygieneTest` 범위·패턴 확대는 별도 phase 의 판단이다.
+
+### 6-9. 이 step 이 잡은 함정·발견 (전부 실측)
+
+1. **세션 단일 정책이 하네스를 속였다**: 1차 A-2 실측에서 「A 는 한 번도 배부하지 못하고 B 만 배부」가 6/6 으로 나왔다 — 중복 0 처럼 보였지만 실은 A 의 tick 이 전부 **401** 이었다. ps1 이 Z 로 로그인할 때마다
+   `SessionStore.createSession` 이 같은 userId 의 이전 세션을 **전부 무효화**해(단일 세션 정책) 왕복 초기의 Z 토큰이 죽어 있었다. 토큰을 A-2 안에서 새로 발급하자 진짜 결과(동시 5/5 중복)가 나왔다.
+   **교훈**: 다중 인스턴스 실측에서 `statusA/statusB` 를 표에 남겨야 「배부 안 함」과 「인증 실패」를 구분한다 — 프로브가 그렇게 기록한다.
+2. **ps1 락 홀더의 판정 방식**: 별도 PowerShell 프로세스로 「열어 보기」 판정은 1차 실행에서 20초 동안 답을 못 냈다(원인 미확정 · 격리 재현 0/8). 홀더가 stdout 으로 `HELD` 를 스스로 알리는 방식으로 바꿔 결정적으로 만들었다.
+3. **ps1 로그의 `/`**: 「missing-env (A / B)」 문구가 프로브의 「출력에 경로 구분자 0」 검사에 걸렸다 — 로그 문구에도 구분자를 쓰지 않는다(위생 검사가 문구까지 본다는 뜻이고, 그것이 옳다).
+4. **`Invoke-WebRequest` 는 `Origin`·`Referer` 를 붙이지 않는다**(Node `fetch`/undici 도 — 실측). 그래서 ADR-009 관용이 그대로 통하고, 스크립트에 Origin 을 흉내내 넣으면 정적 검사가 `browser-origin-header` 로 막는다.
+5. **`Start-Sleep -Seconds` 금지 · `-Milliseconds` 허용**: 락 열기 재시도(1초 안 5회)를 넣으며 정적 검사 규칙을 「초 단위 대기·`while($true)`·타이머는 상주 루프」로 좁혔다(밀리초 5자리 이상도 막는다).
+
+### 6-10. 무엇을 보지 않는가
+
+- 운영 스케줄러의 **실제 작업 이름·주기·스크립트 경로·자격 위치**(§0-6 전부 미상) — U5 가 사람 손으로 채운다. 산술표는 그래서 주기가 매개변수다.
+- 두 인스턴스가 **다른 머신**에 있는 구성(같은 스풀을 SMB 로 공유) — ADR-012 트레이드오프의 미검증 영역이고 이 phase 도 재지 않는다.
+- 스풀 파일 이름 충돌(같은 ms 에 두 인스턴스가 같은 `<articleId>_<stamp>.json` 을 쓰는 경우) — 5회 관측에서는 모두 다른 stamp 였다. 충돌 시 `ATOMIC_MOVE` 의 덮어쓰기 여부는 잰 적이 없다.
+- 세션 재사용 판의 ps1 — 만들지 않았다(§6-3 결정).

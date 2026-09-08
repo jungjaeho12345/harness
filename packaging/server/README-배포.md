@@ -85,6 +85,26 @@ $login = Invoke-RestMethod -Method Post -Uri "$base/api/login" -ContentType "app
 Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x-session-id" = $login.sessionId }
 ```
 
+### 6-1. Spring 서버로 전환한 뒤 — tick 스크립트는 `tick-distribution-spring.ps1` (P3 · `docs/cutover-p3.md` §6)
+
+- **위 Node 예시와 같은 형태의 호출이 Spring 에 그대로 통한다**(실측 17행 Node=Spring 동일 — 쿠키 우선·`x-session-id` 헤더 폴백 · `Origin`/`Referer` 없는
+  서버-서버 요청은 통과). 그래도 운영에는 **이 폴더의 `tick-distribution-spring.ps1`** 을 쓴다 — 종료코드·로그·이중 실행 방지가 있다. 위 예시는 롤백용으로 남긴다.
+- **작업 스케줄러의 tick 작업은 교체하지 추가하지 마라.** 두 작업이 살아 있으면 같은 기사가 두 번 배부된다. 기존 작업의 동작(Action)만 바꾸거나 기존 작업을
+  **비활성화한 뒤** 새로 등록한다(`schtasks /Change /TN <기존 작업명> /DISABLE` → `schtasks /Create ...`). 활성 tick 작업은 **언제나 정확히 하나**.
+- **자격은 작업 실행 계정의 환경변수**에 둔다 — `NEWS_TICK_USER`(Z 계정 ID)·`NEWS_TICK_PASSWORD`. 스크립트·bat·작업 인자에 평문으로 두지 마라(인자는 스케줄러 이력·프로세스
+  목록에 남는다). 대상은 `NEWS_TICK_BASE`(기본 `http://127.0.0.1:3001`) 또는 `-BaseUrl`.
+- 등록 예(5분 주기 · 실행 계정 = 위 환경변수를 가진 계정):
+  `schtasks /Create /TN "기사작성기-distribution-tick" /SC MINUTE /MO 5 /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\기사작성기-server\tick-distribution-spring.ps1 -LogFile D:\기사작성기-server\data\tick.log" /RU <계정> /F`
+  작업 속성에서 **"이미 실행 중이면 새 인스턴스를 시작하지 않음"** 을 켠다(스크립트의 락 파일과 두 겹).
+- **주기는 90초 이상(권장 5분).** 호출마다 로그인하고 로그인 한도가 같은 IP 기준 **15분/10회**라, 90초보다 짧으면 15분 안 11번째 로그인이 429 로 거부돼 tick 이 멈춘다
+  (60초 주기 = 15회 > 10). 세션을 파일에 저장해 재사용하지 않는 이유는 그 파일이 Z 토큰 유출 표면이기 때문이다.
+- **종료코드** `0` 성공 · `2` 환경변수 없음 · `3` 로그인 실패 · `4` tick 비-200(403/503) · `5` 서버 미도달 · `6` 이중 실행(락 점유). **0 이 아니면 경보** — 스케줄러 "마지막 실행 결과" 로 보인다.
+  로그(`-LogFile`)는 한 줄에 시각·결과·`distributed` 등 건수만 남기고 토큰·자격·스풀 경로는 쓰지 않는다.
+- **판정**: 등록 후 한 주기 뒤 (a) 마지막 실행 결과 `0` (b) `DIST_SPOOL_DIR` 파일 수가 **주기당 한 벌만** 는다 (c) `schtasks /Query /FO LIST /V` 에 활성 tick 작업이 하나. 두 벌이 늘면 옛 작업이 살아 있다.
+- **되돌릴 때**: Spring용 작업을 비활성화하고 Node용 작업을 되살린다(둘 다 켜 두지 마라). 수집 스위퍼(7-1절)도 함께 운영 중이면 스위퍼를 먼저 끈다.
+- **서버는 하나만**: Spring 에는 11절의 "이미 실행 중" 잠금이 **없다**. 다른 포트로 Spring 을 하나 더(또는 Node 와 나란히) 띄우면 둘 다 뜨고, 같은 스풀에 tick 이 양쪽에서 돌면
+  같은 기사가 두 번 배부된다(실측: 동시 tick 5회 중 5회 파일 2벌). `netstat -ano | findstr LISTENING` 과 작업 관리자에서 서버 프로세스가 하나인지 확인하라 — `/api/health` 로는 구분할 수 없다.
+
 ## 7. 수집 운영 (선택)
 
 - FTP 수집: `RCV_SPOOL_DIR`를 설정하면 그 폴더를 감시한다 — 외부 FTP 서버(FTPd)가 그 폴더에
