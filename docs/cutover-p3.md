@@ -579,3 +579,148 @@ fetch 표준의 **차단 포트 묶음**(`6000` · `6566` · `6665~6669` · `669
 | 8 | 제어문자 9자 중 1자만 자기검사가 잠금 | **사실** → 9자 **전부** 집합 단언 | 계획에서 U+000E 제거 → red(`0x0E 가 없다`) → 원복 green |
 | 10 | 요약 줄 판정 2개 · 비교 불가 경로의 수치 부재 미명시 | **사실** → `formatCounts` + 종합 판정 **하나**(§4-1 = 코드) | `… 눈감은 자리 A=66 B=66 db=mysql → ok` |
 | 11 | Q6 행 "3곳이 더 red" | **사실**(4곳 = 5건) → §4-7 정정 · 재측정 6건 | `title` 추가 → red 6(1·4·9·11·12·19) · 원복 동일 |
+
+## 5. FTP 수집의 앱 밖 대체 경로 (`tools/collection-sweeper/` — step6 · 로드맵 P3 산출물 (마))
+
+> **한 줄**: Spring 에는 Node 의 FTP 스풀 watcher(`server/ftpWatcher.js` · `fs.watch(recursive)`)가 **없다**(`WatchService`·`RCV_SPOOL` 철자 0건 — ADR-008
+> "앱은 스스로 깨어나지 않는다"). 그 자리를 **앱 밖 스위퍼** `tools/collection-sweeper/sweeper.js` 가 맡는다: `<RCV_SPOOL_DIR>/<sourceId>/<file>` 을
+> **1회** 훑어 각 파일을 동결된 HTTP 진입점 `POST /api/collection/receive` `{sourceId, payload:<파일 내용 그대로>}` 로 넣는다 — watcher 가 부르던
+> `controllers.collection.receive(sourceId, payload)` 와 **같은 서비스 진입점**이고, 배부 tick(외부 cron pull)과 정확히 대칭이다. `server-spring/src/main` 은
+> **0줄** 바뀌었다(이 step 의 핵심 AC · `Adr008DisciplineTest` 의 '주기 실행'·'비동기·재시도' 예외 0 그대로).
+>
+> **분기 기록(step6.md 필수)**: §0-5묶음 첫 행 = **「쓴다」**(사용자 답변 · 2026-09-05 · §0-2 Q1). 따라서 **이 step 은 컷오버의 필수 선행이다** —
+> Spring 기동과 **같은 정지 창 안에서** 스위퍼 등록까지 끝나야 하고(step10 런북 순서), 「Node 은퇴 전제」로 내려가는 분기는 택하지 않았다.
+> 정확한 `RCV_SPOOL_DIR` 값·유입 주기·외부 FTPd 주체는 아직 **미상**이며 운영기에서 읽는다(step7·step10 사용자 항목) — 이 step 은 그 값 없이 구현·검증했다
+> (스위퍼는 폴더 경로를 인자로 받고, 검증은 전부 리포 밖 임시 폴더에서 했다).
+
+### 5-1. 실행
+
+```bash
+# 스위퍼 본체 — 토큰은 환경변수 COLLECTION_TOKEN 으로만(서버와 같은 값 · argv 에 토큰 모양이 오면 exit 2)
+COLLECTION_TOKEN=<서버와 같은 값> node tools/collection-sweeper/sweeper.js --spool <RCV_SPOOL_DIR> --base http://127.0.0.1:3001 --once \
+    [--move-to <처리완료 폴더 — 스풀 밖>] [--dry-run] [--ledger <파일>] [--stabilize-ms 1000] [--timeout 15000] [--report <리포 밖 JSON>]
+node --test tools/collection-sweeper/sweeper.test.js                                                     # 순수 판정부 + 파일 루프(sweepOnce 주입) + 소스 정적 스캔(28)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node tools/collection-sweeper/roundtrip.js             # Node vs Spring 왕복 대조 · exit 0
+node tools/collection-sweeper/roundtrip.js --overlap                                                       # Node watcher + 스위퍼 같은 스풀 — 중복 실측
+```
+
+**종료코드 규약** — `0` 전건 성공 **또는 처리 0건** · `1` `rejected`(4xx 사유 토큰 — 최종 · 재시도 안 함) 또는 `failed`(401·503·5xx·네트워크 — **다음 실행이 재시도**)가
+1건 이상 · `2` 설정·환경 오류(인자·스풀 없음·서버 미도달·장부 못 씀·argv 토큰 · **파일을 건드리지 않았다**). 스케줄러는 `1`·`2` 를 경보 조건으로 건다.
+**파일별 결과** = `ingested` / `rejected` / `failed` / `skipped`(장부에 있음) / `deferred`(크기·mtime 이 아직 변한다 — 다음 실행에) / `dry-run` / `ignored`(최상위 = sourceId 없음).
+**장부** = `<spool>/.collection-sweeper-ledger.jsonl`(기본 · append 전용 JSON Lines · 키 = `상대경로#sha256`) — 스풀 **최상위**라 1세그먼트 = watcher·스위퍼 모두 무시하는 자리다.
+`--ledger` 로 옮길 수 있되 **전송 전 preflight** 로 쓸 수 있는지 보고, 못 쓰면 한 건도 보내지 않는다(장부 없는 기사 = 다음 실행의 중복).
+**`--move-to`** 는 성공(ingested)한 파일만 `<dir>/<sourceId>/<file>` 로 **이동**(덮어쓰기 없음 · 같은 이름이면 `.<ms>.dup` 접미사 · 다른 드라이브면 복사 후 지문 일치 확인 뒤 원본 정리)
+하고, **스풀 안은 거부**한다 — 스풀 안으로 옮기면 `<spool>/<done>/<sourceId>/<file>` 이 2세그먼트 이상이라 다음 스캔(과 롤백 시 Node watcher)이 **다시 수집**한다.
+장부는 `--move-to` 와 무관하게 **항상** 쓴다(이동 실패·장부 어느 한쪽이 무너져도 멱등이 남는다). **스위퍼는 파일을 지우지 않는다.**
+
+### 5-2. 무엇이 갈리는가 (divergence — 더 나은 쪽이라도 적는다)
+
+| 축 | Node watcher (`server/ftpWatcher.js` 48줄 · 무수정) | 스위퍼 (`tools/collection-sweeper/`) | 실측 |
+|---|---|---|---|
+| 깨어남 | `fs.watch(dir,{recursive:true})` 이벤트 — 파일이 떨어지면 **즉시** | **외부 스케줄러가 정한 주기**(1회 실행 = 1회 스캔 · 자체 루프·타이머·감시 0 — 정적 스캔 15패턴) | 수집 지연 = 스케줄 주기(권장 1분) |
+| sourceId 도출 | `split(/[/\\]/).filter(Boolean)` · 2세그먼트 미만 무시 · `parts[0]` | **동형**(`lib.js deriveSourceId` · 단위 R1·R2) | 왕복 `nested/04-deep.txt` → `rt-src-a` 양쪽 동일 · 최상위 `10-toplevel.txt` 양쪽 `ignored` |
+| 부분 파일 방어 | **없다** — 이벤트마다 곧바로 `readFile` | 크기·mtime 이 `--stabilize-ms`(기본 1000) 간격의 **연속 2회 관측에서 동일**할 때만 읽는다(아니면 `deferred`) | `--overlap`: 한 번의 `writeFileSync` 에 watcher 가 **3건** 등록(rename+change 다중 이벤트 · 이번엔 셋 다 전문이었지만 빈 제목이 나올 수 있는 구조) |
+| 중복 판정 | **없다** — 이벤트 수만큼 `receive` 호출. 수집 서비스도 중복 판정이 없다(`unregistered`·`inactive` 뿐 — Node·Spring 동일) | 장부(`상대경로#sha256`) — 같은 파일 재실행은 `skipped` · 같은 이름에 다른 내용은 새 파일 | 왕복 pass2 `ingested 0/0` · 01-plain 기사 **1건** 유지 · R3(장부 제거)로 **2건** 실측(§5-7) |
+| 파일 처분 | 아무것도 안 함(FTPd·운영이 치운다) | **삭제 금지** — 장부 + 선택 `--move-to` 이동 | 왕복 검증 절차 3: pass1·pass2 후 픽스처 10파일 전부 제자리 |
+| 실패 격리 | 파일 단위 `catch` → `onError` 로그 · watcher 는 산다 | 파일 단위 `catch` → `failed` · 다음 파일 계속 · 장부 못 쓰면 **exit 2 로 멈춤**(환경 실패는 격리 대상이 아니다) | R4b(첫 실패 중단) 왕복 red(§5-7) |
+| 로그 | `collection ftp received sourceId=…` / `warn … reason=…` · payload 0 | stdout `[sweep] <rel> sourceId=… → ingested articleId=…` · stderr `rejected/failed reason=…` · payload·토큰 0 · `--report` JSON 도 동일 | 왕복이 출력·장부·리포트에서 토큰 부재 단언 |
+| 무효화 신호 | watcher 가 `notifyChange('create')` | HTTP 경로라 `CollectionController` 가 `ChangeBus.CREATE` 발행(Node 라우트 1090행 동형) — **동일** | — |
+| **거대 파일** | HTTP 를 거치지 않아 **상한 없음** | Spring `JsonHttp.readBody` **상한 없음 → 200** · **Node HTTP 는 전역 `express.json()` 100kb → 413 → 전역 핸들러 500 `internal-error`** | 왕복 `07-huge-150k.txt`: node `failed:internal-error@500` / spring `ingested@200` — **허용 divergence 1건**(관측되지 않으면 실패) |
+| 런타임 | 서버 exe 안(SEA · Node 내장) | **Node 런타임이 필요하다**(≥ 24 · `node:sqlite` 불필요 · 의존성 0 — `tools/collection-sweeper/` 두 파일 `sweeper.js`·`lib.js` 만 복사) | 운영기에 Node 가 없으면 설치 항목이 하나 는다(§5-3) |
+
+거대 파일 행의 뜻: 스위퍼→**Spring** 은 watcher→Node 와 **같은 쪽**(상한 없음)이고, 갈리는 것은 대조군 스위퍼→Node 뿐이다. 이 100kb 경계는 `JsonHttp` javadoc 이 이미 "어떤 계약도 관측하지 않아
+조용히 갈린다"고 적어 둔 기존 divergence 이며, 이번 왕복이 그것을 **수치로** 처음 봤다. 운영에서 스위퍼는 Spring 만 향한다 — Node 를 향해 돌리지 마라(그건 watcher 가 하는 일이다).
+
+### 5-3. 설치·등록 (작업 스케줄러) — step10 런북이 이 절을 인용한다
+
+1. 운영기에 Node 런타임(v24 권장)이 있는지 확인. 없으면 설치한다(**서버 exe 는 Node 를 내장하지만 그것을 스위퍼가 빌릴 수는 없다**).
+2. `tools/collection-sweeper/sweeper.js`·`lib.js` 두 파일을 운영 폴더(예: `D:\기사작성기-server\tools\collection-sweeper\`)에 복사한다. 리포 전체는 필요 없다.
+3. `COLLECTION_TOKEN` 은 **작업의 실행 계정 환경변수(사용자 변수) 또는 서비스 환경**에 둔다 — bat·ps1·작업 인자에 평문으로 두지 마라(argv 는 프로세스 목록·스케줄러 이력에 남는다.
+   스위퍼는 argv 에 토큰 모양이 오면 **실행을 거부**한다). 값은 Spring 의 `COLLECTION_TOKEN` 과 같아야 한다(다르면 전건 `failed:unauthenticated` · exit 1).
+4. 래퍼 `collection-sweep.cmd`(토큰 없음):
+   ```bat
+   @echo off
+   node "D:\기사작성기-server\tools\collection-sweeper\sweeper.js" --spool "<RCV_SPOOL_DIR>" --base http://127.0.0.1:3001 --once ^
+        --move-to "D:\기사작성기-server\data\rcv-done" --report "%TEMP%\collection-sweep-last.json"
+   exit /b %ERRORLEVEL%
+   ```
+5. 등록(1분 주기 · 실행 계정 = 3 의 환경변수를 가진 계정):
+   ```bat
+   schtasks /Create /TN "기사작성기-collection-sweep" /SC MINUTE /MO 1 /TR "D:\기사작성기-server\collection-sweep.cmd" /RU <계정> /F
+   ```
+   같은 스풀에 이 작업을 **하나만** 둔다(두 개면 장부 append 경합 — 파일 하나가 두 번 들어갈 수 있다). 스케줄러의 "이미 실행 중이면 새 인스턴스를 시작하지 않음" 을 켠다.
+6. 첫 실행은 `--dry-run` 으로 — 후보 수·`ignored` 수·`deferred` 수를 보고 폴더 레이아웃(`<spool>/<sourceId>/<file>`)이 `docs/RCV.md` 와 맞는지 확인한다.
+7. 관측: 종료코드 `1`·`2` 를 경보로, `--report` JSON 의 `counts` 를 대시보드로. 장부는 지우지 않는다(지우면 스풀에 남은 파일이 전부 다시 들어간다 — `--move-to` 를 쓰면 이 위험이 사라진다).
+
+### 5-4. 운영으로 넘어가는 책임
+
+Node 시절 앱 안에 있던 「깨어남·중복 방지 없음·실패 로그」가 전부 **운영 루틴**으로 나온다: **주기**(스케줄러) · **멱등**(장부/이동 — 장부 파일과 `--move-to` 폴더의 보존) ·
+**실패 감시**(exit 1/2 경보 · `failed` 는 자동 재시도되지만 `rejected` 는 장부에 최종으로 남아 **다시 시도되지 않는다** — 미등록 sourceId 를 뒤늦게 등록해도 그 파일은 장부 줄을 지우거나 파일을
+새 이름으로 다시 놓아야 들어간다) · **감시**(스케줄러 이력). 배부 tick 을 운영이 소유하는 것과 같은 규율이다(ADR-008 (3)).
+
+### 5-5. 롤백 순서 — **스위퍼를 먼저 끈다**
+
+**Node 로 되돌리면 `RCV_SPOOL_DIR` 이 설정된 Node 가 watcher 를 되살린다. 그 상태에서 스위퍼 작업이 살아 있으면 같은 파일이 두 번 들어간다 — 반드시 `schtasks /Change /TN "기사작성기-collection-sweep" /DISABLE`
+(또는 `/Delete`)로 스위퍼를 먼저 끄고, 그 다음에 Node 를 올려라.** 반대로 컷오버 때는 Node 를 내린 **뒤** 스위퍼를 켠다. 이 순서를 어기면 어떻게 되는지 잰 것이 아래다.
+
+**실측(`roundtrip.js --overlap` · 2026-09-08 · Node 를 `RCV_SPOOL_DIR=<임시 스풀>` 로 띄우고 같은 스풀에 스위퍼)**: 파일 **1개**(`rt-src-a/overlap.txt`) → Node watcher **3건**
+(Windows `fs.watch` 가 rename+change 이벤트를 셋 내고 watcher 는 중복 판정이 없다 — 셋 다 제목 일치 · 빈 제목 0) + 스위퍼 **1건** = **자동기사 4건**. 즉 겹치는 순간 최소 2배이고, Node watcher 는 혼자서도
+파일당 여러 건을 만든다(이것이 Node 시절부터 있던 성질이며 스위퍼는 그것을 고치지 않는다 — 고칠 자리는 `server/**` 이고 이 phase 는 그것을 만지지 않는다).
+
+### 5-6. 왕복 대조 (`roundtrip.js` · 2026-09-08 · Node·Spring 각각 임시 `DATA_DIR`·같은 시드·같은 난수 토큰 · loopback · 수신 설정 `rt-src-a`(Y)·`rt-src-inactive`(N) 을 Z 세션으로 등록)
+
+| 파일 | node | spring | 투영(title·attribute·status·format·version·blocks) 동일 | 판정 |
+|---|---|---|---|---|
+| `rt-src-a/01-plain.txt` (첫 줄 제목 · 2줄 본문) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/02-object.json` (JSON **텍스트** — 문자열 payload 는 판독하지 않는다 · 첫 줄이 통째로 제목) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/03-empty.txt` (0 B → 빈 제목 · 블록 `['']`) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/nested/04-deep.txt` (중첩 → sourceId `rt-src-a`) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/05-crlf.txt` (선행 빈 줄 2 · CRLF · 제목 양끝 공백) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/06-unicode.txt` (한글·이모지·탭·백슬래시·ESC·VT·U+2028·`<>&`·DEL·따옴표) | `ingested@200` | `ingested@200` | yes | same |
+| `rt-src-a/07-huge-150k.txt` (150 KiB) | **`failed:internal-error@500`** | **`ingested@200`** | no | **expected-divergence**(§5-2) |
+| `rt-src-inactive/08-inactive.txt` | `rejected:inactive@403` | `rejected:inactive@403` | yes | same |
+| `rt-unregistered/09-unregistered.txt` | `rejected:unregistered@403` | `rejected:unregistered@403` | yes | same |
+| `10-toplevel.txt` (최상위) | `ignored` | `ignored` | — | same |
+
+수치: **파일 9 · diffs 0 · 허용 divergence 1 · pass1 exit 1/1**(거부 2건이 의도된 픽스처) · **pass2 `skipped` node 8 / spring 9 · ingested 0/0 · 기사 6/7 불변 · 01-plain 기사 1건** · `--dry-run` 전송 0·장부 없음 ·
+`--move-to` 스풀 안 거부(exit 2)·이동 후 스풀에 없음·`done/rt-src-a/m1.txt`·재실행 ingested 0 · argv `--token` exit 2 + 출력·장부에 값 0 · 장부를 디렉토리로 주면 exit 2 + 전송 0 · 픽스처 10파일 미삭제 ·
+실행 전후 리포 `news.db` 무변 · 자식 잔존 0 · 임시 디렉토리 삭제. 요약 줄: `collection-sweeper roundtrip A=node B=spring 파일 9 · diffs 0 · 허용 divergence 1 · pass2 ingested node=0 spring=0 · 기사 node=6 spring=7 → ok`.
+**Node 대상 pass2 가 exit 1 인 이유**는 `07-huge` 가 `failed`(재시도 대상)라 매 실행 다시 실패하기 때문이다 — 이것이 "failed 는 재시도" 규약의 실물이다.
+
+### 5-7. 변이 결과표 (2026-09-08 · 러너가 심기 → `node --test` → 왕복 → `git checkout --` 원복 → `git diff --stat` 0줄 확인 · 기대≠실제는 굵게)
+
+두 번 쟀다: **1차**(`f73bb60` — 루프가 `sweeper.js` 안에 있던 판)와 **2차**(`c926d63` — 루프를 `lib.js sweepOnce` 로 뽑고 단위 6건을 더한 최종 판). 1차에서 **R4a 가 green 으로 남은 것**이 2차의 이유다.
+왕복 하네스는 자기검사가 빨간 채로는 서버를 띄우지 않으므로, 단위가 red 인 변이의 "왕복" 칸은 **기동 거부**다(방어선이 앞에서 닫혔다는 뜻이며 관측 부재가 아니다).
+
+| 변이 | 심은 것 | 기대 | 실제 (1차 · 2차) | 원복 |
+|---|---|---|---|---|
+| **R1** 백슬래시 구분자 제거 | `lib.js` `split(/[/\\]/)` → `split('/')` | 단위 red(Windows 경로) | 단위 **red 4**(`deriveSourceId` 백슬래시 · `splitSegments` · `planScan` `b\sub\y` · `ledgerKey` 정규화) → 왕복 기동 거부. 왕복만으로는 못 본다(`listFiles` 가 `/` 로 조립한다) — 단위가 유일 방어선 | `git checkout` · diff 0 |
+| **R2** 2세그먼트 미만 무시 제거 | `parts.length < 2` → `< 1` | 최상위 파일이 sourceId 없이 전송돼 실패/오동작 | 단위 **red 2**(`deriveSourceId` null · `planScan`) → 왕복 기동 거부. **런타임 실측(자기검사를 거치지 않는 단독 측정 스크립트 · Node 임시 서버)**: `toplevel.txt` 가 `sourceId=toplevel.txt` 로 전송돼 **403 `unregistered` → rejected → 장부에 최종 등재(재시도 없음) · exit 1**. 기준선(무변이)은 `ignored 1 · ingested 1 · exit 0` | diff 0 |
+| **R3** 멱등 장부 제거 | `const prior = done.get(key)` → `undefined`(1차) / `deps.ledgerHas(key)` → `null`(2차) | 재실행이 같은 파일을 다시 넣는다 — **기사 2건인지 실측** | **1차 왕복 red**: pass2 `ingested` node 6 / spring 7 → 기사 **6→12 · 7→14** · **`01-plain` 기사 2건**(양쪽) · `FAIL pass2 skipped 0 ≠ 8/9`. **수집 서비스는 중복을 막지 않는다 — 같은 파일 2회 = 기사 2건**(Node·Spring 동일 · 예상대로). 2차: 단위 `sweepOnce` skipped 케이스 red 1 → 왕복 기동 거부 | diff 0 |
+| **R4a** 예외 격리 제거(첫 예외에서 중단) | `catch` 에서 무조건 `throw err` | 뒤 파일이 처리되지 않는 테스트 red | **1차: 단위 green · 왕복 green — 못 잡았다**(왕복 픽스처 9건 중 예외를 던지는 것이 없다 — 거부·실패는 전부 HTTP 값이다). → 2차: 루프를 주입형 `sweepOnce` 로 뽑고 "첫 파일 읽기 예외 → 둘째 처리" 단위를 추가 → **red 1**(`sweepOnce — 첫 파일 읽기가 예외를 던져도 둘째 파일은 처리된다`) | diff 0 |
+| **R4b** 거부/실패에서 중단 | `classifyResponse` 뒤 `if (outcome !== 'ingested') break` | 뒤 파일 미처리 red | 1차 왕복 **red**(절대 기대치: `pass1 결과 node 6 / spring 8 ≠ 후보 9 — 뒤 파일이 처리되지 않았다`. 대조만으로는 못 봤을 변이 — 두 서버가 같은 방향으로 틀린다). 2차: 단위 `sweepOnce — 거부/실패여도 다음 파일` red 1 | diff 0 |
+| **R5** 토큰을 argv 로 | 가드 `findTokenLikeArgv` 호출 제거 + `--token` 플래그 수용 + env 대신 argv 값 사용(4곳) | 비밀 위생 게이트/리뷰가 잡는가 | **리포 게이트는 못 잡는다 — 공백**: `SecretHygieneTest` 는 Java 전용, `scripts/**` 는 eslint ignore, `tools/**` 를 훑는 정적 게이트가 없다. 자체 가드가 잡는다: 단위 `정적 스캔 — 토큰을 argv 에서 읽지 않고 env 이름 한 곳에서만` **red 1**(`findTokenLikeArgv(` 배선 단언) → 왕복 기동 거부(무변이 왕복은 `--token <값>` → exit 2 + 출력·장부에 값 0 을 매번 단언한다) | diff 0 |
+| **R6a** `setInterval` 상주 루프 | 파일 끝에 `setInterval(() => {}, 60000)` | 정적 스캔 red | **red 1** `sweeper.js:285 'setInterval'` → 왕복 기동 거부(스캔이 앞에서 닫는다) | diff 0 |
+| **R6b** 상수 조립 우회 | `globalThis['setInt' + 'erval'](...)` | 스캔이 이름을 못 보면 통과할 것 | **red 1** — `'dynamic global lookup'`(`globalThis[`) 패턴이 통로를 막는다 | diff 0 |
+| **R6c** 동적 import 우회 | `await import('node:' + 'tim' + 'ers/promises')` | 이름이 쪼개져 통과할 것 | **red 1** — `'dynamic import'`(`import(`) 패턴(1차의 `'timers/promises'` 리터럴은 `'timers module'` 이 먼저 잡았다) | diff 0 |
+| **R6d** 별칭 대입 | `const every = setInterval;` (호출 없음) | `\(` 을 요구하는 스캔이면 통과할 것 | **red 1** — 낱말 단위(`\bsetInterval\b`) 스캔 | diff 0 |
+
+읽는 법: 이 step 의 방어선은 **단위(순수 판정부 + 정적 스캔) → 왕복(절대 기대치 + 대조 + 허용 divergence 비공허성) → 런타임 단독 측정** 세 겹이고, 앞 겹이 닫히면 뒤 겹은 돌지 않는다. **R4a 1차 green** 은 "왕복이 잡는다"는
+가정이 픽스처의 한계로 거짓이었다는 실측이고, 그래서 격리 규칙을 **단위가 소유**하도록 구조를 바꿨다(decisions (12)·(13)). 리포 차원의 R5 공백(`tools/**` 비밀 위생 게이트 없음)은 남는다 — 스위퍼 자체 가드 + 왕복 단언으로 닫았고, 리포 전역 게이트는 이 step 범위 밖이다.
+
+### 5-8. 이 step 이 잡은 함정·발견 (전부 실측)
+
+1. **`process.exit()` + 살아 있는 fetch 소켓 = Windows libuv 단언 크래시**(`src\win\async.c:94 !(handle->flags & UV_HANDLE_CLOSING)` · exit `0xC0000409`). 왕복 첫 실행에서 스위퍼 자식이 두 번 죽었다(판정은 옳았고
+   종료 직전에 죽었다). 처방: 요청에 `connection: close` + `process.exitCode` 자연 종료(`process.exit` 0건). 스위퍼는 타이머·감시가 없으니 자연 종료가 곧 즉시 종료다.
+2. **`fs.watch(recursive)` 에 8.3 짧은 경로를 주면 Node 서버가 통째로 죽는다**(`src\win\fs-event.c:72 !_wcsnicmp(filename, dir, dirlen)`). `os.tmpdir()` 이 `JUNGJA~1` 형태를 준 첫 `--overlap` 실행에서 실측 —
+   하네스는 `fs.realpathSync.native` 로 풀었다. **운영 함정**: 롤백 시 `RCV_SPOOL_DIR` 을 짧은 경로(`%TEMP%` 파생·`PROGRA~1` 등)로 주면 Node 가 기동 직후 죽는다. 런북 롤백 절에 넣어라(step10).
+3. **Node watcher 는 파일 1개에 3건**을 만든다(§5-5) — Node 시절부터의 성질. 스위퍼는 장부로 자기 쪽 중복만 막는다.
+4. Node HTTP `/api/collection/receive` 의 100kb 상한(§5-2) — Spring 은 없다. 운영 스위퍼는 Spring 만 향한다.
+5. `tools/**/*.mjs` 는 eslint 가 node 전역 없이 훑어 `no-undef` 21건이 난다(`scripts/**` 는 ignore · `**/*.js` 만 node 전역). 그래서 이 도구는 `.js`(package `type: module`)다 — `eslint.config.js`·`package.json` 무수정.
+
+### 5-9. 무엇을 보지 않는가
+
+- 실제 외부 FTPd 와 그 쓰기 방식(임시 이름 → rename 인지, 제자리 쓰기인지) — 안정화 간격(기본 1초)의 적정치는 운영 유입을 보고 정한다(step7·10).
+- LAN 바인딩 + 토큰 미설정의 503 `collection-disabled` 는 계약 `failclosed` 프로파일이 소유한다(무접촉). 스위퍼는 그것을 `failed:collection-disabled` 로 분류하고 재시도한다.
+- Spring 의 MySQL 축은 이 왕복이 띄우지 않는다(sqlite) — 수집 라우트 자체는 `--db mysql --parity` 313관측이 본다. 스위퍼는 서버 저장소를 모른다.
+- 여러 스위퍼 인스턴스의 장부 append 경합 — 작업은 하나만(§5-3 5).

@@ -92,6 +92,20 @@ Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x
 - HTTP 수집(`/api/collection/receive`·`/pull`): LAN 개방(`HOST` 설정) 시 `COLLECTION_TOKEN`이
   없으면 503으로 비활성된다(위 환경변수 표 참조).
 
+### 7-1. Spring 서버로 전환한 뒤 — FTP 수집은 스위퍼가 받는다 (P3 · `docs/cutover-p3.md` §5)
+
+- **Spring 서버에는 위의 FTP 폴더 감시(watcher)가 없다.** `RCV_SPOOL_DIR`를 설정해도 Spring은 그 폴더를
+  보지 않는다. 대신 **앱 밖 스위퍼** `tools/collection-sweeper/sweeper.js`(Node 스크립트 — 운영기에 Node
+  런타임이 있어야 한다)를 작업 스케줄러에 등록해 주기적으로 그 폴더를 훑고, 파일을 HTTP 수집 진입점
+  `POST /api/collection/receive`로 넣는다(watcher가 부르던 것과 같은 서비스 진입점).
+- 실행 예(1분 주기 작업 · 토큰은 **작업 실행 계정의 환경변수** `COLLECTION_TOKEN`에 — 인자·bat에 평문 금지,
+  인자에 토큰 모양이 오면 스위퍼가 실행을 거부한다):
+  `node tools\collection-sweeper\sweeper.js --spool <RCV_SPOOL_DIR> --base http://127.0.0.1:3001 --once --move-to <스풀 밖 처리완료 폴더>`
+- 스위퍼는 **파일을 지우지 않는다**(장부 `<스풀>\.collection-sweeper-ledger.jsonl` + 선택 이동). 장부·처리완료
+  폴더는 백업 대상이다. 종료코드 `0` 정상 · `1` 일부 거부/실패 · `2` 설정 오류 — `1`·`2`를 경보로 건다.
+- **Node 서버로 되돌릴 때는 스위퍼 작업을 먼저 끄고(`schtasks /Change /TN <작업명> /DISABLE`) Node를 켜라.**
+  둘이 같이 돌면 같은 파일이 두 번 수집된다(실측: 파일 1개 → 기사 4건). 컷오버 때는 그 반대 순서다.
+
 ## 8. 백업 / 복구
 
 - **백업 = 서버 중지 후 `data\` 폴더 복사.** (`news.db` + `-wal`/`-journal` 동반 파일 + `uploads\`
