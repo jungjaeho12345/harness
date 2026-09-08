@@ -130,6 +130,91 @@ export function findTokenLikeArgv(argv, envToken) {
   return null;
 }
 
+/** 장부 기록 실패 표식 — 파일 실패가 아니라 환경 실패다(격리하지 않고 전파한다). */
+const LEDGER_FATAL = Symbol('ledger-fatal');
+
+export function isLedgerFatal(err) {
+  return Boolean(err && err[LEDGER_FATAL]);
+}
+
+const errorCode = (err) => (err && err.code ? String(err.code) : (err && err.message) || 'unknown');
+
+/**
+ * 파일 루프 1회 — fs·HTTP·시계는 전부 deps 로 주입된다(단위 테스트가 실패 격리를 잠근다 · R4).
+ *
+ * deps: observe(rel)→{size,mtimeMs}|null · readFile(rel)→Buffer · post(sourceId, payload)→{status,json,error?} ·
+ *       ledgerHas(key)→entry|null · ledgerAppend(entry) (던지면 **전파** — isLedgerFatal) · moveOut(rel, sha)→표시용 목적지 ·
+ *       log(line, level) · dryRun · moveTo · now()→ISO 문자열(기본 시계).
+ * 규칙: 한 파일의 예외는 그 파일만 failed 로 남기고 다음으로 간다. 최종 결과(ingested·rejected)만 장부. 이동 실패는 ingested 를
+ * 뒤집지 않는다(기사는 생겼고 장부에도 있다) — moveError 로만 남긴다. payload·토큰은 어떤 로그 줄에도 싣지 않는다.
+ */
+export async function sweepOnce(candidates, firstObservations, deps) {
+  const now = deps.now ?? (() => new Date().toISOString());
+  const results = [];
+  for (const { sourceId, rel } of candidates) {
+    const record = { rel, sourceId, outcome: null, status: null, reason: null, articleId: null, sha256: null, bytes: null, movedTo: null, moveError: null };
+    results.push(record);
+    try {
+      if (!sameObservation(firstObservations.get(rel), deps.observe(rel))) {
+        record.outcome = 'deferred';
+        record.reason = 'unstable';
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → deferred(unstable — 다음 실행에)`, 'info');
+        continue;
+      }
+      const bytes = deps.readFile(rel);
+      const payload = bytes.toString('utf8'); // watcher 동형: readFile(..., 'utf8') 그대로
+      record.sha256 = sha256Hex(bytes);
+      record.bytes = bytes.length;
+      const key = ledgerKey(rel, record.sha256);
+      const prior = deps.ledgerHas(key);
+      if (prior) {
+        record.outcome = 'skipped';
+        record.reason = `ledger:${prior.outcome}`;
+        record.articleId = prior.articleId ?? null;
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → skipped(ledger ${prior.outcome}${prior.articleId ? ` articleId=${prior.articleId}` : ''})`, 'info');
+        continue;
+      }
+      if (deps.dryRun) {
+        record.outcome = 'dry-run';
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → dry-run(${bytes.length}B)`, 'info');
+        continue;
+      }
+      const res = await deps.post(sourceId, payload);
+      const verdict = classifyResponse(res.status, res.json);
+      record.outcome = verdict.outcome;
+      record.status = res.status ?? null;
+      record.reason = verdict.reason ?? (res.error ? `network:${res.error}` : null);
+      record.articleId = verdict.articleId;
+      if (FINAL_OUTCOMES.has(verdict.outcome)) {
+        const entry = { t: now(), key, rel, sourceId, outcome: verdict.outcome, status: record.status, reason: verdict.reason, articleId: verdict.articleId };
+        try {
+          deps.ledgerAppend(entry);
+        } catch (err) {
+          const fatal = err instanceof Error ? err : new Error(String(err));
+          fatal[LEDGER_FATAL] = true;
+          throw fatal;
+        }
+      }
+      if (verdict.outcome === 'ingested') {
+        if (deps.moveTo) {
+          try { record.movedTo = deps.moveOut(rel, record.sha256); } catch (err) { record.moveError = errorCode(err); }
+        }
+        const tail = record.movedTo ? ` moved=${record.movedTo}` : (record.moveError ? ` move-failed=${record.moveError}` : '');
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → ingested articleId=${verdict.articleId}${tail}`, record.moveError ? 'warn' : 'info');
+      } else {
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → ${verdict.outcome} status=${record.status ?? '-'} reason=${record.reason}`, 'warn');
+      }
+    } catch (err) {
+      if (isLedgerFatal(err)) throw err; // 환경 실패 — 계속 가면 장부 없는 기사가 는다(다음 실행의 중복).
+      // 실패 격리 — 이 파일만 failed 로 남기고 다음 파일로 간다. 메시지는 오류 코드·이름만(payload 없음).
+      record.outcome = 'failed';
+      record.reason = record.reason ?? `error:${errorCode(err)}`;
+      deps.log(`[sweep] ${rel} sourceId=${sourceId} → failed reason=${record.reason}`, 'warn');
+    }
+  }
+  return results;
+}
+
 /** candidate 가 root 자신이거나 그 아래인가. win32 는 대소문자·구분자 무시(scripts/lib/spoolParity.mjs pathIsInside 동형). */
 export function pathIsInside(candidate, root, platform) {
   const norm = platform === 'win32'

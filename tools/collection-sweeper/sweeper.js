@@ -23,8 +23,7 @@ import path from 'node:path';
 
 import {
   EXIT, TOKEN_ENV, TOKEN_HEADER,
-  classifyResponse, exitCodeFor, findTokenLikeArgv, formatLedgerLine, ledgerKey, parseLedger, pathIsInside, planScan,
-  sameObservation, sha256Hex, summarize,
+  exitCodeFor, findTokenLikeArgv, formatLedgerLine, isLedgerFatal, parseLedger, pathIsInside, planScan, sha256Hex, summarize, sweepOnce,
 } from './lib.js';
 
 const DEFAULT_LEDGER_NAME = '.collection-sweeper-ledger.jsonl'; // 스풀 최상위 = 1세그먼트 = watcher·스위퍼 모두 무시하는 자리
@@ -202,73 +201,36 @@ async function main() {
     try { fs.appendFileSync(cfg.ledger, ''); } catch (err) { die(`장부를 쓸 수 없다: ${cfg.ledger} (${err && err.code ? err.code : err})`); }
   }
   const done = fs.existsSync(cfg.ledger) ? parseLedger(fs.readFileSync(cfg.ledger, 'utf8')) : new Map();
-  const results = [];
-  for (const { sourceId, rel } of plan.candidates) {
-    const abs = absByRel.get(rel);
-    const record = { rel, sourceId, outcome: null, status: null, reason: null, articleId: null, sha256: null, bytes: null };
-    results.push(record);
-    try {
-      if (!sameObservation(first.get(rel), observe(abs))) {
-        record.outcome = 'deferred';
-        record.reason = 'unstable';
-        process.stdout.write(`[sweep] ${rel} sourceId=${sourceId} → deferred(unstable — 다음 실행에)\n`);
-        continue;
-      }
-      const bytes = fs.readFileSync(abs);
-      const payload = bytes.toString('utf8'); // watcher 동형: readFile(..., 'utf8') 그대로
-      record.sha256 = sha256Hex(bytes);
-      record.bytes = bytes.length;
-      const key = ledgerKey(rel, record.sha256);
-      const prior = done.get(key);
-      if (prior) {
-        record.outcome = 'skipped';
-        record.reason = `ledger:${prior.outcome}`;
-        record.articleId = prior.articleId ?? null;
-        process.stdout.write(`[sweep] ${rel} sourceId=${sourceId} → skipped(ledger ${prior.outcome}${prior.articleId ? ` articleId=${prior.articleId}` : ''})\n`);
-        continue;
-      }
-      if (cfg.dryRun) {
-        record.outcome = 'dry-run';
-        process.stdout.write(`[sweep] ${rel} sourceId=${sourceId} → dry-run(${bytes.length}B)\n`);
-        continue;
-      }
-      const res = await receive(cfg, token, sourceId, payload);
-      const verdict = classifyResponse(res.status, res.json);
-      record.outcome = verdict.outcome;
-      record.status = res.status;
-      record.reason = verdict.reason ?? (res.error ? `network:${res.error}` : null);
-      record.articleId = verdict.articleId;
-      if (verdict.outcome === 'ingested' || verdict.outcome === 'rejected') {
-        const line = formatLedgerLine({
-          t: new Date().toISOString(), key, rel, sourceId, outcome: verdict.outcome, status: res.status, reason: verdict.reason, articleId: verdict.articleId,
-        });
-        // 장부 실패는 파일 실패가 아니라 환경 실패다 — 계속 가면 장부 없는 기사가 늘어난다(다음 실행의 중복). 여기서 멈춘다(exit 2).
-        try { fs.appendFileSync(cfg.ledger, line); } catch (err) { die(`장부 기록 실패(${rel} 은 서버에 ${verdict.outcome} 됐으나 장부에 없다 — 수동 확인): ${err && err.code ? err.code : err}`); }
-      }
-      if (verdict.outcome === 'ingested') {
-        let moved = '';
-        if (cfg.moveTo) moved = ` moved=${path.relative(cfg.moveTo, moveOut(abs, rel, cfg.moveTo, record.sha256)).replace(/\\/g, '/')}`;
-        process.stdout.write(`[sweep] ${rel} sourceId=${sourceId} → ingested articleId=${verdict.articleId}${moved}\n`);
-      } else {
-        process.stderr.write(`[sweep] ${rel} sourceId=${sourceId} → ${verdict.outcome} status=${res.status ?? '-'} reason=${record.reason}\n`);
-      }
-    } catch (err) {
-      if (err instanceof ConfigError) throw err; // 환경 실패(장부)는 격리 대상이 아니다 — 실행을 멈춘다.
-      // 실패 격리 — 이 파일만 failed 로 남기고 다음 파일로 간다. 메시지는 오류 코드·이름만(payload 없음).
-      record.outcome = 'failed';
-      record.reason = record.reason ?? `error:${err && err.code ? err.code : (err && err.message) || 'unknown'}`;
-      process.stderr.write(`[sweep] ${rel} sourceId=${sourceId} → failed reason=${record.reason}\n`);
-    }
+  // 파일 루프는 lib.js sweepOnce(순수 · 의존성 주입)가 소유한다 — 여기서는 fs·HTTP·stdout 을 꽂아 줄 뿐이다.
+  let results;
+  try {
+    results = await sweepOnce(plan.candidates, first, {
+      observe: (rel) => observe(absByRel.get(rel)),
+      readFile: (rel) => fs.readFileSync(absByRel.get(rel)),
+      post: (sourceId, payload) => receive(cfg, token, sourceId, payload),
+      ledgerHas: (key) => done.get(key) ?? null,
+      ledgerAppend: (entry) => fs.appendFileSync(cfg.ledger, formatLedgerLine(entry)),
+      moveOut: (rel, sha) => path.relative(cfg.moveTo, moveOut(absByRel.get(rel), rel, cfg.moveTo, sha)).replace(/\\/g, '/'),
+      log: (line, level) => (level === 'warn' ? process.stderr : process.stdout).write(`${line}\n`),
+      dryRun: cfg.dryRun,
+      moveTo: cfg.moveTo,
+    });
+  } catch (err) {
+    // 장부 기록 실패 — 파일 실패가 아니라 환경 실패다. 계속 가면 장부 없는 기사가 늘어난다(다음 실행의 중복). 여기서 멈춘다(exit 2).
+    if (isLedgerFatal(err)) die(`장부 기록 실패(서버에는 등록됐으나 장부에 없는 파일이 있다 — 수동 확인): ${err && err.code ? err.code : err}`);
+    throw err;
   }
 
   const counts = summarize(results);
   counts.ignored = plan.ignored.length;
-  const code = exitCodeFor(counts);
+  // 이동 실패는 outcome 을 뒤집지 않지만(기사·장부는 정상) 운영이 알아야 하므로 exit 1 이다.
+  const moveErrors = results.filter((r) => r.moveError).length;
+  const code = moveErrors > 0 ? EXIT.PARTIAL : exitCodeFor(counts);
   if (cfg.report) {
     fs.writeFileSync(cfg.report, `${JSON.stringify({ spool: cfg.spool, base: cfg.baseUrl, dryRun: cfg.dryRun, moveTo: cfg.moveTo, counts, exitCode: code, results }, null, 2)}\n`);
   }
   const parts = ['ingested', 'rejected', 'failed', 'skipped', 'deferred', 'dry-run', 'ignored'].map((k) => `${k}=${counts[k] ?? 0}`).join(' ');
-  process.stdout.write(`collection-sweeper spool=${cfg.spool} base=${cfg.baseUrl} files=${files.length} ${parts} → exit ${code}\n`);
+  process.stdout.write(`collection-sweeper spool=${cfg.spool} base=${cfg.baseUrl} files=${files.length} ${parts} move-errors=${moveErrors} → exit ${code}\n`);
   return code;
 }
 

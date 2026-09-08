@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   EXIT, FINAL_OUTCOMES, TOKEN_ENV, TOKEN_HEADER,
   classifyResponse, deriveSourceId, exitCodeFor, findTokenLikeArgv, formatLedgerLine, ledgerKey, parseLedger,
-  pathIsInside, planScan, sameObservation, sha256Hex, splitSegments, summarize,
+  pathIsInside, planScan, sameObservation, sha256Hex, splitSegments, summarize, sweepOnce,
 } from './lib.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -214,6 +214,98 @@ test('findTokenLikeArgv — 정상 인자는 통과한다 · env 토큰 미설�
 test('토큰은 env COLLECTION_TOKEN 으로만 · 헤더 이름은 x-collection-token(서버 계약 동형)', () => {
   assert.equal(TOKEN_ENV, 'COLLECTION_TOKEN');
   assert.equal(TOKEN_HEADER, 'x-collection-token');
+});
+
+// --- 파일 루프 (sweepOnce — 의존성 주입으로 fs·HTTP 없이 실패 격리를 잠근다 · R4) ---
+
+function fakeDeps(overrides = {}) {
+  const posted = [];
+  const ledger = [];
+  const moved = [];
+  const logs = [];
+  const deps = {
+    observe: () => ({ size: 1, mtimeMs: 1 }),
+    readFile: (rel) => Buffer.from(`body of ${rel}`),
+    post: async (sourceId, payload) => { posted.push({ sourceId, payload }); return { status: 200, json: { ok: true, articleId: `A-${posted.length}` } }; },
+    ledgerHas: () => null,
+    ledgerAppend: (entry) => { ledger.push(entry); },
+    moveOut: (rel) => { moved.push(rel); return `done/${rel}`; },
+    log: (line) => { logs.push(line); },
+    dryRun: false,
+    moveTo: null,
+    ...overrides,
+  };
+  return { deps, posted, ledger, moved, logs };
+}
+
+const twoFiles = () => ({
+  candidates: [{ sourceId: 'a', rel: 'a/1.txt' }, { sourceId: 'a', rel: 'a/2.txt' }],
+  first: new Map([['a/1.txt', { size: 1, mtimeMs: 1 }], ['a/2.txt', { size: 1, mtimeMs: 1 }]]),
+});
+
+test('sweepOnce — 첫 파일 읽기가 예외를 던져도 둘째 파일은 처리된다(실패 격리 · R4a)', async () => {
+  const { deps, posted, ledger } = fakeDeps({ readFile: (rel) => { if (rel === 'a/1.txt') throw Object.assign(new Error('locked'), { code: 'EBUSY' }); return Buffer.from('x'); } });
+  const { candidates, first } = twoFiles();
+  const results = await sweepOnce(candidates, first, deps);
+  assert.deepEqual(results.map((r) => r.outcome), ['failed', 'ingested']);
+  assert.equal(results[0].reason, 'error:EBUSY');
+  assert.equal(posted.length, 1);
+  assert.equal(ledger.length, 1);
+});
+
+test('sweepOnce — 전송 결과가 거부/실패여도 다음 파일로 간다(R4b) · 최종 결과만 장부', async () => {
+  let n = 0;
+  const { deps, ledger } = fakeDeps({ post: async () => { n += 1; return n === 1 ? { status: 403, json: { ok: false, reason: 'unregistered' } } : { status: 500, json: { ok: false, reason: 'internal-error' } }; } });
+  const { candidates, first } = twoFiles();
+  const results = await sweepOnce(candidates, first, deps);
+  assert.deepEqual(results.map((r) => `${r.outcome}:${r.reason}`), ['rejected:unregistered', 'failed:internal-error']);
+  assert.deepEqual(ledger.map((e) => e.outcome), ['rejected']);
+});
+
+test('sweepOnce — 장부 기록 실패는 격리하지 않고 던진다(장부 없는 기사 = 다음 실행의 중복)', async () => {
+  const { deps } = fakeDeps({ ledgerAppend: () => { throw Object.assign(new Error('disk'), { code: 'EIO' }); } });
+  const { candidates, first } = twoFiles();
+  await assert.rejects(() => sweepOnce(candidates, first, deps), (err) => err.code === 'EIO');
+});
+
+test('sweepOnce — 안정화 실패는 deferred · 장부 적중은 skipped(articleId 전달) · dry-run 은 전송 0', async () => {
+  const { candidates, first } = twoFiles();
+  const unstable = fakeDeps({ observe: (rel) => (rel === 'a/1.txt' ? { size: 2, mtimeMs: 1 } : { size: 1, mtimeMs: 1 }) });
+  const r1 = await sweepOnce(candidates, first, unstable.deps);
+  assert.deepEqual(r1.map((r) => r.outcome), ['deferred', 'ingested']);
+  assert.equal(r1[0].reason, 'unstable');
+
+  const hit = fakeDeps({ ledgerHas: (key) => (key.startsWith('a/1.txt#') ? { outcome: 'ingested', articleId: 'OLD' } : null) });
+  const r2 = await sweepOnce(candidates, first, hit.deps);
+  assert.deepEqual(r2.map((r) => r.outcome), ['skipped', 'ingested']);
+  assert.equal(r2[0].articleId, 'OLD');
+  assert.equal(hit.posted.length, 1);
+
+  const dry = fakeDeps({ dryRun: true });
+  const r3 = await sweepOnce(candidates, first, dry.deps);
+  assert.deepEqual(r3.map((r) => r.outcome), ['dry-run', 'dry-run']);
+  assert.equal(dry.posted.length, 0);
+  assert.equal(dry.ledger.length, 0);
+});
+
+test('sweepOnce — 이동 실패는 ingested 를 뒤집지 않는다(기사는 생겼고 장부에도 있다) · moveError 만 남긴다', async () => {
+  const { deps, ledger } = fakeDeps({ moveTo: 'done', moveOut: (rel) => { if (rel === 'a/1.txt') throw Object.assign(new Error('x'), { code: 'EPERM' }); return `done/${rel}`; } });
+  const { candidates, first } = twoFiles();
+  const results = await sweepOnce(candidates, first, deps);
+  assert.deepEqual(results.map((r) => r.outcome), ['ingested', 'ingested']);
+  assert.equal(results[0].moveError, 'EPERM');
+  assert.equal(results[1].moveError, null);
+  assert.equal(results[1].movedTo, 'done/a/2.txt');
+  assert.equal(ledger.length, 2);
+});
+
+test('sweepOnce — payload 는 파일 바이트의 utf8 그대로 · 장부 키 = rel#sha256 · 로그에 payload 없음', async () => {
+  const { deps, posted, ledger, logs } = fakeDeps({ readFile: () => Buffer.from('제목\n본문 secret-body') });
+  const { candidates, first } = twoFiles();
+  await sweepOnce(candidates, first, deps);
+  assert.equal(posted[0].payload, '제목\n본문 secret-body');
+  assert.equal(ledger[0].key, `a/1.txt#${sha256Hex(Buffer.from('제목\n본문 secret-body'))}`);
+  assert.ok(logs.every((l) => !l.includes('secret-body')), '로그에 payload 가 실렸다');
 });
 
 // --- 경로 포함 판정 (--move-to 가 스풀 안이면 거부 — 이동한 파일이 다시 수집된다) ---
