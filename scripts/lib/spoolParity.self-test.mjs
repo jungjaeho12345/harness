@@ -17,8 +17,8 @@ import assert from 'node:assert/strict';
 
 import {
   ISO_MILLIS_Z, LOWERCASE_HEX_CHARS, PLACEHOLDER_KEYS, SPOOL_FILE, SPOOL_FOLDERS, STAMP_ORDER,
-  buildScenarioPlan, compactStamp, compareSpools, expectedFolderCounts, formatDiffLines, formatSummary,
-  normalizeFile, parseSpoolFileName, scanTopLevel, stepsByArticle,
+  buildScenarioPlan, compactStamp, compareSpools, expectedFolderCounts, formatCounts, formatDiffLines, formatSummary,
+  lookupStep, normalizeFile, parseSpoolFileName, pathIsInside, scanTopLevel, stepsByArticle,
 } from './spoolParity.mjs';
 
 // --- 픽스처 — Node spoolWriter.js 가 만드는 그대로(공백 없음 · 키 순서 = 조립 순서) ---
@@ -254,12 +254,72 @@ test('시나리오 순번에 없는 articleId 의 파일은 실패(짝짓기는 
   const r2 = compareSpools(side('node', [{ step: 'ga', file: fileOf(payload()) }]), c);
   assert.equal(r2.ok, false);
   assert.ok(r2.failures.some((f) => f.includes('한쪽')), JSON.stringify(r2.failures));
-  assert.deepEqual(stepsByArticle({ ga: 'A1', ma: 'A2' }), { A1: 'ga', A2: 'ma' });
+  assert.deepEqual({ ...stepsByArticle({ ga: 'A1', ma: 'A2' }) }, { A1: 'ga', A2: 'ma' });
+});
+
+test('순번 표 조회는 own property 만 본다 — articleId 가 constructor·toString·__proto__ 여도 표 밖이면 실패(리뷰 후속 6번)', () => {
+  for (const hostile of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    const a = side('node', [{ step: 'ga', file: fileOf(payload({ articleId: hostile })) }]);
+    a.steps = {}; // plain object — 상속 함수가 truthy 로 잡혀 "표 밖" 실패를 우회하면 안 된다
+    const b = side('spring', [{ step: 'ga', file: fileOf(payload({ articleId: 'AKR20260907000000002' })) }]);
+    const r = compareSpools(a, b);
+    assert.equal(r.ok, false, hostile);
+    assert.ok(r.failures.some((f) => f.includes('순번')), `${hostile}: ${JSON.stringify(r.failures)}`);
+  }
+  assert.equal(lookupStep({}, 'constructor'), null);
+  assert.equal(lookupStep({ constructor: 'ga' }, 'constructor'), 'ga', 'own property 면 정상 조회');
+  assert.equal(lookupStep(undefined, 'x'), null);
+  const table = stepsByArticle({ ga: '__proto__', ma: 'constructor' });
+  assert.equal(Object.getPrototypeOf(table), null, '순번 표는 프로토타입이 없다');
+  assert.equal(lookupStep(table, '__proto__'), 'ga');
+  assert.equal(lookupStep(table, 'constructor'), 'ma');
+});
+
+test('자리표시자 값의 raw 표기도 단언한다 — 의미가 같아도 \\u 이스케이프로 쓰인 articleId·시각은 실패(리뷰 후속 7번)', () => {
+  const obj = payload();
+  const plain = JSON.stringify(obj);
+  const cases = [
+    ['articleId', plain.replace('"articleId":"AKR2026', '"articleId":"AKR\\u0032026')], // \u0032 = '2'
+    ['distributedAt', plain.replace('"distributedAt":"2026-09', '"distributedAt":"2026\\u002d09')], // \u002d = '-'
+    ['createdAt', plain.replace(`"createdAt":"${T_CREATED}"`, `"createdAt":"${T_CREATED.replace('T', '\\u0054')}"`)], // \u0054 = 'T'
+  ];
+  for (const [key, text] of cases) {
+    assert.notEqual(text, plain, `${key}: 픽스처가 실제로 이스케이프를 담아야 한다`);
+    assert.deepEqual(JSON.parse(text), obj, `${key}: 의미는 같다 — 표기만 다르다`);
+    const r = normalizeFile(fileOf(obj).name, text);
+    assert.equal(r.ok, false, key);
+    assert.ok(r.errors.some((e) => e.includes(key) && e.includes('raw')), `${key}: ${JSON.stringify(r.errors)}`);
+  }
+  // 비교 경로에서도 조용히 통과하지 않는다(눈감기 전에 실패로 남는다 — diffs 0 이어도 ok 가 아니다).
+  const a = side('node', [{ step: 'ga', file: fileOf(obj) }]);
+  const b = side('spring', [{ step: 'ga', file: { folder: SPOOL_FOLDERS.press, name: fileOf(obj).name, text: cases[0][1] } }]);
+  const r = compareSpools(a, b);
+  assert.equal(r.ok, false);
+  assert.ok(r.failures.some((f) => f.includes('raw')), JSON.stringify(r.failures));
+});
+
+test('formatCounts 는 판정 없이 다섯 수치만 · formatSummary = formatCounts + 판정(드라이버 요약 줄은 종합 판정 하나만 붙인다 — 리뷰 후속 10번)', () => {
+  const r = pair();
+  assert.equal(formatCounts(r), 'spool-parity A=node B=spring 폴더 1 · 파일 1 · diffs 0 · 눈감은 자리 A=6 B=6');
+  assert.equal(formatSummary(r), `${formatCounts(r)} → ok`);
+  assert.ok(!formatCounts(r).includes('→'));
+});
+
+test('pathIsInside — win32 는 대소문자·구분자를 무시한다(소문자 드라이브로 리포 안에 쓰는 우회 차단) · posix 는 구분(리뷰 후속 1번)', () => {
+  assert.equal(pathIsInside('d:\\agents\\harness\\reports', 'D:\\agents\\harness', 'win32'), true);
+  assert.equal(pathIsInside('D:/agents/harness/reports', 'D:\\agents\\harness', 'win32'), true, '슬래시 표기');
+  assert.equal(pathIsInside('D:\\AGENTS\\Harness', 'D:\\agents\\harness', 'win32'), true, '루트 자체');
+  assert.equal(pathIsInside('D:\\agents\\harness2\\x', 'D:\\agents\\harness', 'win32'), false, '접두 문자열만 같은 형제');
+  assert.equal(pathIsInside('C:\\Users\\x\\Temp\\spool', 'D:\\agents\\harness', 'win32'), false);
+  assert.equal(pathIsInside('/repo/x', '/repo', 'linux'), true);
+  assert.equal(pathIsInside('/repo', '/repo', 'linux'), true);
+  assert.equal(pathIsInside('/Repo/x', '/repo', 'linux'), false, 'posix 는 대소문자 구분');
+  assert.equal(pathIsInside('/repo2/x', '/repo', 'linux'), false);
 });
 
 // --- 시나리오 계획 — Q3·Q5 를 공허하게 만들지 않는 표본 ---
 
-test('시나리오 계획은 5축이고 (마)가 제어문자 9자 중 하나·한글·이모지·따옴표·개행·백슬래시·U+2028·DEL·<>& 와 비어 있지 않은 internalComment 를 담는다', () => {
+test('시나리오 계획은 5축이고 (마)가 제어문자 9자 전부·한글·이모지·따옴표·개행·백슬래시·U+2028·DEL·<>& 와 비어 있지 않은 internalComment 를 담는다', () => {
   const plan = buildScenarioPlan(Date.parse('2026-09-07T03:00:00.000Z'));
   assert.deepEqual(plan.steps.map((s) => s.id), ['ga', 'na', 'da', 'ra', 'ma']);
   const by = Object.fromEntries(plan.steps.map((s) => [s.id, s]));
@@ -269,7 +329,10 @@ test('시나리오 계획은 5축이고 (마)가 제어문자 9자 중 하나·�
   assert.equal(by.ra.retry, true);
   assert.deepEqual(by.na.tickKinds, ['nonpress']); assert.deepEqual(by.da.tickKinds, ['press']);
   const sample = `${by.ma.body.title}\n${by.ma.body.keyword}\n${by.ma.body.externalComment}`;
-  assert.ok(LOWERCASE_HEX_CHARS.some((c) => by.ma.body.title.includes(String.fromCharCode(c))), '제목에 소문자 16진 이스케이프 표본(0x0B/0x0E/0x0F/0x1A~0x1F)이 없으면 Q3 가 공허하다');
+  // Spring LowercaseHexEscapes 는 **문자별 표**다 — 하나만 있으면 나머지 8자의 회귀는 못 본다(리뷰 후속 8번: 9자 전부를 집합으로 잠근다).
+  for (const c of LOWERCASE_HEX_CHARS) {
+    assert.ok(sample.includes(String.fromCharCode(c)), `(마) 표본(제목·keyword·externalComment)에 0x${c.toString(16).toUpperCase().padStart(2, '0')} 가 없다 — 9자 전부 있어야 Q3 가 문자별로 비공허하다`);
+  }
   for (const [label, needle] of [['한글', /[가-힣]/], ['이모지(서로게이트 쌍)', /[\uD83D][\uDE00-\uDEFF]/], ['따옴표', /"/], ['개행', /\n/], ['탭', /\t/], ['백슬래시', /\\/], ['U+2028', /\u2028/], ['DEL', /\u007f/], ['<>&', /<>&/], ['슬래시', /\//]]) {
     assert.ok(needle.test(sample), `(마) 표본에 ${label} 가 없다`);
   }

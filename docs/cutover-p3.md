@@ -460,11 +460,12 @@ cd server-spring && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" ./mvnw -B -q clea
 SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spool-parity.mjs                          # sqlite 축 · exit 0 · diffs 0
 # §3 절차로 NEWS_CT_MYSQL_* 3키만 셸에 실은 뒤(NEWS_DB_* 금지)
 SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/spool-parity.mjs --db mysql               # Spring=MySQL 축(75 경로 그대로)
-node --test scripts/lib/spoolParity.self-test.mjs                                                          # 자기검사 단독(17)
+node --test scripts/lib/spoolParity.self-test.mjs                                                          # 자기검사 단독(21)
 ```
 
-옵션: `--db <sqlite|mysql>` · `--keep`(스풀 파일까지 보존 — 첫 실행은 이것으로 파일 하나를 눈으로 봐라) · `--out-dir <리포 밖>` · `--jar` · `--java-home` · `--timeout`.
-요약 줄 형식: **`spool-parity A=node B=spring 폴더 F · 파일 N · diffs D · 눈감은 자리 A=x B=y → ok|FAILED db=<kind>`** — 다섯 수치를 **항상** 낸다.
+옵션: `--db <sqlite|mysql>` · `--keep`(스풀 파일까지 보존 — 첫 실행은 이것으로 파일 하나를 눈으로 봐라) · `--out-dir <리포 밖 — win32 는 대소문자 무시로 판정>` · `--jar` · `--java-home` · `--timeout`.
+요약 줄 형식: **`spool-parity A=node B=spring 폴더 F · 파일 N · diffs D · 눈감은 자리 A=x B=y db=<kind> → ok|FAILED`** — 판정은 **종합 하나**(대조 결과 + 자식 잔존 · 리포 `news.db` 변동 · 비밀 누출 · 드롭 실패까지 합산).
+스풀 수집 **전**에 실패하면(기동·재생 실패) 수치가 없다: `spool-parity 비교 불가(스풀 수집 전 실패 — 수치 없음) db=<kind> → FAILED`. `diff.json` 의 `summary` 는 대조 판정만 담는다(`formatSummary`).
 **기준값(2026-09-07 · HEAD 소스 · sqlite 연속 2회 동일 · mysql 1회)**: **폴더 3 · 파일 11 · diffs 0 · 눈감은 자리 66/66** (양 축 동일).
 
 절차(`spa-parity.mjs`·`spring-contract.mjs` 의 규율을 베꼈고 그 파일들은 고치지 않았다): 자기검사 → 리포 밖 임시 루트 → 서버별 임시 `DATA_DIR`
@@ -500,6 +501,8 @@ node --test scripts/lib/spoolParity.self-test.mjs                               
 | `createdAt` · `sentAt` (추가) | ① 같은 형식 · ③ **단조성 `createdAt ≤ sentAt ≤ distributedAt`**(같은 ms 허용 — 송고와 배부가 한 ms 안에 끝나는 서버가 있다. tick·재전송 파일은 `sentAt < distributedAt` 이 뚜렷하다) |
 
 치환은 **최상위 키의 문자열 값만** 바꾼다(전용 JSON 스캐너 — 제목 안에 `"distributedAt":"…"` 같은 글자가 있어도 손대지 않는다 · 자기검사가 그 경우를 박아 둔다).
+눈감기 **전**에 ⑤ **raw 표기**도 단언한다(2026-09-08 리뷰 후속): 치환할 raw 슬라이스가 `JSON.stringify(파싱 값)` 과 **바이트 동일**해야 한다 — 값(ISO·articleId)이 ASCII 라
+역슬래시-u0041(= `A`) 류 이스케이프 변형은 파싱 값이 같아 ①~④를 다 통과하지만 산출물 바이트는 다르므로, 이 단언이 없으면 자리표시자 자리가 그 차이를 삼킨다(자기검사가 u0032=`2`·u002d=`-`·u0054=`T` 변형을 박아 둔다).
 그 밖의 키(`title`·`markupVersion`·`embargoAt`·`secondEmbargoAt`·`status`·`keyword`·`author` …)는 **클라가 준 값이거나 양쪽이 같아야 하는 값**이라 자리표시자 금지 —
 자기검사가 **집합**(순서까지)을 잠그고 그 7키가 목록에 없음을 함께 단언한다. 자리표시자를 늘리는 것은 결정이다(Q6 가 그 대가를 실증한다).
 
@@ -521,7 +524,7 @@ node --test scripts/lib/spoolParity.self-test.mjs                               
 
 ### 4-6. 실패했을 때 읽는 법
 
-1. **`FAIL [node|spring] <폴더>/<파일>: …`** 가 먼저 나오면 정합 3겹 위반이다(형식·stamp 정합·단조성·순번 표 밖 articleId·`.tmp` 잔존) — 바이트 비교 **전**이라 `파일 0` 으로 요약된다.
+1. **`FAIL [node|spring] <폴더>/<파일>: …`** 가 먼저 나오면 정합 위반이다(형식·stamp 정합·단조성·자리표시자 raw 표기·순번 표 밖 articleId(own property 만 조회)·`.tmp` 잔존) — 바이트 비교 **전**이라 `파일 0` 으로 요약된다.
 2. **`파일 수가 다르다`·`스풀 파일 수가 시나리오 기대와 다르다`** — 구현 차이보다 **시나리오를 먼저 의심**하라(대상 활성·엠바고 판정·tick 순서 · 재생 로그의 `[label] <순번> … → ok` 줄 어디서 끊겼는지).
 3. **`DIFF <폴더>/<순번>#<n> bytes@<offset> (len A= B=): A="…" B="…"`** + `keys A/B`·`only-in-A/B` — 첫 차이 바이트 주변 64자와 키 집합 차이를 보여 준다. 길이가 같고 offset 이 2 면 키 순서다(Q2).
 4. `--keep`/`--out-dir` 로 남는 것: `node.json`·`spring.json`(폴더·파일명·순번·바이트 수·sha256 — 본문 없음)·`diff.json`·`*-boot.log`(경로는 `<tmp>`/`<repo>` 로 가림) · `--keep` 이면 스풀 파일 원본까지.
@@ -539,7 +542,7 @@ node --test scripts/lib/spoolParity.self-test.mjs                               
 | Q3 | Java `MAPPER` 에서 `LowercaseHexEscapes` 제거 | (마) 파일에서만 diff | **diffs 3/11** — (마) 3파일 `\u001B`↔`\u001b`(길이 710 동일). **함정 확인**: 이 표본이 없었다면 0 = 무해 | cmp 동일 |
 | Q4 | Java pick 의미론 뒤집기(null 이어도 키 유지) | 전 파일 diff | **diffs 11/11** · `"coAuthor":null,"category":null…` 이 끼어 길이 336→505 등 | cmp 동일 |
 | Q5 | Java allowlist 에 `internalComment` 추가(보안 축) | 그 값이 있는 파일에서 diff | **diffs 5/11**(ga 2·ma 3) · `only-in-B=[internalComment]` · **새 키 증가를 잡는다**(집합 비교가 아니라 바이트 비교라 allowlist/blacklist 구분이 필요 없다). 표본이 비어 있었다면 0 | cmp 동일 |
-| Q6 | 대조기 `PLACEHOLDER_KEYS` 에 `title` 추가 | 자기검사 red · 우회하면 제목 차이가 조용히 통과 | (a) **자기검사 red → 하네스 기동 거부**(집합 단언 + 「제목 안 글자 무접촉」·「6/6 tally」·「\uAC00 표본이 title 에 있음」 3곳이 더 red — 게이트를 우회하려면 자기검사 **9곳** 을 고쳐야 했다). (b) 우회한 채 **제목만 바꾼 Spring 변이**(`title + " "` · 정상 대조기로는 diffs 11/11)를 돌리면 **diffs 0 · exit 0 = 공허화 실증** — 남는 흔적은 `눈감은 자리 66→77` 뿐 | 판정부 `git checkout` |
+| Q6 | 대조기 `PLACEHOLDER_KEYS` 에 `title` 추가 | 자기검사 red · 우회하면 제목 차이가 조용히 통과 | (a) **자기검사 red → 하네스 기동 거부**(집합 단언 + 「제목 안 글자 무접촉」·「6/6 tally」·「\uAC00 표본이 title 에 있음」 ·「자리표시자 밖 키의 값 차이」 **4곳**이 더 red = 5건(원문의 "3곳"은 오기 — 2026-09-08 리뷰 후속 정정) — 게이트를 우회하려면 자기검사 **9곳** 을 고쳐야 했다. 2026-09-08 재측정: 「formatCounts 6/6」이 더해져 red **6건**). (b) 우회한 채 **제목만 바꾼 Spring 변이**(`title + " "` · 정상 대조기로는 diffs 11/11)를 돌리면 **diffs 0 · exit 0 = 공허화 실증** — 남는 흔적은 `눈감은 자리 66→77` 뿐 | 판정부 `git checkout` |
 | Q7 | Java 파일명 stamp = `distributedAt`+1ms(페이로드는 그대로) + 대조기 정합 단언 제거 | 정상 대조기는 정합 실패 · 단언 없으면 통과 | (a) 정상 대조기: **`FAIL [spring] … 파일명 stamp(…164Z)가 distributedAt(…162Z)와 정합하지 않는다` ×11**(node 0) · 바이트 비교 전 중단. (b) 단언 제거 → 자기검사 red → 기동 거부. (c) 자기검사도 우회 → **diffs 0 · FAIL 0 · exit 0 = 2겹째가 하중을 진다** | cmp 동일 · 판정부 checkout |
 | Q8 | 드라이버에서 Spring 스풀 루트 = Node 스풀 루트 | 즉시 실패 | (a) 조립 가드가 **기동 전** 거부(`두 서버의 DIST_SPOOL_DIR 이 같다 — 짝짓기가 붕괴한다(조립 거부)` · exit 1). (b) 가드를 지우면 Spring 재생이 (라)에서 **`EISDIR`**(Node 가 이미 만든 `sp-retry` 디렉토리 자리에 차단 파일을 쓰려다) 로 죽어 `비교 불가` exit 1 — 판정부의 「순번 표 밖 articleId」 검사까지 가지도 않는다(그 검사는 자기검사가 잠근다) | 드라이버 checkout |
 
@@ -561,3 +564,18 @@ Java `SpoolWriterTest` 는 **자기 기대값** 위반은 잡지만 **Node 산�
 fetch 표준의 **차단 포트 묶음**(`6000` · `6566` · `6665~6669` · `6697` · `10080`)을 지나던 중이었다 — `listen(0)` 으로 뜬 테스트 서버가 그 포트를 받으면 undici `fetch` 가 **접속 전에** 거부한다.
 카운터를 10080 뒤로 보내고(3,208 포트 소진 · `6834 → 10100`) 재실행하니 **1328/1328**. 처방: 재실행(카운터가 지나간다) 또는 위 소진 — **코드를 고칠 일이 아니다.** 하네스 4종의 포트
 구간([15000,20000)·[45000,49152)·[20000,35000))은 차단 목록 밖이라 이 함정을 맞지 않는다.
+
+### 4-9. 리뷰 후속 (2026-09-08 · 읽기 전용 리뷰 발견 11건 → fix 커밋 1개 · 자기검사 **17 → 21** · 게이트 재실행 없음 — `server-spring/**`·`contract/**`·`server/**`·`src/**`·`test/**` 무접촉)
+
+| # | 발견(미검증 주장) | 코드로 확인 → 처리 | 실측 |
+|---|---|---|---|
+| 1 | `assertOutsideRepo` 가 win32 에서 대소문자 구분 — `d:\agents\harness\…` 소문자 드라이브가 `startsWith` 를 통과 | **사실**(`path.resolve` 는 드라이브 문자 대소문자를 보존) → 순수 `pathIsInside`(win32 대소문자·구분자 무시 · posix 구분) + `--out-dir` 가드를 mkdtemp **앞**으로(거부 경로에 `spool-parity-*` 잔존 0) | 수정 전 재현 `lowerGuardHits=false` → 수정 후 `--out-dir d:\agents\harness\tmp-reports` **exit 1** · 리포 안 생성 0 · 임시 디렉토리 잔존 0 |
+| 2 | finally 에서 기동 로그 쓰기·kill 이 드롭보다 앞이고 미격리 → throw 시 `harness_ct_*` 잔존·md5 단언 누락 | **사실** → 순서 5-a 자식 종료 → 5-b md5 단언·드롭 → 5-c 로그 기록 · 항목마다 try/catch(실패는 failures) · 드롭은 자식을 죽인 **뒤**(연결을 쥔 채 DROP 하지 않는다) | 5-a·5-c 에 throw 를 심고 `--db mysql` → **드롭 실행**(`harness_ct_31c9…`) · `FAIL … planted-5a`·`planted-5c`×2 · exit 1 · `harness_ct_*` 0 · 원복 md5 동일 |
+| 3 | spawn 자식에 `'error'` 리스너 없음(ENOENT/EACCES → uncaught → finally 미실행) | **사실** → 서버 2·마이그레이터 spawn 에 리스너: failures 기록 + `spawnError` 로 죽은 것으로 판정(`childDead`) · `spring-contract.mjs` 도 리스너가 **없어** 베낄 "동형"이 없었다(그 파일은 무수정) | 정적 — javaBin·jar 는 존재 검사를 지나므로 남는 경로는 EACCES 류뿐(재현 안 함) |
+| 4 | SIGINT 경로가 임시 DB 를 드롭하지 않음 | **사실** → 자식 SIGKILL 뒤 마이그레이터 `ephemeral-drop` 을 **spawnSync**(60s) — 성패만 stderr | Spring 기동 중 **실제 CTRL_C**(`GenerateConsoleCtrlEvent` — win32 는 `process.kill(pid,'SIGINT')` 로는 핸들러가 안 돌고, "Ctrl+C 무시" 플래그가 자식에 상속되므로 launcher 가 켜서 띄워야 한다) → `warn 중단 — 임시 MySQL DB 드롭 완료: harness_ct_f30c…` · 0.7s 후 종료 · `harness_ct_*` 0 · java 0 |
+| 5·9 | (마) 저장 왕복 단언이 코드에선 송고 **뒤** · 문서·summary 는 "송고 전" | **사실** → 코드를 송고 **전**으로(문서 문구 유지 = 코드) | sqlite·mysql 양 축 **3 · 11 · 0 · 66/66** 그대로 |
+| 6 | 순번 표가 plain object — `constructor`·`toString` articleId 가 상속 함수로 잡혀 "표 밖" 실패를 우회 | **사실**(파일명 문법이 그 이름을 허용) → `lookupStep`(own property + 문자열만) · `stepsByArticle` 은 null-proto | 자기검사 red(`constructor`·`toString`·`hasOwnProperty`·`__proto__`) → green |
+| 7 | 자리표시자 raw 표기 미단언(역슬래시-u0041 류 변형이 눈감김) | **사실** → ⑤ raw == `JSON.stringify(값)` 단언(§4-3) | 자기검사 red(u0032·u002d·u0054 변형 3건 + 비교 경로) → green |
+| 8 | 제어문자 9자 중 1자만 자기검사가 잠금 | **사실** → 9자 **전부** 집합 단언 | 계획에서 U+000E 제거 → red(`0x0E 가 없다`) → 원복 green |
+| 10 | 요약 줄 판정 2개 · 비교 불가 경로의 수치 부재 미명시 | **사실** → `formatCounts` + 종합 판정 **하나**(§4-1 = 코드) | `… 눈감은 자리 A=66 B=66 db=mysql → ok` |
+| 11 | Q6 행 "3곳이 더 red" | **사실**(4곳 = 5건) → §4-7 정정 · 재측정 6건 | `title` 추가 → red 6(1·4·9·11·12·19) · 원복 동일 |

@@ -35,8 +35,8 @@ import {
   readMysqlCredentials, migratorChildEnv, springMysqlEnv, redactSecrets,
 } from './lib/mysqlHarness.mjs';
 import {
-  PLACEHOLDER_KEYS, buildScenarioPlan, compareSpools, expectedFolderCounts, formatDiffLines,
-  formatSummary, parseSpoolFileName, stepsByArticle,
+  PLACEHOLDER_KEYS, buildScenarioPlan, compareSpools, expectedFolderCounts, formatCounts, formatDiffLines,
+  formatSummary, lookupStep, parseSpoolFileName, pathIsInside, stepsByArticle,
 } from './lib/spoolParity.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -122,7 +122,8 @@ function serverEnv(dataDir, port, spoolDir) {
 
 // --- 자식 프로세스 유틸 ---
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const childDead = (child) => child.exitCode !== null || child.signalCode !== null;
+// spawn 자체가 실패하면(ENOENT·EACCES) 'error' 이벤트만 오고 exitCode 가 null 로 남을 수 있다 — 리스너가 spawnError 를 남겨 죽은 것으로 본다.
+const childDead = (child) => child.exitCode !== null || child.signalCode !== null || child.spawnError !== undefined;
 
 function waitExit(child, ms) {
   return new Promise((resolve) => {
@@ -223,9 +224,11 @@ function resolveJavaBin(given) {
   return bin;
 }
 
+// win32 파일시스템은 대소문자를 구분하지 않는다 — `d:\...` 소문자 드라이브가 문자열 startsWith 를 통과해 리포 안에 리포트·기동 로그를
+// 쓰는 우회를 막는다(판정은 순수 pathIsInside · 자기검사가 그 케이스를 잠근다).
 function assertOutsideRepo(dir, label) {
   const abs = nodePath.resolve(dir);
-  if (abs === REPO_ROOT || abs.startsWith(REPO_ROOT + nodePath.sep)) usageDie(`${label}는 리포 안에 둘 수 없다: ${abs}`);
+  if (pathIsInside(abs, REPO_ROOT, process.platform)) usageDie(`${label}는 리포 안에 둘 수 없다: ${abs}`);
   return abs;
 }
 
@@ -261,8 +264,20 @@ function runMigrator(ctx, cwd, args, passUrl) {
       cwd, env: migratorChildEnv(childEnv(), ctx.mysql, passUrl), stdio: ['ignore', 'pipe', 'pipe'],
     });
     const buf = collectOutput(child);
+    // spawn 실패('error')는 리스너가 없으면 uncaught 로 프로세스를 죽여 finally 가 돌지 않는다 — 실패 결과로 합류시킨다.
+    child.once('error', (err) => resolve({ ok: false, code: null, out: buf.out, err: `${buf.err}\nspawn error: ${err && err.code ? err.code : err}` }));
     child.once('close', (code) => resolve({ ok: code === 0, code, out: buf.out, err: buf.err }));
   });
+}
+
+// SIGINT 경로 전용 — **동기** 드롭(process.exit 전에 끝나야 한다). 출력은 실패 시에만 비밀을 가려 stderr 로, 성패만 돌려준다.
+function dropEphemeralSync(ctx, cwd, name) {
+  const result = spawnSync(ctx.javaBin, ['-jar', ctx.migratorJar, 'ephemeral-drop', '--name', name], {
+    cwd, env: migratorChildEnv(childEnv(), ctx.mysql, null), stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', timeout: 60000,
+  });
+  if (result.status === 0) return true;
+  process.stderr.write(`${scrub(ctx, '[spring] migrator ephemeral-drop(SIGINT)', `${result.stdout ?? ''}${result.stderr ?? ''}`).slice(-2000)}\n`);
+  return false;
 }
 
 // 자식이 뱉은 글은 우리 통제 밖이다 — 가리고, 섞였다는 사실은 실패로 남긴다(값은 싣지 않는다).
@@ -354,6 +369,13 @@ async function replay(target, plan, opts, log) {
     expect(created.status === 200 && created.json?.ok === true && typeof created.json.articleId === 'string', `[${step.id}] 기사 생성 실패 status=${created.status} reason=${created.json?.reason ?? '-'}`);
     const articleId = created.json.articleId;
     articles[step.id] = articleId;
+    if (step.roundTrip.length > 0) {
+      // **송고 전**에 두 서버가 제어문자·이모지를 동일하게 저장했는지 API 로 되읽는다 — 갈리면 스풀 대조 전에 그것이 발견이다(§4-2 (마)).
+      const contents = await getContents(articleId);
+      for (const field of step.roundTrip) {
+        expect(contents && contents[field] === step.body[field], `[${step.id}] 저장 왕복 불일치(송고 전) ${field}: 보낸 값 ${JSON.stringify(step.body[field])} 되읽은 값 ${JSON.stringify(contents?.[field])}`);
+      }
+    }
 
     const sent = await api(baseUrl, 'POST', `/api/articles/${articleId}/action`, { sid: sidD, body: { action: 'send' } });
     expect(sent.status === 200 && sent.json?.ok === true, `[${step.id}] 송고 실패 status=${sent.status} reason=${sent.json?.reason ?? '-'}`);
@@ -401,13 +423,6 @@ async function replay(target, plan, opts, log) {
         `[${step.id}] 재전송 스풀 파일`, opts.timeout,
       );
     }
-    if (step.roundTrip.length > 0) {
-      // 두 서버가 제어문자·이모지를 **동일하게 저장했는지** 먼저 API 로 되읽는다 — 갈리면 스풀 대조 전에 그것이 발견이다.
-      const contents = await getContents(articleId);
-      for (const field of step.roundTrip) {
-        expect(contents && contents[field] === step.body[field], `[${step.id}] 저장 왕복 불일치 ${field}: 보낸 값 ${JSON.stringify(step.body[field])} 되읽은 값 ${JSON.stringify(contents?.[field])}`);
-      }
-    }
     log(`${step.id} ${step.label} → ok`);
   }
   return { articles, failureViews };
@@ -443,8 +458,10 @@ async function main() {
     for (const warning of mysql.warnings) process.stderr.write(`${warning}\n`);
   }
 
+  // --out-dir 가드는 임시 루트를 만들기 **전**에 — 거부 경로에서 spool-parity-* 디렉토리가 남지 않게.
+  const givenOutDir = opts.outDir ? assertOutsideRepo(opts.outDir, '--out-dir') : null;
   const root = assertOutsideRepo(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'spool-parity-')), '임시 루트');
-  const outDir = opts.outDir ? assertOutsideRepo(opts.outDir, '--out-dir') : nodePath.join(root, 'reports');
+  const outDir = givenOutDir ?? nodePath.join(root, 'reports');
   fs.mkdirSync(outDir, { recursive: true });
   const ownsOutDir = !opts.outDir;
   const plan = buildScenarioPlan(Date.now());
@@ -465,11 +482,16 @@ async function main() {
   let seedDigest = null;
   let result = null;
   let interrupted = false;
+  // SIGINT — finally 가 돌지 않는 유일한 경로. 자식은 SIGKILL(연결을 먼저 끊는다), 임시 MySQL DB 는 마이그레이터를 spawnSync 로 돌려
+  // **동기** 드롭한다(비동기로는 exit 전에 끝나지 않는다). 드롭이 실패하면 이름만 남긴다(값·출력은 싣지 않는다). 임시 디렉토리는 진단용으로 남는다.
   process.on('SIGINT', () => {
     if (interrupted) return;
     interrupted = true;
     for (const child of children) { try { child.kill('SIGKILL'); } catch { /* 이미 죽음 */ } }
-    if (ephemeralDb) process.stderr.write(`warn 중단으로 남은 임시 MySQL DB(직접 지워라): ${ephemeralDb}\n`);
+    if (ephemeralDb) {
+      if (dropEphemeralSync(ctx, root, ephemeralDb)) process.stderr.write(`warn 중단 — 임시 MySQL DB 드롭 완료: ${ephemeralDb}\n`);
+      else process.stderr.write(`warn 중단으로 남은 임시 MySQL DB(드롭 실패 — 직접 지워라): ${ephemeralDb}\n`);
+    }
     process.exit(130);
   });
 
@@ -494,6 +516,11 @@ async function main() {
         Object.assign(env, springMysqlEnv(mysql, passUrl));
       }
       target.child = spawn(target.bin, target.argv, { cwd: nodePath.join(root, target.label), env, stdio: ['ignore', 'pipe', 'pipe'] });
+      // spawn 실패(ENOENT·EACCES)는 비동기 'error' 로 온다 — 리스너가 없으면 uncaught 로 죽어 finally(자식 종료·임시 DB 드롭)가 돌지 않는다.
+      target.child.on('error', (err) => {
+        target.child.spawnError = err;
+        failures.push(`[${target.label}] 자식 프로세스 오류(spawn/kill): ${err && err.code ? err.code : err}`);
+      });
       children.push(target.child);
       target.buf = collectOutput(target.child);
       process.stdout.write(`  [${target.label}] 기동 pid=${target.child.pid ?? '-'} port=${target.port} db=${target.label === 'spring' && ephemeralDb ? ephemeralDb : 'sqlite'} spool=<tmp>/${target.label}/spool\n`);
@@ -543,7 +570,7 @@ async function main() {
       for (const target of targets) {
         const report = {
           target: target.label, db: target.label === 'spring' ? opts.db : 'sqlite', placeholders: [...PLACEHOLDER_KEYS],
-          files: sides[target.label].files.map((f) => ({ folder: f.folder, name: f.name, step: sides[target.label].steps[parseSpoolFileName(f.name)?.articleId] ?? null, bytes: Buffer.byteLength(f.text, 'utf8'), sha256: sha256Hex(f.text) })),
+          files: sides[target.label].files.map((f) => ({ folder: f.folder, name: f.name, step: lookupStep(sides[target.label].steps, parseSpoolFileName(f.name)?.articleId), bytes: Buffer.byteLength(f.text, 'utf8'), sha256: sha256Hex(f.text) })),
         };
         fs.writeFileSync(nodePath.join(outDir, `${target.label}.json`), `${JSON.stringify(report, null, 2)}\n`);
       }
@@ -557,24 +584,42 @@ async function main() {
   } catch (err) {
     failures.push(`실행 예외: ${err && err.stack ? err.stack : err}`);
   } finally {
-    // 5. 자식 종료 — 실패해도 반드시 시도한다(잔존 = 다음 실행의 포트·파일 잠금 오염).
+    // finally 안에서 throw 가 나면 그 뒤는 전부 건너뛴다(임시 DB 잔존·md5 단언 누락). 그래서 순서는 5-a 자식 종료 → 5-b md5 단언·드롭 →
+    // 5-c 기동 로그 기록이고, 항목마다 try/catch 로 격리한다(실패는 failures 에 남긴다). 드롭은 자식을 죽인 **뒤**다(연결을 쥔 채 DROP 하지 않는다).
+    // 5-a. 자식 종료 — 실패해도 반드시 시도한다(잔존 = 다음 실행의 포트·파일 잠금 오염).
     for (const target of targets) {
       if (!target.child) continue;
-      const killed = await killChild(target.child);
-      if (!killed) failures.push(`[${target.label}] 프로세스 종료 실패(SIGKILL 후에도 잔존) pid=${target.child.pid}`);
-      const text = scrub(ctx, `[${target.label}]`, `${target.buf.out}\n--- stderr ---\n${target.buf.err}`);
-      bootLogs[target.label] = scrubPaths(text, [[root, '<tmp>'], [REPO_ROOT, '<repo>']]);
-      fs.writeFileSync(nodePath.join(outDir, `${target.label}-boot.log`), bootLogs[target.label]);
+      try {
+        const killed = await killChild(target.child);
+        if (!killed) failures.push(`[${target.label}] 프로세스 종료 실패(SIGKILL 후에도 잔존) pid=${target.child.pid}`);
+      } catch (err) {
+        failures.push(`[${target.label}] 프로세스 종료 중 예외: ${err && err.message ? err.message : err}`);
+      }
     }
-    // 6. mysql: 임시 news.db 무변(= Spring 이 SQLite 를 열지 않았다) · 임시 DB 드롭(성패·--keep 무관)
+    // 5-b. mysql: 임시 news.db 무변(= Spring 이 SQLite 를 열지 않았다) · 임시 DB 드롭(성패·--keep 무관)
     if (seedDigest) {
-      const after = fileDigest(targets[1].seedFile);
-      if (!after || after.md5 !== seedDigest.md5) failures.push(`--db mysql 인데 Spring 임시 DATA_DIR 의 news.db 가 변했다 — 서버가 MySQL 이 아니라 SQLite 를 열었다. before=${JSON.stringify(seedDigest)} after=${JSON.stringify(after)}`);
+      try {
+        const after = fileDigest(targets[1].seedFile);
+        if (!after || after.md5 !== seedDigest.md5) failures.push(`--db mysql 인데 Spring 임시 DATA_DIR 의 news.db 가 변했다 — 서버가 MySQL 이 아니라 SQLite 를 열었다. before=${JSON.stringify(seedDigest)} after=${JSON.stringify(after)}`);
+      } catch (err) {
+        failures.push(`--db mysql 임시 news.db md5 재측정 실패: ${err && err.code ? err.code : err}`);
+      }
     }
     if (ephemeralDb) {
       const dropped = await migratorStep(ctx, root, ['ephemeral-drop', '--name', ephemeralDb], null, failures);
       if (dropped) { process.stdout.write(`  [spring] mysql 임시 DB 드롭 ${ephemeralDb}\n`); ephemeralDb = null; }
       else process.stderr.write(`warn 임시 MySQL DB 정리 실패(직접 지워라): ${ephemeralDb}\n`);
+    }
+    // 5-c. 기동 로그 — 비밀 가림 + 경로 가림 뒤 파일로. 쓰기 실패는 실패로 남기되 다른 항목을 막지 않는다.
+    for (const target of targets) {
+      if (!target.child) continue;
+      try {
+        const text = scrub(ctx, `[${target.label}]`, `${target.buf.out}\n--- stderr ---\n${target.buf.err}`);
+        bootLogs[target.label] = scrubPaths(text, [[root, '<tmp>'], [REPO_ROOT, '<repo>']]);
+        fs.writeFileSync(nodePath.join(outDir, `${target.label}-boot.log`), bootLogs[target.label]);
+      } catch (err) {
+        failures.push(`[${target.label}] 기동 로그 기록 실패: ${err && err.code ? err.code : err}`);
+      }
     }
   }
 
@@ -599,7 +644,8 @@ async function main() {
     if (!ok) for (const [label, log] of Object.entries(bootLogs)) process.stdout.write(`--- ${label} 기동 로그(끝 20줄) ---\n${log.split('\n').slice(-20).join('\n')}\n`);
   }
   if (!ok) process.stderr.write(`${failures.map((f) => `FAIL ${f}`).join('\n')}\n`);
-  process.stdout.write(`${result ? formatSummary(result) : 'spool-parity 비교 불가(스풀 수집 전 실패)'} db=${opts.db} → ${ok ? 'ok' : 'FAILED'}\n`);
+  // 요약 줄은 판정 **하나**(종합)만 붙인다 — 수치는 formatCounts(다섯 수치), 스풀 수집 전에 실패하면 수치 없이 '비교 불가'.
+  process.stdout.write(`${result ? formatCounts(result) : 'spool-parity 비교 불가(스풀 수집 전 실패 — 수치 없음)'} db=${opts.db} → ${ok ? 'ok' : 'FAILED'}\n`);
   process.exit(ok ? 0 : 1);
 }
 

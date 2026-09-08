@@ -195,6 +195,11 @@ export function normalizeFile(name, text) {
     // 치환 — 최상위 문자열 값만, 뒤에서부터(앞 자리가 밀리지 않게).
     const targets = scan.values.filter((v) => PLACEHOLDER_KEYS.includes(v.key) && v.kind === 'string').sort((x, y) => y.start - x.start);
     for (const v of targets) {
+      // ⑤ 눈감기 전에 raw 표기를 단언한다 — 값(ISO·articleId)은 ASCII 라 `JSON.stringify(값)` 과 바이트가 같아야 한다.
+      //    역슬래시-u0041 같은 이스케이프 변형은 파싱 값이 같아 ①~④를 다 통과하지만 산출물 바이트는 다르다(눈감으면 안 보인다).
+      const raw = text.slice(v.start, v.end);
+      const canonical = JSON.stringify(payload[v.key]);
+      if (raw !== canonical) errors.push(`${v.key} 값의 raw 표기가 JSON.stringify(값)과 다르다(이스케이프 형태 차이 — 눈감기 전 실패): raw=${raw} canonical=${canonical}`);
       normalizedText = `${normalizedText.slice(0, v.start)}"<${v.key}>"${normalizedText.slice(v.end)}`;
       blinded += 1;
     }
@@ -293,11 +298,34 @@ export function expectedFolderCounts(plan) {
 
 /** { 순번: articleId } → { articleId: 순번 } (재생기가 양쪽 각각 만든다). */
 export function stepsByArticle(articlesByStep) {
-  const out = {};
+  const out = Object.create(null); // 프로토타입 없음 — articleId 가 __proto__ 여도 자료다
   for (const [step, articleId] of Object.entries(articlesByStep ?? {})) {
     if (typeof articleId === 'string' && articleId !== '') out[articleId] = step;
   }
   return out;
+}
+
+/**
+ * 순번 표에서 articleId 의 순번을 찾는다 — 없으면 null. **own property 만** 본다: 파일명 문법(`[A-Za-z0-9_-]{1,64}`)이
+ * `constructor`·`toString` 을 허용하므로 상속 함수가 truthy 로 잡혀 "표 밖 articleId" 실패를 우회하면 안 된다(Q8 방어선).
+ */
+export function lookupStep(steps, articleId) {
+  if (!steps || typeof steps !== 'object' || !Object.hasOwn(steps, articleId)) return null;
+  return typeof steps[articleId] === 'string' ? steps[articleId] : null;
+}
+
+/**
+ * candidate 가 root 안(루트 자체 포함)인가 — 둘 다 절대경로여야 한다. win32 는 대소문자·구분자(`/`·`\`)를 무시한다
+ * (Windows 파일시스템이 그렇다 — `d:\...` 소문자 드라이브로 리포 안에 쓰는 우회를 막는다). 그 밖의 플랫폼은 구분한다.
+ */
+export function pathIsInside(candidate, root, platform) {
+  const norm = platform === 'win32'
+    ? (p) => String(p).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+    : (p) => String(p).replace(/\/+$/, '');
+  const sep = platform === 'win32' ? '\\' : '/';
+  const c = norm(candidate);
+  const r = norm(root);
+  return c === r || c.startsWith(r + sep);
 }
 
 // --- 비교 ---
@@ -314,7 +342,7 @@ function groupSide(sideInput, label, failures) {
     for (const err of norm.errors) failures.push(`[${label}] ${file.folder}/${file.name}: ${err}`);
     blinded += norm.blinded;
     if (!norm.articleId) continue;
-    const step = sideInput.steps?.[norm.articleId];
+    const step = lookupStep(sideInput.steps, norm.articleId);
     if (!step) {
       failures.push(`[${label}] ${file.folder}/${file.name}: 시나리오 순번 표에 없는 articleId 다 — 이 서버가 만든 기사가 아니거나 두 서버가 같은 스풀 루트를 쓴다`);
       continue;
@@ -402,9 +430,14 @@ export function compareSpools(a, b) {
   return result;
 }
 
-export function formatSummary(result, labelA = 'node', labelB = 'spring') {
+/** 다섯 수치만(판정 없음) — 드라이버 요약 줄은 여기에 db 축과 **종합** 판정 하나를 붙인다(판정 2개가 나란히 찍히지 않게). */
+export function formatCounts(result, labelA = 'node', labelB = 'spring') {
   return `spool-parity A=${labelA} B=${labelB} 폴더 ${result.folderCount} · 파일 ${result.fileCount} · diffs ${result.diffs.length}`
-    + ` · 눈감은 자리 A=${result.blinded.a} B=${result.blinded.b} → ${result.ok ? 'ok' : 'FAILED'}`;
+    + ` · 눈감은 자리 A=${result.blinded.a} B=${result.blinded.b}`;
+}
+
+export function formatSummary(result, labelA = 'node', labelB = 'spring') {
+  return `${formatCounts(result, labelA, labelB)} → ${result.ok ? 'ok' : 'FAILED'}`;
 }
 
 export function formatDiffLines(result) {
