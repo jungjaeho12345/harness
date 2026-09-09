@@ -390,7 +390,7 @@ DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버
 | 3 | 롤백 후 id 간격 — SQLite 없음 / InnoDB 있음 | 못 본다 | `IdentityAndSizeProbeTest.axis6_rollbackLeavesAGapInInnodbButNotInSqlite` |
 | 4 | 769자 PK — Node 200 수락 / Spring 500 거부(1406). **[P3 갱신]** 컷오버 후에는 divergence 가 아니라 **그냥 Spring 의 실패**다(정본이 Spring 이므로 비교 대상이 사라진다) · 경계는 **글자** 768/769(바이트 아님 — 축 8 P3 실측) | 못 본다(케이스가 없다) | `IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` · **[P3]** `scripts/lib/poolProbe.self-test.mjs`(한글 768/769 기대표) · 운영 경고는 `docs/cutover-p3.md` §8 |
 | 5 | `length()` 값 — 문자 수 / 바이트 수 (**술어는 동형**) | 못 본다 | `ValueSemanticsProbeTest.axis9_*` · `RepositoryPredicateDifferentialTest.theLengthPredicateSelectsTheSameRowsInBothDialects` |
-| 6 | 성능(보조 인덱스 0 유지) | 못 본다 | (미측정 — P3) |
+| 6 | 성능(보조 인덱스 0 유지) | 못 본다 | **[P3 부분 측정 · phase 76 step9]** `scripts/pool-ceiling-probe.mjs` — 동시 1~32 × 2회 × 4축에서 **5xx 0**이고 쓰기는 오히려 Spring 이 빠르다(동시 32 p50 181~216 ms vs Node 336~337 ms). 천장은 **부하가 아니라 「커넥션 하나가 오래 잡히는 사건」**에서 온다(행 잠금 재현: Hikari **30,001 ms** → **계약 밖 500** · 클라 대기 **41.6초**). 표·판정은 `docs/cutover-p3.md` §8-2~§8-4. **운영 규모는 여전히 미측정** |
 | **7** | **큰 수의 저장 표현** — `1e9` 가 SQLite `1000000000.0` / MySQL `1000000000` · `1.2345678901234567e19` 가 SQLite `1.23456789012346e+19`(15자리) / MySQL `1.2345678901234567e19`(17자리) **[step6]** | 못 본다(케이스가 문자열만 보낸다) | `RepositoryValueDifferentialTest.numericBindingsLandAsTheSameTextUntilTheMagnitudeGrows` |
 | **8** | **권한 오류의 응답** — `GRANT DELETE ON <db>.ReceiverConfig` 가 없으면 `DELETE /api/receiver-config/:id` 가 **500 `internal-error`** 다(Node 는 200 `{ok:true,changes:1}`) **[step6]** | 하네스가 `news_ct`(ALL) 로 돌아 **못 본다** | `NewsAppMysqlWireTest.theWholeRouteChainRunsOnMysqlWithTheServerRuntimeCredential` |
 
@@ -434,6 +434,13 @@ phase 74 forward_notes (8) ①이 P2 로 넘긴 숙제다. **각 축의 방어�
 > **이 목록의 성질**: 위 축들은 **저장소를 바꿔도 계약 리포트가 침묵한다**. 그래서 MySQL 전환의 실질 게이트는
 > "313관측 diffs 0" 하나가 아니라 **이 표의 Java 테스트 + 313관측**이다. 표의 방어선이 지워지면 그 축은
 > **아무도 보지 않는 축**이 된다 — 삭제 전에 대체 방어선을 먼저 세워라.
+
+> **[P3 시점 갱신 · phase 76 step10]** 컷오버 뒤에는 이 표의 절반이 **성격을 바꾼다**: 운영 정본이 Spring 하나뿐이라
+> 「Node 200 / Spring 500」 같은 문장은 비교가 아니라 **그냥 그 서버의 성질**이 된다(769자 PK 행이 그 예다).
+> 그런데 **표를 버리면 안 된다** — `server/**`는 삭제하지 않았고(ADR-017 결정 3) `--parity` 313관측이 여전히
+> Node 리포트와 대조하는 **회귀 판정 수단**이기 때문이다. 즉 이 표는 컷오버 후에도 **롤백 레버가 살아 있는 동안**
+> 그대로 유효하다. 그리고 P3 가 **새로 연 축 다섯**은 이 표가 아니라 `docs/cutover-p3.md`가 소유한다
+> (SPA 응답 바이트 §2 · 배부 스풀 바이트 §4 · 수집 스위퍼 경로 §5 · 운영 tick 경로 §6 · 다중 인스턴스 §6-5).
 
 > **⚠ 풀 1의 성질이 이관으로 바뀌었다 — P3 판단 항목**(2026-09-04 ⑤ [low] 4). SQLite에서 `MAX_POOL_SIZE=1`은
 > **저장소의 물리적 제약**을 코드로 옮긴 것이었다(단일 파일 · 동시 쓰기가 `SQLITE_BUSY`). MySQL에는 그 제약이
