@@ -38,7 +38,7 @@ import {
 import { pathIsInside } from './lib/spoolParity.mjs';
 import {
   PS1_ENV, countSpoolFiles, describeLogin, describeTick, duplicateArticles, formatMultiInstance, formatRateLimitTable,
-  formatSideBySide, judgeMultiInstance, judgeRoundtrip, outputLeaks, rateLimitTable, spoolPathLeaks, criticalPeriodSec,
+  formatSideBySide, judgeMultiInstance, judgeRoundtrip, outputLeaks, rateLimitTable, sanitizePs1Sample, spoolPathLeaks, criticalPeriodSec, tokenShapeLeaks,
 } from './lib/tickCutover.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -267,8 +267,14 @@ function runMigrator(ctx, cwd, args, passUrl) {
     const child = spawn(ctx.javaBin, ['-jar', ctx.migratorJar, ...args], {
       cwd, env: migratorChildEnv(childEnv(), ctx.mysql, passUrl), stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // SIGINT 핸들러가 죽일 수 있게 등록한다 — 등록하지 않으면 ephemeral-create/migrate 진행 중 Ctrl+C 에 java 자식이 고아가 된다.
+    // 끝난 자식은 빼지 않아도 killChild 가 무시한다(childDead).
+    ctx.children.push(child);
     const buf = collectOutput(child);
-    child.once('error', (err) => resolve({ ok: false, code: null, out: buf.out, err: `${buf.err}\nspawn error: ${err && err.code ? err.code : err}` }));
+    child.once('error', (err) => {
+      child.spawnError = err; // childDead → 정리 루프가 죽은 자식을 5초 기다리지 않는다
+      resolve({ ok: false, code: null, out: buf.out, err: `${buf.err}\nspawn error: ${err && err.code ? err.code : err}` });
+    });
     child.once('close', (code) => resolve({ ok: code === 0, code, out: buf.out, err: buf.err }));
   });
 }
@@ -287,6 +293,12 @@ function scrub(ctx, label, text) {
   if (result.hits > 0) ctx.secretLeaks.push(`${label} 출력에 비밀 값이 ${result.hits}회 섞여 나왔다 — 가려서 남겼지만 원인을 고쳐라.`);
   if (result.unredactable > 0) ctx.secretLeaks.push(`${label}: 가릴 수 없는 짧은 비밀이 ${result.unredactable}건 있다(docs/ops-mysql.md §3-1).`);
   return result.text;
+}
+
+/** 리포트·stdout 으로 나가는 표본 줄 정리: 아는 값 마스킹+형식 allowlist(sanitizePs1Sample) → MySQL 비밀(scrub) → 임시·리포 경로(scrubPaths). */
+function sanitizeSample(ctx, label, text, secrets) {
+  const safe = sanitizePs1Sample(text, secrets);
+  return scrubPaths(scrub(ctx, `[${label}] ps1 표본`, safe), [[ctx.root, '<tmp>'], [REPO_ROOT, '<repo>']]);
 }
 
 async function migratorStep(ctx, cwd, args, passUrl, failures) {
@@ -471,6 +483,8 @@ async function roundtrip(side, nospool, ctx, log, obs) {
   ];
   const leaksOf = (r) => {
     const l = outputLeaks(`${r.out}\n${r.err}`, secrets);
+    // ps1 은 자기 세션을 스스로 발급한다 — 그 토큰 값은 하네스가 모르므로 값 비교로는 잡히지 않는다(변이 실측). 형태로도 본다.
+    l.push(...tokenShapeLeaks(r.out));
     if (/sessionId/i.test(r.out)) l.push('sessionId-word');
     if (/\.json\b/.test(r.out)) l.push('.json');
     if (/[\\/]/.test(r.out.replace(/^\S+\s/gm, ''))) l.push('separator'); // 시각(ISO)에는 구분자가 없다 — 첫 토큰 제외 뒤 검사
@@ -480,7 +494,9 @@ async function roundtrip(side, nospool, ctx, log, obs) {
   const ok1 = runPs1(base, Z, lock);                                                          // #4
   const fa2 = await settledFileCount(side.spoolDir, a2, { timeoutMs: ctx.timeout });
   obs['ps1-ok'] = `${describePs1(ok1, 'none')} distributed=${/distributed=(\d+)/.exec(ok1.out)?.[1] ?? '-'} files=${fa2} leaks=${leaksOf(ok1).length}`;
-  ctx.ps1Samples.push(`[${side.label}] ${ok1.out.trim().split('\n').pop()}`);
+  // 표본 줄은 tables.md·stdout 으로 **나간다** — 담기 전에 값을 가린다(다른 자식 출력 경로 2곳과 같은 규율).
+  // leaksOf 는 「섞였다」를 실패로 만들 뿐, 이미 리포트에 박힌 토큰을 지워 주지 않는다(리뷰 후속 (1)).
+  ctx.ps1Samples.push(`[${side.label}] ${sanitizeSample(ctx, side.label, ok1.out.trim().split('\n').pop(), secrets)}`);
 
   const holder = spawnLockHolder(lock);
   ctx.children.push(holder);

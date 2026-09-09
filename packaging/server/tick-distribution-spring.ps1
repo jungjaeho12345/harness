@@ -32,15 +32,22 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:lock = $null
 
+# 로그 쓰기는 실패해도 종료코드·락 해제를 삼키지 않는다: $ErrorActionPreference='Stop' 아래에서 Add-Content 가 던지면
+# (백신·인덱서가 로그 파일을 잠깐 쥔 회차) Finish 의 Dispose·exit 에 도달하지 못해, 문서화된 종료코드 대신 PowerShell
+# 예외 코드가 스케줄러에 남는다. 로그 실패는 삼키되 stderr 한 줄로 알린다(내용은 단계 라벨뿐 — 값 0).
 function Write-Line([string]$text) {
   $line = "$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')) $text"
-  Write-Output $line
-  if ($LogFile) { Add-Content -Path $LogFile -Value $line -Encoding UTF8 }
+  try {
+    Write-Output $line
+    if ($LogFile) { Add-Content -Path $LogFile -Value $line -Encoding UTF8 }
+  } catch {
+    [Console]::Error.WriteLine('tick WARN stage=log reason=log-write-failed')
+  }
 }
 
 function Finish([int]$code, [string]$text) {
   Write-Line $text
-  if ($script:lock) { $script:lock.Dispose() }
+  if ($script:lock) { try { $script:lock.Dispose() } catch { } }
   exit $code
 }
 

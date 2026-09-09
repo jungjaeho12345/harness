@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DISTRIBUTED_ITEM_KEYS, EXPECTED_ROUNDTRIP, LOGIN_RATE_LIMIT, PS1_ENV, PS1_EXIT, ROUNDTRIP_ROW_IDS, TICK_KEYS,
   countSpoolFiles, criticalPeriodSec, describeLogin, describeTick, duplicateArticles, formatMultiInstance,
-  formatRateLimitTable, formatSideBySide, judgeMultiInstance, judgeRoundtrip, loginsPerWindow, outputLeaks,
+  formatRateLimitTable, formatSideBySide, judgeMultiInstance, judgeRoundtrip, loginsPerWindow, maskSample, outputLeaks, sanitizePs1Sample, tokenShapeLeaks,
   ps1EncodingFinding, ps1StaticFindings, rateLimitTable, spoolPathLeaks,
 } from './tickCutover.mjs';
 
@@ -164,9 +164,9 @@ function goodMulti() {
     crossSession: { aTokenOnB: '401:unauthenticated', bOwnToken: '200' },
     sequential: { tickA: 'distributed', tickB: 'not-distributed', filesAfterA: 1, filesAfterB: 1 },
     concurrent: [
-      { round: 1, files: 2, inA: true, inB: true },
-      { round: 2, files: 1, inA: true, inB: false },
-      { round: 3, files: 1, inA: false, inB: true },
+      { round: 1, files: 2, inA: true, inB: true, statusA: 200, statusB: 200 },
+      { round: 2, files: 1, inA: true, inB: false, statusA: 200, statusB: 200 },
+      { round: 3, files: 1, inA: false, inB: true, statusA: 200, statusB: 200 },
     ],
   };
 }
@@ -215,6 +215,35 @@ test('judgeMultiInstance — Node 2번째가 살아 뜨면(exit≠1) red · 교�
   assert.ok(r.failures.some((f) => f.includes('동시')));
 });
 
+// 리뷰 후속 (4): 동시 라운드는 「양쪽이 실제로 tick 했는가」를 봐야 한다. §6-9 (1) 의 1차 실패(A 가 전부 401 인데
+// B 만 배부해 「중복 0」처럼 보였다)가 다시 나면 red 여야 한다 — 한쪽만 성공한 회차는 중복 배부 크기의 증거가 아니다.
+test('judgeMultiInstance — 동시 라운드 한쪽이 401 이면 무효 회차로 red 이고 수치에서 빠진다', () => {
+  const obs = goodMulti();
+  obs.concurrent[1] = { round: 2, files: 1, inA: false, inB: true, statusA: 401, statusB: 200 };
+  const r = judgeMultiInstance(obs);
+  assert.equal(r.ok, false);
+  assert.ok(r.failures.some((f) => f.includes('회차 2') && f.includes('401')), r.failures.join('\n'));
+  assert.equal(r.invalidRounds, 1);
+  assert.equal(r.validRounds, 2);
+  assert.equal(r.rounds, 3);
+  assert.equal(r.duplicateRounds, 1);
+  assert.equal(r.maxFiles, 2);
+  assert.ok(formatMultiInstance(r).some((l) => l.includes('무효')), '표에 무효 회차가 남는다');
+});
+
+test('judgeMultiInstance — 동시 라운드의 statusA/statusB 측정이 없으면 red(공허 통과 금지) · 양쪽 200 이면 무효 0', () => {
+  const obs = goodMulti();
+  delete obs.concurrent[0].statusA;
+  const r = judgeMultiInstance(obs);
+  assert.equal(r.ok, false);
+  assert.ok(r.failures.some((f) => f.includes('회차 1') && f.includes('not-measured')), r.failures.join('\n'));
+
+  const good = judgeMultiInstance(goodMulti());
+  assert.equal(good.ok, true, good.failures.join('\n'));
+  assert.equal(good.invalidRounds, 0);
+  assert.equal(good.validRounds, 3);
+});
+
 // --- ps1 정적 검사 (실제 파일) ---
 
 test('ps1 — 실제 packaging/server/tick-distribution-spring.ps1 은 정적 검사 0건 · UTF-8 BOM', () => {
@@ -250,6 +279,22 @@ test('ps1 정적 검사 — 변이 6종을 각각 이름으로 잡는다', () =>
   assert.ok(ps1StaticFindings(text.replace('[IO.FileShare]::None', '[IO.FileShare]::ReadWrite')).includes('no-lock'));
 });
 
+// 리뷰 후속 (5): 종전 세 패턴은 `<이름> = '<값>'`(등호+따옴표)만 봤다 — 아래 2종은 그 형태가 아니라 새어 나갔다.
+test('ps1 정적 검사 — 자격 평문의 다른 형태 2종(SecureString · 콜론 구문)도 잡고 env 판은 잡지 않는다', () => {
+  const text = fs.readFileSync(PS1, 'utf8').replace(/^\uFEFF/, '');
+  // (가) ConvertTo-SecureString -AsPlainText 리터럴 — 인자 순서 둘 다
+  assert.ok(ps1StaticFindings(`${text}\n$sec = ConvertTo-SecureString "hunter2" -AsPlainText -Force\n`).includes('literal-secure-string'));
+  assert.ok(ps1StaticFindings(`${text}\n$sec = ConvertTo-SecureString -String 'hunter2' -AsPlainText -Force\n`).includes('literal-secure-string'));
+  assert.ok(ps1StaticFindings(`${text}\n$sec = ConvertTo-SecureString -AsPlainText 'hunter2' -Force\n`).includes('literal-secure-string'));
+  // 환경변수를 SecureString 으로 바꾸는 것은 평문 상수가 아니다(거짓 양성 금지 — 그렇지 않으면 올바른 판을 벌한다)
+  assert.ok(!ps1StaticFindings(`${text}\n$sec = ConvertTo-SecureString $env:NEWS_TICK_PASSWORD -AsPlainText -Force\n`).includes('literal-secure-string'));
+  // (나) 콜론 구문 — JSON·here-string 리터럴
+  assert.ok(ps1StaticFindings(`${text}\n$body = '{ "userId": "z", "password": "hunter2" }'\n`).includes('literal-password-json'));
+  assert.ok(ps1StaticFindings(`${text}\n$body = '{ "secret": "hunter2" }'\n`).includes('literal-password-json'));
+  // 실제 ps1 이 쓰는 형태(값이 변수)는 잡히지 않는다 — 그래서 실제 파일 스캔이 0건으로 남는다
+  assert.ok(!ps1StaticFindings(`${text}\n$body = @{ userId = $user; password = $secret }\n`).includes('literal-password-json'));
+});
+
 test('ps1EncodingFinding — 비ASCII + BOM 없음 → missing-utf8-bom · BOM 있으면 null · ASCII 만이면 null', () => {
   assert.equal(ps1EncodingFinding(Buffer.from('# 한글 주석\n', 'utf8')), 'missing-utf8-bom');
   assert.equal(ps1EncodingFinding(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from('# 한글\n', 'utf8')])), null);
@@ -265,4 +310,54 @@ test('outputLeaks — 출력에 섞인 비밀·토큰·경로를 라벨로 돌�
   assert.deepEqual(leaks, ['session', 'spool']);
   assert.deepEqual(outputLeaks('tick ok distributed=1', [{ label: 'password', value: 'admin123' }]), []);
   assert.deepEqual(outputLeaks('x', [{ label: 'empty', value: '' }]), []);
+});
+
+// 리뷰 후속 (1): ps1 표본 줄은 리포트(tables.md)·stdout 으로 나간다 — 담기 전에 반드시 값을 지운다.
+// outputLeaks 가 「섞였다」를 알리는 검출기라면 maskSample 은 「그래도 새어 나가지 않게」 하는 방어선이다(둘 다 필요하다).
+test('maskSample — 표본 줄의 비밀·토큰·경로 값을 라벨로 치환한다(값 0 · 여러 번 나와도 전부)', () => {
+  const secrets = [
+    { label: 'password', value: 'p4ssw0rd!' },
+    { label: 'session-z', value: 'abcdef0123456789' },
+    { label: 'spool', value: 'C:\\tmp\\spool' },
+  ];
+  assert.equal(maskSample('tick ok distributed=1 scanned=1', secrets), 'tick ok distributed=1 scanned=1');
+  const masked = maskSample('tick ok sid=abcdef0123456789 dir=C:\\tmp\\spool pw=p4ssw0rd!', secrets);
+  assert.equal(masked, 'tick ok sid=<session-z> dir=<spool> pw=<password>');
+  assert.equal(outputLeaks(masked, secrets).length, 0, '가린 줄에는 검출기도 0건이어야 한다');
+  assert.equal(maskSample('a abcdef0123456789 b abcdef0123456789', secrets), 'a <session-z> b <session-z>');
+  assert.equal(maskSample(undefined, secrets), '');
+  assert.equal(maskSample('x', [{ label: 'empty', value: '' }]), 'x');
+  assert.equal(maskSample('x', undefined), 'x');
+});
+
+// 리뷰 후속 (1) 의 실측 보강: **값을 아는 비밀만 가리는 것으로는 부족하다.** ps1 은 자기 세션을 스스로 발급하므로
+// 그 토큰 값은 하네스가 모른다(단일 세션 정책 · §6-9 (1)). 변이 실측에서 `x=<64hex>` 가 tables.md 에 그대로 실렸다.
+// 그래서 표본은 **알려진 형식의 필드만** 싣고(allowlist), 나머지는 값째로 지운다.
+test('sanitizePs1Sample — 허용 필드만 싣고 형식 밖 토큰은 값째로 지운다(모르는 비밀도 못 나간다)', () => {
+  const secrets = [{ label: 'password', value: 'admin123' }];
+  const ok = '2026-09-09T00:47:01Z tick ok distributed=1 scanned=2 failed=0 invalid=0';
+  assert.equal(sanitizePs1Sample(ok, secrets), ok);
+  const fail = '2026-09-09T00:47:01Z tick FAIL stage=login status=401 reason=invalid-credentials';
+  assert.equal(sanitizePs1Sample(fail, secrets), fail);
+  assert.equal(sanitizePs1Sample('2026-09-09T00:47:01Z tick skipped stage=lock reason=already-running', secrets),
+    '2026-09-09T00:47:01Z tick skipped stage=lock reason=already-running');
+  // 하네스가 값을 모르는 세션 토큰
+  const leaky = `2026-09-09T00:47:01Z tick ok x=${'a1b2c3d4'.repeat(8)} distributed=1`;
+  const out = sanitizePs1Sample(leaky, secrets);
+  assert.ok(!/[0-9a-f]{16,}/.test(out), out);
+  assert.equal(out, '2026-09-09T00:47:01Z tick ok <형식 밖> distributed=1');
+  // 허용 필드라도 값 형태가 다르면(경로·확장자) 지운다
+  assert.equal(sanitizePs1Sample('2026-09-09T00:47:01Z tick ok distributed=C:\\spool\\a.json', secrets), '2026-09-09T00:47:01Z tick ok <형식 밖>');
+  // 시각이 아닌 머리도 지운다 · 아는 비밀은 먼저 라벨이 되고 그 라벨은 형식 밖이라 다시 지워진다
+  assert.equal(sanitizePs1Sample('admin123 tick ok', secrets), '<형식 밖> tick ok');
+  assert.equal(sanitizePs1Sample('2026-09-09T00:47:01Z tick FAIL stage=login reason=admin123', secrets), '2026-09-09T00:47:01Z tick FAIL stage=login <형식 밖>');
+  assert.equal(sanitizePs1Sample(undefined, secrets), '');
+});
+
+test('tokenShapeLeaks — 값을 몰라도 토큰 형태(32자 이상 16진수)를 검출한다', () => {
+  assert.deepEqual(tokenShapeLeaks('tick ok distributed=1 scanned=2 failed=0 invalid=0'), []);
+  assert.deepEqual(tokenShapeLeaks('2026-09-09T00:47:01Z tick FAIL stage=tick status=403 reason=forbidden'), []);
+  assert.deepEqual(tokenShapeLeaks(`tick ok x=${'ab12cd34'.repeat(4)}`), ['hex-token']);
+  assert.deepEqual(tokenShapeLeaks(`tick ok x=${'ab12cd34'.repeat(8)} y=${'0f'.repeat(20)}`), ['hex-token']);
+  assert.deepEqual(tokenShapeLeaks(undefined), []);
 });

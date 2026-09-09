@@ -221,10 +221,26 @@ export function judgeMultiInstance(obs) {
   }
   const cc = Array.isArray(o.concurrent) ? o.concurrent : [];
   if (cc.length === 0) failures.push('동시 tick 회차가 0 — 중복 배부 크기를 재지 않았다');
-  for (const r of cc) if (!(Number.isInteger(r.files) && r.files >= 1)) failures.push(`동시 tick 회차 ${r.round}: 파일 수가 정수 ≥1 이 아니다(${r.files})`);
-  const duplicateRounds = cc.filter((r) => r.files > 1).length;
-  const maxFiles = cc.reduce((m, r) => Math.max(m, Number(r.files) || 0), 0);
-  return { ok: failures.length === 0, failures, duplicateRounds, maxFiles, rounds: cc.length, obs: o };
+  for (const r of cc) {
+    if (!(Number.isInteger(r.files) && r.files >= 1)) failures.push(`동시 tick 회차 ${r.round}: 파일 수가 정수 ≥1 이 아니다(${r.files})`);
+    // 「양쪽이 실제로 tick 했는가」를 보지 않으면, 한쪽이 401/500 으로 죽고 다른 한쪽만 배부한 회차도 정상 관측으로 통과한다
+    // (§6-9 (1) 의 1차 실패 — 세션 단일 정책으로 A 가 전부 401 이었는데 「중복 0」처럼 보였다). 그 회차는 무효다.
+    if (!concurrentRoundValid(r)) {
+      failures.push(`동시 tick 회차 ${r.round}: 양쪽이 200 으로 tick 하지 않았다(A=${r.statusA ?? NOT_MEASURED} B=${r.statusB ?? NOT_MEASURED}) — 한쪽만 성공한 회차는 중복 배부 크기의 증거가 아니다`);
+    }
+  }
+  const valid = cc.filter(concurrentRoundValid);
+  const duplicateRounds = valid.filter((r) => r.files > 1).length;
+  const maxFiles = valid.reduce((m, r) => Math.max(m, Number(r.files) || 0), 0);
+  return {
+    ok: failures.length === 0, failures, duplicateRounds, maxFiles,
+    rounds: cc.length, validRounds: valid.length, invalidRounds: cc.length - valid.length, obs: o,
+  };
+}
+
+/** 동시 라운드는 A·B 가 **둘 다 200 으로 tick 에 도달**했을 때만 중복 배부 크기의 증거가 된다. */
+function concurrentRoundValid(r) {
+  return r?.statusA === 200 && r?.statusB === 200;
 }
 
 export function formatMultiInstance(result) {
@@ -237,8 +253,11 @@ export function formatMultiInstance(result) {
   lines.push(`| 2번째 인스턴스 기동 | **exit=${nb.exitCode ?? NOT_MEASURED}** ${nb.elapsedMs ?? '?'}ms (ADR-012 잠금 안내 ${nb.hint ? '있음' : '없음'} · 첫 인스턴스 health ${nb.firstStillHealthy ? '유지' : '상실'}) | **${o.springSecondBoot ?? NOT_MEASURED}** — 둘 다 뜬다 |`);
   lines.push(`| 교차 세션(A 로그인 → B 에 tick) | (2번째가 뜨지 않아 성립 불가) | ${cs.aTokenOnB ?? NOT_MEASURED} · B 자기 세션 ${cs.bOwnToken ?? NOT_MEASURED} |`);
   lines.push(`| 순차 tick(A 먼저 → B) | (성립 불가) | A ${sq.tickA ?? NOT_MEASURED} · B ${sq.tickB ?? NOT_MEASURED} · 파일 ${sq.filesAfterA ?? '?'} → ${sq.filesAfterB ?? '?'} |`);
-  const detail = cc.map((r) => `${r.round}:${r.files}${r.inA && r.inB ? '(A+B)' : r.inA ? '(A)' : r.inB ? '(B)' : '(-)'}`).join(' ');
-  lines.push(`| 동시 tick(A·B 동시 발화 · ${cc.length}회) | (성립 불가) | **중복 회차 ${result.duplicateRounds}/${cc.length} · 기사당 최대 파일 ${result.maxFiles}** — 회차:파일수 ${detail || '-'} |`);
+  const detail = cc.map((r) => (concurrentRoundValid(r)
+    ? `${r.round}:${r.files}${r.inA && r.inB ? '(A+B)' : r.inA ? '(A)' : r.inB ? '(B)' : '(-)'}`
+    : `${r.round}:무효(A=${r.statusA ?? NOT_MEASURED} B=${r.statusB ?? NOT_MEASURED})`)).join(' ');
+  const invalid = result.invalidRounds ? ` · **무효 회차 ${result.invalidRounds}**(한쪽이 200 이 아니다 — 수치에서 제외)` : '';
+  lines.push(`| 동시 tick(A·B 동시 발화 · ${cc.length}회) | (성립 불가) | **중복 회차 ${result.duplicateRounds}/${result.validRounds ?? cc.length} · 기사당 최대 파일 ${result.maxFiles}**${invalid} — 회차:파일수 ${detail || '-'} |`);
   return lines;
 }
 
@@ -262,6 +281,14 @@ export function ps1StaticFindings(text) {
   if (/\$(secret|password|pwd|pass)\s*=\s*['"](?![<$])[^'"]+['"]/i.test(code)) findings.push('literal-password');
   if (/\$(user|userId|username)\s*=\s*['"](?![<$])[^'"]+['"]/i.test(code)) findings.push('literal-user');
   if (/password\s*=\s*['"](?![<$])[^'"]+['"]/i.test(code)) findings.push('literal-password-in-body');
+  // 등호+따옴표가 아닌 흔한 두 형태(리뷰 후속 (5)) — 종전 세 패턴은 둘 다 놓쳤다.
+  // (가) ConvertTo-SecureString 에 평문 리터럴(인자 순서 3형). 값이 $변수·<자리표시자> 면 평문 상수가 아니다.
+  if (/ConvertTo-SecureString\b[^\n]*-AsPlainText/i.test(code)
+    && lines.some((l) => /ConvertTo-SecureString/i.test(l) && /-AsPlainText/i.test(l) && /['"](?![<$])[^'"]+['"]/.test(l))) {
+    findings.push('literal-secure-string');
+  }
+  // (나) 콜론 구문 — JSON·here-string 리터럴의 "password": "<값>"
+  if (/['"]?(password|secret|pwd|pass)['"]?\s*:\s*['"](?![<$])[^'"]+['"]/i.test(code)) findings.push('literal-password-json');
   // 비0 종료코드: exit 뒤에 0 이 아닌 리터럴이나 변수가 최소 1곳 있어야 한다 — 전부 exit 0 이면 실패가 스케줄러에 보이지 않는다(S4).
   const exits = [...code.matchAll(/\bexit\s+([^\s;)]+)/gi)].map((m) => m[1]);
   if (!exits.some((v) => v !== '0')) findings.push('no-nonzero-exit');
@@ -288,6 +315,56 @@ export function ps1EncodingFinding(bytes) {
 }
 
 // --- 출력 위생 ---
+
+/**
+ * 리포트(tables.md)·stdout 으로 **나가는** 줄에서 비밀·토큰·경로 값을 라벨로 치환한다.
+ * outputLeaks 가 「섞였다」를 알리는 검출기라면 이쪽은 그래도 값이 새어 나가지 않게 하는 방어선이다 —
+ * 검출은 실행을 실패로 만들 뿐 이미 리포트에 박힌 토큰을 지워 주지 않는다(리뷰 후속 (1)).
+ * secrets 는 outputLeaks 와 같은 { label, value } 모양이다.
+ */
+export function maskSample(text, secrets) {
+  let out = String(text ?? '');
+  for (const s of secrets ?? []) {
+    if (!s || typeof s.value !== 'string' || s.value.length === 0) continue;
+    out = out.split(s.value).join(`<${s.label}>`);
+  }
+  return out;
+}
+
+/** ps1 로그 한 줄의 **허용 필드**(§6-3 이 문서화한 형식) — 값의 형태까지 제한한다. */
+const PS1_SAMPLE_FIELDS = Object.freeze({
+  stage: /^[a-z]+$/,
+  status: /^\d{3}$/,
+  reason: /^[a-z][a-z0-9-]*$/i,
+  distributed: /^\d+$/, scanned: /^\d+$/, failed: /^\d+$/, invalid: /^\d+$/, skipped: /^\d+$/,
+});
+const PS1_SAMPLE_HEAD = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const PS1_SAMPLE_WORDS = new Set(['tick', 'ok', 'FAIL', 'skipped']);
+const OUT_OF_FORM = '<형식 밖>';
+
+/**
+ * 리포트·stdout 으로 나가는 ps1 표본 줄을 **allowlist** 로 자른다.
+ *
+ * 왜 maskSample 만으로는 부족한가(실측): ps1 은 호출마다 **자기 세션을 스스로 발급**하므로 그 토큰 값은 하네스가
+ * 모른다(단일 세션 정책 · §6-9 (1)). 값을 아는 비밀만 가리면 「ps1 이 자기 sessionId 를 찍는」 바로 그 사고를 못 막는다 —
+ * 변이 실측에서 `x=<64hex>` 가 tables.md 에 그대로 실렸다. 그래서 **아는 형식만 싣고 나머지는 값째로 지운다**.
+ */
+export function sanitizePs1Sample(text, secrets) {
+  const masked = maskSample(text, secrets);
+  const tokens = masked.split(/\s+/).filter((t) => t !== '');
+  return tokens.map((token, index) => {
+    if (index === 0) return PS1_SAMPLE_HEAD.test(token) ? token : OUT_OF_FORM;
+    if (PS1_SAMPLE_WORDS.has(token)) return token;
+    const m = /^([a-zA-Z]+)=(.*)$/.exec(token);
+    if (m && Object.hasOwn(PS1_SAMPLE_FIELDS, m[1]) && PS1_SAMPLE_FIELDS[m[1]].test(m[2])) return token;
+    return OUT_OF_FORM;
+  }).join(' ');
+}
+
+/** 값을 몰라도 **형태**로 잡는다 — 32자 이상 연속 16진수는 세션 토큰·해시다(sessionId 는 64자). 라벨만 돌려준다. */
+export function tokenShapeLeaks(text) {
+  return /[0-9a-fA-F]{32,}/.test(String(text ?? '')) ? ['hex-token'] : [];
+}
 
 /** 자식 출력에 비밀·토큰·경로 값이 섞였는지 — 라벨만 돌려준다(값은 어디에도 싣지 않는다). */
 export function outputLeaks(text, secrets) {

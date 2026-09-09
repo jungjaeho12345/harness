@@ -761,7 +761,7 @@ Node 시절 앱 안에 있던 「깨어남·중복 방지 없음·실패 로그�
 ```bash
 SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node scripts/tick-cutover-probe.mjs                 # A(왕복 표 17행) + S6(Node 2개) · Spring 은 sqlite
 SPRING_JAVA_HOME=... node scripts/tick-cutover-probe.mjs --db mysql [--rounds 5]                        # + A-2(Spring 2개 · 같은 임시 MySQL DB) — NEWS_CT_MYSQL_* 3키
-node --test scripts/lib/tickCutover.self-test.mjs                                                       # 순수 판정부 + ps1 정적 검사 16건(프로브가 시작 시 스스로 돌린다)
+node --test scripts/lib/tickCutover.self-test.mjs                                                       # 순수 판정부 + ps1 정적 검사 **22건**(프로브가 시작 시 스스로 돌린다 · 09-08 판 16건 → 리뷰 후속 §6-11)
 ```
 
 임시 인스턴스 5~6개(Node 2 + 무스풀 Node · Spring 1~2 + 무스풀 Spring)를 리포 밖 임시 `DATA_DIR`·`DIST_SPOOL_DIR` 로 띄우고, 끝나면 자식 종료 → `harness_ct_*` 드롭 →
@@ -807,6 +807,10 @@ node --test scripts/lib/tickCutover.self-test.mjs                               
 - **세션 재사용 없음**: 호출마다 로그인한다. 세션(1시간 슬라이딩)을 파일에 저장해 재사용하면 로그인 한도 문제는 사라지지만 **그 파일이 Z 토큰 유출 표면**이 된다 — 택하지 않았다.
   대가는 §6-4 의 주기 하한이다.
 - **인코딩**: 파일은 **UTF-8 BOM** 이다 — Windows PowerShell 5.1 은 BOM 없는 한글 스크립트를 ANSI 로 읽어 문자열이 깨진다(자기검사가 BOM 을 단언한다).
+- **이 스크립트는 Windows PowerShell 5.1 전용이며 `pwsh`(PowerShell 7)로 등록하면 오류 처리 분기가 달라진다** — 비-2xx 를 잡는 `catch [System.Net.WebException]` 이 7 에서는
+  `HttpResponseException` 이라 걸리지 않는다(작업 등록은 `powershell.exe` 로 · README schtasks 예시와 §0-1 U5 도 그 판이다). 7 로 옮기려면 catch 절을 함께 고치고 왕복 표를 다시 재라.
+- **로그 쓰기 실패는 종료코드를 바꾸지 않는다**: `$ErrorActionPreference='Stop'` 아래에서 `Add-Content` 가 던지면 `Finish` 의 락 해제·`exit` 에 도달하지 못했다(리뷰 후속 §6-11 (2)).
+  이제 로그는 `try/catch` 안이고 실패하면 stderr 에 `tick WARN stage=log reason=log-write-failed` 한 줄만 남긴다 — **스케줄러가 보는 값은 언제나 문서화된 종료코드**다.
 
 ### 6-4. 레이트리밋 산술 (로그인 **10회 / 15분** 고정 창 · `LoginRateLimit.java` = `server/index.js` 609~614 · 클라이언트(IP)별 · 실측 `429@11`)
 
@@ -879,8 +883,12 @@ Spring 2개(**다른 포트 · 같은 MySQL 임시 DB · 같은 `DIST_SPOOL_DIR`
 | **S5** 자격을 ps1 에 평문으로 | `$secret = "…평문…"` | `SecretHygieneTest` 범위에 `packaging/**` 이 드는가 | **실측: `SecretHygieneTest` 는 `packaging/**` 을 _스캔은 한다_(가지치기 목록 밖) 그러나 6/6 green** — 세 패턴(jdbc-URL 자격 · `NEWS_*_PASSWORD=` 대입 · bootstrap SQL `IDENTIFIED BY`)이 PowerShell 리터럴 대입을 잡지 않는다 → **리포 Java 게이트는 못 잡는다(공백)**. 스크립트 자체 방어 `ps1StaticFindings` 는 red(`literal-password`·`password-not-from-env`) | 백업 원복 · 16/16. **테스트 범위 확대는 이 step 에서 하지 않는다**(별도 판단) |
 | **S6** Node 2개 같은 `DATA_DIR` | (변이 아님 — 잃은 보호의 대조 실험) | 2번째가 ADR-012 잠금에 막힌다 | **Node 2번째 `exit 1`(506ms · stderr 안내 · 첫 인스턴스 health 유지) · Spring 2번째 health-ok** — 그 비대칭이 §6-5 첫 줄. sqlite·mysql 두 실행 모두 동일 | — |
 
-**S5 공백 기록**: `tools/**`·`packaging/**` 스크립트의 앱 자격은 리포 전역 Java 게이트가 구조적으로 보지 못한다(패턴이 jdbc·env-대입·SQL 에 특화 — step6 R5 의 `tools/**` 공백과 같은 계열).
-이 step 은 스크립트 **자체 정적 검사**(자기검사 16건 · 프로브 기동 게이트)로 닫았고, `SecretHygieneTest` 범위·패턴 확대는 별도 phase 의 판단이다.
+위 표의 자기검사 수치는 **2026-09-08 판 16건** 기준이다 — 리뷰 후속으로 **22건**이 됐다(§6-11).
+
+**S5 공백 기록**(2026-09-09 갱신): `tools/**`·`packaging/**` 스크립트의 앱 자격은 리포 전역 Java 게이트가 구조적으로 보지 못한다(패턴이 jdbc·env-대입·SQL 에 특화 — step6 R5 의 `tools/**` 공백과 같은 계열).
+이 step 은 스크립트 **자체 정적 검사**(프로브 기동 게이트)로 닫았고, `SecretHygieneTest` 범위·패턴 확대는 별도 phase 의 판단이다. **그 자체 검사도 처음에는 `<이름> = '<값>'`(등호+따옴표) 세 형태만 봤다** —
+리뷰 후속 (5) 로 `ConvertTo-SecureString -AsPlainText '<값>'`(`literal-secure-string`)과 콜론 구문 `"password": "<값>"`(`literal-password-json`) 두 형태를 더했다(각각 자기검사 red 케이스로 실증 ·
+값이 `$변수`면 잡지 않는다 — 올바른 판을 벌하지 않기 위해). **남은 공백**: Base64 blob·외부 파일에서 읽는 자격은 여전히 형태로 못 잡는다(문자열 상수만 본다).
 
 ### 6-9. 이 step 이 잡은 함정·발견 (전부 실측)
 
@@ -898,6 +906,20 @@ Spring 2개(**다른 포트 · 같은 MySQL 임시 DB · 같은 `DIST_SPOOL_DIR`
 - 두 인스턴스가 **다른 머신**에 있는 구성(같은 스풀을 SMB 로 공유) — ADR-012 트레이드오프의 미검증 영역이고 이 phase 도 재지 않는다.
 - 스풀 파일 이름 충돌(같은 ms 에 두 인스턴스가 같은 `<articleId>_<stamp>.json` 을 쓰는 경우) — 5회 관측에서는 모두 다른 stamp 였다. 충돌 시 `ATOMIC_MOVE` 의 덮어쓰기 여부는 잰 적이 없다.
 - 세션 재사용 판의 ps1 — 만들지 않았다(§6-3 결정).
+
+### 6-11. 리뷰 후속 (2026-09-09 · 읽기 전용 리뷰 확정 5건 + 반박 1건 → fix 커밋 1개 · 자기검사 **16 → 22** · 게이트 재실행 없음 — `server-spring/**`·`contract/**`·`server/**`·`src/**`·`test/**` 무접촉)
+
+| # | 발견(미검증 주장) | 코드로 확인 → 처리 | 실측 |
+|---|---|---|---|
+| 1 | ps1 stdout 원문이 `scrub` 없이 `tables.md`·콘솔로 나간다(다른 자식 출력 2곳은 `scrub` 을 탄다 — 비대칭) | **사실. 그리고 처방(값 마스킹)만으로는 부족했다** — ps1 은 호출마다 **자기 세션을 발급**하므로 그 토큰 값은 하네스가 모른다(§6-9 (1)). 그래서 ① 아는 값 마스킹(`maskSample`) ② **형식 allowlist**(`sanitizePs1Sample` — 시각·`tick`/`ok`/`FAIL`/`skipped`·`stage`/`status`/`reason`/건수 5키만 통과, 나머지는 `<형식 밖>`) ③ 검출기에 **형태** 규칙(`tokenShapeLeaks` — 32자 이상 16진수) | ps1 이 자기 sessionId 를 찍도록 변이(정적 검사를 통과하는 형태 `$s`) → **수정 전: `tables.md`·stdout 에 64hex 토큰 2건 · 프로브 exit 0**(값 비교 검출기가 못 봤다) → **수정 후: 리포트·stdout 토큰 0건**(`tick ok <형식 밖> distributed=1`) **· exit 1 · `FAIL … hex-token`** · 원복 후 md5 동일 |
+| 2 | `Finish` 가 `Write-Line` 실패에 무방비 — 락 해제·`exit $code` 를 건너뛴다 | **사실** → 로그를 `try/catch` 안으로(실패는 stderr 1줄 `tick WARN stage=log reason=log-write-failed`) · `Dispose` 도 `try` 로 감싸 `exit` 가 **항상** 실행 | `-LogFile` 을 디렉토리로 주어 `Add-Content` 를 던지게 함: **수정 전 exit 1**(PowerShell 예외 코드 · stderr 에 경로까지 노출) → **수정 후 exit 2**(문서화된 config 코드 · stderr 1줄) · 로그 정상 경로도 exit 2 동일 |
+| 3 | `runMigrator` 의 java 자식이 `ctx.children` 에 없어 SIGINT 때 고아가 된다(다른 spawn 3곳은 등록한다) | **사실**(등록 누락) → `spawn` 직후 `ctx.children.push(child)` + `'error'` 에서 `spawnError` 설정(죽은 자식을 정리 루프가 5초 기다리지 않게) | **실제 CTRL_C 로는 재현되지 않는다** — 콘솔 이벤트는 **콘솔 전체**에 가서 java 자식이 스스로 죽는다(`--db mysql` 중 CTRL_C → 자식 0 · `harness_ct_*` 0 · 드롭 완료). 등록의 값은 **콘솔 밖 SIGINT** 에서 드러난다: 100ms 샘플링 타임라인에서 **수정 전 = 프로브 종료 뒤에도 migrate java 생존**(`probe=0 migrator=2 pids=6556,21988`) → **수정 후 = 드롭 자식 1개만**(`probe=0 migrator=1 pids=30476`) |
+| 4 | A-2 동시 라운드 판정이 `statusA`/`statusB` 를 보지 않아 「한쪽 401 + 한쪽 성공」 회차도 통과 | **사실**(기록만 하고 판정에 안 썼다) → 라운드마다 `statusA===200 && statusB===200` 요구 · 아니면 **무효 회차**로 red 이고 중복·최대파일 **수치에서 제외**(`validRounds`·`invalidRounds` 신설 · 표에도 남긴다) | 자기검사 red 2건(한쪽 401 · `statusA` 측정 누락) → green · 최종 `--db mysql` 실행에서 **5/5 유효(A+B 둘 다 200) · 무효 0** |
+| 5 | 자격 평문 정규식이 등호+따옴표 형태만 본다 | **사실** → `literal-secure-string`·`literal-password-json` 2종 추가(§6-8 S5 공백 기록 갱신) | 자기검사 red 5케이스(인자 순서 3형 + 콜론 구문 2형) → green · 거짓 양성 방지 2케이스(`$env:` 판 · `password = $secret`)도 잠금 |
+| 반박 | `catch [System.Net.WebException]` 가 PowerShell 7 에서 안 맞는다 | **코드는 고치지 않았다** — 이 리포는 배포 대상을 **Windows PowerShell 5.1** 로 명시한다(BOM 근거 · README `schtasks` 예시가 `powershell.exe` · 프로브도 5.1 로 실행). 대신 §6-3 에 「`pwsh` 로 등록하면 오류 처리 분기가 달라진다」 한 줄을 남겼다 | — |
+
+**이 후속이 남긴 교훈**: 「검출기가 있으니 안전하다」는 **값을 아는 비밀에만** 참이다. 하네스가 값을 모르는 비밀(자식이 스스로 발급한 토큰)은 **형식 allowlist** 로만 막힌다 — 리포트로 나가는 줄은
+「무엇을 지울까」가 아니라 **「무엇만 실을까」**로 짜라. 그리고 SIGINT 실측은 **콘솔 Ctrl+C 와 콘솔 밖 SIGINT 가 다른 사건**이다(전자는 자식에게도 직접 간다 — 등록 누락을 가린다).
 
 ## 7. 운영 적재 리허설 · 규모 점검 (`scripts/load-rehearsal.mjs` · `scripts/db-scale-probe.mjs` — step8)
 
