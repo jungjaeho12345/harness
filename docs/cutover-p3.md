@@ -1194,6 +1194,13 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | Spring(MySQL · 풀 1) | 16 | 128 | 126 / 120 | 189 / 209 | 300 / 243 | 0 | 16 / 16 |
 | Spring(MySQL · 풀 1) | 32 | 256 | 228 / 190 | 423 / 390 | 533 / 496 | 0 | 32 / 32 |
 
+> **[step10 리뷰 후속 재실행 · 2026-09-09]** 판정부가 **전송 계층 실패(`status:0`)를 세지 않고 분위수에만 섞고 있었다**
+> (읽기 전용 리뷰 확정 3번). 고친 뒤(`transportFailures`·`measured` 신설 · 자기검사 12 → **15**) **프로브를 1회 다시 돌렸다**:
+> **96계단 전부 `전송실패 0` · `측정 = 요청` · 5xx 0** — 즉 **위 표가 감추고 있던 실패는 없었고 판정은 그대로다.**
+> 다만 그 회차의 **절대값은 위 표와 다르다**(머신 부하가 달랐다 — 예: `read+sse` Node 동시 32 p50 63 → **181 ms** ·
+> Spring 51 → **198~210 ms**). **표는 갈아 끼우지 않았다** — 위 표는 step9 의 2회 측정이고 이 문단은 그 뒤의 재실행이다.
+> 판정(5xx 0 · 동시 32까지 천장 미관측 · 쓰기에서 Spring 이 느리지 않다)은 **두 세션 모두 같다**.
+
 - **전 축·전 계단에서 5xx 0건**이다. 두 회차가 서로 붙는다(꼬리 하나 예외: 쓰기 동시 16 Spring 1회차 p95 1,088 ms ·
   최대 1,211 ms — 2회차는 186/265 ms 다. 같은 계단의 다른 회차와 20% 이내로 붙지 않는 유일한 자리이고,
   **평균만 적었으면 보이지 않았을 값**이다).
@@ -1641,3 +1648,80 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 >   그래서 육안 체크리스트 **A-7** 이 그 실사용을 본다(자동 하네스는 `news_ct`=ALL 로 돌아 구조적으로 못 본다).
 > - **(d) 롤백에 `export` 를 넣은 이유가 수치로 보였다.** 컷오버 창 동안 **수집으로 들어온 기사 1건**이 export 산출물에 담겨
 >   Node 쪽 목록에 **2건**으로 돌아왔다. `export` 를 생략했다면 그 1건은 **MySQL 에만** 남았을 것이다(§9-9 주의 2).
+
+## 10. 마감 실측과 교차 변이 (step10 · 2026-09-09)
+
+> **마감은 재측정이다.** 앞 절들의 수치를 옮겨 적지 않고 **연속 2회** 다시 쟀다(평균을 적지 않는다 — 두 회차를 모두 싣는다).
+> 회차 1 = 11:39:42~11:54:34 · 회차 2 = 11:57:10~12:12:13.
+
+### 10-1. 13커맨드 × 2회
+
+| # | 커맨드 | 1회차 | 2회차 |
+|---|---|---|---|
+| 1 | `cd server-spring && ./mvnw -B clean verify` | **Tests run 1522 / F 0 / E 0 / Skipped 0** · BUILD SUCCESS | **1522 / 0 / 0 / 0** · BUILD SUCCESS |
+| 2 | `cd tools/news-migrator && ./mvnw -B clean verify` | **107 / 0 / 0 / 0** · BUILD SUCCESS | **107 / 0 / 0 / 0** · BUILD SUCCESS |
+| 3 | `spring-contract --parity` | exit 0 · **313관측 diffs 0**(246·55·4·5·3) | exit 0 · **313 · 0** |
+| 4 | `spring-contract --dual-run` | exit 0 · **313 · 0** | exit 0 · **313 · 0** |
+| 5 | `spring-contract --db mysql --parity` | exit 0 · **313 · 0** | **exit 1 — diffs 는 0인데 실패**(아래 §10-4 ①) → **재실행 2회 전부 exit 0 · 313 · 0** |
+| 6 | `spring-contract --db mysql --dual-run` | exit 0 · **313 · 0** | exit 0 · **313 · 0** |
+| 7 | `spring-contract --db mysql --require-full-coverage` | exit 0 · **covered 39/39 · 미커버 쌍 0**(합산 관측 313) | exit 0 · **39/39 · 0** |
+| 8 | `contract-inventory-check --require-spec-paths` | exit 0 · **routes 39**(GET 16 · POST 19 · PUT 3 · DELETE 1) · **spec-paths 39/39** | 동일 |
+| 9 | `spa-parity` | exit 0 · **관측 38 · diffs 0 · 허용 diff 516** | 동일 |
+| 10 | `spool-parity` | exit 0 · **폴더 3 · 파일 11 · diffs 0 · 눈감은 자리 66/66** | 동일 |
+| 11 | `verify-integration --server spring --scenario loopback` | **exit 0**(13,278 ms) · data-safety 무변 4종 | **exit 0**(57,258 ms — 비표시 팝업 스로틀로 `unverified` 1건 추가) |
+| 12 | `verify-integration --server exe --scenario loopback` | **exit 0**(51,183 ms) | **exit 0**(3,883 ms) |
+| 13 | `npm test && npm run lint && npm run build` | **1328 pass / 0 fail**(51 suites) · lint exit 0 · build ok | **1328 / 0** · lint 0 · build ok |
+
+**11·12의 소요 시간 편차는 결함이 아니다** — 비표시 Electron 창의 스로틀·attach 대기가 회차마다 다르고, 판정(exit code)과
+`unverified` 항목의 성격은 §3-3에 이미 적혀 있다. **수치(관측 수·diffs·테스트 수)는 두 회차가 전부 같다.**
+
+### 10-2. 자산 지문 (두 회차 동일)
+
+| 자산 | 값 |
+|---|---|
+| 리포 `news.db` | **606,208 B · md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967`**(전 실행 전·후 무변) |
+| `uploads/` | **32파일 · 6,068,792 B** |
+| `web/dist` | **3파일 · 444,543 B**(`npm run build` 뒤에도 같은 해시 이름) |
+| `server-spring` jar | **38,420,518 B** |
+| `news-migrator` jar | **21,855,292 B** |
+| 잔존 `harness_ct_*` | **0개** · 실행 후 `java.exe` **0** |
+
+### 10-3. 교차 변이 6종 — 그리고 **각각을 심은 채 계약이 green 인가**
+
+앞 step 들이 세운 게이트 중 **여섯**을 다시 심어 red 를 보고 원복했다. 그리고 **각각을 심은 채 계약(`--parity`)을 돌려**
+「계약이 구조적으로 못 보는 축」 목록을 마감에서 다시 확정했다(원복은 전건 **바이트 동일** · 끝나고 `git diff` **0줄**).
+
+| # | 심은 것(어디에) | 기대 | 실제 | **그 상태의 계약** | 원복 |
+|---|---|---|---|---|---|
+| **M1**(step2) | Java `SpaFallbackRules.isSpaFallbackRequest` — **`Accept` 게이트 제거**(`return true`) | 해시가 어긋난 자산이 200 index.html 로 뒤집힌다 | **`spa-parity` FAILED · 실패 diff 6건**(전부 `asset-missing`: `status` 404→**200** · `isIndex` false→**true** · `bodySha256` · `bodyLength` 163→**413** · `contentType` · CSP) · 허용 diff 516→**515** | **`--parity` 313관측 diffs 0 — green** | 바이트 동일 |
+| **Q5**(step5 · **보안 축**) | Java `SpoolWriter.CONTENTS_FIELDS` 에 **`internalComment`·`lockYN` 추가** | 내부 전용 값과 **편집 잠금 컬럼**이 외부 수신처 파일로 나간다 | **`spool-parity` FAILED · diffs 11/11**(파일마다 `only-in-B=[internalComment,lockYN]` — 잠금 컬럼은 5축 전부에서) | **`--parity` 313관측 diffs 0 — green** | 바이트 동일 |
+| **N4**(step3) | JS `scripts/lib/spaParity.mjs` `RECORD_FIELDS` 에서 **`contentType` 제거**(비교 항목 축소) | 대조가 조용히 좁아진다 | **자기검사 red 3건 → 하네스가 서버를 띄우지 않는다**(`판정부 자기검사가 실패했다 …` · exit 1) | (jar 무변 — 아래 공통 행) | 바이트 동일 |
+| **R3**(step6) | JS `tools/collection-sweeper/lib.js` **멱등 장부 조회 제거**(`ledgerHas` → `null`) | 같은 파일이 다시 수집된다 | **단위 red 1/28**(`sweepOnce — 장부에 있는 파일은 skipped`) → 왕복은 돌지 않는다(앞 겹이 닫힌다) | 〃 | 바이트 동일 |
+| **S2**(step7) | JS `scripts/lib/tickCutover.mjs` 기대표 — **비-Z tick 기대를 `200` 으로 완화** | 인가 회귀가 통과한다 | **자기검사 red 1/22 → 프로브 기동 거부**(exit 1). 실측 대조군은 리허설이 잡았다: 비-Z(desk) **403 `forbidden`** · 무세션 **401** | 〃 | 바이트 동일 |
+| (공통) | **N4+R3+S2 를 함께 심은 채** | 계약은 하네스 쪽 변이를 보지 못한다 | — | **`--parity` 313관측 diffs 0 — green** | — |
+| **T2**(step8/75) | Java 마이그레이터 `SourceFingerprint` 에 **죽은 코드 한 줄**(`Files.deleteIfExists(path)` · **SQL 은 0글자**) | 비파괴 정적 게이트가 red | **`MigratorHasNoDestructiveSqlTest.theMainTreeContainsNoDestructiveSqlAndNoDestructiveApiCall:241` red**(107 tests / **1 failure** · BUILD FAILURE) — 패턴 **둘**이 동시에 물었다(`\bFiles\s*\.\s*(delete\|deleteIfExists\|move)\s*\(` 와 맨이름 판) | **`--db mysql --parity` 313관측 diffs 0 — green**(그 죽은 코드가 든 jar 로 적재까지 했다) | 바이트 동일 |
+
+**이 표가 확정하는 문장 셋**:
+1. **계약은 이 phase 가 연 축을 하나도 보지 못한다** — SPA 응답(M1)·스풀 바이트(Q5)·마이그레이터의 파괴 코드(T2)를 심은 채로도 **313관측 diffs 0** 이다.
+   그러므로 「계약이 green 이니 안전하다」는 이 축들에 대해 **거짓**이고, 방어선은 `spa-parity`·`spool-parity`·정적 게이트 셋뿐이다.
+2. **하네스 자신을 무디게 하는 변이는 자기검사가 앞에서 막는다**(N4·S2 는 **기동 거부** · R3 는 단위 red). 게이트가 공허해지는 길은
+   「대조를 느슨하게」가 가장 싸고, 그래서 그 자리를 자기검사가 지키고 있어야 한다.
+3. **원복은 증명해야 한다** — 변이 전건 `bytes-identical=true` · `git diff --stat` **0줄** · 재빌드 후 `spa-parity` **38·0·516** ·
+   `spool-parity` **3·11·0·66/66** · 스위퍼 단위 **28/28** · tick 자기검사 **22/22** · 리포 `news.db` md5 무변 · 잔존 `harness_ct_*` **0**.
+
+### 10-4. 이 마감이 새로 잡은 것 (전부 실측 · 셋 다 「수치가 아니라 절차」의 결함이다)
+
+1. **거짓 leak 경보 — 개발 비밀번호가 4자라서 난다(§0-1 U2 가 예고한 그 함정이다).**
+   회차 2의 `--db mysql --parity` 가 **diffs 0 인 채로 exit 1** 이었고 사유는
+   `FAIL [default] migrator migrate 출력에 비밀 값이 2회 섞여 나왔다` 였다. 원인은 **우연**이다:
+   그 패스의 시드 md5(`4dd52cae…`) 안에 **4자 비밀번호와 같은 4글자**가 들어 있었다(값은 어디에도 싣지 않고
+   `includes` 판정만 했다 — 히트 1). 하네스는 우연과 유출을 구분할 수 없으므로 **이 동작은 옳다** —
+   고칠 자리는 하네스가 아니라 **U2(비밀번호를 8자 이상으로 교체)** 다. 재실행 2회 모두 exit 0(313 diffs 0).
+   **판정 규약**: 이 실패를 「계약 회귀」로 읽지 마라 — `[diff]` 줄이 전부 0 인데 exit 1 이면 **위생 검사**를 먼저 보라.
+2. **IDE 가 `target/` 을 동시에 건드리면 `clean` 이 있어도 빌드가 죽는다.** 변이 실험 1차에서
+   `mvnw clean package -DskipTests` 가 **테스트 컴파일**에서 `LogRecord.seq() cannot find symbol` 로 죽었고
+   (그 자리는 이 phase 가 만지지도 않은 파일이다) **jar 이 사라진 채** 뒤 단계가 전부 exit 1 이 됐다 —
+   그대로 기록했으면 「변이가 잡혔다」로 오독됐을 것이다. 처방: 변이 빌드는 **`-Dmaven.test.skip=true`**(테스트 컴파일 자체를 건너뛴다) ·
+   **jar 존재를 확인**하고 없으면 `rm -rf target` 후 1회 재시도 · 그래도 없으면 **그 단계의 수치를 버린다**.
+3. **`powershell.exe` 를 PATH 로 부르면 조용히 실행되지 않는다**(§9-13 (b)) — 종료코드가 **비어 있는 것**이
+   「성공」으로 보이는 자리다. 절대 경로로 부르고, **exit 가 `null`이면 실패로 판정**하라.
