@@ -299,6 +299,50 @@ test('sweepOnce — 이동 실패는 ingested 를 뒤집지 않는다(기사는 
   assert.equal(ledger.length, 2);
 });
 
+test('sweepOnce — ingested 가 아닌 파일은 옮기지 않는다(rejected·failed·deferred·skipped·dry-run) — 원본은 수집 폴더에 남는다', async () => {
+  // 왜 이 줄이 필요한가(④ 테스트 게이트 · 2026-09-09): 이동은 **기사가 생긴 파일만** 대상이다.
+  // 이동이 ingested 밖으로 새면 (가) 거부·실패한 파일이 수집 폴더에서 사라져 **다음 실행이 재시도하지 못하고**
+  // (나) 장부에도 없어서 어디로 갔는지 남지 않는다 — 무삭제·재시도 규율이 조용히 깨지는 자리다.
+  // 종전 28항은 ingested 의 이동만 봤고, 이동을 if 블록 밖으로 옮겨도 전부 green 이었다.
+  const { candidates, first } = twoFiles();
+
+  const rejected = fakeDeps({ moveTo: 'done', post: async () => ({ status: 403, json: { ok: false, reason: 'unregistered' } }) });
+  const r1 = await sweepOnce(candidates, first, rejected.deps);
+  assert.deepEqual(r1.map((r) => r.outcome), ['rejected', 'rejected']);
+  assert.deepEqual(rejected.moved, [], 'rejected 파일을 옮겼다');
+  assert.deepEqual(r1.map((r) => r.movedTo), [null, null]);
+
+  const failed = fakeDeps({ moveTo: 'done', post: async () => ({ status: 500, json: { ok: false, reason: 'internal-error' } }) });
+  const r2 = await sweepOnce(candidates, first, failed.deps);
+  assert.deepEqual(r2.map((r) => r.outcome), ['failed', 'failed']);
+  assert.deepEqual(failed.moved, [], 'failed 파일을 옮겼다 — 다음 실행이 재시도할 원본이 사라진다');
+
+  const deferred = fakeDeps({ moveTo: 'done', observe: () => ({ size: 99, mtimeMs: 99 }) });
+  const r3 = await sweepOnce(candidates, first, deferred.deps);
+  assert.deepEqual(r3.map((r) => r.outcome), ['deferred', 'deferred']);
+  assert.deepEqual(deferred.moved, [], '아직 쓰이는 중인 파일을 옮겼다');
+
+  const skipped = fakeDeps({ moveTo: 'done', ledgerHas: () => ({ outcome: 'ingested', articleId: 'OLD' }) });
+  const r4 = await sweepOnce(candidates, first, skipped.deps);
+  assert.deepEqual(r4.map((r) => r.outcome), ['skipped', 'skipped']);
+  assert.deepEqual(skipped.moved, [], '장부 적중(이미 처리)은 이번 실행이 옮길 대상이 아니다');
+
+  const dry = fakeDeps({ moveTo: 'done', dryRun: true });
+  const r5 = await sweepOnce(candidates, first, dry.deps);
+  assert.deepEqual(r5.map((r) => r.outcome), ['dry-run', 'dry-run']);
+  assert.deepEqual(dry.moved, [], 'dry-run 이 파일을 옮겼다 — 그것은 dry 가 아니다');
+
+  // 대조군: ingested 이고 --move-to 가 있을 때만 옮긴다. --move-to 가 없으면 ingested 여도 옮기지 않는다.
+  const moving = fakeDeps({ moveTo: 'done' });
+  const r6 = await sweepOnce(candidates, first, moving.deps);
+  assert.deepEqual(r6.map((r) => r.outcome), ['ingested', 'ingested']);
+  assert.deepEqual(moving.moved, ['a/1.txt', 'a/2.txt']);
+  const noMoveTo = fakeDeps();
+  const r7 = await sweepOnce(candidates, first, noMoveTo.deps);
+  assert.deepEqual(r7.map((r) => r.outcome), ['ingested', 'ingested']);
+  assert.deepEqual(noMoveTo.moved, [], '--move-to 없이 옮겼다(기본은 무이동이다)');
+});
+
 test('sweepOnce — payload 는 파일 바이트의 utf8 그대로 · 장부 키 = rel#sha256 · 로그에 payload 없음', async () => {
   const { deps, posted, ledger, logs } = fakeDeps({ readFile: () => Buffer.from('제목\n본문 secret-body') });
   const { candidates, first } = twoFiles();
