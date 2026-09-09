@@ -620,6 +620,8 @@ fetch 표준의 **차단 포트 묶음**(`6000` · `6566` · `6665~6669` · `669
 # 스위퍼 본체 — 토큰은 환경변수 COLLECTION_TOKEN 으로만(서버와 같은 값 · argv 에 토큰 모양이 오면 exit 2)
 COLLECTION_TOKEN=<서버와 같은 값> node tools/collection-sweeper/sweeper.js --spool <RCV_SPOOL_DIR> --base http://127.0.0.1:3001 --once \
     [--move-to <처리완료 폴더 — 스풀 밖>] [--dry-run] [--ledger <파일>] [--stabilize-ms 1000] [--timeout 15000] [--report <리포 밖 JSON>]
+# 컷오버 첫 실행 전 1회 — 스풀에 **이미 쌓여 있던** 파일을 전송 0건으로 장부에만 올린다(§9-1-1 · --base 불요 · --move-to 와 배타)
+node tools/collection-sweeper/sweeper.js --spool <RCV_SPOOL_DIR> --ledger <래퍼가 쓸 장부와 같은 경로> --seed-ledger
 node --test tools/collection-sweeper/sweeper.test.js                                                     # 순수 판정부 + 파일 루프(sweepOnce 주입) + 소스 정적 스캔(28)
 SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" node tools/collection-sweeper/roundtrip.js             # Node vs Spring 왕복 대조 · exit 0
 node tools/collection-sweeper/roundtrip.js --overlap                                                       # Node watcher + 스위퍼 같은 스풀 — 중복 실측
@@ -627,12 +629,16 @@ node tools/collection-sweeper/roundtrip.js --overlap                            
 
 **종료코드 규약** — `0` 전건 성공 **또는 처리 0건** · `1` `rejected`(4xx 사유 토큰 — 최종 · 재시도 안 함) 또는 `failed`(401·503·5xx·네트워크 — **다음 실행이 재시도**)가
 1건 이상 · `2` 설정·환경 오류(인자·스풀 없음·서버 미도달·장부 못 씀·argv 토큰 · **파일을 건드리지 않았다**). 스케줄러는 `1`·`2` 를 경보 조건으로 건다.
-**파일별 결과** = `ingested` / `rejected` / `failed` / `skipped`(장부에 있음) / `deferred`(크기·mtime 이 아직 변한다 — 다음 실행에) / `dry-run` / `ignored`(최상위 = sourceId 없음).
+**파일별 결과** = `ingested` / `rejected` / `failed` / `skipped`(장부에 있음) / `seeded`(**선등재** — 전송 없이 장부에만) / `deferred`(크기·mtime 이 아직 변한다 — 다음 실행에) / `dry-run` / `ignored`(최상위 = sourceId 없음).
 **장부** = `<spool>/.collection-sweeper-ledger.jsonl`(기본 · append 전용 JSON Lines · 키 = `상대경로#sha256`) — 스풀 **최상위**라 1세그먼트 = watcher·스위퍼 모두 무시하는 자리다.
 `--ledger` 로 옮길 수 있되 **전송 전 preflight** 로 쓸 수 있는지 보고, 못 쓰면 한 건도 보내지 않는다(장부 없는 기사 = 다음 실행의 중복).
 **`--move-to`** 는 성공(ingested)한 파일만 `<dir>/<sourceId>/<file>` 로 **이동**(덮어쓰기 없음 · 같은 이름이면 `.<ms>.dup` 접미사 · 다른 드라이브면 복사 후 지문 일치 확인 뒤 원본 정리)
 하고, **스풀 안은 거부**한다 — 스풀 안으로 옮기면 `<spool>/<done>/<sourceId>/<file>` 이 2세그먼트 이상이라 다음 스캔(과 롤백 시 Node watcher)이 **다시 수집**한다.
 장부는 `--move-to` 와 무관하게 **항상** 쓴다(이동 실패·장부 어느 한쪽이 무너져도 멱등이 남는다). **스위퍼는 파일을 지우지 않는다.**
+**`--seed-ledger`** 는 **전송 0건**으로 스풀을 훑어 장부에만 등재한다(결과 `seeded` · 이동 없음 · `--move-to` 와 배타 · `--dry-run` 이 우선 ·
+`--base` 를 생략할 수 있고 서버 도달성도 보지 않는다). **컷오버 첫 실행이 스풀의 기존 파일을 전건 재수집하는 것을 막는 유일한 수단**이며
+그 절차는 **§9-1-1** 이다. 왕복 실측(2026-09-09 · 임시 스풀 3파일): 선등재 `seeded 3` **POST 0** → 다음 `--once` `skipped 3` **POST 0** →
+새 파일 1개 추가 후 `ingested 1` **POST 1**(선등재가 새 파일을 막지는 않는다) · **대조군**(장부 없는 첫 실행) `ingested 3` **POST 3**.
 
 ### 5-2. 무엇이 갈리는가 (divergence — 더 나은 쪽이라도 적는다)
 
@@ -742,6 +748,9 @@ Node 시절 앱 안에 있던 「깨어남·중복 방지 없음·실패 로그�
 ### 5-9. 무엇을 보지 않는가
 
 - 실제 외부 FTPd 와 그 쓰기 방식(임시 이름 → rename 인지, 제자리 쓰기인지) — 안정화 간격(기본 1초)의 적정치는 운영 유입을 보고 정한다(step7·10).
+  **그리고 「FTPd·운영이 수집 끝난 파일을 치우는가」도 여기서 미상이다** — 치우지 않는다면 컷오버 시점의 스풀에 이미 수집된 파일이 남아 있고,
+  스위퍼 첫 실행이 그것을 전건 재수집한다. **미상 위에서 컷오버를 시작하지 않도록** 런북 **§9-0 #12**(개수를 센다)와 **§9-1-1**
+  (선등재 `--seed-ledger` 또는 보존 이동)이 이 공백을 절차로 막는다. 이 절의 「미상」이 해소되면 §9-1-1 의 (가)/(나) 선택 근거도 다시 본다.
 - LAN 바인딩 + 토큰 미설정의 503 `collection-disabled` 는 계약 `failclosed` 프로파일이 소유한다(무접촉). 스위퍼는 그것을 `failed:collection-disabled` 로 분류하고 재시도한다.
 - Spring 의 MySQL 축은 이 왕복이 띄우지 않는다(sqlite) — 수집 라우트 자체는 `--db mysql --parity` 313관측이 본다. 스위퍼는 서버 저장소를 모른다.
 - 여러 스위퍼 인스턴스의 장부 append 경합 — 작업은 하나만(§5-3 5).
@@ -1356,7 +1365,8 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | 9 | 스위퍼 전제 | 운영기 Node 런타임(v24) · `sweeper.js`·`lib.js` 복사 · `COLLECTION_TOKEN` 위치(§5-3) | 준비됨 | **수집이 멈춘다**(Spring 에는 watcher 가 없다 — §5) |
 | 10 | Spring 자격 3키 로드 절차 | `docs/ops-mysql.md` §3(한 줄씩 · `set -a; .` 금지) | `NEWS_DB_*` 3키 | 기동이 거부된다(설계) |
 | 11 | 한글 출력 | java 커맨드에 `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` | 마이그레이터 메시지가 안 깨진다 | 실패 문구를 읽을 수 없다 |
-| 12 | **알려진 한계 낭독**(아래 셋) | 소리 내어 읽는다 | 전원이 들었다 | 모르고 전환하면 사고 뒤에야 알게 된다 |
+| 12 | **스풀에 이미 쌓여 있는 파일 수** | `(Get-ChildItem "<RCV_SPOOL_DIR>" -Recurse -File).Count` · 목록은 `Get-ChildItem … \| Select-Object FullName, Length, LastWriteTimeUtc` | **개수와 목록을 작업 기록지에 적었다**(0 이어도 적는다) | 세지 않고 스위퍼를 켜면 **첫 실행이 그 파일을 전부 다시 수집**한다 → **삭제할 수 없는 중복 기사**. 처분 절차는 **§9-1-1** |
+| 13 | **알려진 한계 낭독**(아래 셋) | 소리 내어 읽는다 | 전원이 들었다 | 모르고 전환하면 사고 뒤에야 알게 된다 |
 
 **낭독 3항 — 전환 전에 소리 내어 읽는다.**
 
@@ -1389,6 +1399,51 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 - **왜 이 순서인가**: 서버를 먼저 내리면 다음 주기에 tick 이 깨어나 실패로 끝나고(스케줄러 이력·경보 오염), 무엇보다
   **정지 창 한가운데서 프로세스가 다시 뜨는** 길을 열어 둔다.
 - **되돌리려면**: 이 시점에는 아무것도 바뀌지 않았다 — `/ENABLE` + 서버 기동이면 원상복구다.
+
+### 9-1-1. **스풀 기존 파일 처분 — 스냅샷 → 선등재 또는 보존 이동** (스위퍼를 켜기 전에 반드시 · ⑤ 리뷰 [high])
+
+- **무엇을**: Node 를 내린 지금, `RCV_SPOOL_DIR` 에 **이미 쌓여 있는 파일**을 처분한다. **어느 쪽을 택하든 파일을 지우지 않는다.**
+- **왜 이 단계가 있는가**(이것을 건너뛰면 되돌릴 수 없다): Node watcher 는 수집한 파일을 **지우지도 옮기지도 않는다**
+  (§5-2 「파일 처분: 아무것도 안 함」 — 치우는 것은 외부 FTPd·운영이고 **그 처분 방식은 §5-9 가 스스로 「미상」이라 적었다**).
+  그래서 컷오버 시점의 스풀에는 **이미 수집이 끝난 파일이 그대로 남아 있을 수 있다.** 스위퍼는 장부(`상대경로#sha256`)로 멱등인데
+  **컷오버 첫 실행에는 그 장부가 없다** → 남아 있는 파일이 **전부** `POST /api/collection/receive` 로 들어간다. 수집 서비스에는
+  중복 판정이 없으므로(같은 파일 2회 = **기사 2건** — R3 실측 · §5-2) 그만큼 **자동기사가 복제되고, 기사는 지울 수 없다**
+  (CLAUDE.md 최상위 규칙 — 사람이 화면에서 하나씩 처리해야 한다). 실측(2026-09-09 · 임시 스풀 3파일): 장부 없는 첫 실행 =
+  **`ingested 3` · POST 3건**, 선등재 후 실행 = **`skipped 3` · POST 0건**.
+- **명령 — 1) 스냅샷**(§9-0 #12 에서 이미 셌다면 그 값을 쓴다):
+  ```powershell
+  $spool = "<RCV_SPOOL_DIR>"
+  (Get-ChildItem $spool -Recurse -File).Count
+  Get-ChildItem $spool -Recurse -File | Select-Object FullName, Length, LastWriteTimeUtc | Out-File "<작업기록지>\spool-snapshot.txt" -Encoding UTF8
+  ```
+- **명령 — 2) 둘 중 하나를 택한다**:
+
+  **(가) 선등재**(권장 · 파일을 그 자리에 두고 「이미 있던 것」으로 장부에 표시한다 — 서버가 아직 안 떠 있어도 된다):
+  ```bat
+  node "D:\기사작성기-server\tools\collection-sweeper\sweeper.js" --spool "<RCV_SPOOL_DIR>" ^
+       --ledger "D:\기사작성기-server\data\collection-sweeper-ledger.jsonl" --seed-ledger
+  ```
+  `--ledger` 값은 **§5-3 래퍼가 쓸 값과 반드시 같아야 한다**(다르면 선등재가 아무 소용이 없다 — 스위퍼는 자기 장부만 본다).
+  `--seed-ledger` 는 **전송 0건**이고 `--base` 도 필요 없다(서버를 부르지 않는다). 파일은 **옮기지도 지우지도 않는다**
+  (그래서 `--move-to` 와 함께 쓰면 exit 2 로 거부한다). 미리 보려면 `--dry-run` 을 함께 준다(그때는 장부도 쓰지 않는다).
+
+  **(나) 보존 이동**(스풀을 비운 상태에서 시작하고 싶을 때 — **이동이지 삭제가 아니다**):
+  ```powershell
+  $keep = "<보존 폴더 — 스풀 밖 · FTPd 권한 밖>"
+  New-Item -ItemType Directory -Force -Path $keep | Out-Null
+  Move-Item -Path "<RCV_SPOOL_DIR>\*" -Destination $keep
+  ```
+  외부 FTPd 가 그 폴더에 계속 쓰는 중이면 이동 도중에 새 파일이 들어올 수 있다 — **정지 창 안에서** 하고, 옮긴 뒤 개수를 다시 센다.
+- **성공 판정**: (가) `seeded=<스냅샷 개수>` · `ingested=0` · exit **0** · 장부 줄 수 = 그 개수 · **스풀 파일 수 무변** ·
+  (선택) 이어서 `--dry-run --base <서버>` 를 돌리면 전건 `skipped`. (나) 스풀 파일 수 **0** · 보존 폴더 파일 수 = 스냅샷 개수.
+- **기록지에 적는다**: 택한 경로(가/나) · 스냅샷 개수 · **장부 파일 절대경로**(또는 보존 폴더 경로).
+- **실패 시 분기**: 장부를 못 쓰면 exit **2** 이고 **한 건도 등재되지 않는다**(경로·권한을 고치고 다시 — 부분 등재는 없다) ·
+  선등재 도중 새 파일이 들어와 `deferred` 가 남으면 그 파일은 **진짜 새 파일**이므로 그대로 두고 첫 스위퍼 실행에 맡긴다.
+- **되돌리려면**: (가) 장부 파일을 지우면 원상복구지만 **그 순간 위 위험이 되살아난다**(지우지 마라 — 지워야 한다면 이 절을 다시 한다) ·
+  (나) 보존 폴더의 파일을 스풀로 되돌린다(롤백 시 Node watcher 가 다시 걷게 하려면 이쪽이다 — §9-9).
+- **롤백과의 관계**: Node 로 되돌리면 watcher 가 스풀을 다시 본다. **(가)를 택했으면 파일이 그 자리에 있으므로 watcher 가 다시
+  수집한다**(watcher 는 장부를 모른다 — 그것이 §5-5 가 「스위퍼를 먼저 끄라」고 한 이유의 다른 얼굴이다). 롤백 시에는
+  **스위퍼 작업을 먼저 `/DISABLE`** 하고, 스풀에 남은 파일을 어떻게 할지 롤백 판단자에게 알린다.
 
 ### 9-2. 사본 2벌 + **봉인**(md5 · 크기 · mtime)
 
@@ -1474,7 +1529,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | c | 데이터가 왔는가 | 로그인 → 목록 → 상세 1건 | **컷오버 전 기사가 보인다** · 상세 200 |
 | d | 배부가 도는가 | 기사 1건 송고 → `<DIST_SPOOL_DIR>/<수신처 폴더>/` 를 본다 | 파일이 **1개** 늘었다(`<articleId>_<stamp>.json`) |
 | e | tick 이 도는가 | `powershell -NoProfile -ExecutionPolicy Bypass -File <배포>\tick-distribution-spring.ps1 -BaseUrl http://127.0.0.1:<PORT> -LogFile <배포>\data\tick.log` (스케줄러 등록·스크립트에서 부를 때는 **절대 경로** `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` — §9-13 (b)) | **exit 0** · `tick.log` 마지막 줄 `2026-…Z tick ok distributed=<n> scanned=<n> failed=0 invalid=0`(실측 형식) |
-| f | 수집이 도는가 | 스위퍼 `--dry-run` → 후보 수 확인 → `--once` 실행(§5-1) | exit **0** · 기사 1건 증가 · 스풀 파일은 **지워지지 않는다** |
+| f | 수집이 도는가 | **§9-1-1 을 마쳤는지 먼저 확인**(기록지에 선등재/보존 이동 줄) → 스위퍼 `--dry-run` → 후보 수 확인 → `--once` 실행(§5-1) | exit **0** · 스풀 파일은 **지워지지 않는다** · 기사 증가분이 **`--dry-run` 이 센 후보 수와 일치**한다(선등재를 했다면 기존 파일은 `skipped` 이므로 새로 떨어진 파일만 는다 — 예상 밖으로 늘면 §9-1-1 을 건너뛴 것이다) |
 | g | 클라이언트가 붙는가 | 운영 PC 한 대에서 **설정을 고치지 않고** exe 실행 | 주소 입력 화면 없이 로그인 화면 |
 
 > **⚠ `scripts/verify-integration.mjs --server spring` 은 이 자리에서 쓰는 도구가 아니다.**
@@ -1490,6 +1545,9 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
   (수집은 운영이 쓰고 있고 — §0-5묶음 「쓴다」 — Spring 에는 watcher 가 없다).
 - **명령**: tick = §0-1 **U5** 1~4 그대로(기존 작업 `/DISABLE` → 새 작업 `/Create` · **주기 90초 이상 · 권장 5분**) ·
   스위퍼 = **§5-3** 1~7(1분 주기 · 같은 스풀에 작업은 **하나만** · 「이미 실행 중이면 새 인스턴스를 시작하지 않음」).
+- **선행 확인(스위퍼를 켜기 전에)**: **§9-1-1 을 했는가**(스풀 기존 파일 선등재 또는 보존 이동) — 기록지에 그 줄이 없으면
+  **스위퍼 작업을 만들지 마라.** 안 했으면 첫 주기에 스풀에 남아 있던 파일이 전부 기사가 되고 **되돌릴 수 없다**.
+  래퍼(§5-3 4)의 `--ledger` 값이 **§9-1-1 에서 선등재한 장부와 같은 경로**인지 눈으로 대조한다.
 - **순서**: **Node 를 내린 뒤에 스위퍼를 켠다.** 반대로 하면(=Node watcher 와 스위퍼가 겹치면) 파일 하나가
   **기사 4건**이 된다(실측: watcher 3 + 스위퍼 1 — §5-5).
 - **성공 판정**: (a) 활성 tick 작업이 **정확히 하나**(`schtasks /Query /FO LIST /V`) (b) 한 주기 뒤 `DIST_SPOOL_DIR` 파일이
@@ -1501,7 +1559,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 
 ### 9-8. 육안 확인 + **봉인 재측정**(하루로 끝내지 않는다)
 
-- **무엇을**: `packaging/체크리스트-육안확인-P3.md` 12항을 돌리고, **§9-2 의 봉인값을 다시 잰다**.
+- **무엇을**: `packaging/체크리스트-육안확인-P3.md` 13항을 돌리고, **§9-2 의 봉인값을 다시 잰다**.
 - **명령**(한 줄 · 앱 안에 넣지 마라):
   ```powershell
   $want = "<기록지의 md5>"

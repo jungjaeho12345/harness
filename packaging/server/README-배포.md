@@ -123,6 +123,11 @@ Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x
   `node tools\collection-sweeper\sweeper.js --spool <RCV_SPOOL_DIR> --base http://127.0.0.1:3001 --once --move-to <스풀 밖 처리완료 폴더>`
 - 스위퍼는 **파일을 지우지 않는다**(장부 `<스풀>\.collection-sweeper-ledger.jsonl` + 선택 이동). 장부·처리완료
   폴더는 백업 대상이다. 종료코드 `0` 정상 · `1` 일부 거부/실패 · `2` 설정 오류 — `1`·`2`를 경보로 건다.
+- **작업을 처음 등록하기 전에 딱 한 번**: 스풀에 **이미 쌓여 있던** 파일을 선등재한다(안 하면 첫 실행이 그 파일을
+  전부 다시 수집해 **자동기사가 복제되고, 기사는 지울 수 없다**). 전송 0건이고 서버가 안 떠 있어도 된다:
+  `node tools\collection-sweeper\sweeper.js --spool <RCV_SPOOL_DIR> --ledger <래퍼가 쓸 장부와 같은 경로> --seed-ledger`
+  → 결과 `seeded=<파일 수>` · `ingested=0`. 절차 전문은 `docs/cutover-p3.md` **§9-1-1**(선등재 대신 **보존 폴더로
+  이동**해도 된다 — **어느 쪽이든 지우지 않는다**).
 - **Node 서버로 되돌릴 때는 스위퍼 작업을 먼저 끄고(`schtasks /Change /TN <작업명> /DISABLE`) Node를 켜라.**
   둘이 같이 돌면 같은 파일이 두 번 수집된다(실측: 파일 1개 → 기사 4건). 컷오버 때는 그 반대 순서다.
 

@@ -18,8 +18,14 @@ export const TOKEN_ENV = 'COLLECTION_TOKEN';
 /** 서버 계약의 헤더 이름(contract/cases/default/collection.contract.js · CollectionController.TOKEN_HEADER). */
 export const TOKEN_HEADER = 'x-collection-token';
 
-/** 장부에 등재되는 최종 결과 — 이 둘만 재실행에서 건너뛴다. failed 는 다음 실행이 다시 시도한다. */
+/** 서버 응답의 **최종 판정** — 이 둘만 장부에 남는다. failed 는 다음 실행이 다시 시도한다. */
 export const FINAL_OUTCOMES = new Set(['ingested', 'rejected']);
+
+/** 선등재(`--seed-ledger`)가 남기는 결과 — 전송하지 않고 「이 파일은 이미 있던 것」만 표시한다. */
+export const SEEDED = 'seeded';
+
+/** 재실행이 **건너뛰는** 장부 결과 — 서버 판정 둘 + 선등재. `parseLedger` 가 읽어 들이는 집합이다. */
+export const LEDGER_OUTCOMES = new Set([...FINAL_OUTCOMES, SEEDED]);
 
 /** 서버 거부 = 사유 토큰이 있는 4xx 두 가지(403 unregistered·inactive / 400 파서·폴백). 그 밖은 failed(재시도). */
 const REJECTED_STATUSES = new Set([400, 403]);
@@ -74,7 +80,7 @@ export function formatLedgerLine(entry) {
   return `${JSON.stringify(entry)}\n`;
 }
 
-/** 장부 텍스트 → Map<key, entry>(최종 결과만). 빈 줄·깨진 줄·key 없는 줄은 건너뛴다(장부 일부 손상이 전체를 막지 않는다). */
+/** 장부 텍스트 → Map<key, entry>(건너뛸 결과만). 빈 줄·깨진 줄·key 없는 줄은 건너뛴다(장부 일부 손상이 전체를 막지 않는다). */
 export function parseLedger(text) {
   const done = new Map();
   for (const raw of String(text ?? '').split('\n')) {
@@ -82,7 +88,7 @@ export function parseLedger(text) {
     if (!line) continue;
     let entry;
     try { entry = JSON.parse(line); } catch { continue; }
-    if (!entry || typeof entry.key !== 'string' || !FINAL_OUTCOMES.has(entry.outcome)) continue;
+    if (!entry || typeof entry.key !== 'string' || !LEDGER_OUTCOMES.has(entry.outcome)) continue;
     done.set(entry.key, entry);
   }
   return done;
@@ -139,14 +145,26 @@ export function isLedgerFatal(err) {
 
 const errorCode = (err) => (err && err.code ? String(err.code) : (err && err.message) || 'unknown');
 
+/** 장부 기록 — 실패는 **격리하지 않고** 표식을 달아 전파한다(장부 없는 기사 = 다음 실행의 중복). */
+function appendLedger(deps, entry) {
+  try {
+    deps.ledgerAppend(entry);
+  } catch (err) {
+    const fatal = err instanceof Error ? err : new Error(String(err));
+    fatal[LEDGER_FATAL] = true;
+    throw fatal;
+  }
+}
+
 /**
  * 파일 루프 1회 — fs·HTTP·시계는 전부 deps 로 주입된다(단위 테스트가 실패 격리를 잠근다 · R4).
  *
  * deps: observe(rel)→{size,mtimeMs}|null · readFile(rel)→Buffer · post(sourceId, payload)→{status,json,error?} ·
  *       ledgerHas(key)→entry|null · ledgerAppend(entry) (던지면 **전파** — isLedgerFatal) · moveOut(rel, sha)→표시용 목적지 ·
- *       log(line, level) · dryRun · moveTo · now()→ISO 문자열(기본 시계).
+ *       log(line, level) · dryRun · seedLedger · moveTo · now()→ISO 문자열(기본 시계).
  * 규칙: 한 파일의 예외는 그 파일만 failed 로 남기고 다음으로 간다. 최종 결과(ingested·rejected)만 장부. 이동 실패는 ingested 를
  * 뒤집지 않는다(기사는 생겼고 장부에도 있다) — moveError 로만 남긴다. payload·토큰은 어떤 로그 줄에도 싣지 않는다.
+ * seedLedger 는 **전송·이동 없이** 장부에만 등재한다(dryRun 이 우선 — 그때는 아무것도 쓰지 않는다).
  */
 export async function sweepOnce(candidates, firstObservations, deps) {
   const now = deps.now ?? (() => new Date().toISOString());
@@ -179,6 +197,16 @@ export async function sweepOnce(candidates, firstObservations, deps) {
         deps.log(`[sweep] ${rel} sourceId=${sourceId} → dry-run(${bytes.length}B)`, 'info');
         continue;
       }
+      // 선등재(--seed-ledger) — **전송하지 않고** 장부에만 올린다. 컷오버 첫 실행이 스풀에 이미 쌓여 있던
+      // 파일을 전건 재수집하는 것을 막는 유일한 앱 밖 수단이다(수집 서비스에 중복 판정이 없고 기사는 지울 수
+      // 없다). 이동도 하지 않는다: 선등재는 「이미 있던 것」의 표시이지 처리한 것이 아니다.
+      if (deps.seedLedger) {
+        record.outcome = SEEDED;
+        record.reason = 'seed-ledger';
+        appendLedger(deps, { t: now(), key, rel, sourceId, outcome: SEEDED, status: null, reason: 'seed-ledger', articleId: null });
+        deps.log(`[sweep] ${rel} sourceId=${sourceId} → seeded(장부 선등재 · 전송 없음 · ${bytes.length}B)`, 'info');
+        continue;
+      }
       const res = await deps.post(sourceId, payload);
       const verdict = classifyResponse(res.status, res.json);
       record.outcome = verdict.outcome;
@@ -186,14 +214,7 @@ export async function sweepOnce(candidates, firstObservations, deps) {
       record.reason = verdict.reason ?? (res.error ? `network:${res.error}` : null);
       record.articleId = verdict.articleId;
       if (FINAL_OUTCOMES.has(verdict.outcome)) {
-        const entry = { t: now(), key, rel, sourceId, outcome: verdict.outcome, status: record.status, reason: verdict.reason, articleId: verdict.articleId };
-        try {
-          deps.ledgerAppend(entry);
-        } catch (err) {
-          const fatal = err instanceof Error ? err : new Error(String(err));
-          fatal[LEDGER_FATAL] = true;
-          throw fatal;
-        }
+        appendLedger(deps, { t: now(), key, rel, sourceId, outcome: verdict.outcome, status: record.status, reason: verdict.reason, articleId: verdict.articleId });
       }
       if (verdict.outcome === 'ingested') {
         if (deps.moveTo) {

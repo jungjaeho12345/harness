@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  EXIT, FINAL_OUTCOMES, TOKEN_ENV, TOKEN_HEADER,
+  EXIT, FINAL_OUTCOMES, LEDGER_OUTCOMES, SEEDED, TOKEN_ENV, TOKEN_HEADER,
   classifyResponse, deriveSourceId, exitCodeFor, findTokenLikeArgv, formatLedgerLine, ledgerKey, parseLedger,
   pathIsInside, planScan, sameObservation, sha256Hex, splitSegments, summarize, sweepOnce,
 } from './lib.js';
@@ -350,6 +350,91 @@ test('sweepOnce — payload 는 파일 바이트의 utf8 그대로 · 장부 키
   assert.equal(posted[0].payload, '제목\n본문 secret-body');
   assert.equal(ledger[0].key, `a/1.txt#${sha256Hex(Buffer.from('제목\n본문 secret-body'))}`);
   assert.ok(logs.every((l) => !l.includes('secret-body')), '로그에 payload 가 실렸다');
+});
+
+// --- 선등재 (--seed-ledger · ⑤ 리뷰 [high] · 2026-09-09) ---
+//
+// 왜 필요한가: 장부가 없으면 `done` 이 빈 Map 이라 **컷오버 첫 실행이 스풀에 남아 있는 파일을 전부 POST 한다**.
+// Node watcher 는 파일을 지우지도 옮기지도 않고(§5-2 「파일 처분: 아무것도 안 함」) 수집 서비스에는 중복 판정이
+// 없다(같은 파일 2회 = 기사 2건 — R3 실측). 그리고 기사는 **지울 수 없다**(CLAUDE.md 최상위 규칙).
+// `--seed-ledger` 는 **전송 0건**으로 스풀을 훑어 장부에만 등재한다 — 그 다음 실행은 전부 skipped 다.
+
+test('LEDGER_OUTCOMES — 재실행에서 건너뛰는 결과는 셋(ingested·rejected·seeded) · 서버 판정(FINAL_OUTCOMES)은 둘 그대로', () => {
+  assert.deepEqual([...FINAL_OUTCOMES].sort(), ['ingested', 'rejected'], '서버 응답의 최종 판정 집합은 늘리지 않았다');
+  assert.deepEqual([...LEDGER_OUTCOMES].sort(), ['ingested', 'rejected', 'seeded']);
+  assert.equal(SEEDED, 'seeded');
+});
+
+test('parseLedger — seeded 줄도 등재한다(선등재한 파일은 다음 실행이 건너뛴다)', () => {
+  const done = parseLedger([
+    formatLedgerLine({ key: 'a/x#1', outcome: 'seeded', reason: 'seed-ledger' }),
+    formatLedgerLine({ key: 'a/y#2', outcome: 'failed' }),
+  ].join(''));
+  assert.deepEqual([...done.keys()], ['a/x#1']);
+  assert.equal(done.get('a/x#1').outcome, 'seeded');
+  assert.equal(done.get('a/x#1').articleId, undefined, '선등재는 기사를 만들지 않았다 — articleId 가 없다');
+});
+
+test('sweepOnce — seedLedger 는 전송 0건으로 장부에만 등재한다(파일도 옮기지 않는다)', async () => {
+  const { deps, posted, ledger, moved, logs } = fakeDeps({ seedLedger: true, moveTo: 'done', now: () => 'T0' });
+  const { candidates, first } = twoFiles();
+  const results = await sweepOnce(candidates, first, deps);
+  assert.deepEqual(results.map((r) => r.outcome), ['seeded', 'seeded']);
+  assert.deepEqual(results.map((r) => r.reason), ['seed-ledger', 'seed-ledger']);
+  assert.equal(posted.length, 0, '선등재가 서버에 보냈다 — 그것이 바로 막으려는 사고다');
+  assert.deepEqual(ledger.map((e) => `${e.outcome} ${e.key}`), [
+    `seeded a/1.txt#${sha256Hex(Buffer.from('body of a/1.txt'))}`,
+    `seeded a/2.txt#${sha256Hex(Buffer.from('body of a/2.txt'))}`,
+  ]);
+  assert.deepEqual(ledger.map((e) => e.articleId), [null, null]);
+  assert.deepEqual(moved, [], '선등재는 파일을 옮기지 않는다(--move-to 가 있어도)');
+  assert.deepEqual(results.map((r) => r.status), [null, null]);
+  assert.ok(logs.every((l) => l.includes('seeded')), logs.join('\n'));
+});
+
+test('sweepOnce — 선등재 왕복: 두 번째 실행은 전건 skipped 이고 전송이 0 이다', async () => {
+  const { candidates, first } = twoFiles();
+  const seed = fakeDeps({ seedLedger: true, now: () => 'T0' });
+  await sweepOnce(candidates, first, seed.deps);
+  const done = new Map(seed.ledger.map((e) => [e.key, e]));
+
+  const second = fakeDeps({ ledgerHas: (key) => done.get(key) ?? null });
+  const results = await sweepOnce(candidates, first, second.deps);
+  assert.deepEqual(results.map((r) => r.outcome), ['skipped', 'skipped']);
+  assert.deepEqual(results.map((r) => r.reason), ['ledger:seeded', 'ledger:seeded']);
+  assert.equal(second.posted.length, 0, '선등재한 파일이 다시 전송됐다 — 중복 기사가 생긴다');
+  assert.equal(second.ledger.length, 0);
+});
+
+test('sweepOnce — 선등재도 안정화·장부 적중·dry-run 규율을 그대로 따른다(dry-run 이 이긴다)', async () => {
+  const { candidates, first } = twoFiles();
+
+  const unstable = fakeDeps({ seedLedger: true, observe: (rel) => (rel === 'a/1.txt' ? { size: 2, mtimeMs: 1 } : { size: 1, mtimeMs: 1 }) });
+  const r1 = await sweepOnce(candidates, first, unstable.deps);
+  assert.deepEqual(r1.map((r) => r.outcome), ['deferred', 'seeded'], '쓰이는 중인 파일을 선등재하면 그 내용이 영영 안 들어온다');
+  assert.equal(unstable.ledger.length, 1);
+
+  const hit = fakeDeps({ seedLedger: true, ledgerHas: () => ({ outcome: 'ingested', articleId: 'OLD' }) });
+  const r2 = await sweepOnce(candidates, first, hit.deps);
+  assert.deepEqual(r2.map((r) => r.outcome), ['skipped', 'skipped']);
+  assert.equal(hit.ledger.length, 0, '이미 장부에 있는 파일을 다시 등재했다(장부가 무의미하게 자란다)');
+
+  const dry = fakeDeps({ seedLedger: true, dryRun: true });
+  const r3 = await sweepOnce(candidates, first, dry.deps);
+  assert.deepEqual(r3.map((r) => r.outcome), ['dry-run', 'dry-run'], '--dry-run 은 --seed-ledger 를 이긴다(아무것도 쓰지 않는다)');
+  assert.equal(dry.ledger.length, 0);
+  assert.equal(dry.posted.length, 0);
+});
+
+test('sweepOnce — 선등재 중 장부 기록 실패는 격리하지 않고 던진다(반쯤 선등재된 장부는 다음 실행의 중복이다)', async () => {
+  const { deps } = fakeDeps({ seedLedger: true, ledgerAppend: () => { throw Object.assign(new Error('disk'), { code: 'ENOSPC' }); } });
+  const { candidates, first } = twoFiles();
+  await assert.rejects(() => sweepOnce(candidates, first, deps), (err) => err.code === 'ENOSPC');
+});
+
+test('exitCodeFor — seeded 는 실패가 아니다(선등재 실행은 exit 0)', () => {
+  assert.equal(exitCodeFor({ seeded: 12, skipped: 3, deferred: 1 }), 0);
+  assert.equal(exitCodeFor({ seeded: 12, failed: 1 }), 1);
 });
 
 // --- 경로 포함 판정 (--move-to 가 스풀 안이면 거부 — 이동한 파일이 다시 수집된다) ---
