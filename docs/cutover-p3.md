@@ -289,7 +289,8 @@ node --test scripts/lib/spaParity.self-test.mjs                                 
 
 옵션: `--spa-dir <dir>`(기본 리포 `web/dist` — `<dir>/index.html` 필수) · `--out-dir <리포 밖>`(리포트 보존) · `--keep` · `--jar` · `--java-home` · `--timeout`.
 요약 줄 형식: **`spa-parity A=node B=spring 관측 N · diffs F · 허용 diff A건 → ok|FAILED`** — 세 수치를 **항상** 낸다.
-**기준값(2026-09-07 · HEAD 소스 · 연속 2회 동일 · 리포트 3파일 바이트 동일)**: **관측 38 · diffs 0 · 허용 diff 516건.**
+**기준값(2026-09-09 · ⑤ 리뷰 후속으로 `asset-range` 1행 추가 후)**: **관측 39 · diffs 0 · 허용 diff 528건.**
+그 전 값은 **38 · 0 · 516**(2026-09-07 · 연속 2회 동일 · 리포트 3파일 바이트 동일)이고, 늘어난 **12건**은 새 Range 행의 보안·캐시 헤더 부재다(허용 규칙은 그대로).
 
 절차(`spring-contract.mjs` 의 규율을 베꼈고 그 파일은 고치지 않았다): 자기검사 → 리포 밖 임시 루트 → 서버별 **별도** 임시
 `DATA_DIR`(스키마·시드 = `src/db/**` · `uploads/<32hex>.png` 픽스처 1개 · mtime 고정) → 빈 포트 2개([15000,20000) 실제 listen)
@@ -375,7 +376,7 @@ node --test scripts/lib/spaParity.self-test.mjs                                 
 | N8 | `SECURITY_HEADERS` 에서 `x-download-options` 삭제 | 자기검사 red | **자기검사 red 1건(집합 deep-equal) → 기동 거부** | md5 동일 |
 | N9 | `ALLOWED_DIFFS` 에서 `group:uploads` 제거 | `/uploads` 항목 오탐 | **자기검사 red 2건 → 기동 거부.** 규칙만 바꿔 기준 리포트에 적용하면 **diffs 23**(`uploads-missing` 보안 헤더 10 · `uploads-existing` CSP+10+`cache-control`+`etag`) — 오탐 실증. **역방향**(`group:spa` 에 CSP 허용)은 N7 리포트를 diffs 0 으로 통과시킨다(N4a) | md5 동일 |
 
-추가 실측: 자기 결정성 — HEAD 소스로 **연속 2회** `관측 38 · diffs 0 · 허용 diff 516건`, `node.json`·`spring.json`·`diff.json` **바이트 동일**. 두 자식 프로세스는 매 실행 `kill → 확인` 으로 종료를 확인하고 임시 루트를 지운다(성공 시 `정리: 자식 2 종료 확인 · 임시 디렉토리 삭제` 출력 · 실패 시 보존 경로 출력). 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 무변.
+추가 실측: 자기 결정성 — HEAD 소스로 **연속 2회** `관측 38 · diffs 0 · 허용 diff 516건`(2026-09-07 당시 값 — 09-09 에 Range 1행이 늘어 **현재 기준값은 39 · 0 · 528** 이다), `node.json`·`spring.json`·`diff.json` **바이트 동일**. 두 자식 프로세스는 매 실행 `kill → 확인` 으로 종료를 확인하고 임시 루트를 지운다(성공 시 `정리: 자식 2 종료 확인 · 임시 디렉토리 삭제` 출력 · 실패 시 보존 경로 출력). 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 무변.
 
 ## 3. 실기 통합 시나리오의 Spring 모드 (`scripts/verify-integration.mjs --server spring` — step4)
 
@@ -1333,7 +1334,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | 항목 | 판단 | 근거 |
 |---|---|---|
 | `DistributionTargetService.checkName` 의 `String.trim()` → `NodeString.trim` 수렴 | **고치지 않는다 — 세 번째 이월이다**(74 → 75 → 76) | 235행이 여전히 `text.trim()` 이다. Java `trim()` 은 `U+0020` 이하만 걷고 JS `trim()` 은 유니코드 공백(`U+00A0`·`U+FEFF`·`U+2028` …)까지 걷는다 ⇒ 그런 문자가 섞인 이름에서 **저장 값이 갈린다**. 이 phase 의 규율은 「런타임 코드 0줄」이고, 고치면 저장 값이 바뀌므로 계약 관측 + 단위 테스트를 함께 세워야 한다. `NodeString` 은 이미 있다(같은 패키지 · 37행) — **다음 phase 의 첫 항목으로 올려라** |
-| `helmet` 등가 보안 헤더 **11종**(HSTS·nosniff·frame-options 등 10종 + `/api` 응답 CSP) | **두 phase 연속 이월**(75 → 76) — excluded (d) | SPA 문서·자산의 CSP 1종만 step2 가 이식했다(§2). `/api` 응답에는 **보안 헤더가 없다** — step3 대조기가 그 사실을 관측·리포트에 **보이게** 남기고(허용 diff 516건), 런북 §0 낭독과 §10 분기가 운영자에게 알린다 |
+| `helmet` 등가 보안 헤더 **11종**(HSTS·nosniff·frame-options 등 10종 + `/api` 응답 CSP) | **두 phase 연속 이월**(75 → 76) — excluded (d) | SPA 문서·자산의 CSP 1종만 step2 가 이식했다(§2). `/api` 응답에는 **보안 헤더가 없다** — step3 대조기가 그 사실을 관측·리포트에 **보이게** 남기고(허용 diff 528건), 런북 §0 낭독과 §10 분기가 운영자에게 알린다 |
 | 부트 백필 2종(`backfillEmptyDepartments`·`backfillHistoryTitles`) 미이식 | **컷오버 후 판단**(excluded (e)) | 값을 **바꾸는** 동작이라 100% 대조와 섞을 수 없다. step8 리허설에서 **export 산출물 md5 가 Node 부팅 전후 동일**했다 = 그 사본에서는 백필이 아무것도 쓰지 않았다(운영 데이터에서도 그렇다는 보장은 아니다 — §7-8) |
 
 ### 8-7. 변이 전건 결과표 (기대 / 실제 / 원복)
@@ -1394,7 +1395,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
    그러니 컷오버 후 첫 주에 볼 것은 평균 응답시간이 아니라 **500의 유무와 응답시간의 꼬리**다.」(§8-3·§8-4)
 2. **보안 헤더**: 「Spring 의 **`/api` 응답에는 보안 헤더가 하나도 없다.** SPA 문서·자산에만 CSP 1종을 실었고
    나머지 **10종**(nosniff·XFO·Referrer-Policy·COOP/CORP 등)과 `/api` 의 CSP 는 **이월**이다 — 3연속 이월이며
-   그 차이는 `spa-parity` 리포트에 **허용 diff 516건**으로 보인다.」(§2-3 · `excluded` (d) ②)
+   그 차이는 `spa-parity` 리포트에 **허용 diff 528건**으로 보인다.」(§2-3 · `excluded` (d) ②)
 3. **단일 인스턴스**: 「**Spring 에는 ADR-012 단일 인스턴스 잠금이 없다.** Node 는 같은 `DATA_DIR` 이면 두 번째가
    `exit 1` 로 죽었지만 **Spring 은 둘 다 뜬다.** 서로 다른 포트로 서버를 두 개 띄우지 마라 — 같은 MySQL·같은 `uploads`·
    같은 `DIST_SPOOL_DIR` 에 붙어 tick 이 양쪽에서 돌면 **같은 기사가 두 번 배부된다**(실측: 동시 tick **5/5 회차** ·
@@ -1763,6 +1764,10 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | 12 | `verify-integration --server exe --scenario loopback` | **exit 0**(51,183 ms) | **exit 0**(3,883 ms) |
 | 13 | `npm test && npm run lint && npm run build` | **1328 pass / 0 fail**(51 suites) · lint exit 0 · build ok | **1328 / 0** · lint 0 · build ok |
 
+> **⚠ 이 표는 마감 시점(2026-09-09 오전)의 값이다.** 같은 날 오후 ④/⑤ 게이트 후속(§10-5)으로 세 행이 움직였다:
+> **1** `clean verify` **1522 → 1526**(④ 테스터 보강 + Range 와이어 1항) · **9** `spa-parity` **38 · 0 · 516 → 39 · 0 · 528**(요청 표 `asset-range` 1행) ·
+> **13** `npm test` **1328 → 1349**(④ 테스터 보강). 그 밖의 행은 재실행에서도 같았다.
+
 **11·12의 소요 시간 편차는 결함이 아니다** — 비표시 Electron 창의 스로틀·attach 대기가 회차마다 다르고, 판정(exit code)과
 `unverified` 항목의 성격은 §3-3에 이미 적혀 있다. **수치(관측 수·diffs·테스트 수)는 두 회차가 전부 같다.**
 
@@ -1816,3 +1821,27 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
    **jar 존재를 확인**하고 없으면 `rm -rf target` 후 1회 재시도 · 그래도 없으면 **그 단계의 수치를 버린다**.
 3. **`powershell.exe` 를 PATH 로 부르면 조용히 실행되지 않는다**(§9-13 (b)) — 종료코드가 **비어 있는 것**이
    「성공」으로 보이는 자리다. 절대 경로로 부르고, **exit 가 `null`이면 실패로 판정**하라.
+
+### 10-5. ④/⑤ 게이트 후속 (2026-09-09 오후 · 확정 12건 → fix 커밋 4개 · 반박 1)
+
+| # | 발견 | 코드로 확인 → 처리 | 실측 |
+|---|---|---|---|
+| P0 | `ps1StaticFindings` 의 주석 제거가 `#.*$` 라 **문자열 안의 `#`** 까지 잘라낸다 | **사실** — `$secret='p#4z'` 가 정적 검사 **전건 통과**(`'p4z'` 는 잡힌다). `SecretHygieneTest` 는 jdbc/`NEWS_*_PASSWORD=`/SQL 만 보므로 이 형태의 방어선은 여기뿐이다 → 따옴표 상태를 읽는 `stripPs1Comment` 로 교체(`''`·`""`·백틱 이스케이프) | 수정 전 `[]` → 후 `literal-password` · 자기검사 **22 → 24**(거짓 양성 방지 2케이스 + 실제 ps1 0건 대조군 포함) |
+| P1 | **첫 스위퍼 실행이 스풀 기존 파일을 전건 재수집한다**(장부가 없다) | **사실이고 되돌릴 수 없다**(수집 서비스에 중복 판정 없음 · 기사는 삭제 금지) → 스위퍼 `--seed-ledger`(전송 0건 · 장부만) + 런북 **§9-1-1**(스냅샷 → 선등재 또는 보존 이동) + §9-0 #12 + 육안 A-12 | 임시 스풀 3파일: 선등재 `seeded=3` **POST 0** → 다음 실행 `skipped=3` **POST 0** → 새 파일 1개 `ingested=1` **POST 1** · **대조군(장부 없는 첫 실행) `ingested=3` POST 3** |
+| P2-1 | §9-5 기동 명령이 bash 형태뿐이다(다른 절은 PowerShell·bat) | **사실** → `$env:X = '…'` + `& java …` 판을 나란히(ops §3 선례) · bash 판 유지 | — |
+| P2-2 | 다중 `Range` 응답의 Content-Type 이 본문과 어긋난다 | **사실** — `Accept-Ranges: bytes` 를 광고하므로 도달 가능하고, 래퍼가 `multipart/byteranges` 를 고정된 파일 타입으로 되돌렸다 → `rewrite(requested)` 가 그 한 형식만 통과시킨다 | `bytes=0-4,10-14`: 수정 전 헤더 `application/javascript; charset=UTF-8`(본문은 multipart) → 수정 후 `multipart/byteranges; boundary=…` + **본문에 그 경계가 있다** · `SpaServingWireTest` **21 → 22** · 대조기 `asset-range`(단일) 1행 추가 → **39 · 0 · 528** |
+| P2-3 | 육안 A-7 실패 경로의 잔여 행 처분이 없다 | **사실**(grant 미부착이면 삭제 500) → 시험용은 **비활성(N)** 으로 만들고, 실패 시 행을 지우지 말고 기록지에 적어 §9-4 뒤 재삭제 | — |
+| L1~L8 | 스위퍼 기본 장부가 운영 스풀 루트 · ps1 락이 `$env:TEMP` · `skipped` 죽은 분기 · `--move-to` 역방향 · §9-0 tick 자격 누락 · `judgeLoadSelfCheck([])` 공허 통과 · `SpaContentTypes` 표 폭 · `spoolPathLeaks` 오탐 | 앞의 일곱은 **사실** → §5-3 `--ledger` · `-LockFile` 고정 권고(코드 기본값 유지) · 죽은 분기 제거 · `moveToConflict` 양방향 가드 · §9-0 #13 · 계단 0/`count:0` red + `STAGE_AXES` 호출부 게이트 · `forward_notes` (5) ⑭ 신설. **`spoolPathLeaks` 오탐은 고치지 않았다**(보수적인 방향으로 틀리는 검출기 — 느슨하게 고치면 진짜 구분자를 놓친다) | 스위퍼 단위 **28 → 37** · poolProbe **15 → 16** · tickCutover **22 → 24** |
+
+**후속 AC 재실측(전부 이 순서로 순차)**: `mvnw -B clean verify` **Tests run 1526 / F 0 / E 0 / Skipped 0** BUILD SUCCESS ·
+`npm test` **1349 pass / 0 fail / 59 suites / skip 0** · `spa-parity` **관측 39 · diffs 0 · 허용 diff 528** ·
+`tick-cutover-probe --db mysql` **왕복 17행 전건 same · diffs 0 · exit 0**(A-2 동시 5회 중복 5 · 최대 파일 2 · Node2 exit 1) ·
+스위퍼 단위 **37/37** · `roundtrip.js` **파일 9 · diffs 0 · 허용 divergence 1 · pass2 ingested 0/0**(기존 동작 무회귀) ·
+`npm run lint` 0 · `npm run build` ok · 리포 `news.db` md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` **무변** ·
+잔존 `harness_ct_*` **0** · 실행 후 `java.exe` **0** · 무접촉 목록 `git diff --stat` **0줄**.
+
+> **환경 함정(§10-4 (2)의 재발 · 처방이 갱신됐다)**: 이번에는 `rm -rf target` 후에도 리포 안 빌드가 살아나지 않았다 —
+> 테스트 컴파일이 `cannot access List`·`Optional cannot be converted to java.util.Optional<Path>` 로 죽었다(main 클래스가
+> IDE 쪽 컴파일러 산출물로 덮인 상태). **처방: 리포 밖 미러에서 빌드하라** — `git archive HEAD | tar -x -C <리포 밖>` 로 풀고
+> 추적되지 않는 빌드 입력(`web/dist`·`news.db`·`uploads/`)만 복사하면 `mvnw clean verify` 가 그대로 돈다. 하네스는 리포에서
+> 돌리되 jar 만 `--jar <미러 경로>` 로 가리키면 된다(spa-parity·tick 프로브 둘 다 그 옵션이 있다).

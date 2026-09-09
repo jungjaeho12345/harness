@@ -732,7 +732,7 @@ SSE 2 스트림(phase 74)이 남긴 공백 — 각 항목의 **유일한 방어�
   막는 자동 게이트는 없고 **막는 것은 운영 절차**다(런북 §0 낭독·§10 분기). `GET_LOCK`을 넣지 않은 근거는 ADR-017 결정 2.
 - **`/api` 응답의 보안 헤더가 전량 없다(3연속 이월).** SPA 문서·자산에는 CSP 1종만 실었다(위 SPA 절). Node가 helmet으로
   모든 응답에 싣던 나머지 **10종**(COOP·CORP·OAC·Referrer-Policy·nosniff·DNS-prefetch·Download-Options·XFO·XPCDP·XSS)과
-  `/api`의 CSP는 **없다** — `scripts/spa-parity.mjs`가 그 차이를 **허용 diff 516건**으로 리포트에 드러내고, 런북이 운영자에게 낭독한다.
+  `/api`의 CSP는 **없다** — `scripts/spa-parity.mjs`가 그 차이를 **허용 diff 528건**으로 리포트에 드러내고, 런북이 운영자에게 낭독한다.
 - **부팅 진단이 콘솔에 없다.** Node의 부팅 5줄(`instance lock acquired` · `serving SPA from` · `distribution spool root` ·
   `FTP watcher watching` · `API server on http://<host>:<port>`)은 **링 버퍼**에만 있고 콘솔은 무출력이다. 이 서버의 링 버퍼에는
   `serving SPA from` **1줄뿐**이고 스풀 루트·바인드 주소 줄이 **없다**(2026-09-09 실측 · `docs/cutover-p3.md` §9-12 대조표).
