@@ -32,9 +32,9 @@
     "(5) **정식 feature 브랜치 이름·분기점** — 작업 세션 브랜치는 `claude/slack-session-cexev5`이고 code base는 phase 76 머지(`e4db006`)다. `feat-77-*` 명명·`feat-0-mvp` 분기·PR·머지 시점은 **오케스트레이터 판단**이다(이 계획서는 코드 base만 못박는다)."
   ],
   "steps": [
-    { "step": 0, "name": "baseline-and-toolchain-survey", "status": "pending" },
+    { "step": 0, "name": "baseline-and-toolchain-survey", "status": "completed", "summary": "docs/cutover-p4.md 신설(§0 채움 · §1/§2/§5 자리표시자). 기준선 재측정(npm ci 후 npm test 1349 total/0 fail · web/dist 부재 시 1 skip=E22, 존재 시 0 skip · lint·build exit 0 · 각 2회 flake 0) — 인계 어긋남 3건 기록: ①총 카운트 1328→1349(+21, 스위트 성장) ②news.db·uploads/ 부재(.gitignore 런타임 산출물이라 md5 재현 불가) ③node_modules 부재로 npm ci 선행 필요. MODEL_KEYS=35 확인. 스파이크 지문 고정(4축 T1~T4). 툴체인 실측: cmake 3.28.3·ctest·g++ 13.3 존재, Qt6/qmake 부재 → offscreen ctest 불가 → **툴체인 부재 blocked 게이트 FIRE**(step3 진입 금지 · step2 blocked)." },
     { "step": 1, "name": "requirements-reconciliation", "status": "pending" },
-    { "step": 2, "name": "editor-spike-verdict", "status": "pending" },
+    { "step": 2, "name": "editor-spike-verdict", "status": "blocked", "blocked_reason": "Qt6 툴체인 부재(step0 §0-B/§0-C 실측): 실행 머신에 Qt6·qmake 없음, QT_QPA_PLATFORM=offscreen ctest 불가 → 스파이크 --selftest 실행 불가. 사용자 Windows Qt6 프로비저닝(build.bat: MSVC 14.50 + Qt 6.8.3 + WinSDK 10.0.26100) 대기. 성공 판정: qmake -v가 6.x + offscreen selftest exit 0(§0-C)." },
     { "step": 3, "name": "app-skeleton", "status": "pending" },
     { "step": 4, "name": "shell-config-probe", "status": "pending" },
     { "step": 5, "name": "shell-diag", "status": "pending" },
@@ -46,5 +46,9 @@
     { "step": 11, "name": "integration-verify", "status": "pending" },
     { "step": 12, "name": "docs-and-residual", "status": "pending" }
   ],
-  "forward_notes": []
+  "forward_notes": [
+    "(1) **phase BLOCKED — 툴체인 프로비저닝 대기(step0 확정 · 2026-09-09).** 실행 머신에 Qt6·qmake 부재(cmake 3.28.3·ctest·g++ 13.3·Node v22 는 존재), `QT_QPA_PLATFORM=offscreen` ctest 불가. 이는 환경 미비이지 프로덕션 결함이 아니다 — execute.py 가 error 재시도로 마감하지 마라. **step3 진입 금지** · step2(스파이크 --selftest)는 blocked. step0(측정)·step1(DOCS/ADR)은 Qt 없이 완결 가능하므로 blocked 아님. 실측·게이트 전문은 `docs/cutover-p4.md` §0-C. 재개 조건: 사용자가 Qt6(6.x · Widgets·Test) 프로비저닝 후 `qmake -v` + offscreen selftest exit 0.",
+    "(2) **기준선 인계 어긋남 3건(step0 실측 · `docs/cutover-p4.md` §0-A).** ① `npm test` 총 카운트 1328→**1349**(+21 · 스위트 성장) · fail 0 · skip 은 build 상태 의존(web/dist 부재 시 E22 1 skip, 존재 시 0 skip). ② 리포 `news.db`(인계 md5 `7247e9e0…`)·`uploads/` 는 `.gitignore` 런타임 산출물이라 신선 체크아웃에 **부재** → md5 재현 불가(위조 없이 '부재'로 기록 · P4 클라는 DB 0 이라 무영향). ③ 이 체크아웃은 `node_modules` 부재 → `npm ci`(436 패키지) 선행 후에야 테스트가 돈다.",
+    "(3) **spring-contract `--parity` 미측정(step0).** `server-spring/target/*.jar`(mvn 빌드 + MySQL 8.0 · ADR-016 ⑧ fail-closed) 필요 = P4 범위 밖. 최근 기록은 phase 75/76 의 313관측 diffs 0."
+  ]
 }
