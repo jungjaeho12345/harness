@@ -1362,7 +1362,9 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 
 1. **풀 1 천장**: 「이 서버는 DB 커넥션을 **하나**만 쓴다. 평상 부하로는 천장에 닿지 않지만(동시 32까지 5xx 0건),
    **DB 쪽에서 한 요청이 오래 막히면 그 사이 모든 요청이 줄을 선다.** 30초를 넘기면 500이고 그 500의 본문은
-   **앱 계약 밖 모양**(`error·path·status·timestamp`)이다. 실측: Hikari 예외 **30,001 ms** · 클라이언트가 실제로 기다린 시간 **41.6초**.
+   **앱 계약 밖 모양**(`error·path·status·timestamp`)이다. 실측: Hikari 예외 **30,001 ms** · 클라이언트가 실제로 기다린 시간 **41.6초**
+   (그 사이의 기계적 원인은 **미확정**이다 — 「30초면 끝난다」로 읽지 마라). **그리고 그 계약 밖 500 은 풀 고갈에만 나는 것이 아니다**:
+   인증 필터가 DispatcherServlet 밖에서 DB 를 치고 예외 방어가 없어 **어떤 DB 장애든**(연결 blip·순간 지연) 같은 모양이 된다.
    그러니 컷오버 후 첫 주에 볼 것은 평균 응답시간이 아니라 **500의 유무와 응답시간의 꼬리**다.」(§8-3·§8-4)
 2. **보안 헤더**: 「Spring 의 **`/api` 응답에는 보안 헤더가 하나도 없다.** SPA 문서·자산에만 CSP 1종을 실었고
    나머지 **10종**(nosniff·XFO·Referrer-Policy·COOP/CORP 등)과 `/api` 의 CSP 는 **이월**이다 — 3연속 이월이며
@@ -1471,7 +1473,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | b | **화면이 서빙되는가** | 브라우저로 `http://<host>:<PORT>/login.do` → 로그인 화면에서 **새로고침**(F5) → 개발자 콘솔(F12) | 화면이 뜨고 **새로고침에도 404 가 아니다**(SPA 폴백) · 콘솔에 **CSP 위반 0** |
 | c | 데이터가 왔는가 | 로그인 → 목록 → 상세 1건 | **컷오버 전 기사가 보인다** · 상세 200 |
 | d | 배부가 도는가 | 기사 1건 송고 → `<DIST_SPOOL_DIR>/<수신처 폴더>/` 를 본다 | 파일이 **1개** 늘었다(`<articleId>_<stamp>.json`) |
-| e | tick 이 도는가 | `powershell -NoProfile -ExecutionPolicy Bypass -File <배포>\tick-distribution-spring.ps1 -BaseUrl http://127.0.0.1:<PORT> -LogFile <배포>\data\tick.log` | **exit 0** · `tick.log` 마지막 줄 `tick ok distributed=<n> …` |
+| e | tick 이 도는가 | `powershell -NoProfile -ExecutionPolicy Bypass -File <배포>\tick-distribution-spring.ps1 -BaseUrl http://127.0.0.1:<PORT> -LogFile <배포>\data\tick.log` (스케줄러 등록·스크립트에서 부를 때는 **절대 경로** `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` — §9-13 (b)) | **exit 0** · `tick.log` 마지막 줄 `2026-…Z tick ok distributed=<n> scanned=<n> failed=0 invalid=0`(실측 형식) |
 | f | 수집이 도는가 | 스위퍼 `--dry-run` → 후보 수 확인 → `--once` 실행(§5-1) | exit **0** · 기사 1건 증가 · 스풀 파일은 **지워지지 않는다** |
 | g | 클라이언트가 붙는가 | 운영 PC 한 대에서 **설정을 고치지 않고** exe 실행 | 주소 입력 화면 없이 로그인 화면 |
 
@@ -1599,7 +1601,7 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | **콘솔(stdout/stderr)** | **완전 무출력**(0바이트) — 모든 부팅 줄이 링 버퍼로 간다 | Spring Boot 배너 + `Starting NewsServerApplication …` · `Tomcat initialized with port <PORT>` · `Tomcat started on port <PORT> (http) with context path '/'` · `Started NewsServerApplication in N seconds` · Hikari 2줄 | Node 는 **콘솔로 아무것도 판정할 수 없다**(README-배포 §12 의 「콘솔 무출력」이 이것이다) |
 | 인스턴스 잠금 | `instance lock acquired <DATA_DIR>\instance-lock.db` | **없음**(잠금 자체가 없다 — 낭독 3) | 링 버퍼 |
 | **SPA 활성** | `serving SPA from <경로>` | `serving SPA from <경로>` (**같은 문구** · 링 버퍼에만) | 링 버퍼(Z 로그 화면). **콘솔에는 양쪽 다 없다** → 판정은 `GET /` 200(9-6 b) |
-| **실제 바인드 host:port** | `API server on http://<host>:<port>` — **하드코딩이 아니라 실제 바인드 host** | **없음.** 콘솔의 `Tomcat started on port <PORT>` 에는 **host 가 없다** | Spring 은 `netstat -ano | findstr :<PORT>` 가 유일한 노출 범위 판정 수단이다 |
+| **실제 바인드 host:port** | `API server on http://<host>:<port>` — **하드코딩이 아니라 실제 바인드 host** | **없음.** 콘솔의 `Tomcat started on port <PORT>` 에는 **host 가 없다** | Spring 은 `netstat -ano` 의 `:<PORT>` LISTENING 줄이 유일한 노출 범위 판정 수단이다 |
 | **배부 스풀 루트** | `distribution spool root <dir>` | **없음** | 판정은 9-6 (d)(파일이 실제로 생기는가) |
 | FTP 수집 | `FTP watcher watching <dir>` | **없음**(watcher 미이식 — 스위퍼가 대체 · §5) | 스위퍼의 `--report`·종료코드 |
 | **DB 방언·대상** | (줄 없음 — sqlite 고정) | Hikari `news-db - Added connection <드라이버 커넥션 클래스>` — mysql 이면 `com.mysql.cj.jdbc.ConnectionImpl@&lt;16진수&gt;` · sqlite 면 `org.sqlite.jdbc4.JDBC4Connection@&lt;16진수&gt;` | **콘솔.** 방언 오설정을 콘솔에서 잡을 수 있는 유일한 줄이다 |
