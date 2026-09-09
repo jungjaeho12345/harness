@@ -96,6 +96,9 @@ Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x
 - 등록 예(5분 주기 · 실행 계정 = 위 환경변수를 가진 계정):
   `schtasks /Create /TN "기사작성기-distribution-tick" /SC MINUTE /MO 5 /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\기사작성기-server\tick-distribution-spring.ps1 -LogFile D:\기사작성기-server\data\tick.log" /RU <계정> /F`
   작업 속성에서 **"이미 실행 중이면 새 인스턴스를 시작하지 않음"** 을 켠다(스크립트의 락 파일과 두 겹).
+  **락 파일도 `-LockFile D:\기사작성기-server\data\tick.lock` 처럼 배포 폴더에 고정하라.** 기본값은 `%TEMP%` 라
+  **계정마다 다른 폴더**여서, 사람이 콘솔에서 한 번 돌리는 실행과 스케줄러 실행이 서로 다른 락을 잡는다
+  (그러면 이중 실행 방지가 스케줄러 설정 한 겹만 남는다).
 - **주기는 90초 이상(권장 5분).** 호출마다 로그인하고 로그인 한도가 같은 IP 기준 **15분/10회**라, 90초보다 짧으면 15분 안 11번째 로그인이 429 로 거부돼 tick 이 멈춘다
   (60초 주기 = 15회 > 10). 세션을 파일에 저장해 재사용하지 않는 이유는 그 파일이 Z 토큰 유출 표면이기 때문이다.
 - **종료코드** `0` 성공 · `2` 환경변수 없음 · `3` 로그인 실패 · `4` tick 비-200(403/503) · `5` 서버 미도달 · `6` 이중 실행(락 점유). **0 이 아니면 경보** — 스케줄러 "마지막 실행 결과" 로 보인다.

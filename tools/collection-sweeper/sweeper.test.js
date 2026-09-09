@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   EXIT, FINAL_OUTCOMES, LEDGER_OUTCOMES, SEEDED, TOKEN_ENV, TOKEN_HEADER,
-  classifyResponse, deriveSourceId, exitCodeFor, findTokenLikeArgv, formatLedgerLine, ledgerKey, parseLedger,
+  classifyResponse, deriveSourceId, exitCodeFor, findTokenLikeArgv, formatLedgerLine, ledgerKey, moveToConflict, parseLedger,
   pathIsInside, planScan, sameObservation, sha256Hex, splitSegments, summarize, sweepOnce,
 } from './lib.js';
 
@@ -438,6 +438,19 @@ test('exitCodeFor — seeded 는 실패가 아니다(선등재 실행은 exit 0)
 });
 
 // --- 경로 포함 판정 (--move-to 가 스풀 안이면 거부 — 이동한 파일이 다시 수집된다) ---
+
+// ⑤ 리뷰 [low] ④ (2026-09-09): 종전 가드는 「--move-to 가 스풀 **안**」만 봤다. 반대 방향(--move-to 가 스풀의
+// **부모**)이면 이동본이 스풀의 형제·상위로 떨어져 폴더 구조가 뒤섞이고, 스풀 자체가 통째로 처리완료 폴더 안에
+// 있는 배치가 된다(다음 스캔의 무시 규칙이 경로 깊이에 기대므로 혼선이 크다). 두 방향 다 거부한다.
+test('moveToConflict — --move-to 는 스풀 안도, 스풀을 품는 상위도 아니어야 한다(양방향)', () => {
+  assert.equal(moveToConflict('D:\\spool\\done', 'D:\\spool', 'win32'), 'inside-spool');
+  assert.equal(moveToConflict('D:\\SPOOL\\done', 'd:/spool', 'win32'), 'inside-spool', 'win32 는 대소문자·구분자 무시다');
+  assert.equal(moveToConflict('D:\\spool', 'D:\\spool', 'win32'), 'inside-spool', '같은 폴더');
+  assert.equal(moveToConflict('D:\\data', 'D:\\data\\spool', 'win32'), 'contains-spool', '스풀의 부모로 옮기면 이동본이 스풀 밖 상위로 흩어진다');
+  assert.equal(moveToConflict('/data', '/data/spool', 'linux'), 'contains-spool');
+  assert.equal(moveToConflict('D:\\done', 'D:\\spool', 'win32'), null, '서로 무관한 폴더는 정상이다');
+  assert.equal(moveToConflict('/spool-done', '/spool', 'linux'), null, '이름이 겹치는 형제는 정상이다');
+});
 
 test('pathIsInside — win32 는 대소문자·구분자 무시, posix 는 구분', () => {
   assert.equal(pathIsInside('D:\\spool\\done', 'd:/spool', 'win32'), true);

@@ -36,7 +36,7 @@ import {
 import { pathIsInside } from './lib/spoolParity.mjs';
 import {
   LADDER, buildUserIdCases, formatStageTable, formatUserIdTable,
-  judgeLoadSelfCheck, judgeUserIdAxis, queueDepthForTimeout, summarise,
+  STAGE_AXES, judgeLoadSelfCheck, judgeUserIdAxis, queueDepthForTimeout, summarise,
 } from './lib/poolProbe.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -606,9 +606,12 @@ async function main() {
       if (!verdict.ok) failures.push(...verdict.failures.map((f) => `769자 축: ${f}`));
     }
 
-    // 6. 부하 자기검사(U2) — 프로브가 실제로 부하를 걸었는가
-    const selfCheck = judgeLoadSelfCheck(ctx.stages);
-    if (selfCheck.length > 0) failures.push(...selfCheck.map((p) => `부하 자기검사: ${p}`));
+    // 6. 부하 자기검사(U2) — 프로브가 실제로 부하를 걸었는가. 계단을 만드는 축으로 돌았을 때만 부른다
+    // (userid·timeout 축은 계단이 없다). 그 축들에서 계단이 0개면 그것은 **재지 않은 것**이므로 판정부가 red 다.
+    if (STAGE_AXES.includes(opts.axis)) {
+      const selfCheck = judgeLoadSelfCheck(ctx.stages);
+      if (selfCheck.length > 0) failures.push(...selfCheck.map((p) => `부하 자기검사: ${p}`));
+    }
   }
   catch (err) {
     failures.push(`실행 예외: ${err && err.stack ? err.stack : err}`);

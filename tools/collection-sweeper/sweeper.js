@@ -26,7 +26,7 @@ import path from 'node:path';
 
 import {
   EXIT, TOKEN_ENV, TOKEN_HEADER,
-  exitCodeFor, findTokenLikeArgv, formatLedgerLine, isLedgerFatal, parseLedger, pathIsInside, planScan, sha256Hex, summarize, sweepOnce,
+  exitCodeFor, findTokenLikeArgv, formatLedgerLine, isLedgerFatal, moveToConflict, parseLedger, planScan, sha256Hex, summarize, sweepOnce,
 } from './lib.js';
 
 const DEFAULT_LEDGER_NAME = '.collection-sweeper-ledger.jsonl'; // 스풀 최상위 = 1세그먼트 = watcher·스위퍼 모두 무시하는 자리
@@ -107,7 +107,10 @@ function resolveConfig(opts) {
   if (opts.moveTo) {
     moveTo = path.resolve(opts.moveTo);
     // 스풀 안으로 옮기면 <spool>/<done>/<sourceId>/<file> 이 2세그먼트 이상이라 다음 스캔(과 롤백 시 Node watcher)이 다시 수집한다.
-    if (pathIsInside(moveTo, spool, process.platform)) die(`--move-to 는 --spool 안에 둘 수 없다(이동한 파일이 다시 수집된다): ${moveTo}`);
+    // 반대로 스풀의 **상위**로 옮기면 이동본이 스풀의 형제·상위로 흩어진다 — 두 방향 다 거부한다(lib.js moveToConflict).
+    const conflict = moveToConflict(moveTo, spool, process.platform);
+    if (conflict === 'inside-spool') die(`--move-to 는 --spool 안에 둘 수 없다(이동한 파일이 다시 수집된다): ${moveTo}`);
+    if (conflict === 'contains-spool') die(`--move-to 가 --spool 을 품고 있다(이동본이 스풀 밖 상위로 흩어진다 — 스풀과 겹치지 않는 폴더를 써라): ${moveTo}`);
     if (fs.existsSync(moveTo) && !fs.statSync(moveTo).isDirectory()) die(`--move-to 가 디렉토리가 아니다: ${moveTo}`);
   }
   const ledger = path.resolve(opts.ledger ?? path.join(spool, DEFAULT_LEDGER_NAME));

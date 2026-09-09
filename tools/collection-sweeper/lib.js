@@ -236,6 +236,18 @@ export async function sweepOnce(candidates, firstObservations, deps) {
   return results;
 }
 
+/**
+ * `--move-to` 가 스풀과 겹치는가 — 라벨 또는 null.
+ *   `inside-spool`   : 스풀 안(또는 스풀 자신) → 이동본이 `<spool>/<done>/<sourceId>/<file>` 이라 **다시 수집된다**.
+ *   `contains-spool` : 스풀의 상위 → 이동본이 스풀의 형제·상위로 흩어지고 스풀이 처리완료 폴더 안에 들어간다(혼선).
+ * 둘 다 거부한다. 서로 무관한 폴더·이름만 겹치는 형제(`/spool-done`)는 정상이다.
+ */
+export function moveToConflict(moveTo, spool, platform) {
+  if (pathIsInside(moveTo, spool, platform)) return 'inside-spool';
+  if (pathIsInside(spool, moveTo, platform)) return 'contains-spool';
+  return null;
+}
+
 /** candidate 가 root 자신이거나 그 아래인가. win32 는 대소문자·구분자 무시(scripts/lib/spoolParity.mjs pathIsInside 동형). */
 export function pathIsInside(candidate, root, platform) {
   const norm = platform === 'win32'

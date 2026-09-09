@@ -339,9 +339,16 @@ node --test scripts/lib/spaParity.self-test.mjs                                 
 - **계약 하네스는 SPA 축을 구조적으로 보지 않는다 — 실측(§2-7 N1+N2)**: Accept 게이트와 `/api` 예약 접두사를 함께 지워 없는 자산·미정의 `/api` 경로가 SPA 200 으로
   뒤집힌 상태에서도 `node scripts/spring-contract.mjs --parity` 는 **313관측 diffs 0** 이다. 이 하네스가 그 축의 유일 방어선이다.
 - 상태줄 **이유구**(Node `200 OK` · Spring `200 `) — 상태 정수만 비교한다(계약과 같다). `Vary`·`Access-Control-Allow-Credentials`(양쪽 동일) · `Date` · `Content-Language`(Tomcat 400 만) 는 관측하지 않는다.
-- **조건부 요청(304)** · Range 요청 · 인증된 세션의 SPA 요청 · 실제 브라우저 렌더링(step4 실기 시나리오의 몫).
+- **조건부 요청(304)** · 인증된 세션의 SPA 요청 · 실제 브라우저 렌더링(step4 실기 시나리오의 몫).
+  **Range 는 이제 한 행 본다**(`asset-range` — 단일 `bytes=0-15`). **다중** Range 는 대조 대상이 아니다: Node `send@0.19.2` 는
+  다중 범위를 지원하지 않아 전체 200 을 주고 Spring 은 206 `multipart/byteranges` 라 애초에 같아질 수 없다.
+  그 축(헤더가 본문 형식과 맞는가)은 `SpaServingWireTest.aRangeRequestKeepsTheContentTypeHonest` 가 잠근다.
 - `SPA_DIR` 이 리포 `web/dist` 와 **다른 산출물**인 배치(§0-3묶음 — 운영 `web\` 의 md5 를 먼저 대조하라. 다르면 이 하네스는 다른 파일을 비교한 것이다).
 - 표에 없는 확장자의 Content-Type(`SpaContentTypes` 표는 `mime@1.6.0` 실측 27종 — `web/dist` 의 실물은 html·css·js 3종뿐이다).
+  **그 표는 Node 보다 좁다**(누락 실측: `bmp·csv·wav·md·xhtml·tif/tiff·apng·oga·flac·m4a·ts·jsonld·zip·gz·avi·mov`). 그 확장자가 오면
+  Spring 은 `application/octet-stream`, Node 는 각자의 타입 — **갈리는데 대조기가 그 확장자를 요청하지 않아 방어선이 0 이다**
+  (표를 넓히는 것 자체가 실측 없는 새 divergence 라 넓히지 않았다). 화면 산출물에 새 확장자가 생기면 **표와 요청 표를 함께** 넓혀라
+  (`forward_notes` (5) ⑭).
 
 ### 2-6. 실패했을 때 리포트 읽는 법
 
@@ -668,9 +675,14 @@ node tools/collection-sweeper/roundtrip.js --overlap                            
    ```bat
    @echo off
    node "D:\기사작성기-server\tools\collection-sweeper\sweeper.js" --spool "<RCV_SPOOL_DIR>" --base http://127.0.0.1:3001 --once ^
+        --ledger "D:\기사작성기-server\data\collection-sweeper-ledger.jsonl" ^
         --move-to "D:\기사작성기-server\data\rcv-done" --report "%TEMP%\collection-sweep-last.json"
    exit /b %ERRORLEVEL%
    ```
+   **`--ledger` 를 반드시 준다**(⑤ 리뷰 [low] ①): 기본값은 **스풀 최상위**(`<spool>/.collection-sweeper-ledger.jsonl`)이고
+   그 폴더는 **외부 FTPd 의 권한 안**이다 — 멱등의 근거가 남의 쓰기 권한 아래 있으면 안 된다(지워지면 스풀에 남은
+   파일이 전부 다시 들어온다). 앱 데이터 폴더처럼 **FTP 밖**에 두고 백업 대상에 넣어라. 이 값은 **§9-1-1 의 선등재에
+   쓴 경로와 같아야 한다.**
 5. 등록(1분 주기 · 실행 계정 = 3 의 환경변수를 가진 계정):
    ```bat
    schtasks /Create /TN "기사작성기-collection-sweep" /SC MINUTE /MO 1 /TR "D:\기사작성기-server\collection-sweep.cmd" /RU <계정> /F
@@ -810,9 +822,12 @@ node --test scripts/lib/tickCutover.self-test.mjs                               
   작업 스케줄러의 "마지막 실행 결과" 가 이 값이다 — **`0` 이 아니면 경보를 건다.**
 - **로그**: 한 줄 — 시각(UTC)·결과·`distributed`/`scanned`/`failed`/`invalid` 건수·실패 단계·사유 토큰. **세션 토큰·자격·스풀 경로는 한 글자도 쓰지 않는다**(tick 응답에 경로가 없는 것이
   계약인데 로그가 밖에서 그 계약을 깨면 안 된다). 프로브가 ps1 출력 7종에서 비밀번호·세션 토큰·스풀 경로·`sessionId`·`.json`·경로 구분자 부재를 실측한다(`leaks=0`). `-LogFile` 로 같은 줄을 append.
-- **이중 실행 방지**: 락 파일(`%TEMP%\tick-distribution-spring.lock`)을 `FileShare None` 으로 독점 열어 둔다 — 프로세스가 죽으면 OS 가 푼다(잔류 없음 · PID 파일 아님 · ADR-012 와 같은 원리).
+- **이중 실행 방지**: 락 파일(기본 `%TEMP%\tick-distribution-spring.lock`)을 `FileShare None` 으로 독점 열어 둔다 — 프로세스가 죽으면 OS 가 푼다(잔류 없음 · PID 파일 아님 · ADR-012 와 같은 원리).
   열기는 **1초 안에 5회만** 재시도한다(백신·인덱서의 순간 점유로 거짓 6 을 내지 않기 위해 — 상주 루프가 아니다. 정적 검사가 초 단위 대기·`while($true)`·타이머를 막는다). **앱 안에 락·타이머를 만들지 않는다.**
   스케줄러 쪽에서도 "이미 실행 중이면 새 인스턴스를 시작하지 않음" 을 켜라(두 겹).
+  **등록할 때 `-LockFile` 로 배포 폴더에 고정하라**(⑤ 리뷰 [low] ②): 기본값 `$env:TEMP` 는 **계정마다 다른 폴더**라
+  사람이 콘솔에서 한 번 돌리는 실행과 스케줄러(다른 계정) 실행이 **서로 다른 락**을 잡는다 — 그 순간 이 한 겹은
+  무효이고 남는 것은 스케줄러 설정 한 겹뿐이다. 예: `-LockFile "D:\기사작성기-server\data\tick.lock"`(두 계정 모두 쓰기 가능한 폴더).
 - **세션 재사용 없음**: 호출마다 로그인한다. 세션(1시간 슬라이딩)을 파일에 저장해 재사용하면 로그인 한도 문제는 사라지지만 **그 파일이 Z 토큰 유출 표면**이 된다 — 택하지 않았다.
   대가는 §6-4 의 주기 하한이다.
 - **인코딩**: 파일은 **UTF-8 BOM** 이다 — Windows PowerShell 5.1 은 BOM 없는 한글 스크립트를 ANSI 로 읽어 문자열이 깨진다(자기검사가 BOM 을 단언한다).
@@ -1366,7 +1381,8 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | 10 | Spring 자격 3키 로드 절차 | `docs/ops-mysql.md` §3(한 줄씩 · `set -a; .` 금지) | `NEWS_DB_*` 3키 | 기동이 거부된다(설계) |
 | 11 | 한글 출력 | java 커맨드에 `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` | 마이그레이터 메시지가 안 깨진다 | 실패 문구를 읽을 수 없다 |
 | 12 | **스풀에 이미 쌓여 있는 파일 수** | `(Get-ChildItem "<RCV_SPOOL_DIR>" -Recurse -File).Count` · 목록은 `Get-ChildItem … \| Select-Object FullName, Length, LastWriteTimeUtc` | **개수와 목록을 작업 기록지에 적었다**(0 이어도 적는다) | 세지 않고 스위퍼를 켜면 **첫 실행이 그 파일을 전부 다시 수집**한다 → **삭제할 수 없는 중복 기사**. 처분 절차는 **§9-1-1** |
-| 13 | **알려진 한계 낭독**(아래 셋) | 소리 내어 읽는다 | 전원이 들었다 | 모르고 전환하면 사고 뒤에야 알게 된다 |
+| 13 | **tick 자격**(`NEWS_TICK_USER`·`NEWS_TICK_PASSWORD` = **Z 계정**) | 작업 실행 계정으로 로그인해 `[Environment]::GetEnvironmentVariable('NEWS_TICK_USER','User')` (값은 읽되 **적지 마라** — 있는지만 본다) · 그 계정의 역할이 Z 인지 화면에서 확인 | 두 변수가 **그 계정의 사용자 환경변수**에 있다 · 계정 역할 Z | 없으면 새 tick 작업이 **exit 2**(설정) · 비-Z 면 **exit 4**(403)로 매 주기 실패한다 — 배부가 조용히 멈춘 것처럼 보인다(§6-3·§9-7) |
+| 14 | **알려진 한계 낭독**(아래 셋) | 소리 내어 읽는다 | 전원이 들었다 | 모르고 전환하면 사고 뒤에야 알게 된다 |
 
 **낭독 3항 — 전환 전에 소리 내어 읽는다.**
 

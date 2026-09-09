@@ -86,9 +86,16 @@ export function summarise(samples) {
   };
 }
 
+/** 계단을 만드는 축 — 이 축들로 돌았을 때만 부하 자기검사가 성립한다(userid·timeout 축은 계단이 없다). */
+export const STAGE_AXES = Object.freeze(['all', 'load', 'sse']);
+
 /**
- * 부하 프로브의 **자기검사**(U2). 둘을 본다.
+ * 부하 프로브의 **자기검사**(U2). 넷을 본다.
  * <ol>
+ *   <li>계단이 **하나도 없으면** 부하를 건 적이 없다 — 재지 않은 것을 「문제 0건」으로 읽지 않는다
+ *       (④ 테스터 게이트 2026-09-09: `judgeLoadSelfCheck([])` 가 `[]` 였다. 계단이 없는 축은
+ *       {@link STAGE_AXES} 로 **부르기 전에** 갈라라).</li>
+ *   <li>계단이 요청을 한 건도 보내지 않았으면(`count:0`) 그것도 「재지 않았다」다.</li>
  *   <li>동시 요청 수 1에서 5xx 가 나오면 그것은 천장이 아니라 **프로브·환경의 결함**이다.</li>
  *   <li>계단이 목표 동시 수에 실제로 닿지 않았으면 그 계단의 수치는 "그 부하에서의 값"이 아니다
  *       (요청을 순차로 보내 놓고 32 동시라고 적는 것이 이 자리의 조용한 거짓말이다).</li>
@@ -96,7 +103,14 @@ export function summarise(samples) {
  */
 export function judgeLoadSelfCheck(stages) {
   const problems = [];
-  for (const stage of stages ?? []) {
+  const rows = Array.isArray(stages) ? stages : [];
+  if (rows.length === 0) {
+    return ['계단이 0개다 — 부하를 건 적이 없다. 「문제 0건」이 아니라 「재지 않았다」다'];
+  }
+  for (const stage of rows) {
+    if ((stage.summary?.count ?? 0) === 0) {
+      problems.push(`동시 요청 수 ${stage.concurrency} 계단이 요청이 0건이다 — 이 계단은 측정된 적이 없다`);
+    }
     if (stage.concurrency === 1 && stage.summary.errors5xx > 0) {
       problems.push(`동시 요청 수 1에서 5xx 가 ${stage.summary.errors5xx}건 나왔다 — 천장이 아니라 프로브·환경의 결함이다`);
     }

@@ -18,6 +18,10 @@
 #       -LogFile 을 주면 같은 줄을 그 파일에 append 한다(stdout 은 스케줄러가 버린다).
 # 이중 실행 방지: 락 파일을 FileShare None 으로 독점 열어 둔다 — 프로세스가 죽으면 OS 가 푼다(잔류 없음 · PID 파일 아님 · ADR-012 와 같은 원리).
 #   스케줄러 쪽에서도 "이미 실행 중이면 새 인스턴스를 시작하지 않음" 을 켜라(두 겹).
+#   **락 파일 위치를 -LockFile 로 배포 폴더에 고정하라**(예: -LockFile 'D:\기사작성기-server\data\tick.lock').
+#   기본값 $env:TEMP 는 **계정마다 다른 폴더**다 — 사람이 콘솔에서 한 번 돌리고 스케줄러가 다른 계정으로 도는
+#   흔한 배치에서 두 실행이 서로 다른 락을 잡아 **이 한 겹이 통째로 무효가 된다**(⑤ 리뷰 [low] ② · 남는 방어선은
+#   스케줄러 설정 한 겹뿐이다). 고정 경로는 두 계정 모두 쓰기 권한이 있는 폴더여야 한다.
 # 세션 재사용 없음: 호출마다 로그인한다. 로그인 한도는 같은 IP 기준 15분/10회 고정 창 → 주기는 **90초 이상**(권장 5분).
 #   세션(1시간 슬라이딩)을 파일에 저장해 재사용하면 한도 문제는 사라지지만 그 파일이 Z 토큰 유출 표면이 된다 — 택하지 않았다.
 # 상주 루프·타이머 없음: 1회 실행 = 로그인 1회 + tick 1회. 주기는 스케줄러가 정한다(ADR-008 (3)).
@@ -121,5 +125,7 @@ $distributed = @($tick.json.distributed).Count
 $failed = @($tick.json.failed).Count
 $invalid = @($tick.json.invalid).Count
 $scanned = [int]$tick.json.scanned
-$skipped = if ($null -ne $tick.json.skipped) { " skipped=$($tick.json.skipped)" } else { '' }
-Finish 0 "tick ok distributed=$distributed scanned=$scanned failed=$failed invalid=$invalid$skipped"
+# 성공 응답의 키는 여섯뿐이다(at·distributed·failed·invalid·ok·scanned — 계약 distribution-tick 이 동결).
+# skipped 는 그 목록에 없으므로 여기서 찍지 않는다(⑤ 리뷰 [low] ③ — 죽은 분기였다). 'skipped' 라는 낱말은
+# 락 점유 줄(위 Finish 6 'tick skipped stage=lock …')에만 쓴다.
+Finish 0 "tick ok distributed=$distributed scanned=$scanned failed=$failed invalid=$invalid"

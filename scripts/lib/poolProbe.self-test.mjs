@@ -16,7 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  LADDER, USERID_CASES, buildUserIdCases, formatStageTable, formatUserIdTable,
+  LADDER, STAGE_AXES, USERID_CASES, buildUserIdCases, formatStageTable, formatUserIdTable,
   judgeLoadSelfCheck, judgeUserIdAxis, percentile, queueDepthForTimeout, summarise,
 } from './poolProbe.mjs';
 
@@ -66,6 +66,24 @@ test('U2 — 동시 요청 수 1에서 천장이 관측되면 프로브가 틀�
   ]);
   assert.equal(ceilingAtOne.length, 1);
   assert.match(ceilingAtOne[0], /동시 요청 수 1/);
+});
+
+// ④ 테스터 게이트(2026-09-09): 계단이 0개면 문제 0건이었다 — **재지 않은 것이 「깨끗한 자기검사」로 읽혔다**.
+// 같은 파일의 judgeUserIdAxis([]) 는 관측 누락을 실패로 보고 judgeMultiInstance 도 회차 0을 막는데 여기만 뚫려 있었다.
+test('U2 — 계단이 0개거나 요청을 한 건도 보내지 않은 계단은 「부하를 걸지 않았다」로 red 다', () => {
+  // 계단이 없는 축(userid·timeout)은 **부르기 전에** 갈라야 한다 — 그 목록이 STAGE_AXES 다(호출부 pool-ceiling-probe.mjs).
+  assert.deepEqual([...STAGE_AXES], ['all', 'load', 'sse']);
+  assert.equal(judgeLoadSelfCheck([]).length, 1, '계단 0개가 문제 0건으로 통과했다');
+  assert.match(judgeLoadSelfCheck([])[0], /계단이 0/);
+  assert.equal(judgeLoadSelfCheck(undefined).length, 1);
+  assert.equal(judgeLoadSelfCheck(null).length, 1);
+
+  const empty = judgeLoadSelfCheck([{ concurrency: 4, maxInFlight: 4, summary: summarise([]) }]);
+  assert.equal(empty.length, 1, 'count:0 인 계단이 통과했다 — 요청을 한 건도 보내지 않은 계단이다');
+  assert.match(empty[0], /요청이 0/);
+
+  // 대조군: 정상 계단은 여전히 문제 0건이다(거짓 양성 금지).
+  assert.deepEqual(judgeLoadSelfCheck([{ concurrency: 2, maxInFlight: 2, summary: summarise([{ ms: 3, status: 200 }]) }]), []);
 });
 
 test('U2 — 목표 동시 수에 실제로 닿지 않은 계단은 거짓 수치다', () => {

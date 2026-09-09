@@ -161,7 +161,14 @@ export function describeTick(res, articleId) {
   return `keys=${keys} item=${Object.keys(item).sort().join(',')} kinds=${Array.isArray(item.kinds) ? item.kinds.join('+') : String(item.kinds)} status=${item.status}`;
 }
 
-/** 계약 assertNoSpoolPath 동형 — 응답 전체 문자열에서 4축을 본다. 라벨만 돌려준다. */
+/**
+ * 계약 assertNoSpoolPath 동형 — 응답 전체 문자열에서 4축을 본다. 라벨만 돌려준다.
+ *
+ * `separator` 축은 **JSON 직렬화 결과**에 정규식을 걸므로 값이 아니라 `\"`(이스케이프한 따옴표)의 백슬래시에도
+ * 걸린다 — 즉 오탐이 날 수 있다(④ 테스터 F4). 고치지 않는다: 이 검출기는 **보수적인 방향으로 틀린다**
+ * (있는 것을 없다고 하지 않는다). 실제 관측에서는 `leaks=0` 이므로 오탐이 표를 오염시킨 적이 없고, 판정을
+ * 느슨하게 만드는 수정(따옴표 제외)은 진짜 경로 구분자를 놓칠 위험을 새로 만든다.
+ */
 export function spoolPathLeaks(json, slugs = []) {
   const raw = JSON.stringify(json ?? null);
   const leaks = [];
