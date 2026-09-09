@@ -140,6 +140,41 @@ test('표는 계단마다 두 회차를 나란히 낸다 — 평균 한 줄로 �
   assert.equal(text.split('\n').filter((l) => l.startsWith('|')).length, 4, '헤더 2줄 + 회차 2줄');
 });
 
+// --- [step10 리뷰 후속] 전송 계층 실패(status <= 0)를 성공으로도 5xx 로도 세지 않는다 ---
+// pool-ceiling-probe.mjs 의 api() 는 fetch 가 던지면 { status: 0, ms, error } 를 돌려준다(조용히 버리지 않는 설계).
+// 그런데 그 표본이 분위수에 섞이면 "5xx 0 · 천장 미관측" 이라는 판정이 **못 보는 카운터** 위에 서게 된다.
+test('요약은 전송 실패(status 0)를 따로 세고 분위수 모집단에서 뺀다', () => {
+  const s = summarise([
+    { ms: 5, status: 200 }, { ms: 30000, status: 0, error: 'fetch failed' }, { ms: 7, status: 200 },
+  ]);
+  assert.equal(s.count, 3, 'count 는 보낸 요청 수 그대로다');
+  assert.equal(s.transportFailures, 1, '전송 실패는 별도 카운터다');
+  assert.equal(s.measured, 2, '분위수 모집단은 응답을 받은 요청뿐이다');
+  assert.equal(s.p50, 5, '[5, 7] 의 최근접 순위 p50 은 5 다(30000 이 섞이면 여기서 드러난다)');
+  assert.equal(s.max, 7, '전송 실패의 대기 시간이 최대값을 오염시키면 안 된다');
+  assert.equal(s.errors5xx, 0, '전송 실패는 5xx 가 아니다 — 서버가 답한 적이 없다');
+  assert.equal(s.statuses[0], 1, '상태 분포에는 그대로 남긴다(감사 가능해야 한다)');
+});
+
+test('U2 — 전송 실패가 한 건이라도 있으면 그 계단의 수치를 그대로 믿지 않는다', () => {
+  const problems = judgeLoadSelfCheck([
+    { concurrency: 8, maxInFlight: 8, summary: summarise([{ ms: 5, status: 200 }, { ms: 20, status: 0 }]) },
+  ]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /전송 실패/);
+  assert.match(problems[0], /1/);
+});
+
+test('계단표는 전송 실패 건수를 낸다 — 깨끗한 표가 감사 가능해야 한다', () => {
+  const text = formatStageTable([
+    { concurrency: 2, round: 1, target: 'spring', summary: summarise([{ ms: 3, status: 200 }, { ms: 9, status: 0 }]), maxInFlight: 2 },
+  ]);
+  const header = text.split('\n')[0];
+  assert.match(header, /실패/, '헤더에 실패 열이 있어야 한다');
+  const row = text.split('\n').find((l) => l.includes('spring'));
+  assert.match(row, /\|\s*1\s*\|\s*2\s*\|$/, '실패 1건과 실제 동시 2가 나란히 보인다');
+});
+
 test('769자 축의 표는 글자 수와 바이트 수를 함께 싣는다', () => {
   const text = formatUserIdTable(USERID_CASES.map((c) => ({ id: c.id, node: c.node, spring: c.spring })));
   assert.match(text, /2304/, '한글 768자의 바이트 수가 표에 보여야 「글자 vs 바이트」가 읽힌다');

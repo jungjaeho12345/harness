@@ -49,22 +49,39 @@ export function percentile(values, p) {
   return sorted[Math.min(Math.max(rank, 1), sorted.length) - 1];
 }
 
-/** 한 계단(한 회차)의 요약 — 지연 분위수와 상태코드 분포를 함께 낸다. */
+/**
+ * 한 계단(한 회차)의 요약 — 지연 분위수와 상태코드 분포를 함께 낸다.
+ *
+ * <p><b>[step10 리뷰 후속]</b> 호출자의 `api()` 는 fetch 가 던지면 `{ status: 0, ms, error }` 를 돌려준다
+ * (조용히 버리지 않는 설계다). 그 표본을 **성공으로도 5xx 로도 세지 않은 채 분위수에만 섞으면**
+ * 「5xx 0건 · 천장 미관측」이라는 판정이 **전송 계층 실패를 못 보는 카운터** 위에 서게 된다.
+ * 그래서 `status <= 0`(응답을 받은 적이 없는 요청)은 <b>`transportFailures` 로 따로 세고 분위수 모집단에서 뺀다</b>.
+ * `count` 는 보낸 요청 수 그대로이고 `measured` 가 분위수의 모집단이다. 상태 분포에는 `0` 을 그대로 남긴다.
+ */
 export function summarise(samples) {
   const list = samples ?? [];
-  const times = list.map((s) => s.ms);
   const statuses = {};
+  const times = [];
   let errors5xx = 0;
+  let transportFailures = 0;
   for (const s of list) {
+    const status = Number(s.status);
     statuses[s.status] = (statuses[s.status] ?? 0) + 1;
-    if (Number(s.status) >= 500) errors5xx += 1;
+    if (!Number.isFinite(status) || status <= 0) {
+      transportFailures += 1;
+      continue; // 서버가 답한 적이 없다 — 이 대기 시간은 응답 지연이 아니다.
+    }
+    times.push(s.ms);
+    if (status >= 500) errors5xx += 1;
   }
   return {
     count: list.length,
+    measured: times.length,
     p50: percentile(times, 50),
     p95: percentile(times, 95),
     max: times.length > 0 ? Math.max(...times) : null,
     errors5xx,
+    transportFailures,
     statuses,
   };
 }
@@ -85,6 +102,11 @@ export function judgeLoadSelfCheck(stages) {
     }
     if (stage.maxInFlight < stage.concurrency) {
       problems.push(`동시 요청 수 ${stage.concurrency} 를 목표했는데 실제 동시 실행은 최대 ${stage.maxInFlight} 였다 — 이 계단의 수치는 그 부하의 값이 아니다`);
+    }
+    // 전송 실패는 "서버가 답하지 않았다"이지 "빨랐다"가 아니다 — 분위수에서 뺀 사실을 표에도 판정에도 드러낸다.
+    if ((stage.summary.transportFailures ?? 0) > 0) {
+      problems.push(`동시 요청 수 ${stage.concurrency} 계단에서 전송 실패가 ${stage.summary.transportFailures}건이다`
+        + ' — 응답을 받은 적이 없는 요청이라 분위수에서 뺐다. 이 계단의 수치를 그대로 믿지 마라');
     }
   }
   return problems;
@@ -131,12 +153,13 @@ const cell = (v) => (v === null || v === undefined ? '-' : String(v));
 /** 계단표 — 계단마다 **회차를 각각 한 줄로** 낸다(평균 한 줄로 접지 않는다). */
 export function formatStageTable(rows) {
   const lines = [
-    '| 대상 | 동시 | 회차 | 요청 | p50(ms) | p95(ms) | 최대(ms) | 5xx | 실제 동시 |',
-    '|---|---|---|---|---|---|---|---|---|',
+    '| 대상 | 동시 | 회차 | 요청 | p50(ms) | p95(ms) | 최대(ms) | 5xx | 전송 실패 | 실제 동시 |',
+    '|---|---|---|---|---|---|---|---|---|---|',
   ];
   for (const r of rows ?? []) {
     lines.push(`| ${r.target} | ${r.concurrency} | ${r.round} | ${r.summary.count} | ${cell(r.summary.p50)}`
-      + ` | ${cell(r.summary.p95)} | ${cell(r.summary.max)} | ${r.summary.errors5xx} | ${cell(r.maxInFlight)} |`);
+      + ` | ${cell(r.summary.p95)} | ${cell(r.summary.max)} | ${r.summary.errors5xx}`
+      + ` | ${r.summary.transportFailures ?? 0} | ${cell(r.maxInFlight)} |`);
   }
   return lines.join('\n');
 }

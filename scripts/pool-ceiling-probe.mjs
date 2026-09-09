@@ -396,7 +396,8 @@ async function measureAxis(ctx, targets, axisName, makeRequest, opts, rows) {
         rows.push({ axis: axisName, target: target.label, concurrency, round, summary, maxInFlight });
         ctx.stages.push({ axis: axisName, target: target.label, concurrency, round, summary, maxInFlight });
         process.stdout.write(`  [${target.label}] ${axisName} 동시 ${String(concurrency).padStart(2)} 회차 ${round}`
-          + ` → 요청 ${summary.count} p50 ${summary.p50}ms p95 ${summary.p95}ms 최대 ${summary.max}ms 5xx ${summary.errors5xx} 실제동시 ${maxInFlight}\n`);
+          + ` → 요청 ${summary.count} 측정 ${summary.measured} p50 ${summary.p50}ms p95 ${summary.p95}ms 최대 ${summary.max}ms`
+          + ` 5xx ${summary.errors5xx} 전송실패 ${summary.transportFailures} 실제동시 ${maxInFlight}\n`);
       }
     }
   }
