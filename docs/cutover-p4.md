@@ -118,9 +118,22 @@ JSON 한 줄 + exit 0 을 내면, step2 게이트가 실측으로 열린다.
 
 ---
 
-## 1. ADR-overrode-news.md — news.md 드리프트 정리 목록 (step1)
+## 1. ADR-overrode-news.md — news.md 드리프트 정리 목록 (step1 · 2026-09-09)
 
-<!-- PLACEHOLDER — step1(requirements-reconciliation)이 채운다. news.md ~174행 spellcheck · ~301행 CORS 최소 2건 + 조사 발견분. news.md 원문은 무수정. -->
+**목적**: `docs/news.md` 를 포팅 요구 정본으로 읽되, **ADR 이 이미 덮어쓴 지점**은 문자 그대로 이식하지 않도록
+"정본을 읽는 렌즈"를 명문화한다. **news.md 원문은 고치지 않는다**(사료 보존 · §10-8 지시) — 드리프트는 여기서만 정리한다.
+아래 좌표는 2026-09-09 에 `docs/news.md`·`docs/ADR.md`·`docs/ARCHITECTURE.md` 를 직접 읽어 확인했다.
+
+| # | news.md 문장(좌표) | 덮은 ADR / 현행 규율 | 포팅 시 처분(P4 네이티브 클라) |
+|---|---|---|---|
+| D1 | **~174행** "Alt+Y를 누르면 브라우저 맞춤법 검사가 켜진다(spellcheck=true, lang=ko)" | **ADR-011** — 데스크톱 셸의 `spellcheck:false` 확정, 맞춤법은 SPA/앱 메뉴 책임(브라우저 맞춤법이 아니라 앱 자체 기능). index.json decisions (9)도 "셸 `spellcheck` off 확정". | **그대로 이식하지 않는다.** "Alt+Y 가 브라우저 맞춤법을 켠다"는 서술은 네이티브에 이식 대상이 아니다 — Qt 셸에는 브라우저 맞춤법 개념이 없다. 맞춤법은 **P6 앱 맞춤법**(news.md 180/187/219행의 앱 메뉴 통합/문단/현재위치 검사)으로 대체하며 이는 별개 기능으로 살아남는다. P4 골격은 에디터·맞춤법을 만들지 않는다(excluded (a)). |
+| D2 | **~301행** "CORS는 개발 클라이언트(localhost:5173)만 허용한다" | **ADR-009**(CSRF Origin/Referer allowlist) + **ADR-004**(세션 인가) + **ADR-017**(동일 출처 배포). 현행은 `ALLOWED_ORIGINS` 체계다(`docs/ARCHITECTURE.md` 134~140행): 비프로덕션 기본 `http://localhost:5173`·`http://127.0.0.1:5173`, **프로덕션은 `ALLOWED_ORIGINS` 등록 출처만**, **동일 출처 배포는 빈 목록이 정상**(ADR-017 · csrfOriginGuard 자기 출처 판정만으로 통과). | **한 줄을 문자 그대로 이식하지 않는다.** "localhost:5173 만 허용"은 개발 시점 서술이고 현행 정본이 아니다. **단 이는 서버(§2 동결) 사안이고 P4 클라는 CORS 설정 주체가 아니다** — Qt 클라의 REST 는 동일 출처 상대 경로(`/api/...`)로 나가고(decisions (4)), 인증은 세션 쿠키다(decisions (5)). 클라는 `ALLOWED_ORIGINS` 를 건드리지 않는다. |
+
+**추가 스캔 결과(발견 없음도 사실로 기록)**: news.md 전문을 CORS/localhost/5173/Origin · spellcheck/맞춤법 · 설치/SEA/포터블
+· CSRF/SameSite/쿠키 키워드로 스캔했다. **위 D1·D2 외의 드리프트는 발견되지 않았다.** 구체적으로 — (i) `localhost:5173`
+은 **301행 1곳뿐**이다. (ii) 맞춤법 언급 4곳 중 174행만 "브라우저 맞춤법"(드리프트)이고 163/180/187/219행은 **앱 메뉴 맞춤법**
+(ADR-011 이 지목한 대체 기능이지 드리프트 아님). (iii) SEA·단일 실행·무설치 서술은 news.md 에 **0건**(ADR-010 소멸 축은
+news.md 에 노출된 요구가 아니다). 따라서 ADR-overrode-news 목록은 **D1·D2 2건이 확정 전부**다.
 
 ---
 

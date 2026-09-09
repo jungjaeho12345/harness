@@ -33,7 +33,7 @@
   ],
   "steps": [
     { "step": 0, "name": "baseline-and-toolchain-survey", "status": "completed", "summary": "docs/cutover-p4.md 신설(§0 채움 · §1/§2/§5 자리표시자). 기준선 재측정(npm ci 후 npm test 1349 total/0 fail · web/dist 부재 시 1 skip=E22, 존재 시 0 skip · lint·build exit 0 · 각 2회 flake 0) — 인계 어긋남 3건 기록: ①총 카운트 1328→1349(+21, 스위트 성장) ②news.db·uploads/ 부재(.gitignore 런타임 산출물이라 md5 재현 불가) ③node_modules 부재로 npm ci 선행 필요. MODEL_KEYS=35 확인. 스파이크 지문 고정(4축 T1~T4). 툴체인 실측: cmake 3.28.3·ctest·g++ 13.3 존재, Qt6/qmake 부재 → offscreen ctest 불가 → **툴체인 부재 blocked 게이트 FIRE**(step3 진입 금지 · step2 blocked)." },
-    { "step": 1, "name": "requirements-reconciliation", "status": "pending" },
+    { "step": 1, "name": "requirements-reconciliation", "status": "completed", "summary": "선행 게이트 ① — ADR-overrode-news 목록을 docs/cutover-p4.md §1에 확정(D1 news.md 174행 spellcheck→ADR-011 · D2 301행 CORS→ADR-009/004/017); 전문 스캔 결과 추가 드리프트 없음(발견 없음도 기록). news.md 원문 무수정(diff 0). 전환 아키텍처 ADR-018 신설(add-only · ADR.md 5삽입 0삭제 · decisions (1)~(9): Qt6·CMake·client-qt/ 레이아웃·MODEL_KEYS 35·세션 쿠키·SSE unauthorized·diag 미러링·config 화이트리스트·단일 인스턴스·spellcheck off). porting-plan §10 Q8 닫힘·Q7(ContentsVO) P4 범위 밖+사용자 blocker로 상태 조정(내용 삭제 없이 주석만). npm test 1349 pass/0 fail 무회귀." },
     { "step": 2, "name": "editor-spike-verdict", "status": "blocked", "blocked_reason": "Qt6 툴체인 부재(step0 §0-B/§0-C 실측): 실행 머신에 Qt6·qmake 없음, QT_QPA_PLATFORM=offscreen ctest 불가 → 스파이크 --selftest 실행 불가. 사용자 Windows Qt6 프로비저닝(build.bat: MSVC 14.50 + Qt 6.8.3 + WinSDK 10.0.26100) 대기. 성공 판정: qmake -v가 6.x + offscreen selftest exit 0(§0-C)." },
     { "step": 3, "name": "app-skeleton", "status": "pending" },
     { "step": 4, "name": "shell-config-probe", "status": "pending" },

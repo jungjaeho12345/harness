@@ -220,8 +220,8 @@ P4~P7: 안정된 Spring 서버 위에서 C++ 클라이언트 개발·교체
 4. 다국어 문서 언어 9종(현행 prefs) 중 실사용 범위 — 네이티브 폰트·조판 검증 범위가 달라짐.
 5. Spring 채택 시 로그 정책 — 현행 "파일 미저장·링 버퍼 10,000·Z 전용 SSE"(ADR-007)를 유지할지, WAS 관행(파일 로그+로테이션)으로 갈지. 로그 마스킹 규율(`docs/LOGS.md`)은 어느 쪽이든 승계.
 6. 세션 스토어 — 단일 노드 인메모리로 시작할지, 처음부터 공유 스토어(Redis)로 갈지(ADR-012 제약의 존폐와 연동).
-7. `ContentsVO.md` — news.md가 참조하나 리포에 부재. 포팅 전 원본 확보 필요.
-8. news.md 드리프트 2건 정리 — 301행 CORS 서술(현행은 ALLOWED_ORIGINS 체계), 174행 spellcheck=true(ADR-011이 셸 한정 무효화). **포팅 요구사항 정본으로 쓰기 전에 "ADR이 news.md를 덮어쓴 지점" 목록을 확정**해야 한다.
+7. `ContentsVO.md` — news.md가 참조하나 리포에 부재. 포팅 전 원본 확보 필요. **[phase 77 step1 상태 조정 · 2026-09-09] P4 범위 밖 + 사용자 소유 blocker.** ContentsVO.md는 에디터 본문 필드 매핑(P5~P6)의 입력이고, P4 골격(shell 계약 + net 35 메서드 + 로그인/목록 화면)은 본문 필드를 렌더하지 않으므로(목록은 메타만 · net은 본문을 불투명 blob으로 나른다) **P4를 막지 않는다**. 원본은 사용자만 보유하며 에이전트가 만들거나 추측할 수 없다 — **P5 착수 전 사용자가 리포에 등재**해야 한다(ADR-018 트레이드오프 ④ · phase 77 index.json open_questions (2)·excluded (c)).
+8. news.md 드리프트 2건 정리 — 301행 CORS 서술(현행은 ALLOWED_ORIGINS 체계), 174행 spellcheck=true(ADR-011이 셸 한정 무효화). **포팅 요구사항 정본으로 쓰기 전에 "ADR이 news.md를 덮어쓴 지점" 목록을 확정**해야 한다. **[닫힘 · phase 77 step1 확정 · 2026-09-09]** ADR-overrode-news 목록을 `docs/cutover-p4.md` §1(D1 spellcheck→ADR-011 · D2 CORS→ADR-009/004/017)에 확정했고, 전문 스캔 결과 그 2건 외 추가 드리프트는 없다(발견 없음도 기록). news.md 원문은 무수정 보존. 전환 아키텍처는 **ADR-018**로 신설.
 
 ---
 
