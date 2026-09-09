@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import org.jspecify.annotations.Nullable;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.FileSystemResource;
@@ -57,6 +58,9 @@ import org.springframework.web.servlet.resource.ResourceHttpRequestHandler;
  * {@link NodeContentTypeResponse}가 가로채 고정값을 다시 seam 으로 쓴다. 고정 전에 지정이 오면 <b>던진다</b>
  * (조용한 폴백은 "기능은 정상인데 패리티가 깨진" 상태를 만든다 — {@link RawContentType}과 같은 규율).
  * 잠금은 {@code SpaServingWireTest.contentTypeLinesAreNodeOriginal}·{@code SpaRealDistWireTest}다.
+ * <b>예외는 하나</b>다: 다중 {@code Range} 응답의 {@code multipart/byteranges}는 되돌리지 않는다 — 고정은 파일
+ * <b>타입</b>을 Node 원문으로 맞추는 것이지 컨버터가 정한 본문 <b>형식</b>을 덮는 것이 아니다
+ * ({@code SpaServingWireTest.aRangeRequestKeepsTheContentTypeHonest}).
  *
  * <h2>손대지 않는 것</h2>
  * 캐시·{@code ETag}·{@code Cache-Control}을 새로 켜지 않는다 — 조건부 요청 304 경로를 새로 열면 표면만
@@ -120,6 +124,18 @@ final class SpaResourceHandler extends ResourceHttpRequestHandler {
 
 		private static final String CONTENT_TYPE = "Content-Type";
 
+		/**
+		 * 고정을 <b>덮어쓰지 않는</b> 유일한 예외 — 다중 {@code Range} 응답의 본문 형식이다.
+		 *
+		 * <p>핸들러가 {@code Accept-Ranges: bytes}를 광고하므로 다중 Range 는 도달 가능한 경로이고, 그때
+		 * {@code ResourceRegionHttpMessageConverter}는 본문을 {@code multipart/byteranges; boundary=…}로 만든다.
+		 * 고정값(파일 타입)으로 되돌리면 <b>헤더와 본문이 어긋난 응답</b>이 나간다(클라이언트가 경계 구분자를
+		 * 스크립트로 읽는다). 고정의 목적은 <b>파일 타입을 Node 원문으로 맞추는 것</b>이지 컨버터가 정한 본문
+		 * <b>형식</b>을 덮는 것이 아니다. 잠금은 {@code SpaServingWireTest.aRangeRequestKeepsTheContentTypeHonest}.
+		 * 단일 Range 는 컨버터가 파일 타입을 그대로 쓰므로 이 예외에 걸리지 않는다(고정값과 같다).
+		 */
+		private static final String MULTIPART_BYTERANGES = "multipart/byteranges";
+
 		private final @Nullable Object seam;
 
 		private @Nullable String pinned;
@@ -137,13 +153,13 @@ final class SpaResourceHandler extends ResourceHttpRequestHandler {
 
 		@Override
 		public void setContentType(String type) {
-			rewrite();
+			rewrite(type);
 		}
 
 		@Override
 		public void setHeader(String name, String value) {
 			if (CONTENT_TYPE.equalsIgnoreCase(name)) {
-				rewrite();
+				rewrite(value);
 				return;
 			}
 			super.setHeader(name, value);
@@ -152,19 +168,27 @@ final class SpaResourceHandler extends ResourceHttpRequestHandler {
 		@Override
 		public void addHeader(String name, String value) {
 			if (CONTENT_TYPE.equalsIgnoreCase(name)) {
-				rewrite();
+				rewrite(value);
 				return;
 			}
 			super.addHeader(name, value);
 		}
 
-		private void rewrite() {
+		/**
+		 * 지정된 값을 <b>고정값으로 되돌린다</b> — 단 본문 형식이 {@code multipart/byteranges}면 그 값을 그대로
+		 * 쓴다({@link #MULTIPART_BYTERANGES}). 어느 쪽이든 기록은 {@link RawContentType} seam 을 지난다.
+		 */
+		private void rewrite(@Nullable String requested) {
 			if (this.pinned == null) {
 				throw new IllegalStateException("SPA 응답의 Content-Type이 고정되기 전에 지정됐다 — "
 						+ "setHeaders 가 먼저 불리지 않는 경로가 생겼다. 서블릿 API로 폴백하면 컨테이너가 헤더를 "
 						+ "재조립해 Node와 어긋난 채 조용히 통과한다(SpaContentTypes 참조).");
 			}
-			RawContentType.set(this.seam, this.pinned);
+			RawContentType.set(this.seam, isMultipartByteRanges(requested) ? requested : this.pinned);
+		}
+
+		private static boolean isMultipartByteRanges(@Nullable String value) {
+			return value != null && value.toLowerCase(Locale.ROOT).startsWith(MULTIPART_BYTERANGES);
 		}
 	}
 

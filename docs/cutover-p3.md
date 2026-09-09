@@ -1483,7 +1483,9 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 - **명령·판정**: §0-1 **U1** (가) 경로 · ops **§11-4-b**. 확인은 `SHOW GRANTS` 에 그 한 줄.
 - **왜 지금**: MySQL 은 **테이블 단위 GRANT 를 대상 테이블이 있을 때만** 받는다(그 전에는 `ERROR 1146`).
 - **실패 시 분기**: 안 붙인 채로 가면 **기동 성공 · 계약 하네스 green · 수신 설정 삭제만 500**이다(§7-6 T5).
-  자동 감지 수단이 없으므로 **육안 체크리스트 A-7** 이 그 자리를 본다.
+  자동 감지 수단이 없으므로 **육안 체크리스트 A-7** 이 그 자리를 본다. A-7 을 grant **부착 전에** 돌렸다면
+  시험용 수신 설정이 **삭제되지 않은 채 남는다** — 그 행은 **지우지 말고**(DB 직접 조작 금지) 비활성(N)으로 두고
+  이름·id 를 기록지에 적은 뒤 **이 단계 직후 화면에서 다시 삭제**한다(A-7 의 「실패하면」 열과 같은 절차다).
 - **되돌리려면**: `REVOKE` 는 필요 없다(권한을 되돌릴 이유가 없다).
 
 ### 9-5. Spring 기동 — **같은 host:port**
@@ -1502,11 +1504,24 @@ Node 는 언제나 SQLite(단일 프로세스·동기)이고 Spring 은 MySQL·*
 | `RCV_SPOOL_DIR` | **주지 않는다** | Spring 은 읽지 않는다(watcher 가 없다). 수집은 **스위퍼**가 한다(9-7) |
 | `APP_ENV` | **주지 않는다** | `production` 이면 쿠키가 `Secure; SameSite=None` 이 되어 **평문 HTTP LAN 접속이 죽는다**. 실기 시나리오는 이 함정을 **못 본다**(§3-7 P5) |
 
-- **명령**(한 줄 · 자격은 이미 셸에 있다):
+- **명령 — 운영기는 PowerShell 이다**(§0-1 · 이 창에서 `VAR=… java …` 는 **동작하지 않는다**. `docs/ops-mysql.md` §3 과 같은 형태로 나란히 적는다):
+  ```powershell
+  $env:DATA_DIR        = '<기존>'
+  $env:PORT            = '<기존>'
+  $env:HOST            = '<기존>'
+  $env:SPA_DIR         = '<기존 web 폴더>'
+  $env:DIST_SPOOL_DIR  = '<기존>'
+  $env:DB_KIND         = 'mysql'
+  # NEWS_DB_URL/_USERNAME/_PASSWORD 는 ops §3 절차로 이미 이 셸에 있다(여기 값을 적지 마라).
+  & java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar '<배포>\server-spring-0.0.1-SNAPSHOT.jar'
+  ```
+  같은 것을 bash(Git Bash·WSL)에서 돌린다면:
   ```bash
   DATA_DIR=<기존> PORT=<기존> HOST=<기존> SPA_DIR=<기존 web 폴더> DIST_SPOOL_DIR=<기존> DB_KIND=mysql \
     java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar <배포>/server-spring-0.0.1-SNAPSHOT.jar
   ```
+  **주의**: PowerShell 의 `$env:X` 는 **그 창에만** 산다. 창을 닫으면 사라지므로 서비스로 등록할 때는
+  서비스 환경(NSSM `AppEnvironmentExtra` 등)에 같은 값을 넣는다 — **자격은 bat·인자에 적지 않는다**.
 - **성공 판정 — 콘솔에 이 줄들이 보이면 정상이다**(문구는 §9-12 대조표의 실측값):
   1. `o.s.boot.tomcat.TomcatWebServer : Tomcat started on port <PORT> (http) with context path '/'`
   2. `harness.news.NewsServerApplication : Started NewsServerApplication in N seconds`

@@ -113,6 +113,11 @@ test('요청 표는 유효하고 최소 관측 수 이상이며 계획의 필수
   assert.equal(REQUESTS.find((r) => r.name === 'escape-backslash').rawPath.includes(String.fromCharCode(92)), true, '진짜 백슬래시');
   assert.equal(REQUESTS.find((r) => r.name === 'asset-missing').headers.Accept, '*/*');
   assert.equal(REQUESTS.find((r) => r.name === 'do-list').headers.Accept, HTML_ACCEPT);
+  // Range 행 — 양쪽 다 accept-ranges 를 광고하는데 종전 표에는 조건부/부분 요청이 한 행도 없었다(⑤ 리뷰 2026-09-09).
+  const range = REQUESTS.find((r) => r.name === 'asset-range');
+  assert.ok(range, 'Range 요청 행이 없다 — 부분 응답 축을 아무도 보지 않는다');
+  assert.equal(range.headers.Range, 'bytes=0-15');
+  assert.equal(range.asset, 'script', '실재하는 자산이어야 206 이 나온다(해시는 실행 시 index.html 에서 뽑는다)');
 });
 
 test('요청 표의 중복 name 은 즉시 실패다', () => {

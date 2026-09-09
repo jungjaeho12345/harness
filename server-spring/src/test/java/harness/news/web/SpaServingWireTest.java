@@ -235,6 +235,42 @@ class SpaServingWireTest {
 				"HEAD 응답의 Content-Type 원문이 Node와 갈렸다");
 	}
 
+	/**
+	 * {@code Range} 요청 — 단일 범위는 <b>파일 타입</b>이고 <b>다중 범위는 {@code multipart/byteranges}</b>다.
+	 *
+	 * <p>왜 있는가(⑤ 리뷰 2026-09-09): 핸들러가 {@code Accept-Ranges: bytes}를 광고하므로 다중 Range 는
+	 * 도달 가능한 경로다. 그때 본문은 {@code ResourceRegionHttpMessageConverter}가 만든 <b>multipart</b>인데,
+	 * {@link SpaResourceHandler}의 Content-Type 고정이 그것을 파일 타입으로 되돌리면 <b>헤더와 본문이
+	 * 어긋난다</b>(클라이언트가 경계 구분자를 자바스크립트로 읽는다). 고정은 파일 타입을 <b>Node 원문</b>으로
+	 * 맞추기 위한 것이지 컨버터가 정한 <b>본문 형식</b>을 덮으라는 것이 아니다.
+	 *
+	 * <p>대조기({@code scripts/spa-parity.mjs})의 {@code asset-range} 행은 단일 범위만 본다 — Node
+	 * {@code send}는 다중 범위를 지원하지 않아(전체 200) 그 축은 Node=Spring 대조가 성립하지 않는다.
+	 */
+	@Test
+	void aRangeRequestKeepsTheContentTypeHonest() {
+		Wire.RawResponse single = Wire.raw(this.port, "GET", "/assets/app-abc123.js",
+				Map.of("Accept", "*/*", "Range", "bytes=0-4"), null);
+
+		assertEquals(206, single.status(), "단일 Range 가 206이 아니다");
+		assertEquals("Content-Type: application/javascript; charset=UTF-8", single.line("content-type"),
+				"단일 Range 응답의 Content-Type 이 Node 원문과 갈렸다");
+		assertArrayEquals(FIXTURE_ASSET.substring(0, 5).getBytes(StandardCharsets.UTF_8), single.body());
+
+		Wire.RawResponse multi = Wire.raw(this.port, "GET", "/assets/app-abc123.js",
+				Map.of("Accept", "*/*", "Range", "bytes=0-4,10-14"), null);
+
+		assertEquals(206, multi.status(), "다중 Range 가 206이 아니다");
+		assertEquals(1, multi.lines("content-type").size(), "Content-Type 줄이 하나가 아니다: " + multi.lines("content-type"));
+		String contentType = multi.line("content-type");
+		assertTrue(contentType.startsWith("Content-Type: multipart/byteranges"),
+				"다중 Range 본문은 multipart 인데 헤더가 파일 타입으로 고정됐다(헤더와 본문이 어긋난다): " + contentType);
+		String boundary = contentType.substring(contentType.indexOf("boundary=") + "boundary=".length()).trim();
+		assertFalse(boundary.isEmpty(), "multipart 경계 구분자가 없다: " + contentType);
+		assertTrue(multi.bodyAsLatin1().contains("--" + boundary),
+				"본문에 헤더가 광고한 경계 구분자가 없다 — 헤더와 본문이 다른 응답이다");
+	}
+
 	// --- C. 경계 — 폴백이 절대 먹으면 안 되는 곳 ---
 
 	/** C10~C12: API 라우트는 SPA가 켜져도 그대로다(200 JSON · 미인증 401 JSON). */

@@ -139,6 +139,10 @@ export const REQUESTS = Object.freeze([
   { name: 'head-list', method: 'HEAD', rawPath: '/list.do', headers: html },
   { name: 'asset-script', method: 'GET', asset: 'script', headers: any },
   { name: 'asset-style', method: 'GET', asset: 'style', headers: { Accept: 'text/css,*/*;q=0.1' } },
+  // Range — 양쪽 다 `Accept-Ranges: bytes` 를 광고하므로 도달 가능한 경로다(⑤ 리뷰 2026-09-09). **단일** 범위만 본다:
+  // Node send@0.19.2 는 다중 범위를 지원하지 않아(전체 200) Spring 의 206 multipart 와 대조 자체가 성립하지 않는다.
+  // 그 축(다중 Range 의 Content-Type 이 본문 형식과 맞는가)은 SpaServingWireTest.aRangeRequestKeepsTheContentTypeHonest 가 잠근다.
+  { name: 'asset-range', method: 'GET', asset: 'script', headers: { Accept: '*/*', Range: 'bytes=0-15' } },
   { name: 'asset-missing', method: 'GET', rawPath: '/assets/does-not-exist.js', headers: any },
   { name: 'index-html', method: 'GET', rawPath: '/index.html', headers: html },
   { name: 'assets-dir', method: 'GET', rawPath: '/assets', headers: html, cls: 'directory' },
