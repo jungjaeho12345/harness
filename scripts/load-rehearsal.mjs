@@ -5,7 +5,7 @@
 // **소스 사본이 한 바이트도 변하지 않았는가**.
 //
 // 사용: node scripts/load-rehearsal.mjs --source <사본.db> [--work <리포 밖 디렉토리>] [--java-home <path>]
-//                                       [--timeout <ms>] [--keep]
+//                                       [--timeout <ms>]
 //   자격은 argv 가 아니라 환경변수다: NEWS_CT_MYSQL_URL/_USERNAME/_PASSWORD (docs/ops-mysql.md §3 · 한 줄씩).
 //   로그인 계정은 기본이 src/db/seed.js 의 SAMPLE_USERS 이고, 운영 사본이면 NEWS_REHEARSAL_USER/_PASSWORD 로 준다.
 //
@@ -45,12 +45,12 @@ const MIGRATOR_BUILD_HINT = `cd tools/news-migrator && JAVA_HOME="${JDK_HINT}" .
 // 마이그레이터의 한글 메시지는 이 두 옵션이 없으면 깨진다(docs/ops-mysql.md §11-0-5 실측).
 const ENCODING_FLAGS = ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8'];
 
-const USAGE = `사용법: node scripts/load-rehearsal.mjs --source <사본.db> [--work <리포 밖 디렉토리>] [--java-home <path>] [--timeout <ms>] [--keep]
+const USAGE = `사용법: node scripts/load-rehearsal.mjs --source <사본.db> [--work <리포 밖 디렉토리>] [--java-home <path>] [--timeout <ms>]
   --source <파일>    리허설 소스 = 운영 news.db 의 **사본**(리포 밖). 원본을 주지 마라.
   --work <디렉토리>  산출물·리포트를 둘 곳. 미지정=OS 임시 디렉토리. **리포 안에는 쓰지 않는다.**
   --java-home <path> JDK 홈. 미지정=SPRING_JAVA_HOME → JAVA_HOME 순(시스템 java 폴백 금지).
   --timeout <ms>     기동·요청 대기 한도(기본 60000, 1000 이상 정수).
-  --keep             작업 디렉토리를 성공해도 지우지 않는다(기본: 성공하면 산출물만 남기고 지우지 않는다 — 전부 보존).`;
+  작업 디렉토리·산출물은 **언제나 보존한다**(이 스크립트에는 지우는 경로가 없다 — 임시 MySQL DB 만 드롭한다).`;
 
 function usageDie(msg) {
   process.stderr.write(`${msg}\n${USAGE}\n`);
@@ -63,14 +63,13 @@ function parseArgs(argv) {
     if (!v.ok) usageDie(v.message);
     return v.value;
   };
-  const opts = { timeout: 60000, keep: false };
+  const opts = { timeout: 60000 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--source') { opts.source = take(i, '--source'); i += 1; }
     else if (a === '--work') { opts.work = take(i, '--work'); i += 1; }
     else if (a === '--java-home') { opts.javaHome = take(i, '--java-home'); i += 1; }
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
-    else if (a === '--keep') opts.keep = true;
     else usageDie(`알 수 없는 인자: ${a}`);
   }
   if (!opts.source) usageDie('--source <사본.db> 가 필요하다(운영 원본이 아니라 사본이다).');
@@ -190,8 +189,14 @@ function runMigrator(ctx, cwd, args, passUrl) {
     const child = spawn(ctx.javaBin, [...ENCODING_FLAGS, '-jar', ctx.migratorJar, ...args], {
       cwd, env: migratorChildEnv(childEnv(), ctx.mysql, passUrl), stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // SIGINT 핸들러가 죽일 수 있게 등록한다 — 등록하지 않으면 migrate/verify/export 진행 중 Ctrl+C 에 java 자식이
+    // 고아가 되고, 그 자식이 JDBC 연결을 쥔 채 동기 드롭이 시도된다. 끝난 자식은 빼지 않아도 killChild 가 무시한다(childDead).
+    ctx.children.push(child);
     const buf = collectOutput(child);
-    child.once('error', (err) => resolve({ code: null, ms: Date.now() - started, out: buf.out, err: `${buf.err}\nspawn error: ${err && err.code ? err.code : err}` }));
+    child.once('error', (err) => {
+      child.spawnError = err; // childDead → 정리 루프가 죽은 자식을 5초 기다리지 않는다
+      resolve({ code: null, ms: Date.now() - started, out: buf.out, err: `${buf.err}\nspawn error: ${err && err.code ? err.code : err}` });
+    });
     child.once('close', (code) => resolve({ code, ms: Date.now() - started, out: buf.out, err: buf.err }));
   });
 }
@@ -204,6 +209,16 @@ function dropEphemeralSync(ctx, cwd, name) {
   if (result.status === 0) return true;
   process.stderr.write(`${scrub(ctx, 'migrator ephemeral-drop(SIGINT)', `${result.stdout ?? ''}${result.stderr ?? ''}`).slice(-2000)}\n`);
   return false;
+}
+
+/**
+ * verify 한 회의 판정. **파싱이 온전한지도 실패 조건**이다 — 표 줄을 못 읽으면 `불일치 0`·`구조 0`이 자동으로
+ * 참이 되어(규모 수치는 전부 0인데) 리허설이 green 으로 끝난다.
+ */
+function verifyProblems(label, parsed) {
+  if (parsed.matched && parsed.diffs === 0 && parsed.structural.length === 0) return [];
+  const reasons = parsed.parseIncomplete.length > 0 ? ` 파싱=${parsed.parseIncomplete.join(' / ')}` : '';
+  return [`${label} 불일치: 판정=${parsed.verdict} 불일치=${parsed.diffs} 구조=${parsed.structural.length}${reasons}`];
 }
 
 async function step(ctx, name, args, passUrl, { expect = 0 } = {}) {
@@ -368,16 +383,12 @@ async function main() {
       report.migrateOutput = migrate.text;
       const verify1 = await step(ctx, '3. verify(사본 ↔ 임시DB)', ['verify', '--source', source, '--target', PASS_KEY_SET], passUrl);
       report.verify1 = parseVerifyReport(verify1.text);
-      if (!report.verify1.matched || report.verify1.diffs !== 0 || report.verify1.structural.length !== 0) {
-        ctx.failures.push(`3. verify 불일치: 판정=${report.verify1.verdict} 불일치=${report.verify1.diffs} 구조=${report.verify1.structural.length}`);
-      }
+      ctx.failures.push(...verifyProblems('3. verify', report.verify1));
       await step(ctx, '4. export', ['export', '--target', PASS_KEY_SET, '--out', exportFile], passUrl);
       report.exportDigest = fileDigest(exportFile);
       const verify2 = await step(ctx, '5. verify(산출물 ↔ 임시DB)', ['verify', '--source', exportFile, '--target', PASS_KEY_SET], passUrl);
       report.verify2 = parseVerifyReport(verify2.text);
-      if (!report.verify2.matched || report.verify2.diffs !== 0 || report.verify2.structural.length !== 0) {
-        ctx.failures.push(`5. verify 불일치: 판정=${report.verify2.verdict} 불일치=${report.verify2.diffs} 구조=${report.verify2.structural.length}`);
-      }
+      ctx.failures.push(...verifyProblems('5. verify', report.verify2));
       if (ctx.failures.length === 0) {
         report.node = await probeNode(ctx, rollbackDir, exportFile);
         ctx.failures.push(...digestProblems('export 산출물(Node 부팅 전후)', report.exportDigest, report.node.exportAfterBoot));

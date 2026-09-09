@@ -77,6 +77,23 @@ test('NULL 과 빈 문자열을 구분해서 세고, 상한 초과는 > 로 판�
   assert.equal(summary.loneSurrogateRows, 0);
 });
 
+test('상한 판정은 **글자**다 — 한글 768자(2,304바이트)는 초과가 아니다', () => {
+  // 왜 이 케이스가 따로 있는가: ASCII 픽스처만 있으면 chars===bytes 라서 판정을 bytes 로 바꿔도 전부 green 이다.
+  // MySQL VARCHAR(768) 의 상한은 글자이고(768 이라는 숫자 자체가 utf8mb4 3072바이트 인덱스 한계 / 4 에서 왔다),
+  // 1406 은 **글자 초과**에서 난다. 이 리포가 반복해 밟은 「바이트 vs 글자」 함정의 방어선이다.
+  const korean768 = '가'.repeat(768);
+  assert.equal(stringStats(korean768).chars, 768);
+  assert.equal(stringStats(korean768).bytes, 2304, '한글 768자는 UTF-8 2,304바이트 — 768바이트를 훌쩍 넘는다');
+  const summary = summariseColumn([korean768], { maxChars: 768 });
+  assert.equal(summary.overlong, 0, '바이트로 재면 여기가 1이 된다(그 변이를 이 단언이 잡는다)');
+  assert.equal(summary.maxChars, 768);
+  assert.equal(summary.maxBytes, 2304);
+
+  const korean769 = summariseColumn(['가'.repeat(769)], { maxChars: 768 });
+  assert.equal(korean769.overlong, 1, '한 글자 더 넘으면 초과다 — 그 경계가 MySQL 1406 의 경계다');
+  assert.equal(korean769.maxBytes, 2307);
+});
+
 test('상한이 없는 컬럼은 초과가 0이고 최대 바이트는 그대로 잰다', () => {
   const summary = summariseColumn(['가'.repeat(10)], { maxChars: null });
   assert.equal(summary.overlong, 0);
