@@ -110,7 +110,7 @@ JSON 한 줄 + exit 0 을 내면, step2 게이트가 실측으로 열린다.
 | 항목 | 왜 사람이 | 확인 방법 | 성공 판정 | 막는 step |
 |---|---|---|---|---|
 | **Qt6 툴체인 프로비저닝** | 에이전트는 이 머신에 Qt6/MSVC 를 설치할 수 없다(0-B: 전부 부재). build.bat 은 Windows MSVC 14.50 + Qt 6.8.3(`D:/agents/tools/Qt/6.8.3`) + WinSDK 10.0.26100 을 요구한다 | 실행 머신에서 `qmake -v`(또는 Qt6 CMake 패키지 버전) · Widgets·Test 모듈 존재 | 6.x 출력 + `offscreen … --selftest` 가 exit 0 | **2·3·4·5·6·7·8·9·10·11** (phase blocked) |
-| **Windows 실기 IME 조합 육안 검증** | 한글 조합 체감·캐럿 튐은 자동 판정 밖(§8 육안 게이트) — 사람 눈이 정본 | Windows 실기에서 조합 입력 실기 | P5~P6 육안 체크리스트 | (P5~P6) |
+| **Windows 실기 IME 조합 육안 검증** | 한글 조합 체감·캐럿 튐은 자동 판정 밖(`docs/porting-plan-cpp-spring.md` §8 육안 게이트 — P5~P6 실기 검증, P4 범위 밖) — 사람 눈이 정본 | Windows 실기에서 조합 입력 실기 | P5~P6 육안 체크리스트 | (P5~P6) |
 | **정식 feature 브랜치 명명·분기점** | 브랜치 명명·PR·머지는 오케스트레이터/사용자 판단(open_questions (5)) | — | 오케스트레이터 결정 | (전 phase) |
 | **빌드 시스템 CMake vs qmake 이의** | decisions (2) 기본은 CMake. qmake 승계를 원하면 **step3 착수 전** 사용자가 말해야 한다(open_questions (1)) | 사용자 통지 | 미통지 = CMake 확정 | 3 |
 | **diag 자동 검증 경로 (가)/(나) 선택** | AC ②의 실행 경로(open_questions (3)) — step11 은 이 결정 없이 착수 금지 | 사용자 통지 | (가) verify-integration 확장 / (나) verify-client-qt 신설 중 택1 | 11 |
@@ -131,7 +131,7 @@ JSON 한 줄 + exit 0 을 내면, step2 게이트가 실측으로 열린다.
 
 **추가 스캔 결과(발견 없음도 사실로 기록)**: news.md 전문을 CORS/localhost/5173/Origin · spellcheck/맞춤법 · 설치/SEA/포터블
 · CSRF/SameSite/쿠키 키워드로 스캔했다. **위 D1·D2 외의 드리프트는 발견되지 않았다.** 구체적으로 — (i) `localhost:5173`
-은 **301행 1곳뿐**이다. (ii) 맞춤법 언급 4곳 중 174행만 "브라우저 맞춤법"(드리프트)이고 163/180/187/219행은 **앱 메뉴 맞춤법**
+은 **301행 1곳뿐**이다. (ii) 맞춤법 언급 5곳 = 드리프트 1(174행 브라우저 맞춤법) + 앱메뉴 4(163/180/187/219행)이며, 이 중 174행만 "브라우저 맞춤법"(드리프트)이고 163/180/187/219행은 **앱 메뉴 맞춤법**
 (ADR-011 이 지목한 대체 기능이지 드리프트 아님). (iii) SEA·단일 실행·무설치 서술은 news.md 에 **0건**(ADR-010 소멸 축은
 news.md 에 노출된 요구가 아니다). 따라서 ADR-overrode-news 목록은 **D1·D2 2건이 확정 전부**다.
 
