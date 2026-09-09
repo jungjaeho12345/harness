@@ -266,9 +266,40 @@ export function formatMultiInstance(result) {
 const PS1_ENV_USER = `$env:${PS1_ENV.user}`;
 const PS1_ENV_PASSWORD = `$env:${PS1_ENV.password}`;
 
+/**
+ * PowerShell 한 줄에서 **주석만** 떼어낸다. `#` 은 **따옴표 밖**에서만 주석 시작이다.
+ *
+ * 왜 정규식 하나로 못 하는가(④ 테스터 게이트 · 2026-09-09 실측): 종전 판은 `line.replace(/#.*$/, '')` 였고,
+ * 그래서 `$secret = 'p#4z'` 가 `$secret = 'p` 로 잘려 **`#` 이 든 평문 비밀번호가 정적 검사 전건을 통과**했다
+ * (`$secret = 'p4z'` 는 `literal-password` 로 잡힌다). `SecretHygieneTest` 는 jdbc URL·`NEWS_*_PASSWORD=`·
+ * `IDENTIFIED BY` 만 보므로 이 형태의 방어선은 여기 하나뿐이다(§6-8 S5).
+ *
+ * 규칙: 작은따옴표 안에서는 `''`, 큰따옴표 안에서는 `""` 와 백틱이 이스케이프다. 여러 줄 문자열(here-string)은
+ * 다루지 않는다 — 줄 단위로 보므로 그 안의 줄은 **코드로 남고**(= 더 많이 검사한다) 그 방향이 보수적이다.
+ * 같은 이유로 블록 주석 `<# … #>` 도 특별 취급하지 않는다.
+ */
+export function stripPs1Comment(line) {
+  const text = String(line ?? '');
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote === null) {
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (ch === '#') return text.slice(0, i);
+      continue;
+    }
+    if (quote === '"' && ch === '`') { i += 1; continue; } // 백틱 이스케이프(큰따옴표 안에서만)
+    if (ch === quote) {
+      if (text[i + 1] === quote) { i += 1; continue; } // '' · "" = 리터럴 따옴표
+      quote = null;
+    }
+  }
+  return text;
+}
+
 /** 코멘트(#…)를 뗀 코드 줄만 본다 — 주석의 설명 문구가 검사에 걸리면 문서화를 벌하는 셈이다. */
 function codeLines(text) {
-  return String(text ?? '').split(/\r?\n/).map((line) => line.replace(/#.*$/, '')).filter((l) => l.trim() !== '');
+  return String(text ?? '').split(/\r?\n/).map(stripPs1Comment).filter((l) => l.trim() !== '');
 }
 
 export function ps1StaticFindings(text) {

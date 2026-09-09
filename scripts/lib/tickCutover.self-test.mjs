@@ -23,7 +23,7 @@ import {
   DISTRIBUTED_ITEM_KEYS, EXPECTED_ROUNDTRIP, LOGIN_RATE_LIMIT, PS1_ENV, PS1_EXIT, ROUNDTRIP_ROW_IDS, TICK_KEYS,
   countSpoolFiles, criticalPeriodSec, describeLogin, describeTick, duplicateArticles, formatMultiInstance,
   formatRateLimitTable, formatSideBySide, judgeMultiInstance, judgeRoundtrip, loginsPerWindow, maskSample, outputLeaks, sanitizePs1Sample, tokenShapeLeaks,
-  ps1EncodingFinding, ps1StaticFindings, rateLimitTable, spoolPathLeaks,
+  ps1EncodingFinding, ps1StaticFindings, rateLimitTable, spoolPathLeaks, stripPs1Comment,
 } from './tickCutover.mjs';
 
 const HERE = nodePath.dirname(fileURLToPath(import.meta.url));
@@ -293,6 +293,35 @@ test('ps1 정적 검사 — 자격 평문의 다른 형태 2종(SecureString · 
   assert.ok(ps1StaticFindings(`${text}\n$body = '{ "secret": "hunter2" }'\n`).includes('literal-password-json'));
   // 실제 ps1 이 쓰는 형태(값이 변수)는 잡히지 않는다 — 그래서 실제 파일 스캔이 0건으로 남는다
   assert.ok(!ps1StaticFindings(`${text}\n$body = @{ userId = $user; password = $secret }\n`).includes('literal-password-json'));
+});
+
+// ④ 테스터 게이트(2026-09-09): 주석 제거가 `#.*$` 였다 — PowerShell 에서 `#` 은 **따옴표 밖에서만** 주석인데
+// 문자열 리터럴 안의 `#` 까지 잘라내는 바람에 그 뒤가 통째로 사라졌다. 실측: `$secret='p4z'` → literal-password,
+// `$secret='p#4z'` → **[]**. ps1 이 U5 로 운영에 나가기 전에 닫아야 하는 유일한 방어선이다(SecretHygieneTest 의
+// 패턴은 jdbc URL·`NEWS_*_PASSWORD=`·`IDENTIFIED BY` 뿐이라 이 형태를 보지 못한다 — §6-8 S5).
+test('stripPs1Comment — 따옴표 **밖**의 # 부터만 잘라낸다(문자열 안의 # 은 남는다)', () => {
+  assert.equal(stripPs1Comment('$x = 1 # 진짜 주석'), '$x = 1 ');
+  assert.equal(stripPs1Comment('# 줄 전체가 주석'), '');
+  assert.equal(stripPs1Comment("$x = 'a#b'  # 뒤에 주석"), "$x = 'a#b'  ");
+  assert.equal(stripPs1Comment('$x = "a#b" # 뒤에 주석'), '$x = "a#b" ');
+  assert.equal(stripPs1Comment("Write-Output \"it's fine\" # c"), 'Write-Output "it\'s fine" ');
+  assert.equal(stripPs1Comment("$x = 'a''b#c'"), "$x = 'a''b#c'");
+  assert.equal(stripPs1Comment('$x = "a`"b#c"'), '$x = "a`"b#c"');
+  assert.equal(stripPs1Comment('$x = 1'), '$x = 1');
+  assert.equal(stripPs1Comment(''), '');
+});
+
+test('ps1 정적 검사 — 자격 값에 # 이 있어도 잡는다(주석 제거가 문자열을 삼키던 구멍)', () => {
+  assert.ok(ps1StaticFindings("$secret = 'p#4z'").includes('literal-password'), "$secret = 'p#4z' 가 통과했다");
+  assert.ok(ps1StaticFindings('$secret = "p#4z"').includes('literal-password'));
+  assert.ok(ps1StaticFindings("$user = 'ad#min'").includes('literal-user'));
+  assert.ok(ps1StaticFindings('$body = \'{ "userId": "z", "password": "hun#ter2" }\'').includes('literal-password-json'));
+  assert.ok(ps1StaticFindings('$sec = ConvertTo-SecureString "hun#ter2" -AsPlainText -Force').includes('literal-secure-string'));
+  // 거짓 양성 방지 — **진짜 주석**은 여전히 검사 밖이다(문서화를 벌하지 않는다).
+  assert.ok(!ps1StaticFindings("# 예시로도 두지 마라: \\$secret = 'hunter2'").includes('literal-password'));
+  assert.ok(!ps1StaticFindings("$secret = $env:NEWS_TICK_PASSWORD # 값은 'hunter2' 같은 리터럴이면 안 된다").includes('literal-password'));
+  // 실제 파일은 변함없이 0건이다(이 줄이 없으면 "더 많이 잡게 만들어 통과"를 못 막는다).
+  assert.deepEqual(ps1StaticFindings(fs.readFileSync(PS1, 'utf8').replace(/^\uFEFF/, '')), []);
 });
 
 test('ps1EncodingFinding — 비ASCII + BOM 없음 → missing-utf8-bom · BOM 있으면 null · ASCII 만이면 null', () => {
