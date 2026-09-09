@@ -123,8 +123,28 @@ public class SchemaGuard {
 			throw new IllegalStateException(
 					"DB 스키마가 이 서버의 요구를 만족하지 않습니다 (" + this.target + "): "
 							+ String.join(" / ", problems)
-							+ ". 이 서버는 스키마를 만들거나 고치지 않습니다 — Node 서버로 데이터 디렉토리를 준비한 뒤 다시 실행하세요.");
+							+ ". 이 서버는 스키마를 만들거나 고치지 않습니다 — " + prescription());
 		}
+	}
+
+	/**
+	 * 처방은 <b>방언마다 다르다</b>(phase 75 forward_notes (6) ⑩ · phase 76 step8).
+	 *
+	 * <p>이 문장은 부팅이 거부된 운영자가 <b>다음에 무엇을 할지</b>를 정한다. sqlite 시절의 처방("Node 서버로
+	 * 데이터 디렉토리를 준비하라")이 mysql 모드에 그대로 나가면, 컷오버 정지 창 한복판의 운영자가
+	 * <b>Node 서버를 켠다</b> — 그것이 두 저장소를 갈라 놓는 정확히 그 행동이고(런북 §11-6), 실제 처방인
+	 * 마이그레이터의 {@code migrate} 는 어디에도 적혀 있지 않다. mysql 모드에서 스키마를 세우는 것은 Node 가
+	 * 아니라 마이그레이터다(ADR-016 ③ — 그 모듈이 스키마 정본을 소유한다).
+	 *
+	 * <p>바뀌는 것은 <b>문구뿐</b>이다 — 판정 로직도, 문제 목록도, 계약 관측도 이 분기와 무관하다
+	 * ({@code SchemaGuardTest.thePrescriptionDiffersByDialect} 가 그 사실을 함께 단언한다).
+	 */
+	private String prescription() {
+		return this.mysql
+				? "news-migrator 로 대상 DB 를 적재한 뒤 다시 실행하세요"
+						+ "(java -jar tools/news-migrator/target/news-migrator.jar migrate --source <news.db> --target <키집합>"
+						+ " · 절차는 docs/ops-mysql.md §11-3)."
+				: "Node 서버로 데이터 디렉토리를 준비한 뒤 다시 실행하세요.";
 	}
 
 	/**

@@ -1,0 +1,272 @@
+#!/usr/bin/env node
+// tools/collection-sweeper/sweeper.js — FTP 스풀 → POST /api/collection/receive 앱 밖 스위퍼 (phase 76 step6 · ADR-017 결정 4).
+//
+// Spring 에는 Node 의 FTP 스풀 watcher(server/ftpWatcher.js)가 **없다**(ADR-008: 앱은 스스로 깨어나지 않는다 — WatchService 0건).
+// 이 도구가 그 자리를 앱 **밖**에서 맡는다: 스풀 `<RCV_SPOOL_DIR>/<sourceId>/<file>` 을 1회 훑어 각 파일을
+// 동결된 HTTP 진입점 `POST <base>/api/collection/receive` {sourceId, payload:<파일 내용 그대로>} 로 넣는다.
+// watcher 가 부르던 `controllers.collection.receive(sourceId, payload)` 와 **같은 서비스 진입점**이다.
+//
+// 사용: node tools/collection-sweeper/sweeper.js --spool <RCV_SPOOL_DIR> --base <서버 origin> [--once]
+//        [--move-to <처리완료 폴더>] [--dry-run] [--seed-ledger] [--ledger <파일>] [--stabilize-ms <n>] [--timeout <ms>] [--report <파일>]
+// 토큰: 환경변수 COLLECTION_TOKEN 으로만(서버와 같은 값). argv 에 토큰 모양이 오면 실행하지 않는다(exit 2).
+//
+// 규율(step6.md · 이 파일이 지킨다):
+//   · 1회 실행 = 1회 스캔. 자체 루프·타이머·디렉토리 감시가 없다 — 주기는 외부 스케줄러(작업 스케줄러)가 정한다(tick 과 같은 규율).
+//     sweeper.test.js 의 정적 스캔이 이 파일에서 그 패턴 0건을 단언한다.
+//   · 처리한 파일을 **지우지 않는다** — 장부(append 전용 JSON Lines)로 멱등, --move-to 가 있으면 이동도 한다.
+//   · 컷오버 첫 실행 대비 --seed-ledger — 스풀에 **이미 쌓여 있던** 파일을 전송 0건으로 장부에만 올린다
+//     (그 파일들은 Node watcher 가 이미 수집했을 수 있고, 수집 서비스에 중복 판정이 없어 다시 보내면 기사가
+//      두 벌이 된다 — 그리고 기사는 지울 수 없다). 절차는 docs/cutover-p3.md §9-1-1.
+//   · 부분 파일 방어 — 크기·mtime 이 --stabilize-ms 간격의 연속 2회 관측에서 같을 때만 읽는다(Node watcher 는 하지 않는다).
+//   · 실패 격리 — 한 파일의 실패가 다음 파일을 막지 않는다. payload·토큰은 stdout/stderr/장부/리포트 어디에도 담지 않는다.
+//   · 종료코드 0 = 전건 성공 또는 처리 0건 · 1 = rejected/failed 1건 이상 · 2 = 설정·환경 오류(파일을 건드리지 않았다).
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import {
+  EXIT, TOKEN_ENV, TOKEN_HEADER,
+  exitCodeFor, findTokenLikeArgv, formatLedgerLine, isLedgerFatal, moveToConflict, parseLedger, planScan, sha256Hex, summarize, sweepOnce,
+} from './lib.js';
+
+const DEFAULT_LEDGER_NAME = '.collection-sweeper-ledger.jsonl'; // 스풀 최상위 = 1세그먼트 = watcher·스위퍼 모두 무시하는 자리
+const DEFAULT_STABILIZE_MS = 1000;
+const DEFAULT_TIMEOUT_MS = 15000;
+const HEALTH_PATH = '/api/health';
+const RECEIVE_PATH = '/api/collection/receive';
+
+const USAGE = `사용법: node tools/collection-sweeper/sweeper.js --spool <RCV_SPOOL_DIR> --base <서버 origin> [--once]
+        [--move-to <처리완료 폴더>] [--dry-run] [--seed-ledger] [--ledger <파일>] [--stabilize-ms <n>] [--timeout <ms>] [--report <파일>]
+  --spool <dir>        수집 스풀 루트(<dir>/<sourceId>/<file>). 최상위 파일은 무시한다.
+  --base <origin>      서버 origin(예: http://127.0.0.1:3001). 토큰은 env ${TOKEN_ENV} 로만 받는다 — argv 금지.
+                       --seed-ledger 일 때만 생략할 수 있다(전송이 없으므로 서버 도달 확인도 하지 않는다).
+  --once               1회 스캔(기본이자 유일한 모드 — 상주 모드는 없다. 주기는 외부 스케줄러가 정한다).
+  --move-to <dir>      성공(ingested)한 파일을 이 폴더로 **이동**한다(<dir>/<sourceId>/<file>). 스풀 안은 거부한다.
+  --dry-run            읽고 판정만 한다 — 전송·장부·이동 없음. **--seed-ledger 보다 우선**(둘 다 주면 아무것도 쓰지 않고 후보만 센다).
+  --seed-ledger        **전송 0건**으로 스풀을 훑어 장부에만 등재한다(결과 seeded · 이동 없음 · --move-to 와 함께 쓸 수 없다).
+                       컷오버 첫 실행이 스풀에 남아 있던 파일을 전건 재수집하는 것을 막는 용도다(docs/cutover-p3.md §9-1-1).
+  --ledger <file>      멱등 장부(JSON Lines · append 전용). 기본 <spool>/${DEFAULT_LEDGER_NAME}.
+  --stabilize-ms <n>   부분 파일 방어 간격(기본 ${DEFAULT_STABILIZE_MS} · 0 이상 정수).
+  --timeout <ms>       HTTP 한도(기본 ${DEFAULT_TIMEOUT_MS} · 1000 이상 정수).
+  --report <file>      파일별 결과 JSON(리포 밖에 두라 — payload·토큰은 담기지 않는다).
+종료코드: 0 전건 성공/처리 0건/선등재 · 1 rejected/failed 1건 이상 · 2 설정·환경 오류`;
+
+// 설정·환경 오류 — main 이 잡아 exit 2 로 접는다. process.exit() 는 어디서도 부르지 않는다(아래 main 끝 주석).
+class ConfigError extends Error {}
+
+function die(msg) {
+  throw new ConfigError(msg);
+}
+
+// scripts/lib/cliArgs.mjs flagValue 동형(자기완결을 위해 복제하지 않고 최소 규칙만 — 값 누락·플래그 잠식·빈 값 거부).
+function takeValue(argv, i, flag) {
+  const value = argv[i + 1];
+  if (value === undefined) die(`${flag} 값이 없다(플래그가 마지막 인자다).`);
+  if (String(value).startsWith('--')) die(`${flag} 값 자리에 다른 플래그가 왔다: ${value}`);
+  if (String(value).trim() === '') die(`${flag} 값이 비어 있다.`);
+  return value;
+}
+
+function parseArgs(argv) {
+  const opts = { once: true, dryRun: false, seedLedger: false, stabilizeMs: DEFAULT_STABILIZE_MS, timeout: DEFAULT_TIMEOUT_MS };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--spool') { opts.spool = takeValue(argv, i, a); i += 1; }
+    else if (a === '--base') { opts.base = takeValue(argv, i, a); i += 1; }
+    else if (a === '--once') opts.once = true;
+    else if (a === '--move-to') { opts.moveTo = takeValue(argv, i, a); i += 1; }
+    else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--seed-ledger') opts.seedLedger = true;
+    else if (a === '--ledger') { opts.ledger = takeValue(argv, i, a); i += 1; }
+    else if (a === '--stabilize-ms') { opts.stabilizeMs = Number(takeValue(argv, i, a)); i += 1; }
+    else if (a === '--timeout') { opts.timeout = Number(takeValue(argv, i, a)); i += 1; }
+    else if (a === '--report') { opts.report = takeValue(argv, i, a); i += 1; }
+    else die(`알 수 없는 인자: ${a}`);
+  }
+  if (!opts.spool) die('--spool 이 필요하다.');
+  // 선등재는 전송이 없으므로 대상 서버가 없어도(정지 창 안이라도) 돌아야 한다 — 그 한 경우만 --base 를 면제한다.
+  if (!opts.base && !opts.seedLedger) die('--base 가 필요하다.');
+  if (opts.seedLedger && opts.moveTo) die('--seed-ledger 와 --move-to 는 함께 쓸 수 없다(선등재는 파일을 옮기지 않는다 — 보존 폴더로 옮길 거라면 선등재가 필요 없다).');
+  if (!Number.isInteger(opts.stabilizeMs) || opts.stabilizeMs < 0) die(`--stabilize-ms 값이 유효하지 않다(0 이상 정수): ${opts.stabilizeMs}`);
+  if (!Number.isInteger(opts.timeout) || opts.timeout < 1000) die(`--timeout 값이 유효하지 않다(ms, 1000 이상 정수): ${opts.timeout}`);
+  return opts;
+}
+
+function resolveConfig(opts) {
+  const spool = path.resolve(opts.spool);
+  if (!fs.existsSync(spool) || !fs.statSync(spool).isDirectory()) die(`--spool 이 디렉토리가 아니다: ${spool}`);
+  let baseUrl = null;
+  if (opts.base) {
+    let base;
+    try { base = new URL(opts.base); } catch { die(`--base 가 URL 이 아니다: ${opts.base}`); }
+    if (base.protocol !== 'http:' && base.protocol !== 'https:') die(`--base 는 http(s) origin 이어야 한다: ${opts.base}`);
+    if (base.username || base.password || base.search || base.hash) die('--base 에는 origin 만 쓴다(자격·쿼리·해시 금지).');
+    baseUrl = `${base.origin}${base.pathname.replace(/\/+$/, '')}`;
+  }
+  let moveTo = null;
+  if (opts.moveTo) {
+    moveTo = path.resolve(opts.moveTo);
+    // 스풀 안으로 옮기면 <spool>/<done>/<sourceId>/<file> 이 2세그먼트 이상이라 다음 스캔(과 롤백 시 Node watcher)이 다시 수집한다.
+    // 반대로 스풀의 **상위**로 옮기면 이동본이 스풀의 형제·상위로 흩어진다 — 두 방향 다 거부한다(lib.js moveToConflict).
+    const conflict = moveToConflict(moveTo, spool, process.platform);
+    if (conflict === 'inside-spool') die(`--move-to 는 --spool 안에 둘 수 없다(이동한 파일이 다시 수집된다): ${moveTo}`);
+    if (conflict === 'contains-spool') die(`--move-to 가 --spool 을 품고 있다(이동본이 스풀 밖 상위로 흩어진다 — 스풀과 겹치지 않는 폴더를 써라): ${moveTo}`);
+    if (fs.existsSync(moveTo) && !fs.statSync(moveTo).isDirectory()) die(`--move-to 가 디렉토리가 아니다: ${moveTo}`);
+  }
+  const ledger = path.resolve(opts.ledger ?? path.join(spool, DEFAULT_LEDGER_NAME));
+  if (!fs.existsSync(path.dirname(ledger))) die(`--ledger 의 디렉토리가 없다: ${path.dirname(ledger)}`);
+  const report = opts.report ? path.resolve(opts.report) : null;
+  return {
+    spool, baseUrl, moveTo, ledger, report,
+    dryRun: opts.dryRun, seedLedger: opts.seedLedger, stabilizeMs: opts.stabilizeMs, timeout: opts.timeout,
+  };
+}
+
+// 부분 파일 방어의 간격 — 타이머 API 없이 동기 대기한다(이 프로세스는 스캔 1회 말고 할 일이 없다).
+function pause(ms) {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// 스풀 아래 전 파일(재귀). 장부 파일 자신은 제외한다. 순서는 이름순(결정적).
+function listFiles(root, skipAbs) {
+  const out = [];
+  const walk = (dir, rel) => {
+    let names;
+    try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of names.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const abs = path.join(dir, ent.name);
+      const r = rel ? `${rel}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) walk(abs, r);
+      else if (ent.isFile() && path.resolve(abs) !== skipAbs) out.push({ rel: r, abs });
+    }
+  };
+  walk(root, '');
+  return out;
+}
+
+function observe(abs) {
+  try {
+    const st = fs.statSync(abs);
+    return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
+// connection: close — keep-alive 소켓을 남기지 않는다. 소켓이 살아 있는 채 프로세스가 끝나면 Windows 에서 libuv 단언
+// (UV_HANDLE_CLOSING · exit 0xC0000409)으로 죽는 플레이크가 실측됐다(왕복 하네스 첫 실행 · docs/cutover-p3.md §5).
+async function getJson(url, init, timeoutMs) {
+  try {
+    const headers = { ...(init.headers ?? {}), connection: 'close' };
+    const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await res.text();
+    let json;
+    try { json = text ? JSON.parse(text) : undefined; } catch { json = undefined; }
+    return { status: res.status, json };
+  } catch (err) {
+    return { status: null, json: undefined, error: err && err.code ? err.code : (err && err.name) || 'error' };
+  }
+}
+
+async function receive(cfg, token, sourceId, payload) {
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers[TOKEN_HEADER] = token;
+  return getJson(`${cfg.baseUrl}${RECEIVE_PATH}`, { method: 'POST', headers, body: JSON.stringify({ sourceId, payload }) }, cfg.timeout);
+}
+
+// 이동 — 덮어쓰지 않는다(같은 이름이 있으면 접미사). 드라이브가 다르면(EXDEV) 복사 후 지문이 같을 때만 원본을 정리한다.
+function moveOut(abs, rel, moveTo, sha) {
+  let dest = path.join(moveTo, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (fs.existsSync(dest)) dest = `${dest}.${Date.now()}.dup`;
+  try {
+    fs.renameSync(abs, dest);
+  } catch (err) {
+    if (err && err.code !== 'EXDEV') throw err;
+    fs.copyFileSync(abs, dest, fs.constants.COPYFILE_EXCL);
+    if (sha256Hex(fs.readFileSync(dest)) !== sha) throw new Error('moved copy digest mismatch');
+    fs.unlinkSync(abs);
+  }
+  return dest;
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const token = process.env.COLLECTION_TOKEN;
+  // R5 가드 — 토큰 모양의 argv 는 값을 찍지 않고 위치만 알린다. 가드는 인자 해석보다 앞이다.
+  const hit = findTokenLikeArgv(argv, token);
+  if (hit) die(`argv[${hit.index}] 에 토큰 모양의 인자가 있다(${hit.rule}) — 토큰은 환경변수 ${TOKEN_ENV} 로만 받는다.`);
+  const cfg = resolveConfig(parseArgs(argv));
+  if (cfg.seedLedger) {
+    process.stdout.write('notice --seed-ledger — 전송 0건으로 장부에만 등재한다(서버를 부르지 않는다 · 파일을 옮기지도 지우지도 않는다).\n');
+  }
+  else if (!token) process.stdout.write(`notice ${TOKEN_ENV} 미설정 — ${TOKEN_HEADER} 헤더 없이 보낸다(토큰이 설정된 서버는 401 unauthenticated 로 failed 가 된다).\n`);
+
+  // 서버 도달성 — 파일을 건드리기 전에 확인한다(닿지 않으면 설정·환경 오류 2 · 장부 무변).
+  // 선등재는 전송이 없으므로 이 확인도 하지 않는다(정지 창 안, 서버가 아직 안 떠 있을 때 돌리는 것이 정상 경로다).
+  if (!cfg.seedLedger) {
+    const health = await getJson(`${cfg.baseUrl}${HEALTH_PATH}`, { method: 'GET' }, cfg.timeout);
+    if (health.status !== 200 || !health.json || health.json.ok !== true) {
+      die(`서버에 닿지 않는다: GET ${cfg.baseUrl}${HEALTH_PATH} status=${health.status ?? health.error}`);
+    }
+  }
+
+  const files = listFiles(cfg.spool, cfg.ledger);
+  const plan = planScan(files.map((f) => f.rel));
+  const absByRel = new Map(files.map((f) => [f.rel, f.abs]));
+  for (const rel of plan.ignored) process.stdout.write(`[sweep] ignored(no sourceId): ${rel}\n`);
+
+  // 부분 파일 방어 — 전 후보를 1회 관측 → 간격 → 재관측. 다른 파일은 그 사이에도 바뀔 수 있으므로 판정은 파일마다 독립이다.
+  const first = new Map(plan.candidates.map((c) => [c.rel, observe(absByRel.get(c.rel))]));
+  if (plan.candidates.length > 0) pause(cfg.stabilizeMs);
+
+  // 장부 preflight — 전송 **전**에 쓸 수 있는지 본다. 장부에 못 올리는 기사는 다음 실행에서 중복이 되므로, 못 쓰면 한 건도 보내지 않는다(exit 2).
+  if (!cfg.dryRun) {
+    try { fs.appendFileSync(cfg.ledger, ''); } catch (err) { die(`장부를 쓸 수 없다: ${cfg.ledger} (${err && err.code ? err.code : err})`); }
+  }
+  const done = fs.existsSync(cfg.ledger) ? parseLedger(fs.readFileSync(cfg.ledger, 'utf8')) : new Map();
+  // 파일 루프는 lib.js sweepOnce(순수 · 의존성 주입)가 소유한다 — 여기서는 fs·HTTP·stdout 을 꽂아 줄 뿐이다.
+  let results;
+  try {
+    results = await sweepOnce(plan.candidates, first, {
+      observe: (rel) => observe(absByRel.get(rel)),
+      readFile: (rel) => fs.readFileSync(absByRel.get(rel)),
+      post: (sourceId, payload) => receive(cfg, token, sourceId, payload),
+      ledgerHas: (key) => done.get(key) ?? null,
+      ledgerAppend: (entry) => fs.appendFileSync(cfg.ledger, formatLedgerLine(entry)),
+      moveOut: (rel, sha) => path.relative(cfg.moveTo, moveOut(absByRel.get(rel), rel, cfg.moveTo, sha)).replace(/\\/g, '/'),
+      log: (line, level) => (level === 'warn' ? process.stderr : process.stdout).write(`${line}\n`),
+      dryRun: cfg.dryRun,
+      seedLedger: cfg.seedLedger,
+      moveTo: cfg.moveTo,
+    });
+  } catch (err) {
+    // 장부 기록 실패 — 파일 실패가 아니라 환경 실패다. 계속 가면 장부 없는 기사가 늘어난다(다음 실행의 중복). 여기서 멈춘다(exit 2).
+    if (isLedgerFatal(err)) die(`장부 기록 실패(서버에는 등록됐으나 장부에 없는 파일이 있다 — 수동 확인): ${err && err.code ? err.code : err}`);
+    throw err;
+  }
+
+  const counts = summarize(results);
+  counts.ignored = plan.ignored.length;
+  // 이동 실패는 outcome 을 뒤집지 않지만(기사·장부는 정상) 운영이 알아야 하므로 exit 1 이다.
+  const moveErrors = results.filter((r) => r.moveError).length;
+  const code = moveErrors > 0 ? EXIT.PARTIAL : exitCodeFor(counts);
+  if (cfg.report) {
+    fs.writeFileSync(cfg.report, `${JSON.stringify({
+      spool: cfg.spool, base: cfg.baseUrl, dryRun: cfg.dryRun, seedLedger: cfg.seedLedger, moveTo: cfg.moveTo, counts, exitCode: code, results,
+    }, null, 2)}\n`);
+  }
+  const parts = ['ingested', 'rejected', 'failed', 'skipped', 'seeded', 'deferred', 'dry-run', 'ignored'].map((k) => `${k}=${counts[k] ?? 0}`).join(' ');
+  process.stdout.write(`collection-sweeper spool=${cfg.spool} base=${cfg.baseUrl ?? '-'} files=${files.length} ${parts} move-errors=${moveErrors} → exit ${code}\n`);
+  return code;
+}
+
+// 종료는 자연 종료다 — exitCode 만 놓고 이벤트 루프가 비면 끝난다(process.exit() 금지: 위 getJson 주석의 플레이크).
+// 스캔 1회 말고 살아 있을 것이 없으므로(타이머·디렉토리 감시 0건 — sweeper.test.js 정적 스캔) 자연 종료가 곧 즉시 종료다.
+main().then((code) => {
+  process.exitCode = code;
+}, (err) => {
+  if (err instanceof ConfigError) process.stderr.write(`${err.message}\n${USAGE}\n`);
+  else process.stderr.write(`collection-sweeper 실패: ${err && err.stack ? err.stack : err}\n`);
+  process.exitCode = EXIT.CONFIG;
+});

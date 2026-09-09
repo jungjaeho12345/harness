@@ -50,16 +50,16 @@ class SpaServingWireTest {
 
 	private static final Path DATA_DIR = TempNewsDb.newDataDir("spa-serving");
 
-	/** SPA 루트의 <b>부모</b> — 형제 파일 비노출(위치 문자열의 끝 슬래시) 프로브가 여기에 비밀을 놓는다. */
-	private static final Path SPA_PARENT = createSpaFixture();
-
-	private static final Path SPA_ROOT = SPA_PARENT.resolve("dist");
-
 	/** 가짜 dist 픽스처 — Node 테스트의 표식 문자열을 그대로 쓴다. */
 	private static final String FIXTURE_INDEX = "<!doctype html><html lang=\"ko\"><head><title>spa</title></head>"
 			+ "<body><div id=\"root\">SPA-FIXTURE-INDEX</div></body></html>";
 
 	private static final String FIXTURE_ASSET = "console.log(\"SPA-FIXTURE-ASSET\");";
+
+	/** content-type 원문 프로브용 자산 3종 — 텍스트(css)·바이너리(png)·mime 이 모르는 확장자(zzz). */
+	private static final String FIXTURE_STYLE = "body{margin:0}";
+
+	private static final byte[] FIXTURE_OPAQUE = { 1, 2, 3 };
 
 	private static final String SIBLING_SECRET = "SPA-SIBLING-SECRET-MUST-NOT-BE-SERVED";
 
@@ -73,6 +73,14 @@ class SpaServingWireTest {
 
 	private static final byte[] PNG = Base64.getDecoder().decode(
 			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+	/**
+	 * SPA 루트의 <b>부모</b> — 형제 파일 비노출(위치 문자열의 끝 슬래시) 프로브가 여기에 비밀을 놓는다.
+	 * 선언 순서가 계약이다: 픽스처가 위의 바이트 배열(PNG·FIXTURE_OPAQUE)을 쓰므로 그 뒤에 초기화돼야 한다.
+	 */
+	private static final Path SPA_PARENT = createSpaFixture();
+
+	private static final Path SPA_ROOT = SPA_PARENT.resolve("dist");
 
 	private static final String HTML_ACCEPT = "text/html,application/xhtml+xml,*/*;q=0.8";
 
@@ -105,6 +113,9 @@ class SpaServingWireTest {
 			Files.writeString(dist.resolve("index.html"), FIXTURE_INDEX, StandardCharsets.UTF_8);
 			Files.createDirectory(dist.resolve("assets"));
 			Files.writeString(dist.resolve("assets").resolve("app-abc123.js"), FIXTURE_ASSET, StandardCharsets.UTF_8);
+			Files.writeString(dist.resolve("assets").resolve("app.css"), FIXTURE_STYLE, StandardCharsets.UTF_8);
+			Files.write(dist.resolve("assets").resolve("pic.png"), PNG);
+			Files.write(dist.resolve("assets").resolve("blob.zzz"), FIXTURE_OPAQUE);
 			Path hidden = Files.createDirectory(dist.resolve(".hidden"));
 			Files.writeString(hidden.resolve("secret.txt"), DOTFILE_SECRET, StandardCharsets.UTF_8);
 			Files.writeString(dist.resolve(".env"), DOTFILE_SECRET, StandardCharsets.UTF_8);
@@ -189,6 +200,75 @@ class SpaServingWireTest {
 
 		assertEquals(200, response.status());
 		assertEquals(0, response.body().length, "HEAD 응답에 본문이 실렸다");
+	}
+
+	/**
+	 * SPA 응답의 {@code Content-Type} 헤더 줄은 <b>Node 원문과 바이트 동일</b>하다 — phase 76 step3 대조기가
+	 * 잡은 divergence의 잠금이다(2026-09-07 실측: Node {@code text/html; charset=UTF-8} 대 여기 {@code text/html},
+	 * {@code .js}는 {@code application/javascript} 대 {@code text/javascript}로 기저 타입까지 달랐다).
+	 *
+	 * <p>값의 규칙은 {@link SpaContentTypes}(Node {@code send}+{@code mime@1.6.0})가 소유하고, 와이어 기록은
+	 * {@link RawContentType} seam 을 지난다(서블릿 API로 지정하면 컨테이너가 {@code ;charset=} 으로 재조립한다).
+	 * 대조기는 이 축을 <b>실패 diff</b>로 본다 — 허용 목록에 넣는 순간 대조가 공허해진다(변이 N4).
+	 */
+	@Test
+	void contentTypeLinesAreNodeOriginal() {
+		Map<String, String> expected = Map.of(
+				"/", "Content-Type: text/html; charset=UTF-8",
+				"/login.do", "Content-Type: text/html; charset=UTF-8",
+				"/assets/app-abc123.js", "Content-Type: application/javascript; charset=UTF-8",
+				"/assets/app.css", "Content-Type: text/css; charset=UTF-8",
+				"/assets/pic.png", "Content-Type: image/png",
+				"/assets/blob.zzz", "Content-Type: application/octet-stream");
+		for (Map.Entry<String, String> entry : expected.entrySet()) {
+			Wire.RawResponse response = getAsBrowser(entry.getKey());
+
+			assertEquals(200, response.status(), entry.getKey());
+			assertEquals(1, response.lines("content-type").size(),
+					entry.getKey() + " 의 Content-Type 줄이 정확히 하나가 아니다: " + response.lines("content-type"));
+			assertEquals(entry.getValue(), response.line("content-type"),
+					entry.getKey() + " 의 Content-Type 원문이 Node와 갈렸다");
+		}
+
+		Wire.RawResponse head = Wire.raw(this.port, "HEAD", "/list.do", Map.of("Accept", HTML_ACCEPT), null);
+		assertEquals("Content-Type: text/html; charset=UTF-8", head.line("content-type"),
+				"HEAD 응답의 Content-Type 원문이 Node와 갈렸다");
+	}
+
+	/**
+	 * {@code Range} 요청 — 단일 범위는 <b>파일 타입</b>이고 <b>다중 범위는 {@code multipart/byteranges}</b>다.
+	 *
+	 * <p>왜 있는가(⑤ 리뷰 2026-09-09): 핸들러가 {@code Accept-Ranges: bytes}를 광고하므로 다중 Range 는
+	 * 도달 가능한 경로다. 그때 본문은 {@code ResourceRegionHttpMessageConverter}가 만든 <b>multipart</b>인데,
+	 * {@link SpaResourceHandler}의 Content-Type 고정이 그것을 파일 타입으로 되돌리면 <b>헤더와 본문이
+	 * 어긋난다</b>(클라이언트가 경계 구분자를 자바스크립트로 읽는다). 고정은 파일 타입을 <b>Node 원문</b>으로
+	 * 맞추기 위한 것이지 컨버터가 정한 <b>본문 형식</b>을 덮으라는 것이 아니다.
+	 *
+	 * <p>대조기({@code scripts/spa-parity.mjs})의 {@code asset-range} 행은 단일 범위만 본다 — Node
+	 * {@code send}는 다중 범위를 지원하지 않아(전체 200) 그 축은 Node=Spring 대조가 성립하지 않는다.
+	 */
+	@Test
+	void aRangeRequestKeepsTheContentTypeHonest() {
+		Wire.RawResponse single = Wire.raw(this.port, "GET", "/assets/app-abc123.js",
+				Map.of("Accept", "*/*", "Range", "bytes=0-4"), null);
+
+		assertEquals(206, single.status(), "단일 Range 가 206이 아니다");
+		assertEquals("Content-Type: application/javascript; charset=UTF-8", single.line("content-type"),
+				"단일 Range 응답의 Content-Type 이 Node 원문과 갈렸다");
+		assertArrayEquals(FIXTURE_ASSET.substring(0, 5).getBytes(StandardCharsets.UTF_8), single.body());
+
+		Wire.RawResponse multi = Wire.raw(this.port, "GET", "/assets/app-abc123.js",
+				Map.of("Accept", "*/*", "Range", "bytes=0-4,10-14"), null);
+
+		assertEquals(206, multi.status(), "다중 Range 가 206이 아니다");
+		assertEquals(1, multi.lines("content-type").size(), "Content-Type 줄이 하나가 아니다: " + multi.lines("content-type"));
+		String contentType = multi.line("content-type");
+		assertTrue(contentType.startsWith("Content-Type: multipart/byteranges"),
+				"다중 Range 본문은 multipart 인데 헤더가 파일 타입으로 고정됐다(헤더와 본문이 어긋난다): " + contentType);
+		String boundary = contentType.substring(contentType.indexOf("boundary=") + "boundary=".length()).trim();
+		assertFalse(boundary.isEmpty(), "multipart 경계 구분자가 없다: " + contentType);
+		assertTrue(multi.bodyAsLatin1().contains("--" + boundary),
+				"본문에 헤더가 광고한 경계 구분자가 없다 — 헤더와 본문이 다른 응답이다");
 	}
 
 	// --- C. 경계 — 폴백이 절대 먹으면 안 되는 곳 ---

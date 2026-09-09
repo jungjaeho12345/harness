@@ -58,6 +58,8 @@ class SpaRealDistWireTest {
 
 	private static final Pattern SRC_OR_HREF = Pattern.compile("(?:src|href)=\"([^\"]+)\"");
 
+	private static final Pattern STYLESHEET_HREF = Pattern.compile("<link[^>]*rel=\"stylesheet\"[^>]*\\shref=\"([^\"]+)\"");
+
 	@DynamicPropertySource
 	static void properties(DynamicPropertyRegistry registry) {
 		registry.add("app.data-dir", () -> DATA_DIR.toAbsolutePath().toString());
@@ -89,6 +91,29 @@ class SpaRealDistWireTest {
 				"서빙된 index.html이 디스크의 파일과 다르다");
 		assertTrue(response.line("content-security-policy").contains("script-src 'self'"),
 				"CSP 헤더에 script-src 'self'가 없다: " + response.line("content-security-policy"));
+		// Node(send) 원문 — 대문자 UTF-8 · 세미콜론 뒤 공백(phase 76 step3 대조기가 실패 diff 로 보는 축).
+		assertEquals("Content-Type: text/html; charset=UTF-8", response.line("content-type"),
+				"실제 문서의 Content-Type 원문이 Node와 갈렸다");
+	}
+
+	/** 실제 산출물의 자산 3종(html·js·css)은 Node {@code send}와 같은 {@code Content-Type} 원문을 낸다. */
+	@Test
+	void theRealAssetsCarryNodeOriginalContentTypes() {
+		String html = indexHtmlOnDisk();
+		Matcher script = SCRIPT_SRC.matcher(html);
+		assertTrue(script.find(), "index.html에 <script src>가 있어야 한다");
+		Matcher style = STYLESHEET_HREF.matcher(html);
+		assertTrue(style.find(), "index.html에 <link rel=\"stylesheet\" href>가 있어야 한다");
+
+		Wire.RawResponse js = Wire.raw(this.port, "GET", script.group(1), Map.of("Accept", "*/*"), null);
+		Wire.RawResponse css = Wire.raw(this.port, "GET", style.group(1), Map.of("Accept", "text/css,*/*;q=0.1"), null);
+
+		assertEquals(200, js.status(), script.group(1));
+		assertEquals("Content-Type: application/javascript; charset=UTF-8", js.line("content-type"),
+				"스크립트 자산의 Content-Type 원문이 Node와 갈렸다(Tomcat 표의 text/javascript 가 새어 나왔는가)");
+		assertEquals(200, css.status(), style.group(1));
+		assertEquals("Content-Type: text/css; charset=UTF-8", css.line("content-type"),
+				"스타일 자산의 Content-Type 원문이 Node와 갈렸다");
 	}
 
 	/** ② 해시를 하드코딩하지 않는다 — index.html에서 {@code <script src>}를 추출해 그대로 요청한다. */

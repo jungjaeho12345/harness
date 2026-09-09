@@ -236,6 +236,16 @@ phase 76 step2가 붙였다(ADR-017 결정 1). Node `server/index.js` **174~250�
 - **dotfiles·Win32 이름 별칭**: 점으로 시작하는 세그먼트는 (하위까지) 서빙되지 않고(Node `dotfiles:'ignore'`),
   Win32 별칭 판정은 `/uploads`와 **같은 `LibuvNames`**를 쓴다(`x.png.`·`CON` 등 — 후자를 빼면 `/NUL`이
   **실재 장치로 열려 500**이 된다).
+- **Content-Type 원문은 Node(`send@0.19.2` + `mime@1.6.0`)의 규칙이다 — 컨테이너의 확장자 표가 아니다**(phase 76 step3
+  대조기의 발견 · 2026-09-07). 두 서버를 같은 `web/dist`로 나란히 치니 SPA 200 응답의 Content-Type이 전부 갈렸다:
+  Node `text/html; charset=UTF-8`·`text/css; charset=UTF-8`·`application/javascript; charset=UTF-8` 대 여기
+  `text/html`·`text/css`·`text/javascript`(charset 파라미터 없음 · `.js`는 **기저 타입까지** 다름). 값은 `SpaContentTypes`
+  (Node `mime@1.6.0` 실측표 — 모르는 확장자는 `application/octet-stream`)가 만들고, 기록은 `RawContentType` seam을 지난다
+  (`SpaResourceHandler.setHeaders`가 고정 → 프레임워크의 서블릿 API 지정을 응답 래퍼가 가로채 seam으로 되돌린다).
+  **그래서 `RawContentType.set` 호출 파일이 넷이 됐다**(`HtmlErrors`·`JsonHttp`·`SseHttp` + `SpaResourceHandler` —
+  `SseHttpTest.exactlyFourFilesWriteTheContentTypeBytes`가 집합을 잠근다). 잠금: `SpaContentTypesTest`(규칙) ·
+  `SpaServingWireTest.contentTypeLinesAreNodeOriginal`·`SpaRealDistWireTest.theRealAssetsCarryNodeOriginalContentTypes`(와이어).
+  Node 정본이 바뀌면(express 5 = `send@1`은 `text/javascript`를 낸다) `node scripts/spa-parity.mjs`가 실패 diff로 알려 준다.
 - **CSP는 SPA 응답에만 싣는다**(`ContentSecurityPolicy.NODE_ORIGINAL` — 값의 단일 소유 지점). Node helmet 원문과
   **바이트 동일**(344바이트)이며 **지시자는 7종이 아니라 14종**이다: `server/index.js` 494~506행이 명시한 7종 뒤에
   helmet 기본 6종(`base-uri`·`font-src`·`form-action`·`object-src`·`script-src-attr`·`upgrade-insecure-requests`)이
@@ -246,7 +256,7 @@ phase 76 step2가 붙였다(ADR-017 결정 1). Node `server/index.js` **174~250�
   `SPA_DIR`을 자식에게 넘기지 않는다. 2026-09-05 변이 실측: **예약 접두사에서 `/api`를 지워 미정의 `/api` 경로가
   SPA 200으로 뒤집힌 상태에서도 `--parity`는 313관측 diffs 0**이었고, **CSP를 통째로 떼어낸 상태에서도 313관측
   diffs 0**이었다. 그래서 이 축의 **유일 방어선**은 다음 파일들이다:
-  `SpaFallbackRulesTest`(규칙) · `SpaServingWireTest`(와이어 20항 — 404 바이트·CSP 경계·`/uploads` 무손상) ·
+  `SpaFallbackRulesTest`(규칙) · `SpaServingWireTest`(와이어 21항 — 404 바이트·CSP 경계·`/uploads` 무손상·Content-Type 원문) ·
   `SpaDisabledWireTest`/`SpaEmptyRootWireTest`/`SpaMissingRootWireTest`(비활성 3종) ·
   `SpaRealDistWireTest`(실제 `web/dist` — 인라인 스크립트 0·동일 출처 절대 경로) · `SpaPropertiesTest`(활성 판정).
 - **`SpaRealDistWireTest`는 `web/dist`를 요구한다**(skip 하지 않는다 — 조용한 skip은 "실제 산출물을 한 번도 서빙해
@@ -392,6 +402,25 @@ cd /d/agents/harness && JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" npm run test:
 - **`creds.json`·`targets.json`은 리포 밖 임시 디렉토리에만** 0600으로 만들어지고, 성패·`--keep`과 무관하게
   `finally`에서 **항상 삭제**된다. 리포에 쓰지 않으므로 커밋될 수 없다.
 
+## P3 전환 하네스 3종 — 계약이 **구조적으로 못 보는** 면을 보는 자리 (phase 76)
+
+계약 스위트(313관측)는 39 라우트의 **응답**만 본다. 서버 전환(P3)이 새로 연 면은 그 밖에 있고,
+아래 셋이 그 면의 **유일한 기계 판정**이다. 전부 리포 밖 임시 `DATA_DIR`·임시 포트에서 돌고
+리포 `news.db`·`uploads/`의 지문 무변을 스스로 단언한다. 실행·읽는 법·변이 결과표는 `docs/cutover-p3.md`.
+
+| 하네스 | 무엇을 보는가 | 커맨드 | 기준값(2026-09-09) |
+|---|---|---|---|
+| `scripts/spa-parity.mjs`(§2) | Node와 **같은 `web/dist`**를 두 서버에 물리고 요청 38건의 응답을 **바이트로** 대조 — 상태·`Content-Type` 원문·본문 sha256·보안 헤더 12종·캐시 4종 | `SPRING_JAVA_HOME=… node scripts/spa-parity.mjs` | 관측 **38** · diffs **0** · 허용 diff **516** |
+| `scripts/spool-parity.mjs`(§4) | 배부 스풀 **파일 바이트**(폴더 집합·파일 수·정규화 후 전 바이트). 계약은 오히려 응답에 스풀 경로가 **없음**을 단언한다 | `SPRING_JAVA_HOME=… node scripts/spool-parity.mjs [--db mysql]` | 폴더 **3** · 파일 **11** · diffs **0** · 눈감은 자리 **66/66** |
+| `scripts/verify-integration.mjs --server spring`(§3) | **Electron 클라 exe**가 이 서버에 붙어 로그인→SSE→작성→팝업→송고→스풀까지 도는가(CDP 실기) | `SPRING_JAVA_HOME=… node scripts/verify-integration.mjs --server spring --scenario loopback` | exit **0** |
+
+곁들여 도는 둘: `tools/collection-sweeper/roundtrip.js`(FTP 수집의 앱 밖 대체 경로 — 이 서버에는 watcher가 **없다**) ·
+`scripts/tick-cutover-probe.mjs`(운영 tick 왕복 17행 + **다중 인스턴스** 실측).
+
+> **이 셋은 `mvnw verify`가 돌리지 않는다.** Java 게이트가 전부 green이어도 SPA 응답 바이트·스풀 파일 바이트·클라 결합은
+> **한 줄도 검증되지 않는다** — 그 사실이 이 표가 존재하는 이유다. 그리고 **`verify-integration`은 이미 떠 있는 서버에
+> 붙는 도구가 아니다**(언제나 자기 서버를 띄운다) — 운영 인스턴스의 판정에 쓰지 마라(`docs/cutover-p3.md` §9-6).
+
 ## npm 파이프라인과 분리돼 있다
 
 Java 빌드를 npm 파이프라인에 섞지 않는다. `npm test`·`npm run lint`·`npm run build`는 이 모듈을 **보지 않는다**
@@ -475,6 +504,12 @@ mysql 모드로 뜬 서버의 `DATA_DIR` 을 sqlite 시절과 다른 곳으로 �
 - `service/SpoolWriter.java` — ④의 예외 ①. 배부 스풀 outbound 어댑터이고 파일 쓰기가 **기능 그 자체**다
   (ADR-008 (2)의 "전송은 파일 게시로만"). 같은 디렉토리의 `.tmp`에 쓰고 `ATOMIC_MOVE`로 게시 · 일반 move 폴백 없음
   · UTF-8 명시 · **throw 0**(모든 실패는 `{ok:false, reason}` 고정 토큰).
+  **이 파일이 쓰는 바이트가 Node(`src/services/spoolWriter.js`)와 같은가의 유일 방어선은 `node scripts/spool-parity.mjs`
+  (+ `--db mysql`)다**(phase 76 step5 · `docs/cutover-p3.md` §4). `SpoolWriterTest`는 **자기 기대값**과의 바이트 단언이고
+  계약 스위트는 응답에 스풀 경로가 **없음**을 단언하며 `--parity`는 HTTP만 본다 — 실측(2026-09-07): allowlist 키 제거·
+  키 순서 변경·`internalComment` 노출을 한 jar에 심은 채 `spring-contract.mjs --parity`는 **313관측 diffs 0**이고(Node `npm test`는
+  Java를 구조적으로 보지 못한다) `SpoolWriterTest`는 자기 기대값으로 6 red를 내지만 **Node가 바뀌는 쪽**은 그 테스트도 계약도 못 본다 —
+  `spool-parity.mjs`만 양쪽을 함께 본다(diffs 11/11). 파일 shape·순서·이스케이프를 바꾸면 그 스크립트를 먼저 돌려라.
 - `service/UploadStore.java` — ④의 예외 ②(**phase 73 신설**). `POST /api/upload`의 저장 어댑터다. **경로를 밖에서 받지 않는다** —
   루트는 `AppProperties.uploadsDirPath()`에서 스스로 도출하고 파일명은 서버 발급 32-hex이며 `CREATE_NEW`로만 만든다
   (문자열을 경로에 이어 붙이는 API를 노출하지 않는다는 것을 `UploadStoreTest`가 단언한다).
@@ -687,3 +722,21 @@ SSE 2 스트림(phase 74)이 남긴 공백 — 각 항목의 **유일한 방어�
 - **SSE 요청 자신의 액세스 로그가 스트림이 열린 상태에서 자기 스트림으로 push된다**(정본은 스트림 종료 시점) —
   `RequestLogFilter`가 async 가드 없는 plain `Filter`이기 때문이다. **관측 가능한 divergence이고 재귀는 아니다**
   (그 write는 새 로그를 만들지 않는다). 계약은 이것을 red로 만들지 않는다(위 「하한 함정」).
+
+서버 전환(phase 76 · P3)이 남긴 공백 — **이 전환이 잃은 것부터 적는다**:
+
+- **ADR-012 단일 인스턴스 잠금이 없다(회귀다).** Node는 `src/db/instanceLock.js`가 **`DATA_DIR` 범위**로 두 번째 인스턴스를
+  막았고(포트가 달라도 막힌다) 이 서버에는 대응물이 **0건**이다. 실측(phase 76 step7 A-2 · `docs/cutover-p3.md` §6-5):
+  같은 MySQL·같은 `DIST_SPOOL_DIR`로 **Spring 둘이 다 뜨고**, 동시 tick을 치면 **5/5 회차에서 기사 하나에 스풀 파일 2개**가
+  생긴다(직렬 tick은 이력 멱등이 막는다 — 동시는 못 막는다). 같은 실험에서 **Node 2번째는 `exit 1`**이다.
+  막는 자동 게이트는 없고 **막는 것은 운영 절차**다(런북 §0 낭독·§10 분기). `GET_LOCK`을 넣지 않은 근거는 ADR-017 결정 2.
+- **`/api` 응답의 보안 헤더가 전량 없다(3연속 이월).** SPA 문서·자산에는 CSP 1종만 실었다(위 SPA 절). Node가 helmet으로
+  모든 응답에 싣던 나머지 **10종**(COOP·CORP·OAC·Referrer-Policy·nosniff·DNS-prefetch·Download-Options·XFO·XPCDP·XSS)과
+  `/api`의 CSP는 **없다** — `scripts/spa-parity.mjs`가 그 차이를 **허용 diff 528건**으로 리포트에 드러내고, 런북이 운영자에게 낭독한다.
+- **부팅 진단이 콘솔에 없다.** Node의 부팅 5줄(`instance lock acquired` · `serving SPA from` · `distribution spool root` ·
+  `FTP watcher watching` · `API server on http://<host>:<port>`)은 **링 버퍼**에만 있고 콘솔은 무출력이다. 이 서버의 링 버퍼에는
+  `serving SPA from` **1줄뿐**이고 스풀 루트·바인드 주소 줄이 **없다**(2026-09-09 실측 · `docs/cutover-p3.md` §9-12 대조표).
+  콘솔에는 Spring Boot의 `Tomcat started on port <PORT>`·`Started NewsServerApplication`이 나오지만 **바인드 host는 찍히지 않는다** —
+  노출 범위 판정은 `netstat`이 유일하다.
+- **운영 규모·장기 운용이 통째로 미검증**: 178행 표본까지만 쟀고(동시 32 계단 5xx 0 · `docs/cutover-p3.md` §8),
+  운영 데이터의 이관 시간·동시 접속 수·스위퍼 장기 운용·롤백 실기는 **실험실 1회**뿐이다(`phases/76-spring-cutover/index.json` `forward_notes` (5)).

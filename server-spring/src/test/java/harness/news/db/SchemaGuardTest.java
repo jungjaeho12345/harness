@@ -224,6 +224,43 @@ class SchemaGuardTest {
 		}
 	}
 
+	/**
+	 * <b>처방은 방언마다 다르다</b>(phase 75 forward_notes (6) ⑩ · phase 76 step8 C).
+	 *
+	 * <p>거부 메시지의 마지막 문장은 운영자가 <b>다음에 무엇을 할지</b>를 정한다. sqlite 모드의 처방
+	 * ("Node 서버로 데이터 디렉토리를 준비하라")을 mysql 모드에 그대로 내보내면, 정지 창 한복판에서 부팅이
+	 * 거부된 운영자가 <b>Node 서버를 켠다</b> — 컷오버 중에 그것은 두 저장소를 갈라 놓는 정확히 그 행동이고
+	 * (런북 §11-6), 실제 처방인 {@code migrate} 는 어디에도 적혀 있지 않다. mysql 모드에서 스키마를 세우는
+	 * 것은 Node 가 아니라 마이그레이터다(ADR-016 ③).
+	 *
+	 * <p>판정 로직은 이 테스트의 대상이 아니다 — <b>문구만</b> 본다. 그래서 두 가드가 같은 결손(빈 DB)을 보고
+	 * 같은 문제 목록을 내되 처방만 갈리는지를 확인한다. 방언 판정은 명시 주입이다({@code mysql} 인자).
+	 */
+	@Test
+	void thePrescriptionDiffersByDialect() {
+		TempNewsDb.seedEmpty(tempDir);
+
+		try (HikariDataSource dataSource = NewsDataSource.create(tempDir)) {
+			String target = TempNewsDb.dbFile(tempDir).toAbsolutePath().toString();
+			String sqlite = assertThrows(IllegalStateException.class,
+					() -> new SchemaGuard(dataSource, target, false).verify()).getMessage();
+			String mysql = assertThrows(IllegalStateException.class,
+					() -> new SchemaGuard(dataSource, target, true).verify()).getMessage();
+
+			assertTrue(sqlite.contains("Node 서버로 데이터 디렉토리를 준비"),
+					"sqlite 처방은 그대로다(정본은 Node의 src/db/schema.js다): " + sqlite);
+			assertFalse(sqlite.contains("migrate"), "sqlite 모드에 마이그레이터를 지목하지 않는다: " + sqlite);
+
+			assertTrue(mysql.contains("news-migrator") && mysql.contains("migrate"),
+					"mysql 처방은 마이그레이터의 migrate 를 지목해야 한다: " + mysql);
+			assertFalse(mysql.contains("Node 서버로 데이터 디렉토리를 준비"),
+					"mysql 모드에 sqlite 시절 처방이 남아 있다 — 운영자가 컷오버 중에 Node를 켠다: " + mysql);
+
+			assertEquals(onlyProblem(sqlite), onlyProblem(mysql),
+					"판정(문제 목록)은 같아야 한다 — 이 step은 문구만 고친다");
+		}
+	}
+
 	@Test
 	void canonicalSchemaPasses() {
 		TempNewsDb.seed(tempDir);

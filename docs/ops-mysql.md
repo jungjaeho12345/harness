@@ -585,7 +585,7 @@ curl -i http://127.0.0.1:<포트>/api/health      # 200 {"ok":true}
 | **`verify` 불일치** | **exit 4** · `대조 불일치 N건 · 구조 문제 M건 — 리포트를 보세요.` 리포트에 테이블·PK·컬럼이 지목된다(값 원문은 싣지 않고 길이만) | **전환을 멈춘다.** Node 는 아직 정본이므로 그대로 되살리면 된다(6 을 시작하지 않았다면 아무 일도 없었다) |
 | **`verify` 를 못 돌렸다** | **exit 1**(접속·파일 오류) | 데이터 판정이 아니다 — 자격·경로를 고쳐 다시 돌려라. **exit 4 와 섞지 마라** |
 | **`DB_KIND` 누락/모순인 채 기동** | **exit 1** · `app.db.kind 와 app.db.url 이 서로 다른 저장소를 가리킵니다: kind=sqlite 인데 url 은 jdbc:mysql: 로 시작합니다` | 환경변수를 맞춘다. **URL 로 방언을 추론하지 않는 것이 설계다**(누락이 조용히 옛 파일로 되돌아가지 않게) |
-| **적재 전/부분 적재 상태로 기동** | **exit 1** · `DB 스키마가 이 서버의 요구를 만족하지 않습니다 (jdbc:mysql:): 테이블 없음 = DistributionTarget / … / 테이블 없음 = ArticleHistory` — **가장 먼저 깨지는 것은 관측이 아니라 부팅이다** | 3 으로 돌아간다. ⚠ 이 메시지의 마지막 문장("Node 서버로 데이터 디렉토리를 준비한 뒤")은 **sqlite 시절의 처방**이다 — mysql 모드의 처방은 **`migrate`** 다 |
+| **적재 전/부분 적재 상태로 기동** | **exit 1** · `DB 스키마가 이 서버의 요구를 만족하지 않습니다 (jdbc:mysql:): 테이블 없음 = DistributionTarget / … / 테이블 없음 = ArticleHistory` — **가장 먼저 깨지는 것은 관측이 아니라 부팅이다** | 3 으로 돌아간다. **[phase 76 step8 정정]** 이 메시지의 마지막 문장은 이제 **방언별로 다르다** — mysql 모드는 `news-migrator 로 대상 DB 를 적재한 뒤 다시 실행하세요(… migrate --source <news.db> --target <키집합> · 절차는 docs/ops-mysql.md §11-3)` 를 낸다(sqlite 모드만 「Node 서버로 데이터 디렉토리를 준비」다). 잠금은 `SchemaGuardTest.thePrescriptionDiffersByDialect` |
 | **grant 누락** | 기동 성공 · 계약 하네스 **green** · 그러나 `DELETE /api/receiver-config/:id` 만 **500** | 0-4·4-b 로 붙인다. 감지는 `SHOW GRANTS` 또는 위 육안 확인 마지막 항목뿐이다 |
 | **`export` 가 중간에 실패** | 만들다 만 파일이 **남는다**(이 도구에는 파일을 지우거나 옮기는 경로가 **없다** — 그 금지가 원본 `news.db` 를 지키는 방어선이다). 메시지가 남은 파일의 경로를 밝히고 멈춘다 | 사람이 그 파일을 치운 뒤 **새 이름**으로 재실행 |
 | **임시 DB 잔재**(하네스 경로) | 실행이 실패하며 이름을 알린다 | `ephemeral-drop --name <이름>` · 확인은 `SHOW DATABASES LIKE 'harness\_ct\_%'` |

@@ -201,6 +201,22 @@ Node `node:sqlite` 가 `2.0` 을 `"2.0"` 으로 저장한다는 74 이월 실측
 그것은 **Node 의 응답도 바꾸는 동작 변경**이라 이 phase 의 범위(이관이 동작을 바꾸지 않는다) 밖이다.
 ⇒ **divergence 로 기록하고 해소는 P3 로 넘긴다.** 방어선은 위 테스트다.
 
+> **[P3 · phase 76 step9 실측 · 2026-09-09] 이 상한은 「바이트」가 아니라 「글자」다.** 768 이라는 숫자가
+> 3072바이트/4 에서 왔기 때문에 「768바이트」로 읽기 쉽고, 76 의 계획서도 그렇게 적었다 — **틀렸다.**
+> 두 서버를 나란히 띄워 `POST /api/users` 로 실측한 표다(`scripts/pool-ceiling-probe.mjs --axis userid` ·
+> 임시 인스턴스 · 값 원문은 어디에도 싣지 않는다 · 2회 측정 동일):
+>
+> | 케이스 | 글자 | 바이트 | Node | Spring(MySQL) |
+> |---|---|---|---|---|
+> | ASCII 768자 | 768 | 768 | 200 | **200** |
+> | ASCII 769자 | 769 | 769 | 200 | **500** |
+> | **한글 768자** | 768 | **2,304** | 200 | **200** ← 바이트 상한이면 여기서 터진다 |
+> | 한글 769자 | 769 | 2,307 | 200 | **500** |
+>
+> ⇒ 경계는 **글자 수 768/769** 이고 UTF-8 바이트 수는 상한과 무관하다. 자기검사가 이 사실을 잠근다
+> (`scripts/lib/poolProbe.self-test.mjs` — 한글 768자를 「초과 아님」으로 단언 ·
+> `scripts/lib/dbScaleProbe.self-test.mjs` — 규모 점검의 판정을 `stats.bytes` 로 바꾸면 red).
+
 ### 축 9 — `length()` (`ValueSemanticsProbeTest.axis9_*`)
 
 | 입력 | SQLite `length()` | MySQL `LENGTH()` | MySQL `CHAR_LENGTH()` |
@@ -372,9 +388,9 @@ DEFAULT 를 못 가지지만(1101) 8.0.13+ 의 식 DEFAULT 는 가능하고, 버
 | 1 | `LIKE` 대소문자 — SQLite 무시 / MySQL 구분 | **못 본다**(`photos-search` 는 소문자 랜덤 토큰만 쓴다) | `CollationSemanticsProbeTest.axis4_likeCaseSensitivityIsTheSacrificedAxis` |
 | 2 | 삭제된 id 재사용 — SQLite 재사용 / InnoDB 미재사용 | **못 본다**(`receiver-config` 케이스는 id 원값을 안 싣는다) | `IdentityAndSizeProbeTest.axis6_sqliteReusesDeletedIdsAndInnodbDoesNot` |
 | 3 | 롤백 후 id 간격 — SQLite 없음 / InnoDB 있음 | 못 본다 | `IdentityAndSizeProbeTest.axis6_rollbackLeavesAGapInInnodbButNotInSqlite` |
-| 4 | 769자 PK — Node 200 수락 / Spring 500 거부(1406) | 못 본다(케이스가 없다) | `IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` |
+| 4 | 769자 PK — Node 200 수락 / Spring 500 거부(1406). **[P3 갱신]** 컷오버 후에는 divergence 가 아니라 **그냥 Spring 의 실패**다(정본이 Spring 이므로 비교 대상이 사라진다) · 경계는 **글자** 768/769(바이트 아님 — 축 8 P3 실측) | 못 본다(케이스가 없다) | `IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` · **[P3]** `scripts/lib/poolProbe.self-test.mjs`(한글 768/769 기대표) · 운영 경고는 `docs/cutover-p3.md` §8 |
 | 5 | `length()` 값 — 문자 수 / 바이트 수 (**술어는 동형**) | 못 본다 | `ValueSemanticsProbeTest.axis9_*` · `RepositoryPredicateDifferentialTest.theLengthPredicateSelectsTheSameRowsInBothDialects` |
-| 6 | 성능(보조 인덱스 0 유지) | 못 본다 | (미측정 — P3) |
+| 6 | 성능(보조 인덱스 0 유지) | 못 본다 | **[P3 부분 측정 · phase 76 step9]** `scripts/pool-ceiling-probe.mjs` — 동시 1~32 × 2회 × 4축에서 **5xx 0**이고 쓰기는 오히려 Spring 이 빠르다(동시 32 p50 181~216 ms vs Node 336~337 ms). 천장은 **부하가 아니라 「커넥션 하나가 오래 잡히는 사건」**에서 온다(행 잠금 재현: Hikari **30,001 ms** → **계약 밖 500** · 클라 대기 **41.6초**). 표·판정은 `docs/cutover-p3.md` §8-2~§8-4. **운영 규모는 여전히 미측정** |
 | **7** | **큰 수의 저장 표현** — `1e9` 가 SQLite `1000000000.0` / MySQL `1000000000` · `1.2345678901234567e19` 가 SQLite `1.23456789012346e+19`(15자리) / MySQL `1.2345678901234567e19`(17자리) **[step6]** | 못 본다(케이스가 문자열만 보낸다) | `RepositoryValueDifferentialTest.numericBindingsLandAsTheSameTextUntilTheMagnitudeGrows` |
 | **8** | **권한 오류의 응답** — `GRANT DELETE ON <db>.ReceiverConfig` 가 없으면 `DELETE /api/receiver-config/:id` 가 **500 `internal-error`** 다(Node 는 200 `{ok:true,changes:1}`) **[step6]** | 하네스가 `news_ct`(ALL) 로 돌아 **못 본다** | `NewsAppMysqlWireTest.theWholeRouteChainRunsOnMysqlWithTheServerRuntimeCredential` |
 
@@ -406,7 +422,7 @@ phase 74 forward_notes (8) ①이 P2 로 넘긴 숙제다. **각 축의 방어�
 | **NULL vs 빈 문자열** | 못 본다(둘 다 같은 `bodyKeys` 를 낸다) | `db/dialect/ValueSemanticsProbeTest.axis2_emptyStringAndNullStayDistinctInBothDialects` · `model/dialect/RepositoryValueDifferentialTest.nullAndEmptyStringSurviveTheRoundTripAsDistinctValuesInBothDialects` · `anEqualityFilterOnTheEmptyStringSelectsTheSameRowsInBothDialects` · `theContentsProjectionKeepsNullAndEmptyApartInBothDialects` |
 | **잠금 · 트랜잭션 · 풀 1** | 못 본다(하네스는 커넥션을 고갈시키지 않는다) | `model/dialect/RepositoryTransactionDifferentialTest.aFailedTwoTableInsertLeavesNothingBehindInEitherDialect` · `nestedRepositoryCallsInsideATransactionShareOneConnectionInBothDialects` · `concurrentInsertsNeverReceiveAnotherWritersIdOnMysql` · `theLockWaitBudgetsDifferAndTheDifferenceIsRecordedNotEqualised` · `db/dialect/ConnectionSemanticsProbeTest.axis11_autocommitAndRollbackBehaveLikeSqlite` · `axis11_aPoolOfOneSurvivesTheServerKillingItsIdleConnection` |
 | **`length()` 의미**(문자 vs 바이트) | 못 본다 | `db/dialect/ValueSemanticsProbeTest.axis9_lengthCountsCharactersInSqliteAndBytesInMysqlButThePredicateAgrees` · `model/dialect/RepositoryPredicateDifferentialTest.theLengthPredicateSelectsTheSameRowsInBothDialects` · `theLengthPredicateReallyFiltersAndIsNotAPassThrough` |
-| **769자 텍스트 PK**(Node 200 / Spring 500) | 못 본다(케이스가 없다) | `db/dialect/IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` — **해소는 P3** |
+| **769자 텍스트 PK**(Node 200 / Spring 500) | 못 본다(케이스가 없다) | `db/dialect/IdentityAndSizeProbeTest.axis8_overlongPrimaryKeysAreAcceptedBySqliteAndRejectedByMysql` — **[P3 처분 · phase 76 step9]** 고치지 않는다(입력 검증을 넣으면 Node 응답도 바뀌어 계약 동결과 충돌한다 — 76 excluded (k)). 대신 **성격이 바뀌었다**: 컷오버 후 정본은 Spring 이므로 이것은 divergence 가 아니라 **입력 길이 한계**이고, 운영자가 알아야 하는 사실로 `docs/cutover-p3.md` §8 에 경고로 있다. 경계는 **글자 768/769**(한글 768자 = 2,304바이트도 통과 — 축 8 P3 실측) · 실패는 조용하지 않다(로그에 `Data truncation: Data too long for column 'userId' at row 1` + SQL 자리표시자 · **값은 실리지 않는다**) |
 | **유한하지 않은 id**(`NaN`·무한대) | **본다**(step7 의 `--db mysql --parity` 가 red 로 잡았다 — default 3관측) | `model/dialect/RepositoryNonFiniteIdDifferentialTest.findByIdWithANonFiniteIdIsEmptyInBothDialects` · `updateWithANonFiniteIdChangesNothingInBothDialects` · `removeWithANonFiniteIdIsZeroChangesInBothDialects` · `aFiniteIdStillReachesTheDatabaseInBothDialects`(대비군) |
 | **권한 오류의 응답**(grant 누락 시 삭제 라우트 500) | **못 본다** — 하네스는 `news_ct`(ALL) 로 돈다 | `controller/NewsAppMysqlWireTest.theWholeRouteChainRunsOnMysqlWithTheServerRuntimeCredential` · `db/dialect/MinimumPrivilegeBoundaryTest.everyOtherTableRefusesDeleteWithTheSameCredentialInTheSameDatabase` · `theTableScopedDeleteExceptionIsRealInTheProbeDatabase` · 운영 판정은 `docs/ops-mysql.md` §11-0-4 의 `SHOW GRANTS` |
 | **세션 read-back**(STRICT·문자셋이 배포 설정으로 흔들린다) | 못 본다 | `db/dialect/MysqlSessionGuardTest` · `db/dialect/MysqlSchemaGuardTest` |
@@ -418,6 +434,13 @@ phase 74 forward_notes (8) ①이 P2 로 넘긴 숙제다. **각 축의 방어�
 > **이 목록의 성질**: 위 축들은 **저장소를 바꿔도 계약 리포트가 침묵한다**. 그래서 MySQL 전환의 실질 게이트는
 > "313관측 diffs 0" 하나가 아니라 **이 표의 Java 테스트 + 313관측**이다. 표의 방어선이 지워지면 그 축은
 > **아무도 보지 않는 축**이 된다 — 삭제 전에 대체 방어선을 먼저 세워라.
+
+> **[P3 시점 갱신 · phase 76 step10]** 컷오버 뒤에는 이 표의 절반이 **성격을 바꾼다**: 운영 정본이 Spring 하나뿐이라
+> 「Node 200 / Spring 500」 같은 문장은 비교가 아니라 **그냥 그 서버의 성질**이 된다(769자 PK 행이 그 예다).
+> 그런데 **표를 버리면 안 된다** — `server/**`는 삭제하지 않았고(ADR-017 결정 3) `--parity` 313관측이 여전히
+> Node 리포트와 대조하는 **회귀 판정 수단**이기 때문이다. 즉 이 표는 컷오버 후에도 **롤백 레버가 살아 있는 동안**
+> 그대로 유효하다. 그리고 P3 가 **새로 연 축 다섯**은 이 표가 아니라 `docs/cutover-p3.md`가 소유한다
+> (SPA 응답 바이트 §2 · 배부 스풀 바이트 §4 · 수집 스위퍼 경로 §5 · 운영 tick 경로 §6 · 다중 인스턴스 §6-5).
 
 > **⚠ 풀 1의 성질이 이관으로 바뀌었다 — P3 판단 항목**(2026-09-04 ⑤ [low] 4). SQLite에서 `MAX_POOL_SIZE=1`은
 > **저장소의 물리적 제약**을 코드로 옮긴 것이었다(단일 파일 · 동시 쓰기가 `SQLITE_BUSY`). MySQL에는 그 제약이
@@ -434,8 +457,8 @@ phase 74 forward_notes (8) ①이 P2 로 넘긴 숙제다. **각 축의 방어�
 | 항목 | 이유 | 어디서 채울 것인가 |
 |---|---|---|
 | 실제 8시간 유휴 후의 첫 요청 | 시간 | 축소 재현(2초)으로 같은 메커니즘 실증 — P3 운영 관찰 |
-| 보조 인덱스 없는 상태의 성능 차이 | 이 phase 는 동형 유지가 원칙 | P3 (excluded (d)) |
-| 다중 커넥션 동시성·락 경합 | 풀 크기 1 유지 결정 | P3 (excluded (c)) |
+| 보조 인덱스 없는 상태의 성능 차이 | 이 phase 는 동형 유지가 원칙 | P3 (excluded (d)) — **[P3 부분 측정]** 178행 표본에서는 두 서버가 같은 규모로 응답한다(`docs/cutover-p3.md` §8 표). 운영 규모의 조회 성능은 **여전히 미측정** |
+| 다중 커넥션 동시성·락 경합 | 풀 크기 1 유지 결정 | ~~P3 (excluded (c))~~ → **[측정됨 · phase 76 step9]** 동시 1~32 계단 × 2회 × 4축에서 **5xx 0** · 30초 천장은 **행 잠금으로 재현**해 실측(Hikari 30,001 ms · 컨테이너 기본 오류 JSON). 표와 판정은 `docs/cutover-p3.md` §8, 결론 문단은 ADR-016 「P3 풀 1 천장 실측」. **여전히 미측정**: 운영 실사용 동시 접속 수(조사표 1·7 미상)와 32 동시를 넘는 구간 |
 | `news` 운영 DB 에서의 실측 | 이 phase 는 임시 DB 와 `news_stage` 만 만진다 | P3 컷오버 |
 
 ## 9. 이 문서를 지키는 테스트

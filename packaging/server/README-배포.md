@@ -85,12 +85,54 @@ $login = Invoke-RestMethod -Method Post -Uri "$base/api/login" -ContentType "app
 Invoke-RestMethod -Method Post -Uri "$base/api/distribution/tick" -Headers @{ "x-session-id" = $login.sessionId }
 ```
 
+### 6-1. Spring 서버로 전환한 뒤 — tick 스크립트는 `tick-distribution-spring.ps1` (P3 · `docs/cutover-p3.md` §6)
+
+- **위 Node 예시와 같은 형태의 호출이 Spring 에 그대로 통한다**(실측 17행 Node=Spring 동일 — 쿠키 우선·`x-session-id` 헤더 폴백 · `Origin`/`Referer` 없는
+  서버-서버 요청은 통과). 그래도 운영에는 **이 폴더의 `tick-distribution-spring.ps1`** 을 쓴다 — 종료코드·로그·이중 실행 방지가 있다. 위 예시는 롤백용으로 남긴다.
+- **작업 스케줄러의 tick 작업은 교체하지 추가하지 마라.** 두 작업이 살아 있으면 같은 기사가 두 번 배부된다. 기존 작업의 동작(Action)만 바꾸거나 기존 작업을
+  **비활성화한 뒤** 새로 등록한다(`schtasks /Change /TN <기존 작업명> /DISABLE` → `schtasks /Create ...`). 활성 tick 작업은 **언제나 정확히 하나**.
+- **자격은 작업 실행 계정의 환경변수**에 둔다 — `NEWS_TICK_USER`(Z 계정 ID)·`NEWS_TICK_PASSWORD`. 스크립트·bat·작업 인자에 평문으로 두지 마라(인자는 스케줄러 이력·프로세스
+  목록에 남는다). 대상은 `NEWS_TICK_BASE`(기본 `http://127.0.0.1:3001`) 또는 `-BaseUrl`.
+- 등록 예(5분 주기 · 실행 계정 = 위 환경변수를 가진 계정):
+  `schtasks /Create /TN "기사작성기-distribution-tick" /SC MINUTE /MO 5 /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\기사작성기-server\tick-distribution-spring.ps1 -LogFile D:\기사작성기-server\data\tick.log" /RU <계정> /F`
+  작업 속성에서 **"이미 실행 중이면 새 인스턴스를 시작하지 않음"** 을 켠다(스크립트의 락 파일과 두 겹).
+  **락 파일도 `-LockFile D:\기사작성기-server\data\tick.lock` 처럼 배포 폴더에 고정하라.** 기본값은 `%TEMP%` 라
+  **계정마다 다른 폴더**여서, 사람이 콘솔에서 한 번 돌리는 실행과 스케줄러 실행이 서로 다른 락을 잡는다
+  (그러면 이중 실행 방지가 스케줄러 설정 한 겹만 남는다).
+- **주기는 90초 이상(권장 5분).** 호출마다 로그인하고 로그인 한도가 같은 IP 기준 **15분/10회**라, 90초보다 짧으면 15분 안 11번째 로그인이 429 로 거부돼 tick 이 멈춘다
+  (60초 주기 = 15회 > 10). 세션을 파일에 저장해 재사용하지 않는 이유는 그 파일이 Z 토큰 유출 표면이기 때문이다.
+- **종료코드** `0` 성공 · `2` 환경변수 없음 · `3` 로그인 실패 · `4` tick 비-200(403/503) · `5` 서버 미도달 · `6` 이중 실행(락 점유). **0 이 아니면 경보** — 스케줄러 "마지막 실행 결과" 로 보인다.
+  로그(`-LogFile`)는 한 줄에 시각·결과·`distributed` 등 건수만 남기고 토큰·자격·스풀 경로는 쓰지 않는다.
+- **판정**: 등록 후 한 주기 뒤 (a) 마지막 실행 결과 `0` (b) `DIST_SPOOL_DIR` 파일 수가 **주기당 한 벌만** 는다 (c) `schtasks /Query /FO LIST /V` 에 활성 tick 작업이 하나. 두 벌이 늘면 옛 작업이 살아 있다.
+- **되돌릴 때**: Spring용 작업을 비활성화하고 Node용 작업을 되살린다(둘 다 켜 두지 마라). 수집 스위퍼(7-1절)도 함께 운영 중이면 스위퍼를 먼저 끈다.
+- **서버는 하나만**: Spring 에는 11절의 "이미 실행 중" 잠금이 **없다**. 다른 포트로 Spring 을 하나 더(또는 Node 와 나란히) 띄우면 둘 다 뜨고, 같은 스풀에 tick 이 양쪽에서 돌면
+  같은 기사가 두 번 배부된다(실측: 동시 tick 5회 중 5회 파일 2벌). `netstat -ano | findstr LISTENING` 과 작업 관리자에서 서버 프로세스가 하나인지 확인하라 — `/api/health` 로는 구분할 수 없다.
+
 ## 7. 수집 운영 (선택)
 
 - FTP 수집: `RCV_SPOOL_DIR`를 설정하면 그 폴더를 감시한다 — 외부 FTP 서버(FTPd)가 그 폴더에
   파일을 떨어뜨리는 구성이다. 미설정이면 FTP 수집이 비활성이다.
 - HTTP 수집(`/api/collection/receive`·`/pull`): LAN 개방(`HOST` 설정) 시 `COLLECTION_TOKEN`이
   없으면 503으로 비활성된다(위 환경변수 표 참조).
+
+### 7-1. Spring 서버로 전환한 뒤 — FTP 수집은 스위퍼가 받는다 (P3 · `docs/cutover-p3.md` §5)
+
+- **Spring 서버에는 위의 FTP 폴더 감시(watcher)가 없다.** `RCV_SPOOL_DIR`를 설정해도 Spring은 그 폴더를
+  보지 않는다. 대신 **앱 밖 스위퍼** `tools/collection-sweeper/sweeper.js`(Node 스크립트 — 운영기에 Node
+  런타임이 있어야 한다)를 작업 스케줄러에 등록해 주기적으로 그 폴더를 훑고, 파일을 HTTP 수집 진입점
+  `POST /api/collection/receive`로 넣는다(watcher가 부르던 것과 같은 서비스 진입점).
+- 실행 예(1분 주기 작업 · 토큰은 **작업 실행 계정의 환경변수** `COLLECTION_TOKEN`에 — 인자·bat에 평문 금지,
+  인자에 토큰 모양이 오면 스위퍼가 실행을 거부한다):
+  `node tools\collection-sweeper\sweeper.js --spool <RCV_SPOOL_DIR> --base http://127.0.0.1:3001 --once --move-to <스풀 밖 처리완료 폴더>`
+- 스위퍼는 **파일을 지우지 않는다**(장부 `<스풀>\.collection-sweeper-ledger.jsonl` + 선택 이동). 장부·처리완료
+  폴더는 백업 대상이다. 종료코드 `0` 정상 · `1` 일부 거부/실패 · `2` 설정 오류 — `1`·`2`를 경보로 건다.
+- **작업을 처음 등록하기 전에 딱 한 번**: 스풀에 **이미 쌓여 있던** 파일을 선등재한다(안 하면 첫 실행이 그 파일을
+  전부 다시 수집해 **자동기사가 복제되고, 기사는 지울 수 없다**). 전송 0건이고 서버가 안 떠 있어도 된다:
+  `node tools\collection-sweeper\sweeper.js --spool <RCV_SPOOL_DIR> --ledger <래퍼가 쓸 장부와 같은 경로> --seed-ledger`
+  → 결과 `seeded=<파일 수>` · `ingested=0`. 절차 전문은 `docs/cutover-p3.md` **§9-1-1**(선등재 대신 **보존 폴더로
+  이동**해도 된다 — **어느 쪽이든 지우지 않는다**).
+- **Node 서버로 되돌릴 때는 스위퍼 작업을 먼저 끄고(`schtasks /Change /TN <작업명> /DISABLE`) Node를 켜라.**
+  둘이 같이 돌면 같은 파일이 두 번 수집된다(실측: 파일 1개 → 기사 4건). 컷오버 때는 그 반대 순서다.
 
 ## 8. 백업 / 복구
 
