@@ -123,12 +123,16 @@
     — 전 문장이 멱등이고 `news` 가 채워져 있으므로 **`--force` 가 필요 없다**.
   - **(나) 지금**(`news` 가 비어 있어 첫 문장이 `ERROR 1146` 으로 배치를 멈춘다): 한 줄만 실행한다 —
     ``& %M% -u root -p -e "GRANT DELETE ON news_stage.ReceiverConfig TO 'news_app'@'localhost';"``
-- **성공 판정**: `& %M% -u news_app -p -e "SHOW GRANTS"` 에 ``GRANT DELETE ON `news`.`receiverconfig` ``
-  (또는 `news_stage` 판)이 보인다. 테이블 이름은 **소문자**로 붙는다(`lower_case_table_names=1`).
+- **성공 판정**: `& %M% -u news_app -p -e "SHOW GRANTS"` 에 ``GRANT DELETE ON `news`.`receiverconfig` TO `news_app`@`localhost` ``
+  (또는 `news_stage` 판)이 **한 줄로** 보인다. 테이블 이름은 **소문자**로 붙는다(`lower_case_table_names=1`) —
+  `GRANT SELECT, INSERT, UPDATE ON \`news\`.*` 줄과 **다른 줄**이다(그 줄에 `DELETE` 가 끼는 것이 아니다).
 - **실패 시 분기**: 붙지 않은 채로 전환하면 **기동 성공 · 하네스 green · 수신설정 삭제만 500** 이다.
   행동 판정은 `news_app` 으로 `DELETE FROM ReceiverConfig WHERE id = -1` 을 던져 **`ERROR 1142` 이면 미부착**,
-  `ERROR 1054`(열 이름) 이면 권한 검사를 통과한 것이다.
-- **현재 상태(2026-09-05 실측)**: **`news`·`news_stage` 둘 다 미부착.**
+  `ERROR 1054`(열 이름) 이면 권한 검사를 통과한 것이다(`id = -1` 이라 **어느 쪽이든 지워지는 행은 없다**).
+- **현재 상태(2026-09-09 재확인 · 읽기 전용)**: **`news`·`news_stage` 둘 다 미부착**이고 `news_app` 의
+  `SHOW GRANTS` 에 있는 `DELETE` 는 ``GRANT DELETE ON `news_grant_probe`.`receiverconfig` `` **1줄뿐**이다.
+  그 상태에서 **삭제 라우트가 500** 이라는 사실은 §7-6 **T5** 가 실측으로 못 박았다(관측 DB `news_stage` ·
+  자격 `news_app` · 같은 시점 `--db mysql --parity` 는 **green** — 하네스는 `news_ct`(ALL)로 돈다).
 
 ### U2. 개발 비밀번호 3종 교체 (root)
 
@@ -204,9 +208,18 @@
      **덮어쓰지 않는다**(같은 경로 재실행은 exit 1).
 - **CLAUDE.md 「DB 에 있는 내용은 절대 삭제하지 않는다」와의 관계**: 여기서 비우는 것은 **컷오버 대상의 부분 적재 잔재**이지
   뉴스 데이터가 아니다 — **정본은 그 시점에도 운영 `news.db`(사본 2벌 포함)에 그대로 있다.** 그 전제가 조건 ②·④ 다.
-- **성공 판정**: 대상 7테이블 행 수 **0**
-  (`SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA='<대상>'` 또는 테이블별 `COUNT(*)`).
+- **성공 판정**: 대상 7테이블 행 수 **0**. 판정은 **반드시 `COUNT(*)`** 로 한다:
+  `& %M% -u news_migrator -p -D <대상> -e "SELECT 'User', COUNT(*) FROM User UNION ALL SELECT 'Article', COUNT(*) FROM Article UNION ALL SELECT 'Contents', COUNT(*) FROM Contents UNION ALL SELECT 'ArticleHistory', COUNT(*) FROM ArticleHistory UNION ALL SELECT 'ReceiverConfig', COUNT(*) FROM ReceiverConfig UNION ALL SELECT 'DistributionTarget', COUNT(*) FROM DistributionTarget UNION ALL SELECT 'Photo', COUNT(*) FROM Photo"`
+  - **⚠ `information_schema.TABLES.TABLE_ROWS` 를 판정에 쓰지 마라 — 추정치라 거짓말한다(2026-09-09 실측).**
+    768자 PK 로 이관이 롤백된 직후의 대상에서 `TABLE_ROWS` 는 `user = 11` 로 보였고 같은 순간
+    `SELECT COUNT(*) FROM User` 는 **0** 이었다(§7-6 T4). 그 표를 믿으면 **비어 있는 대상을 「부분 적재」로 오진**하고,
+    반대 방향의 오진(차 있는 대상을 비었다고 읽는 것)은 더 위험하다.
 - **실패 시 분기**: 판정이 0 이 아니면 `migrate` 를 다시 돌리지 마라(또 exit 1 이다) — (나) 경로로 대상을 바꾼다.
+- **실측(§7-6 T6 · 2026-09-09)**: 적재된 대상에 두 번째 `migrate` → **exit 1** ·
+  `대상이 비어 있지 않다 [User, Article, Contents, ArticleHistory, Photo] — 비우고 다시 넣지 않는다.` ·
+  **소스 md5 무변 · 대상 행 수 전건 동일**(그 뒤 `verify` 가 여전히 **exit 0 일치**). 이어서 **(나) 빈 DB 를
+  새로 만드는 경로로 복구**가 실측으로 돌았다(`migrate` exit 0 · 178행 · `verify` 일치) — **부분 적재 DB 는
+  그대로 남는다**(증거 보존). 즉 **아무것도 지우지 않고 컷오버를 이어 갈 수 있다.**
 
 ## 0-2. 미상 항목이 막는 것 · 사용자에게 물을 질문
 
@@ -885,3 +898,164 @@ Spring 2개(**다른 포트 · 같은 MySQL 임시 DB · 같은 `DIST_SPOOL_DIR`
 - 두 인스턴스가 **다른 머신**에 있는 구성(같은 스풀을 SMB 로 공유) — ADR-012 트레이드오프의 미검증 영역이고 이 phase 도 재지 않는다.
 - 스풀 파일 이름 충돌(같은 ms 에 두 인스턴스가 같은 `<articleId>_<stamp>.json` 을 쓰는 경우) — 5회 관측에서는 모두 다른 stamp 였다. 충돌 시 `ATOMIC_MOVE` 의 덮어쓰기 여부는 잰 적이 없다.
 - 세션 재사용 판의 ps1 — 만들지 않았다(§6-3 결정).
+
+## 7. 운영 적재 리허설 · 규모 점검 (`scripts/load-rehearsal.mjs` · `scripts/db-scale-probe.mjs` — step8)
+
+> **이 절의 수치는 표본이다.** 소스는 **리포 `news.db` 의 사본**(178행)이고 **운영 데이터가 아니다** —
+> 운영 사본은 2026-09-09 시점에 아직 없다(§0-2묶음 · Q3 미상). 그래서 이 절은 **절차와 커맨드를 완성**하고
+> 표본 수치를 남기되, 운영 규모의 값은 **「미측정 — 운영 사본 필요」** 로 정직하게 비워 둔다.
+> **운영 사본이 오면 §7-7 의 같은 커맨드를 그대로 다시 돌려 이 표를 채운다.**
+
+### 7-0. 무엇이 실증됐고 무엇이 아직 아닌가
+
+| 실증된 것(표본) | 아직 아닌 것 |
+|---|---|
+| 사본 → 임시 MySQL → 산출물 `.db` 의 **왕복 대조 불일치 0**(7테이블 · 178행 · 81컬럼 · **2,878셀**) | **운영 규모의 이관 시간**(정지 창 길이의 근거) |
+| **롤백 자산이 진짜다** — export 산출물로 **Node 가 실제로 뜨고**(694 ms) 로그인·목록·상세가 200이다 | 운영 데이터의 768자 초과 PK·이모지·정본 밖 컬럼 유무 |
+| 소스 사본이 **한 바이트도 변하지 않는다**(도구 출력 + 바깥 `md5sum` 양쪽) | 운영 `uploads/` 규모와 복사 시간 |
+| 부분 적재(2차 `migrate`) 는 **exit 1 이고 아무것도 지우지 않는다**(T6) · **(나) 무삭제 복구**가 실측으로 돈다 | 운영 MySQL 이 이 머신인지(Q6) · 정지 창(Q7) |
+
+### 7-1. 절차 — 사전 백업 2벌 → 정지 → 사본 → migrate → verify → grant → 기동
+
+**전제**: 런북 `docs/ops-mysql.md` **§11-0 체크리스트 6항**이 전부 통과(jar 둘 · 자격 3키 · 판본 · **grant** ·
+한글 인코딩 · **대상이 비어 있다**). 아래 1~3은 **사용자 실행 항목**이다(U3·U4·U1).
+
+1. **백업 2벌**(U3 · 서버를 내린 뒤) → 원본과 사본 2벌의 **md5 세 값이 같아야** 시작한다.
+2. **운영 프로세스 정지**(U4) — 정지 전에 뜬 사본은 「그 순간의 전부」가 아니다.
+3. **사본을 리포 밖에 둔다**. 부산물(`-wal`/`-shm`/`-journal`)이 붙어 있으면 **도구가 시작 자체를 거부**한다
+   (T2 실측) — 그때는 **부산물을 지우지 말고** 서버를 정상 종료한 뒤 사본을 다시 뜬다.
+4. **리허설/적재를 한 번에 돈다**(아래 한 줄이 5~9를 순서대로 실행하고 수치를 남긴다):
+
+```bash
+# 자격은 argv 가 아니라 환경변수다(docs/ops-mysql.md §3 — 한 줄씩 · `set -a; .` 금지)
+SPRING_JAVA_HOME="D:/agents/tools/jdk-25.0.4.1+1" \
+  node scripts/load-rehearsal.mjs --source <리포 밖 사본.db> --work <리포 밖 작업 디렉토리>
+```
+
+  이 스크립트가 하는 일: **부산물 가드 → `ephemeral-create` → `migrate` → `verify` → `export` →
+  `verify`(산출물) → 그 산출물로 `node server/index.js` 기동 → 로그인·목록·상세 자동 판정 → 부팅 전후 md5 →
+  `ephemeral-drop`**. 대상은 **임시 DB(`harness_ct_<16hex>`) 뿐**이다 — `news`·`news_stage` 를 리허설
+  대상으로 쓰지 않는다. 운영 사본이라 개발 계정이 없으면 로그인 계정을 **환경변수**로 준다
+  (`NEWS_REHEARSAL_USER`·`NEWS_REHEARSAL_PASSWORD` — **argv 에 두지 마라**).
+
+5. **실제 컷오버**는 같은 명령을 `--target NEWS_MIGRATOR`(URL 이 `news` 를 가리킨다)로 손수 돌리는 것이고,
+   그 순서는 런북 §11-3 → §11-4 → **§11-4-b grant(U1)** → §11-5 Spring 기동이다. 리허설은 그 앞의 예행이다.
+
+### 7-2. 리허설 실측표 — **표본(리포 `news.db` 사본 178행) · 2회** (2026-09-09)
+
+소스 `D:/agents/76s8-work/rehearsal-source.db` = 리포 `news.db` 의 사본(606,208 B ·
+md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967`). 대상은 회차마다 새 `harness_ct_<16hex>` 다.
+
+| 단계 | 커맨드 | 1회차 | 2회차 | 관측 |
+|---|---|---|---|---|
+| 1 | `ephemeral-create` | 605 ms | 512 ms | exit 0 |
+| 2 | `migrate --source <사본> --target <키집합>` | **2,685 ms** | **2,640 ms** | exit 0 · 옮긴 행 **178**(7테이블) · 소스 무변 확인 |
+| 3 | `verify --source <사본> --target <키집합>` | **1,529 ms** | **1,513 ms** | exit 0 · **판정: 일치** · 불일치 **0** · 구조 문제 **0** |
+| 4 | `export --target <키집합> --out <리포 밖 .db>` | **1,792 ms** | **1,773 ms** | exit 0 · 산출물 **606,208 B** · md5 `3f31505996c1afb682ef2bedc2ee89e6` |
+| 5 | `verify --source <산출물> --target <키집합>` | **1,426 ms** | **1,376 ms** | exit 0 · 일치 · 불일치 0 |
+| 6 | **export 산출물로 Node 기동** | **694 ms** | **686 ms** | `/api/health` 200 · **로그인 200 · 목록 200(77건) · 상세 200** · 부팅 전후 **md5 동일** |
+| 7 | `ephemeral-drop` | 624 ms | 630 ms | exit 0 · 잔존 `harness_ct_*` **0** |
+| — | **2~5 합계**(정지 창에 들어가는 부분) | **7,432 ms** | **7,302 ms** | 회차 차 1.7% |
+
+**규모**(3의 출력 그대로 · 제외 `flyway_schema_history`):
+
+| 테이블 | 행 | 컬럼 | 셀 | 불일치 |
+|---|---|---|---|---|
+| User | 11 | 10 | 110 | 0 |
+| Article | 77 | 5 | 385 | 0 |
+| Contents | 77 | 29 | 2,233 | 0 |
+| ArticleHistory | 12 | 12 | 144 | 0 |
+| ReceiverConfig | 0 | 12 | 0 | 0 |
+| DistributionTarget | 0 | 7 | 0 | 0 |
+| Photo | 1 | 6 | 6 | 0 |
+| **합계** | **178** | **81** | **2,878** | **0** |
+
+> **두 회차의 export 산출물 md5 가 같다**(`3f31505996c1…`) — 같은 입력에서 같은 바이트가 나온다.
+> 그래서 롤백 자산은 **재현 가능**하고, 다른 값이 나오면 그것 자체가 신호다.
+> **75 의 값과 다른 것 하나**: 75 step8 은 스테이징(239행)에서 618,496 B 를 얻었다. 크기는 **행 수에 따라 다르다**.
+
+### 7-3. 규모 점검 — 운영에서만 드러나는 다섯 축 (`scripts/db-scale-probe.mjs`)
+
+```bash
+node scripts/db-scale-probe.mjs --source <리포 밖 사본.db> [--json <리포 밖 파일>]
+```
+
+읽기 전용으로 열고(부산물이 생기지 않는다) **값 원문은 출력하지 않는다**(글자 수·바이트 수·건수만).
+상한은 손으로 베끼지 않고 마이그레이터 기반선(`V1__baseline.sql`)에서 읽는다.
+
+| 축 | 왜 컷오버 전에 알아야 하는가 | **표본값(178행 사본 · 2026-09-09)** | **운영값** |
+|---|---|---|---|
+| **768자 초과 텍스트 PK**(`User.userId`·`Article.articleId`·`Contents.articleId`) | 있으면 **이관 자체가 실패**한다(MySQL 1406 · T4) — step9 와 함께 처분을 정해야 한다 | **없음**(최대 20자) | **미측정 — 운영 사본 필요** |
+| **최대 값 바이트**(`markupVersion` 이 대표) | `max_allowed_packet`(67,108,864 B) 대비. **글자가 아니라 바이트**다 | **`Article.markupVersion` 165,802 B = 상한의 0.2471%** | **미측정 — 운영 사본 필요** |
+| **4바이트 이모지(astral)** | 75 forward_notes (5) ⑤ 의 공백. `utf8mb4` 라 저장은 되지만 **재 본 적이 없었다** | **0건** | **미측정 — 운영 사본 필요** |
+| **짝 없는 서로게이트** | 유효한 UTF-8 로 옮길 수 없다 — 이관 경로에서 치환·거부된다 | **0건** | **미측정 — 운영 사본 필요** |
+| **NULL vs 빈 문자열** | 두 값이 섞인 컬럼은 방언 divergence 축이다(`db-mysql-mapping.md` §7-1) | **11컬럼이 섞여 있다** — 예: `Contents.embargoAt` NULL 10 / 빈 52 · `coAuthor` NULL 55 / 빈 16 · `category` NULL 73 / 빈 3 | **미측정 — 운영 사본 필요** |
+| **정본 밖 테이블·컬럼**(수기 `ALTER` 흔적) | 있으면 `verify` 가 **구조 문제**로 잡고 이관이 서지 않는다 | **테이블 0 · 컬럼 0** | **미측정 — 운영 사본 필요** |
+
+### 7-4. 실패 분기 — 런북 §11-8 의 8종을 **P3 문맥**으로 (전부 실측 문구)
+
+| 무슨 일이 났는가 | 어떻게 드러나는가(실측) | 정지 창에서의 안전한 다음 수 |
+|---|---|---|
+| **사본 옆에 부산물** | **exit 1** · `소스 옆에 부산물이 있다 [<파일>-wal] — 다른 프로세스가 쓰는 중이거나 WAL 모드다. 그 상태의 스냅샷은 전부가 아닐 수 있으므로 시작하지 않는다: <경로>` (T2) | **부산물을 지우지 마라.** 서버를 정상 종료했는지 확인하고 **사본을 다시 뜬다** |
+| **대상이 비어 있지 않다**(부분 적재) | **exit 1** · `대상이 비어 있지 않다 [User, Article, Contents, ArticleHistory, Photo] — 비우고 다시 넣지 않는다. 재실행하려면 빈 대상 DB 를 준비하라(docs/ops-mysql.md).` **소스·대상 모두 무변**(T6) | **U6 (나) 빈 DB 를 새로 만드는 무삭제 경로가 기본이다.** (가) 비우기는 예외 조건 4개를 **전부** 만족할 때만 |
+| **768자 초과 PK** | **exit 1** · `이관에 실패했다(부분 성공은 커밋되지 않았다): <키집합> → <URL> (<계정>)` — ⚠ **메시지에 `1406` 도, 어느 테이블·컬럼인지도 없다**(T4). 대상은 **7테이블 전부 `COUNT(*) = 0`** 으로 롤백된다 | 원인 특정은 **`db-scale-probe` 로 사본을 먼저 재는 것**이다(§7-3). 컷오버 **전에** 돌려라 |
+| **`verify` 불일치** | **exit 4** · `대조 불일치 N건 · 구조 문제 M건 — 리포트를 보세요.`(리포트는 OS 임시 디렉토리 · 값 원문 없이 길이만) | **전환을 멈춘다.** Node 가 아직 정본이므로 §11-6 을 시작하지 않았다면 아무 일도 없었다 |
+| **`verify` 를 못 돌렸다** | **exit 1**(접속·파일 오류) | 데이터 판정이 아니다 — 자격·경로를 고쳐 다시 돌려라. **exit 4 와 섞지 마라** |
+| **`DB_KIND` 누락/모순 기동** | **exit 1** · kind/url 모순 거부(설계된 거부) | 환경변수를 맞춘다 |
+| **적재 전/부분 적재 상태로 Spring 기동** | **exit 1** · `DB 스키마가 이 서버의 요구를 만족하지 않습니다 (<대상>): 테이블 없음 = … . 이 서버는 스키마를 만들거나 고치지 않습니다 — news-migrator 로 대상 DB 를 적재한 뒤 다시 실행하세요(... migrate --source <news.db> --target <키집합> · 절차는 docs/ops-mysql.md §11-3).` | **step8 이 이 문구를 고쳤다**(그 전에는 「Node 서버로 데이터 디렉토리를 준비하라」였다 — 컷오버 중에 그 처방을 따르면 **두 저장소가 갈린다**). 처방대로 §11-3 으로 돌아간다 |
+| **grant 누락** | 기동 성공 · 계약 하네스 **green** · `DELETE /api/receiver-config/:id` 만 **500**(T5) | §11-0-4·§11-4-b(U1). 감지는 `SHOW GRANTS` 뿐이다 |
+
+### 7-5. 정지 창 길이의 근거 — **표본으로 산정하고 운영 사본에서 다시 잰다**
+
+정지 창 = **① 백업 2벌 + ② 사본 + ③ 이관·대조(§7-2 의 2~5) + ④ grant + ⑤ Spring 기동 + ⑥ 육안 확인**
+이고, 자동화가 재는 것은 ②③⑤ 뿐이다(①④⑥ 은 사람의 속도다).
+
+| 항목 | 표본 실측 | 운영 추정 근거 |
+|---|---|---|
+| ① 백업 2벌 + md5 대조 | **173 ms**(606 KB · 75 §12 #1) | 파일 크기에 비례 — **운영 `news.db` 크기 미상**(§0-2묶음) |
+| ③ `migrate`+`verify`+`export`+`verify` | **7.4 초**(178행 · 2회 평균 7,367 ms) | **행 수에 대한 선형성은 검증되지 않았다**(75 미검증 ①) — 그래서 **재측정이 필수**다 |
+| ⑤ Spring 기동 + `/api/health` | **4.2 초**(75 §12 #13) | 데이터 규모와 거의 무관(부팅 스키마 검증은 카탈로그 읽기다) |
+| (참고) 롤백 시 Node 기동 | **0.7 초** | 〃 |
+
+**계산식**: `정지 창 ≥ (①+③+⑤) × 안전 계수 3 + ④ grant 1분 + ⑥ 육안 확인 8항목`.
+표본으로는 `(0.2 + 7.4 + 4.2) × 3 ≈ 35초` + 사람 시간이지만, **이 값을 운영 창으로 쓰지 마라** —
+178행짜리 표본이다. **운영 사본에서 §7-7 을 돌려 ③을 다시 잰 뒤에 창을 확정한다.**
+안전 계수 3의 근거: 재시도 1회(부분 적재 → U6 (나) 로 새 DB 준비 → 재적재)를 창 안에 흡수하기 위해서다.
+
+### 7-6. 변이 전건 결과표 (2026-09-09 · 기대/실제/원복)
+
+| 변이 | 심은 것 | 기대 | 실제 | 원복 |
+|---|---|---|---|---|
+| **T1** 대조기의 제외에 정본 테이블 추가 | `RowVerifier.verify` 의 비교 루프에서 `Photo` 를 건너뛰게 한 뒤 jar 재빌드. 대상 임시 DB 의 `Photo.caption` 을 실제로 바꿔 **진짜 불일치**를 만들어 둔다(UPDATE · 삭제 0) | 그 불일치가 **조용히 통과** | **정상 jar: exit 4 · `Photo … 불일치 1`** → **변이 jar: exit 0 · 「판정: 일치」** — 공허화 실증. **유일한 흔적은 헤더**(`대조 테이블 수: 6 · 소스 총 177행` — 7·178 이어야 한다) | 원복 후 다시 **exit 4** · `git diff tools/news-migrator/src` **0줄** |
+| **T2** 사본 옆 `-wal` | 빈 `source.db-wal` 생성 | **시작 거부** | **migrate exit 1** · `소스 옆에 부산물이 있다 [source.db-wal] …` · `load-rehearsal` 도 자체 가드로 **exit 1**(자기검사 통과 직후 · 아무것도 만들지 않음) | 부산물 제거 후 **exit 0 · 178행** |
+| **T3** `SchemaGuard` mysql 처방을 sqlite 문구로 | (= 변경 전 상태 그대로) | 새 테스트 **red** | **`SchemaGuardTest` 20 tests · Failures 1** — `thePrescriptionDiffersByDialect` 가 `mysql 처방은 마이그레이터의 migrate 를 지목해야 한다` 로 실패 | 문구 분기 후 `clean verify` **1522 / 0** |
+| **T4** 769자 텍스트 PK | 사본의 **사본**에 `User.userId` 769자 1행 INSERT(원본·리포 파일 무접촉) | **1406 실패** | **migrate exit 1** · 문구 `이관에 실패했다(부분 성공은 커밋되지 않았다): <키집합> → <URL> (<계정>)` — **1406 도 컬럼 이름도 문구에 없다**(발견). 대상은 7테이블 `COUNT(*) = 0` 으로 롤백. `db-scale-probe` 는 **`User.userId 1행(최대 769자)`** 로 지목한다 | 그 사본은 폐기(임시 디렉토리) · 소스 사본 md5 무변 |
+| **T5** grant 없는 삭제 라우트 | (변이가 아니라 **현재 상태**다 — U1 미부착) | **500** & 같은 시점 `--db mysql --parity` **green** | `SHOW GRANTS`(**`news_app`**): `news`·`news_stage` 에 `DELETE` **없음**(있는 것은 `news_grant_probe.receiverconfig` 1줄). **500 관측 = `NewsAppMysqlWireTest`**(DB **`news_stage`** · 자격 **`news_app`**)가 grant 부재 분기에서 **500 · `internal-error` · `changes:1` 아님**을 단언하며 `clean verify` **1522 green**. 같은 시점 **`--db mysql --parity` 313관측 diffs 0 green**(DB **`harness_ct_<16hex>`** · 자격 **`news_ct`=ALL**) | 원복 없음(상태 관측) · `news_stage` 에 **행을 더하거나 지우지 않았다**(⚠ 단, AC 3 의 `clean verify` 자체가 그 스모크로 9행을 더한다 — 기존에 문서화된 동작이고 삭제는 0이다) |
+| **T6** 적재된 대상에 `migrate` 재실행 | 같은 임시 DB 에 두 번째 `migrate` | **exit 1** + 문구 + 소스·대상 무변 | **exit 1** · `대상이 비어 있지 않다 [User, Article, Contents, ArticleHistory, Photo] — 비우고 다시 넣지 않는다.` · 대상 `COUNT(*)` **전건 동일**(11/77/77/12/1) · 소스 md5 무변 · 그 뒤 `verify` **exit 0 일치** | **(나) 무삭제 복구 실측**: 새 빈 DB 생성 → `migrate` **exit 0 · 178행** → `verify` **exit 0 일치**. **부분 적재 DB 는 그대로 남는다**(증거 보존) |
+
+> **T5 의 두 축을 섞지 마라.** 「500」은 **`news_stage` · `news_app`** 에서 나오고 「parity green」은
+> **`harness_ct_*` · `news_ct`(ALL)** 에서 나온다. 같은 시점에 둘 다 참이라는 것이 이 축의 전부다 —
+> **패리티 green 은 grant 부재를 덮는다.**
+
+### 7-7. 운영 사본이 오면 — **같은 커맨드로 재측정**한다
+
+1. 사용자가 운영 서버를 내린 뒤 사본을 뜨고 **리포 밖 경로**를 알려 준다(§0-2묶음 · Q3).
+2. `node scripts/db-scale-probe.mjs --source <사본> --json <리포 밖>/scale.json` → **§7-3 의 「운영값」 열을 채운다.**
+   **768자 초과 PK 가 1건이라도 나오면 거기서 멈추고** step9 와 함께 처분을 정한다(이관이 서지 않는다).
+3. `node scripts/load-rehearsal.mjs --source <사본> --work <리포 밖>` **2회** → **§7-2 의 시간을 갈아 끼운다**
+   (2회를 재고 두 값을 모두 적는다 — 평균 하나만 적으면 흔들림이 보이지 않는다).
+4. §7-5 의 계산식에 새 ③ 을 넣어 **정지 창을 확정**하고 §0-9묶음에 적는다.
+5. 그 사본에는 운영 계정만 있으므로 로그인 판정은 `NEWS_REHEARSAL_USER`/`NEWS_REHEARSAL_PASSWORD`
+   (환경변수 · **argv 금지**)로 준다. 계정을 못 받으면 **6번(Node 기동 판정)이 로그인에서 멈춘다** — 그 사실을 적고 넘어가지 마라.
+
+### 7-8. 이 절이 보지 않는 것
+
+- **운영 `news` DB 로의 실제 적재** — excluded (a). 이 절은 임시 DB(`harness_ct_*`)만 대상으로 했다.
+- **`uploads/` 복사·검증** — 파일은 DB 밖이고 컷오버는 **같은 `DATA_DIR` 을 그대로 쓴다**(ADR-017 결정 5).
+  운영 `uploads/` 의 파일 수·바이트는 여전히 **미상**(§0-2묶음).
+- **부트 백필 2종**(`backfillEmptyDepartments`·`backfillHistoryTitles`) — 값을 **바꾸는** 동작이라 100% 대조와
+  섞을 수 없다(excluded (e)). Node 기동 판정에서 **산출물 md5 가 부팅 전후 동일**했다는 사실이 「이 사본에서는
+  백필이 아무것도 쓰지 않았다」는 뜻이고, **운영 데이터에서도 그렇다는 보장은 아니다**.
+- **이관 중 단절·재시작에서의 복구** — 트랜잭션 롤백에 기대며 인위적으로 끊어 보지 않았다(75 미검증 ⑧).
+- **마이그레이터 실패 메시지의 진단력** — T4 가 드러낸 공백(1406·컬럼 이름 부재)은 **고치지 않았다**
+  (이 step 은 `SchemaGuard` 문구 하나만 고친다). 후속 판단 항목이다.
