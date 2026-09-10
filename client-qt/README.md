@@ -51,6 +51,9 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 | 모듈 | 정본 | Qt | step |
 |---|---|---|---|
 | 서버 주소·health 판정 | `client/lib/serverUrl.js` | `src/shell/serverurl.{h,cpp}` · 테스트 `tests/serverurltest.{h,cpp}` | step2 |
+| 설정 파싱·직렬화(순수) | `client/lib/clientConfig.js` | `src/shell/clientconfig.{h,cpp}` · 테스트 `tests/clientconfigtest.{h,cpp}` | step3 |
+| 설정 저장소(파일시스템 경계) | `client/lib/clientConfig.js` + `client/main.js`의 경로 결선 | `src/shell/configstore.{h,cpp}` · 테스트 `tests/configstoretest.{h,cpp}` | step3 |
+| OS 가시 이름 상수 블록 | (정본에 대응 파일 없음) | `src/shell/appidentity.h` | step3 |
 
 ### `serverUrl` — 정본과의 의도적 이탈 (2026-09-10 · step2)
 
@@ -100,6 +103,80 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 - **리다이렉트 최종 URL 관측 가능성은 미검증이다.** 정본조차 Electron 실왕복으로 검증한 적이 없다(phase 66 step4
   기록). Qt에서 `QNetworkReply::redirected`가 진짜 최종 URL을 주는지는 전송 계층 step이 **자기 손으로 실측**해야
   하고, 그 전에는 `resolveFinalOrigin`의 입력을 신뢰한다고 주장하면 안 된다.
+
+### `clientConfig` — 사용자 데이터 폴더와 OS 이름 (2026-09-10 · step3)
+
+**Qt 클라의 설정은 `%APPDATA%\기사작성기-qt\config.json`이다 — Electron 클라(`%APPDATA%\기사작성기`)와 분리한다.**
+근거는 `index.json` decisions (11): 두 클라가 P8까지 공존하는데 같은 파일을 원자적으로 번갈아 덮어쓰면 「마지막에 쓴 쪽이
+이긴다」가 되어 서로의 `serverUrl`·`bounds`를 지운다(rename은 원자적일 뿐 병합이 아니다).
+
+- **OS에 보이는 이름은 `src/shell/appidentity.h` 한 블록에 모았다** — 폴더명 · 단일 인스턴스 mutex(`ArticleClientQt-SingleInstance`) ·
+  `QLocalServer` 이름(`ArticleClientQt-Shell`) · env 이름(`CLIENT_USER_DATA`). 나중 감사가 「Electron 이름을 재사용했나」를
+  **grep 한 번**으로 답할 수 있어야 하기 때문이다. 단일 인스턴스 결선 자체는 step5의 몫이고 이름만 여기 있다.
+- 폴더명 리터럴은 **universal character name(`기…`)으로 적었다** — 이 파일을 ASCII로 유지해 어떤 도구도(cmd는 배치를
+  cp949로, MSVC는 BOM/`-utf-8`이 없으면 시스템 코드페이지로 읽는다) 그 한 리터럴을 조용히 망가뜨릴 수 없게 한다.
+- `CLIENT_USER_DATA`가 있으면 **절대 경로로 해석해 우선**한다(env 이름은 Electron 셸에서 승계). 하네스·테스트가 실사용자
+  폴더를 건드리지 않는 유일한 수단이다. 값이 비었거나 공백뿐이면 무시하고 `%APPDATA%` 경로로 내려간다(프로세스 작업
+  디렉토리에 쓰는 사고 방지).
+- **세션ID·비밀번호·쿠키·토큰 필드는 없다**(정본 머리 CRITICAL · decisions (6)). 결과는 **재시작하면 재로그인**이고 그것은
+  웹(1시간 지속 쿠키로 F5 복원)과의 **의도된 divergence**다.
+
+### `clientConfig` — 설정 파일에 마이그레이션 경로가 **없다** (C-N1)
+
+`parseConfig`는 파일의 `schemaVersion`을 **읽지 않는다**. 정본도 그렇다(`clientConfig.js:50`이 `defaultConfig()`로 현재
+상수를 덮어쓰고, 41-58행 어디에서도 저장된 값을 보지 않는다). 따라서 `schemaVersion: 99`·`"corrupt"`·키 부재가 정상
+버전과 **완전히 같게** 파싱된다 — **버전 검사도, 마이그레이션도, 미래 스키마 거부도 0**이다. 버전 상수는 **쓸 때만** 쓰인다.
+
+「정본 어딘가에 마이그레이션이 있겠지」라고 찾지 마라. 없다. 반대로 Qt에서 버전 인지 처리를 새로 만들면 그것은 **정본
+이탈**이므로 이 문서에 먼저 적어야 한다. 이 사실은 `ignoresTheStoredSchemaVersion` 테스트가 잠근다.
+
+### `clientConfig` — 정본과의 의도적 이탈 (2026-09-10 · step3)
+
+정본(`client/lib/clientConfig.js`)과 명세서(`test/client-shell-core.test.js`)는 **한 줄도 고치지 않았다**(읽기 전용).
+
+1. **폴더가 다르다**(위 절). 스키마·파일명(`config.json`)·화이트리스트·원자적 쓰기 규율은 **동일 이식**이다.
+2. **읽기 함수는 동기 1개뿐이다.** 정본의 `readConfigFile`(async)/`readConfigFileSync` 이중화는 「Chromium 초기화 전에
+   동기로 읽어야 한다」는 Electron 제약의 산물이다(R13). Qt에는 그 제약이 없어 `loadConfig` 하나만 만들었다.
+3. **`configPath`는 던지지 않는다.** 정본 `configPath`는 이 모듈에서 유일하게 throw할 수 있는 export다(`path.join`에
+   비문자열 · C-N4). 이 포트는 빈/공백 디렉토리에 **빈 경로**를 돌려주고, `saveConfigAtomically`가 그것을 **실패 결과**로
+   거른다(`CLIENT_USER_DATA`가 빈 문자열로 풀리는 실제 경로가 있다).
+4. **`serializeConfig`의 「쓰레기 인자」는 타입으로 소멸한다**(C-N3). C++ 시그니처에 비객체를 넘길 방법이 없으므로, 대응
+   보증은 「기본 구성 구조체·반쯤 채운 구조체도 기본 shape로 강등되고 실패하지 않는다」로 잠갔다.
+5. **C-N5(옵션 인자 구조분해)는 이식하지 않았다.** 「`undefined`에서 구조분해하면 try 밖에서 throw」는 C++에 대응 개념이
+   없다 — 포트 스펙의 판정도 「기록만 하고 이식하지 마라」다.
+6. **int 범위를 벗어난 정수는 거부한다.** JS `Number.isInteger(1e12)`는 true라 정본은 통과시키지만, Qt 지오메트리는 int이고
+   표현할 수 없는 값은 사각형이 아니다. `1e12`가 red인 케이스를 뒀다.
+7. **직렬화 형식**: `QJsonDocument`가 키를 **알파벳 순**으로, 들여쓰기 **4칸**으로 쓴다(정본은 삽입 순서 · 2칸). 두 클라가
+   파일을 공유하지 않으므로 호환 축이 아니고, 테스트가 잠근 계약은 **키 집합**과 **후행 개행 정확히 1개**다(후행 개행은
+   `QJsonDocument::toJson()`의 동작에 기대지 않고 직접 붙인다 — 가장 조용히 사라지는 항목이다).
+8. **덮어쓰기 rename은 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`이다.** `QFile::rename()`은 대상이 있으면 **거부**해서
+   두 번째 저장이 실패한다. `QSaveFile`을 쓰지 않은 이유는 임시 파일 이름과 호출 순서를 **관측·주입할 수 없어** M3-2 변이
+   (직접 덮어쓰기)를 잡지 못하기 때문이다.
+9. **쓰기 실패 시 정리·재시도가 없다**(정본 동형). 남은 `config.json.tmp`는 다음 저장이 truncate로 덮는다.
+
+### `clientConfig` — 안전망 없는 규칙의 처분
+
+포트 스펙이 「오늘 어떤 테스트로도 잠기지 않는다」고 지목한 5건 + 간접 1건의 처리다.
+
+- **R11**(폴더 분리 — 최고 위험) — **새 케이스로 잠갔다**: `namesAreDistinctFromTheElectronShell`(이름 축)과
+  `fallsBackToItsOwnAppDataFolder`(경로 산술 축). 폴더명을 Electron 것으로 되돌리는 변이(M3-3)가 두 테스트에서 red다.
+- **C-N1**(읽을 때 schemaVersion 무시) — 위 절 · `ignoresTheStoredSchemaVersion`으로 잠갔다.
+- **C-N3**(쓰레기 인자 직렬화) — 이탈 4 · `serializesDegradedInputWithoutFailing`으로 잠갔다.
+- **C-N4**(`configPath`만 throw 가능) — 이탈 3 · `buildsTheConfigPath`의 빈/공백 행과
+  `rejectsAnEmptyDirectoryWithoutTouchingTheFilesystem`으로 잠갔다.
+- **C-N5**(옵션 인자 구조분해) — 이탈 5 · **미이식**(케이스 없음).
+- **R16**(구조 검증과 화면 검증의 분리 — 정본에도 이 분리 자체를 단언하는 테스트가 없다) —
+  `separatesTheShapeCheckFromTheScreenCheck`가 「화면 밖 사각형이 파싱은 통과하고 `sanitizeBounds`에서만 떨어진다」로 잠갔다.
+
+### `clientConfig` — 이 모듈 밖으로 넘긴 계약
+
+- **최소 크기 상수는 2개이고 통합하지 않는다**(포트 스펙 X5). 이 모듈의 **저장 하한은 800×600**(`kMinStoredWidth/Height`)이고,
+  **창 최소 크기 1024×720**은 step5(`windowPolicy` 대응)의 것이다. 저장된 **850×650이 이 검증을 통과하는 것이 정상**이다.
+- **`workArea` 교차 판정(`sanitizeBounds`)은 이 step이 실행하지 않는다.** 파싱 시점에는 모니터 구성을 모른다는 이유로 정본이
+  분리한 함수이고, 창 복원에서 **step5가 호출**한다. `QRect::intersects()`를 쓰지 않고 정본의 네 부등식을 그대로 적었다
+  (`x+width-1` 관례가 모서리에서 답을 바꾼다).
+- **쓸 때 `serverUrl`을 재정규화하지 않는다**(정본 R7 동형). 호출부(step5의 주소 저장 경로)가 `normalizeServerUrl`의 결과만
+  넘기고, **읽을 때 재검증**(R4)이 손편집 파일에 대한 이중 방어다.
 
 ## 무엇이 P4가 아닌가
 

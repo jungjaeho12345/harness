@@ -11,7 +11,11 @@ DESTDIR = $$PWD/release
 
 SOURCES += main.cpp \
            smoketest.cpp \
-           serverurltest.cpp
+           serverurltest.cpp \
+           clientconfigtest.cpp \
+           configstoretest.cpp
 
 HEADERS += smoketest.h \
-           serverurltest.h
+           serverurltest.h \
+           clientconfigtest.h \
+           configstoretest.h
