@@ -10,6 +10,8 @@ CONFIG -= app_bundle
 DESTDIR = $$PWD/release
 
 SOURCES += main.cpp \
-           smoketest.cpp
+           smoketest.cpp \
+           serverurltest.cpp
 
-HEADERS += smoketest.h
+HEADERS += smoketest.h \
+           serverurltest.h

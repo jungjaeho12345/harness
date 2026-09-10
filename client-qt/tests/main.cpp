@@ -8,6 +8,7 @@
 //      neither by default nor with "-o -,txt" - while plain printf from this file lands
 //      normally. build.bat redirects, so each class logs to a temp file that we echo
 //      ourselves; otherwise the log would show a failure count and no diagnosis.
+#include "serverurltest.h"
 #include "smoketest.h"
 
 #include <QApplication>
@@ -109,6 +110,7 @@ int main(int argc, char **argv)
 
     // Register every test class here as it lands (step2+).
     runTestClass<SmokeTest>(baseArgs, logDir.path(), totals);
+    runTestClass<ServerUrlTest>(baseArgs, logDir.path(), totals);
 
     if (totals.classes == 0 || totals.tests == 0) {
         std::fprintf(stderr,

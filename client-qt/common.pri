@@ -8,11 +8,11 @@ QT += core gui widgets network
 
 INCLUDEPATH += $$PWD/src
 
-# Shared implementation sources. Empty in step0 (this is a skeleton): step2..step5 add
-# src/shell/**, step7..step9 add src/net/**, step10..step11 add src/ui/**. Every module
-# lands here exactly once so that the app and the test runner compile the same code.
-CLIENT_SOURCES =
-CLIENT_HEADERS =
+# Shared implementation sources. step2..step5 add src/shell/**, step7..step9 add src/net/**,
+# step10..step11 add src/ui/**. Every module lands here exactly once so that the app and the
+# test runner compile the same code.
+CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp
+CLIENT_HEADERS = $$PWD/src/shell/serverurl.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS
