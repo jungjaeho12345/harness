@@ -42,42 +42,23 @@ int defaultPortFor(const QString &scheme)
     return -1;  // unknown scheme: no port is implied, so an explicit one is always spelled out
 }
 
-// THE origin-assembly helper (X3). QUrl has no origin accessor, so the spelling is built by
-// hand exactly once: every entry point in this file goes through here. A second builder would
-// make the same origin come out two ways and split the same-origin decision.
+// Origin assembly, the half of parseUrlParts() this file was built around (X3). QUrl has no
+// origin accessor, so the spelling is built by hand exactly once: every entry point here and
+// in shell/diag.cpp goes through it. A second builder would make the same origin come out two
+// ways and split the same-origin decision.
 //
 // Contract: scheme (lowercase) + "://" + host (IPv6 keeps its brackets) + ":" port, the port
 // only when it differs from the scheme default. Returns false when the string is not a usable
-// absolute URL - that is this port's replacement for `new URL()` throwing (X2-a).
+// absolute URL WITH a host - that is this port's replacement for `new URL()` throwing (X2-a).
 bool parsedOrigin(const QString &text, QString *origin, QString *scheme)
 {
-    const QUrl url(text, QUrl::StrictMode);
-    if (!url.isValid())
+    const UrlParts parts = parseUrlParts(text);
+    if (!parts.ok || !parts.hasHost)
         return false;
-
-    const QString urlScheme = url.scheme().toLower();
-    if (urlScheme.isEmpty())
-        return false;  // relative reference ("garbage", "not a url", "")
-
-    // FullyEncoded keeps an internationalised host in its ACE/punycode form, which is what
-    // url.origin gives in the canonical (measured: http://<hangul>.com -> xn--bj0bj06e.com).
-    QString host = url.host(QUrl::FullyEncoded);
-    if (host.isEmpty())
-        return false;  // "http://", "http://:3001": new URL() throws on these (measured)
-    if (host.contains(QLatin1Char(':')) && !host.startsWith(QLatin1Char('[')))
-        host = QStringLiteral("[") + host + QStringLiteral("]");  // IPv6 literal
-
-    QString spelled = urlScheme + QStringLiteral("://") + host;
-    const int port = url.port();  // -1 when absent; 0 is a real, explicitly written port
-    if (port != -1 && port != defaultPortFor(urlScheme)) {
-        spelled += QLatin1Char(':');
-        spelled += QString::number(port);
-    }
-
     if (origin)
-        *origin = spelled;
+        *origin = parts.origin;
     if (scheme)
-        *scheme = urlScheme;
+        *scheme = parts.scheme;
     return true;
 }
 
@@ -131,6 +112,37 @@ bool ensureScheme(const QString &input, QString *out)
 }
 
 } // namespace
+
+UrlParts parseUrlParts(const QString &text)
+{
+    UrlParts parts;
+    const QUrl url(text, QUrl::StrictMode);
+    if (!url.isValid())
+        return parts;
+
+    parts.scheme = url.scheme().toLower();
+    if (parts.scheme.isEmpty())
+        return parts;  // relative reference ("garbage", "not a url", "", "/api/articles/5")
+    parts.ok = true;
+    parts.path = url.path(QUrl::FullyEncoded);
+
+    // FullyEncoded keeps an internationalised host in its ACE/punycode form, which is what
+    // url.origin gives in the canonical (measured: http://<hangul>.com -> xn--bj0bj06e.com).
+    QString host = url.host(QUrl::FullyEncoded);
+    if (host.isEmpty())
+        return parts;  // "http://", "http://:3001", "mailto:user@h", "data:text/plain,x"
+    parts.hasHost = true;
+    if (host.contains(QLatin1Char(':')) && !host.startsWith(QLatin1Char('[')))
+        host = QStringLiteral("[") + host + QStringLiteral("]");  // IPv6 literal
+
+    parts.origin = parts.scheme + QStringLiteral("://") + host;
+    const int port = url.port();  // -1 when absent; 0 is a real, explicitly written port
+    if (port != -1 && port != defaultPortFor(parts.scheme)) {
+        parts.origin += QLatin1Char(':');
+        parts.origin += QString::number(port);
+    }
+    return parts;
+}
 
 NormalizedUrl normalizeServerUrl(const QString &input)
 {

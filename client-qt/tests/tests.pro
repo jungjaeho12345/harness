@@ -13,9 +13,11 @@ SOURCES += main.cpp \
            smoketest.cpp \
            serverurltest.cpp \
            clientconfigtest.cpp \
-           configstoretest.cpp
+           configstoretest.cpp \
+           diagtest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
            clientconfigtest.h \
-           configstoretest.h
+           configstoretest.h \
+           diagtest.h

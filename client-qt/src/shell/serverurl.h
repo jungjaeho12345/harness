@@ -38,6 +38,20 @@ struct HealthVerdict {
     QString reason;  // set only when !ok: unreachable | http-status | not-article-server
 };
 
+// THE URL decomposition of this port (spec X3). Every module that needs an origin, a scheme
+// or a path goes through this one function - a second builder would make the same URL come
+// out spelled two ways, and those spellings feed both the same-origin decision (step2/step5)
+// and the diag redaction (step4).
+struct UrlParts {
+    bool ok = false;  // absolute reference: QUrl accepted it AND it carries a scheme
+    QString scheme;   // lowercase, WITHOUT the colon (QUrl::scheme(), unlike JS url.protocol)
+    bool hasHost = false;
+    QString origin;   // scheme://host[:port]; the port only when it is not the scheme default
+    QString path;     // percent-encoded path, empty when the URL has none (JS gives "/")
+};
+
+UrlParts parseUrlParts(const QString &text);
+
 // Operator input (or a stored value) -> one canonical origin string. Path, query and
 // fragment are always dropped.
 NormalizedUrl normalizeServerUrl(const QString &input);

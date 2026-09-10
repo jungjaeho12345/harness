@@ -54,6 +54,7 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 | 설정 파싱·직렬화(순수) | `client/lib/clientConfig.js` | `src/shell/clientconfig.{h,cpp}` · 테스트 `tests/clientconfigtest.{h,cpp}` | step3 |
 | 설정 저장소(파일시스템 경계) | `client/lib/clientConfig.js` + `client/main.js`의 경로 결선 | `src/shell/configstore.{h,cpp}` · 테스트 `tests/configstoretest.{h,cpp}` | step3 |
 | OS 가시 이름 상수 블록 | (정본에 대응 파일 없음) | `src/shell/appidentity.h` | step3 |
+| 진단 JSONL(diag) | `client/diag.js` + `client/main.js`의 19개 호출 지점 | `src/shell/diag.{h,cpp}` · 테스트 `tests/diagtest.{h,cpp}` | step4 |
 
 ### `serverUrl` — 정본과의 의도적 이탈 (2026-09-10 · step2)
 
@@ -177,6 +178,110 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
   (`x+width-1` 관례가 모서리에서 답을 바꾼다).
 - **쓸 때 `serverUrl`을 재정규화하지 않는다**(정본 R7 동형). 호출부(step5의 주소 저장 경로)가 `normalizeServerUrl`의 결과만
   넘기고, **읽을 때 재검증**(R4)이 손편집 파일에 대한 이중 방어다.
+
+### `diag` — 이벤트 처분 표 (확정 · 2026-09-10 · step4)
+
+**이 표가 P4의 경계다.** `shell::allowedDiagEvents()`가 아래 **21개 이름**을 상수 집합으로 들고 있고, `Diag::log()`는
+집합 밖 이름을 **거부한다**(줄을 쓰지 않고 `rejectedEventCount()`를 올린 뒤 경고한다). 이름을 늘리려면 그 파일을
+고쳐야 하고, 그 diff가 곧 「범위가 넓어졌다」는 신호다. `tests/diagtest.cpp`의 `allowsExactlyTheDispositionTable`이
+집합 전체를, `refusesToWriteAnEventOutsideTheAllowedSet`이 거부 동작을 잠근다.
+
+step4.md의 4갈래 제안을 **그대로 확정**했다(변경 0). 근거: `docs/porting-plan-cpp-spring.md` 152행이 「이벤트
+이름·필드 유지 + 렌더러 계열 4이벤트만 재매핑」을 포팅 조건으로 적었고, 이름을 바꾸면 판정 어휘를 새로 배워야 하는
+비용만 늘 뿐 얻는 것이 없다.
+
+| 갈래 | 수 | 이벤트 (네이티브에서의 의미 · P4의 payload 계약) |
+|---|---|---|
+| **승계** | 8 | `app-ready` · `config-loaded{hasServerUrl}` · `config-saved{origin}` · `probe{origin,ok,reason}` · `second-instance` · `setup-shown{reason}` · `restart-required{origin}` · `window-open{url,action}`(외부 링크를 기본 브라우저로) |
+| **재매핑** | 4 | `app-window` = 메인 창 표시 · `local-window{page}` = 설정/오류 화면 · `did-finish-load` = **화면 준비 완료**(정본의 `title` 필드는 싣지 않는다 — C절) · `load-failed{errorCode}` = 서버 도달 실패 |
+| **소멸** | 6 | `secure-origin-switch` · `navigation` · `ipc` · `render-process-gone` · `unresponsive` · `did-navigate` — **집합에 없다.** 렌더러 프로세스·Chromium 커맨드라인 스위치·contextBridge가 없는 앱에서 이 이름을 쓰면 판정자가 **일어나지 않은 일을 읽는다**. 대체 관측이 필요하면 **새 이름**을 만든다(`ipc` → `net-request`) |
+| **신설** | 9 | `net-request{route,method,status,ms}` · `login{status}` · `session{status}` · `sse-open` · `sse-ready` · `sse-change{kind}` · `sse-unauthorized` · `sse-closed{reason}` · `list-loaded{menu,count}` |
+
+**신설 9개는 필드 화이트리스트가 코드로 강제된다**(`contractedFields()`): 표에 없는 필드는 조용히 버려진다. 승계·재매핑
+12개는 정본과 같이 열린 payload를 쓰되 아래 유출 규칙 전부를 통과한다.
+
+### `diag` — 유출 방지 규율 (step4.md C절의 기계화)
+
+1. **정본 금지 키 7종**(`body`·`sessionId`·`cookie`·`cookies`·`password`·`token`·`headers`)은 **대소문자 정확 일치**로
+   버린다(정본 R3 그대로 — `Set.has()`의 의미론). 따라서 `Token`·`Body`는 **정본과 똑같이 통과한다**;
+   `matchesForbiddenKeysCaseSensitively`가 그 사실을 잠근다. 대소문자 무시로 「개선」하면 정본과 다른 필터링 결과가
+   나오므로 하지 않았다 — 실제 보증은 4번(호출부 규율)이다.
+2. **기사 제목·본문·사용자 이름 금지**(이 포트가 새로 만든 규칙이므로 **대소문자 무시**): `title`·`content`·`text`·
+   `name`·`username`. 그래서 재매핑된 `did-finish-load`는 정본이 싣던 `title`을 **싣지 않는다**. 목록은 `count`만 적는다.
+3. **`route` 값 검사**: 라우트 id(`articles-get`) 또는 경로 템플릿(`/api/articles/:id`)만 통과하고, 구체 기사아이디가
+   들어간 경로(`/api/articles/42`)는 **`<invalid-route>`로 대체**된다. 정본이 쿼리를 지운 이유와 같은 축이다.
+4. **가장 중요한 규율은 필터가 아니라 호출부다**(정본 주석 `diag.js:7-8` · 포트 스펙 D-N3). 금지 키 7종 **밖의** 필드로
+   본문이 새는 것을 막는 것은 「payload를 언제나 명시 리터럴로 구성한다」는 상위 규칙이며, **응답/요청 객체를 통째로
+   넘기는 API를 만들지 마라.** `Diag::log`가 `QVariantMap`만 받는 것이 그 규율의 타입 수준 표현이다.
+
+### `diag` — 정본과의 의도적 이탈 (2026-09-10 · step4)
+
+정본(`client/diag.js`)과 명세서(`test/client-shell-main.test.js`)는 **한 줄도 고치지 않았다**(읽기 전용).
+
+1. **`formatDiagLine`은 `QByteArray`(UTF-8)를 돌려준다.** step4.md의 스케치는 `QString`이었지만, 이 함수의 계약은
+   **바이트**(UTF-8 · `\n` 하나 · CRLF 금지)이므로 쓰는 시점에 인코딩이 암묵적으로 결정되지 않게 했다.
+2. **payload 필드 순서는 키 순서다.** `QVariantMap`은 `QMap`이라 정렬된다(정본은 JS 객체의 삽입 순서). `ts`→`event`는
+   **언제나 앞 두 자리**이고(줄을 손으로 조립한다 — `QJsonObject`를 쓰면 `ts`조차 알파벳 순으로 밀린다), 판정자는 JSON
+   파서를 쓰므로 순서 의존이 없다. AC의 비교 대상인 `{ok,url}`은 두 규칙에서 같은 순서가 된다.
+3. **`about:blank`·`file:` 분기는 이식했지만 실호출부가 없다.** 전자는 Chromium이 `window.open()` 대상에 주는
+   placeholder이고 후자는 `loadFile()`로 로컬 HTML을 여는 개념이다 — 네이티브에는 둘 다 없다. AC가 케이스를 요구하고
+   순수 함수의 계약이므로 남겼다.
+4. **호스트 없는 http/https(`http:/x`)는 `"http:"`로 답한다.** WHATWG는 슬래시를 접어 호스트 `x`를 **추론**하지만
+   `QUrl`은 추론하지 않는다(step2의 같은 divergence). 원문을 fail-open으로 돌려주면 **쿼리가 살아남는 유일한 경로**가
+   생기므로, 그 자리는 스킴만 남기는 쪽(최대 리댁션)으로 정했다.
+5. **`QByteArray` 값은 문자열로 취급한다.** C++에서 문자열 리터럴이 가장 쉽게 실려 오는 형태이고, 버리면 다음 step들이
+   **조용히 필드를 잃는다**. UTF-8로 디코드해 넣는다.
+6. **`undefined`는 「키 부재」로, `QVariant()`(무효)는 `null`로 매핑한다.** 정본의 두 값 구분에 대응하는 C++ 표현이
+   없다 — 부재는 폐기(정본 동형), 무효 QVariant는 출력에 `null`로 남는다(정본 R6 동형).
+7. **R13·D-N1은 타입으로 소멸한다.** 정본은 payload가 배열이면 가드를 통과해 **인덱스가 필드처럼 새어나가고**
+   (`typeof [] === 'object'`), 비객체면 `{}`가 된다. `QVariantMap` 시그니처에는 그 두 입력이 **표현 불가능**하므로
+   방어를 따로 넣지 않았다(정본의 누출 동작도 재현되지 않는다).
+8. **`redactDiagEvent`는 `event` 인자를 실제로 쓴다**(정본은 받기만 하고 쓰지 않는다) — 신설 9 이벤트의 필드
+   화이트리스트를 고르는 데 필요하다.
+9. **`log()`는 허용 집합 밖 이름을 거부한다**(정본에는 그런 게이트가 없다). R18을 코드로 세운 자리이고, 거부는
+   `rejectedEventCount()`로 관측된다. 이 검사는 **diag가 꺼져 있을 때도** 돈다(경고는 남는다).
+10. **`ts`/`event` 덮어쓰기(R2)는 정본대로 재현했다** — payload가 이긴다. 21개 payload 계약 중 그 이름을 쓰는 것이
+    없고, 신설 9 이벤트는 필드 화이트리스트가 기계로 막는다.
+11. **경로 문자열은 trim한다**(`Diag`의 생성자 · `CLIENT_DIAG_FILE`이 공백으로 풀리는 실제 경로가 있다 — configstore와
+    같은 처리). 정본은 falsy 검사뿐이다.
+
+### `diag` — 안전망 없는 규칙 12건의 처분
+
+포트 스펙이 「오늘 어떤 테스트도 잠그지 않는다」고 지목한 12건 중 **10건을 새 케이스로 잠갔다**(X7 — 정본에 없는
+커버리지를 만드는 것은 동작 변경이 아니다).
+
+| 규칙 | 처분 | 잠근 케이스 |
+|---|---|---|
+| R2 payload의 `ts`/`event` 덮어쓰기 | **잠금** | `letsThePayloadOverrideTsAndEvent` |
+| R4 `cookies`·`headers` 드롭(호출부·테스트 전무) | **잠금** | `dropsEveryForbiddenKey(cookies)`·`(headers)` |
+| R6 `null` 값 통과 | **잠금** | `keepsNullAndOmitsAbsentFields` |
+| R9 `redactUrl` fail-open | **잠금** | `matchesTheCanonicalRedaction(not a url · relative · empty)` |
+| R12 기타 스킴은 **콜론 포함** 스킴만 | **잠금** | 같은 표의 `mailto`·`ftp`·`data`·`chrome-error` 행 |
+| R16 동기 append | **잠금(관측 가능한 범위)** | `appendsEachLineBeforeLogReturns` — `log()`가 반환한 시점에 이미 디스크에 있다 |
+| R17 디렉토리 미생성 → 무음 실패 | **잠금** | `swallowsWriteFailuresOnAMissingDirectory`(디렉토리도 만들지 않는다) |
+| R18 이벤트 이름 집합 | **잠금** | `allowsExactlyTheDispositionTable` + `refusesToWriteAnEventOutsideTheAllowedSet` |
+| R19 소멸 6종 | **잠금** | `keepsTheExtinctElectronEventsOut` |
+| D-N2 NaN/Infinity → `null` | **잠금(실측 후)** | `writesNonFiniteNumbersAsNull` |
+| D-N1 최상위 배열 payload | **미잠금 — 타입으로 소멸**(이탈 7) | 없음(표현 불가) |
+| D-N3 호출부 명시 구성 규율 | **미잠금 — 규율은 호출부에 있다** | 부분 기계화(신설 9의 필드 화이트리스트 + 사람 텍스트 키 차단). 실호출부는 step5·7·10이 만든다 |
+
+부분 잠금이던 4건도 넓혔다: **R3**(정본 5종 → 7종 전건 + 대소문자 민감성) · **R5**(object/array → 12개 타입 행) ·
+**R7**(`url` 키 → `hourly`·`imageUrl`·`URL`로 substring-vs-suffix 경계) · **R13**(`undefined`만 → 부재 키/무효 QVariant).
+
+### `diag` — 정본 바이트 대조 (실측 · 2026-09-10)
+
+```
+node --input-type=module -e "import('./client/diag.js').then(({formatDiagLine})=>console.log(formatDiagLine('probe',{ok:true,url:'http://h:3001/api/health?x=1'},0)))"
+{"ts":"1970-01-01T00:00:00.000Z","event":"probe","ok":true,"url":"http://h:3001/api/health"}
+```
+
+**C++ 출력은 바이트 단위로 같다.** `matchesTheCanonicalProbeLineByte`가 그 비교를 테스트로 들고 있고, 같은 케이스가
+`qInfo`로 두 줄(`canonical:` / `qt      :`)을 **빌드 로그에 매번 찍는다** — 감사자가 이 문서를 믿지 않아도 되도록.
+URL 리댁션 17행(위 표의 케이스들)도 전부 정본을 직접 실행해 얻은 값이며, 소스를 읽고 옮겨 적은 값이 아니다.
+
+**형식 상호운용도 실측했다**: C++가 쓴 diag 파일을 `scripts/verify-client.mjs`의 `readDiag`(94행)와 **같은 방식**으로
+(`split('\n')` → `filter(Boolean)` → `JSON.parse`) node로 읽어 **전 줄 파싱 · 전 줄 `event`·`ts` 보유 · CR 0바이트**를
+확인했다. 같은 판정을 `writesLinesTheJudgeCanParse`가 QtTest 안에서 상시 반복한다.
 
 ## 무엇이 P4가 아닌가
 

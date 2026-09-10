@@ -61,6 +61,13 @@ inline QString userDataEnvVar()
     return QStringLiteral("CLIENT_USER_DATA");
 }
 
+// Diagnostic JSONL sink, also inherited verbatim (client/main.js:29). When it is unset the
+// diag module is a complete no-op: no file is created and nothing is written.
+inline QString diagFileEnvVar()
+{
+    return QStringLiteral("CLIENT_DIAG_FILE");
+}
+
 } // namespace names
 } // namespace shell
 

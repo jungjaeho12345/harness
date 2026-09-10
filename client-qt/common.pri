@@ -13,11 +13,13 @@ INCLUDEPATH += $$PWD/src
 # test runner compile the same code.
 CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/shell/clientconfig.cpp \
-                 $$PWD/src/shell/configstore.cpp
+                 $$PWD/src/shell/configstore.cpp \
+                 $$PWD/src/shell/diag.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
-                 $$PWD/src/shell/configstore.h
+                 $$PWD/src/shell/configstore.h \
+                 $$PWD/src/shell/diag.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

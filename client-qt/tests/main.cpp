@@ -9,6 +9,7 @@
 //      normally. build.bat redirects, so each class logs to a temp file that we echo
 //      ourselves; otherwise the log would show a failure count and no diagnosis.
 #include "clientconfigtest.h"
+#include "diagtest.h"
 #include "configstoretest.h"
 #include "serverurltest.h"
 #include "smoketest.h"
@@ -115,6 +116,7 @@ int main(int argc, char **argv)
     runTestClass<ServerUrlTest>(baseArgs, logDir.path(), totals);
     runTestClass<ClientConfigTest>(baseArgs, logDir.path(), totals);
     runTestClass<ConfigStoreTest>(baseArgs, logDir.path(), totals);
+    runTestClass<DiagTest>(baseArgs, logDir.path(), totals);
 
     if (totals.classes == 0 || totals.tests == 0) {
         std::fprintf(stderr,
