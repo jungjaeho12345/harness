@@ -4,8 +4,10 @@
 
 - `phases/77-qt-client-skeleton/index.json` — `decisions` (1)(2)(11)(12) · `excluded` (a)(b)(e)
 - `docs/ADR.md` **ADR-018** · **ADR-011**(창 정책의 정신) · **ADR-012**(단일 인스턴스 잠금의 근거 — 서버 축이지만 이유가 같은 계열이다)
-- **정본 소스(읽기 전용)**: `client/main.js` — 부팅 순서(`app-ready` → `config-loaded` → 앱 창 또는 설정 화면) · `second-instance` 처리 · bounds 저장 시점 · 외부 링크 처리
-- **정본 소스(읽기 전용)**: `client/lib/windowPolicy.js` — 창 2종 분리 · bounds/`workArea` 교차 판정 · fail-closed 규율
+- **정본 소스(읽기 전용)**: `client/main.js` — **56-63**(부팅 순서·단일 인스턴스 잠금) · **81-89**(second-instance: isMinimized 게이트 restore/show/focus) · **263-277**(createAppWindow: bounds 주입 → ready-to-show → maximize → show) · **295-296**(close 1회 저장 · shown 게이트 · resize 리스너 금지) · **367-377**(saveBoundsFrom — `sanitizeBounds` 실패 시 **else 분기가 없다**) · **379-383**(persistConfig 삼킴) · 외부 링크 처리
+- **정본 소스(읽기 전용)**: `client/lib/clientConfig.js` — **14-15**(`MIN_WIDTH=800`/`MIN_HEIGHT=600`) · **31-39**(`sanitizeBoundsShape`) · **73-83**(`sanitizeBounds` — **`workArea` 교차 판정의 실제 위치** · 엄격 부등호 · all-or-nothing 폐기)
+- **정본 소스(읽기 전용)**: `client/lib/windowPolicy.js` — 창 2종 분리 · 기본/최소 크기 상수(**39-42**: 1440×900 / min 1024×720) · **46-53**(bounds를 창 옵션에 주입하는 **유일한** 역할) · fail-closed 규율. **주의: 이 파일에는 bounds 저장/복원도 `workArea` 로직도 없다**(포트 스펙 실측 2026-09-10).
+- **오늘의 잠금 기준선(읽기 전용)**: `test/client-shell-core.test.js` **240-265**(`sanitizeBounds`) · **312-342**(`buildWindowOptions`) — 무엇이 잠겨 있고 **무엇이 안 잠겨 있는지**의 기준선
 - **판정자(읽기 전용)**: `scripts/verify-client.mjs` **149행 이하 `main()`** — 시나리오 A(설정 있음 → 앱 창) / B(설정 없음 → 설정 화면)의 **정확한 이벤트 시퀀스**. 여기서 판정되는 것이 step6이 이식할 시퀀스다. 특히 **프로브는 사용자 액션에만 발생한다**(파일 머리 주석 — 부팅 경로에 `probe`가 남지 않는다).
 - `phases/77-qt-client-skeleton/step2.md`~`step4.md` 산출물(`client-qt/src/shell/`: 주소 정규화·config 저장소·diag)
 
@@ -45,7 +47,9 @@ struct ProbeRunner {  // step7이 실제 HTTP 구현을 넣는다
 ### C. 창과 bounds
 
 - 메인 창 기본 크기는 정본 앱 창과 같게 둔다(`client/lib/windowPolicy.js`의 값 — 1440×900 · 최소 1024×720).
-- 복원 시 **`workArea` 교차 판정**: 저장된 위치가 현재 모니터 배치 밖이면 위치를 버리고 크기만 쓴다(정본 규율).
+- 복원 시 **`workArea` 교차 판정**(`clientConfig.js:73-83`): 저장된 사각형이 **어느 `workArea`와도 겹치지 않으면 bounds 전체(위치 + 크기)를 버리고** 기본 배치(1440×900)로 간다 — **all-or-nothing이다. 크기만 남기지 않는다.** 겹침은 **엄격 부등호**라 모서리만 닿는 것은 겹침이 아니다(`test/client-shell-core.test.js:254-259`가 잠근다).
+- **최소 크기 상수는 2개이고 통일하지 않는다**: 설정 검증 하한 **800×600**(`clientConfig.js:14-15`) vs 창 최소 **1024×720**(`windowPolicy.js:41-42`). 저장된 850×650은 검증을 통과한 뒤 실제 창에서 **1024×720으로 조용히 clamp**된다. Qt는 `setMinimumSize(1024,720)`을 `resize()`보다 **먼저** 불러 같은 결과를 낸다. **밴드(800~1023 × 600~719) 케이스를 테스트로 새로 추가하라** — 정본에 없는 커버리지다.
+- 닫는 시점 검증이 실패하면(모니터 재구성 등) 정본은 **이전 known-good 값을 유지한 채 그대로 쓴다**(`main.js:371-373` — `else` 없음). null로 리셋하지 않는다. 재현 여부를 명시적으로 정하고 README에 적어라.
 - 저장은 **닫을 때 1회**. 매 이동/리사이즈마다 쓰지 마라(디스크·원자적 쓰기 낭비).
 - **`CLIENT_SELFTEST=1`이면 창을 표시하지 않는다**(env 이름 승계 — 하네스가 데스크톱을 오염시키지 않는 수단). 창 **생성과 diag는 그대로** 일어난다.
 - `--selftest` 인자는 셸 불변식 자기검사(합성 루트가 전부 주입됐는지 등)를 돌리고 **창 없이 종료**한다.

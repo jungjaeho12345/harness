@@ -5,7 +5,7 @@
 - `phases/77-qt-client-skeleton/index.json` — `decisions` (1)(6)(11)(12)
 - `docs/ADR.md` **ADR-018** · **ADR-011**
 - **정본 소스(읽기 전용)**: `client/lib/clientConfig.js` **전문** — `CONFIG_FILENAME`·`CONFIG_SCHEMA_VERSION`·`configPath`·`parseConfig`(화이트리스트)·`sanitizeBoundsShape`·원자적 쓰기(tmp→rename)
-- **정본 소스(읽기 전용)**: `client/lib/windowPolicy.js` — 창 bounds 정책 부분(`workArea` 교차 판정 · 최소 크기)
+- **정본 소스(읽기 전용)**: `client/lib/windowPolicy.js` — 창 2종 분리 · 기본/최소 **창** 크기 상수(1440×900 / 1024×720). **`workArea` 교차 판정과 bounds 검증은 이 파일이 아니라 위 `clientConfig.js`(31-39·73-83)에 있다**(포트 스펙 실측 2026-09-10).
 - **명세서(읽기 전용)**: `test/client-shell-core.test.js`(config·bounds 케이스)
 - `phases/77-qt-client-skeleton/step2.md`와 그 산출물(`client-qt/src/shell/`의 `normalizeServerUrl` — config 파싱이 그것을 쓴다)
 
