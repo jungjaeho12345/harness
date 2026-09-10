@@ -1,0 +1,16 @@
+{
+  "project": "기사 작성기",
+  "phase": "77-cpp-qt-client-skeleton",
+  "scope": "C++/Spring 포팅 로드맵(docs/porting-plan-cpp-spring.md §7) **P4 'C++ 클라 골격'**을 소유한다 — P1~P3(Spring 서버 API 패리티 39/39 + DB 이관 + 서버 전환 운영)이 끝난 안정된 Spring 서버 위에서 **Qt 6 네이티브 클라이언트(`client-cpp/`)의 골격**을 세운다. 범위 4묶음: ① Qt 앱 스캐폴드(CMake + Qt6 감지 + QtTest/ctest 하네스 + core/net/shell/ui 디렉토리) · ② shell 계약(서버 주소 프로브 · config.json 화이트리스트/원자적 쓰기 · diag JSONL · 단일 인스턴스 · 창 bounds) · ③ net 계층(REST 35 계약 메서드 + SSE 파서 + 쿠키 세션) · ④ 로그인/목록 화면. **완료 판정(P4 done-criteria)** = 로그인→목록 진입 후 **SSE 단일 무효화 신호에 목록 전체 재조회**가 실기 동작하고, **diag 이벤트로 자동 검증**(기존 `scripts/verify-client.mjs`의 diag JSONL 계약 재사용)이 green이 되는 것. 정본 요구사항은 **`docs/news.md`와 `docs/news-md-overrides.md`를 함께** 읽어 도출한다(줄 번호를 만나면 오버라이드 표가 이긴다). 와이어 계약 정본은 동결 계약(`docs/api-contract/endpoints.json` 39 라우트 · `docs/api-contract/sse.md` · `docs/api-contract/reason-tokens.md`)이며 이 phase는 계약을 **한 줄도 고치지 않는다**. **에디터(텍스트 엔진·툴바·맞춤법·임베드·인쇄)는 P5~P6 범위이므로 이 phase 밖**이다(P0 스파이크 `spikes/p0-qt-editor/`는 go 판정 근거일 뿐 이식 대상 아님). Node 서버(`server/**`·`src/**`)·Spring 서버(`server-spring/**`)·기존 Electron 클라(`client/**`)·웹 SPA(`web/**`)·계약 스위트(`contract/**`)는 이 phase에서 **읽기 전용**이다(변경 금지 — Electron 클라는 P4~P7 상시 대체재로 보존).",
+  "steps": [
+    { "step": 0, "name": "project-scaffold", "status": "pending" },
+    { "step": 1, "name": "contract-types", "status": "pending" },
+    { "step": 2, "name": "rest-client", "status": "pending" },
+    { "step": 3, "name": "sse-client", "status": "pending" },
+    { "step": 4, "name": "shell-probe-config", "status": "pending" },
+    { "step": 5, "name": "shell-instance-diag", "status": "pending" },
+    { "step": 6, "name": "login-screen", "status": "pending" },
+    { "step": 7, "name": "list-screen", "status": "pending" },
+    { "step": 8, "name": "integration-verify", "status": "pending" }
+  ]
+}
