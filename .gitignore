@@ -46,3 +46,11 @@ uploads/
 
 # IDE 설정 — 다른 도구 세션이 커밋에 섞은 전례가 있다(d1d5e84)
 .vscode/
+
+# Qt native client build outputs (phase 77 / P4) - details in client-qt/.gitignore
+client-qt/release/
+client-qt/**/release/
+client-qt/**/debug/
+client-qt/**/Makefile
+client-qt/**/Makefile.*
+client-qt/.qmake.stash
