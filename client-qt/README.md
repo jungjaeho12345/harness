@@ -216,7 +216,7 @@ step4.md의 4갈래 제안을 **그대로 확정**했다(변경 0). 근거: `doc
 | **승계** | 8 | `app-ready` · `config-loaded{hasServerUrl}` · `config-saved{origin}` · `probe{origin,ok,reason}` · `second-instance` · `setup-shown{reason}` · `restart-required{origin}` · `window-open{url,action}`(외부 링크를 기본 브라우저로) |
 | **재매핑** | 4 | `app-window` = 메인 창 표시 · `local-window{page}` = 설정/오류 화면 · `did-finish-load` = **화면 준비 완료**(정본의 `title` 필드는 싣지 않는다 — C절) · `load-failed{errorCode}` = 서버 도달 실패 |
 | **소멸** | 6 | `secure-origin-switch` · `navigation` · `ipc` · `render-process-gone` · `unresponsive` · `did-navigate` — **집합에 없다.** 렌더러 프로세스·Chromium 커맨드라인 스위치·contextBridge가 없는 앱에서 이 이름을 쓰면 판정자가 **일어나지 않은 일을 읽는다**. 대체 관측이 필요하면 **새 이름**을 만든다(`ipc` → `net-request`) |
-| **신설** | 9 | `net-request{route,method,status,ms}` · `login{status}` · `session{status}` · `sse-open` · `sse-ready` · `sse-change{kind}` · `sse-unauthorized` · `sse-closed{reason}` · `list-loaded{menu,count}` |
+| **신설** | 9 | `net-request{route,method,status,ms}` · `login{status}` · `session{status}` · `sse-open` · `sse-ready` · `sse-change{kind}` · `sse-unauthorized` · `sse-closed{reason,status}`(step9 — `status`는 `pre-open-rejected`에만) · `list-loaded{menu,count}` |
 
 **신설 9개는 필드 화이트리스트가 코드로 강제된다**(`contractedFields()`): 표에 없는 필드는 조용히 버려진다. 승계·재매핑
 12개는 정본과 같이 열린 payload를 쓰되 아래 유출 규칙 전부를 통과한다.
@@ -624,7 +624,7 @@ QtTest가 **런타임에** `docs/api-contract/endpoints.json`과 `web/src/model/
   「표 − health − SSE 2 = 34」와 같음을 단언). **그 29개의 실제 왕복은 P4 범위 밖이며 미검증이다**(P5·P7이 화면을 붙일 때 넓힌다).
 - **`queryArticles` 결선**: 필터는 **step7의 `buildQuery`를 그대로** 거친다(`?status=RDS&status=DDH` · 정본 197~202행 동형 ·
   `author=a%2Bb+c`). 쉼표 결합(M8-7)도 `QUrlQuery` 조립(M8-7b — `+`가 맨몸으로 남아 서버가 공백으로 읽는다)도 red다.
-- **SSE**: `subscribe()`는 **step9가 `ChangeStream`을 붙일 때까지 비활성**(아무것도 열지 않고 아무것도 보고하지 않음) ·
+- **SSE**: `subscribe()`는 **step9부터 `ChangeStream` 1개를 연다**(아래 「net 계층 — SSE」) ·
   `subscribeLogs()`는 **P4 내내 비활성**(Z 전용 · P7 — `neverOpensTheLogStreamInP4`).
 - **기본 인자는 인터페이스에만 있다** — C++는 오버라이더가 기반의 기본 인자를 가린다(`fake.queryArticles()`가 컴파일되지 않음 —
   실측). 35개 오버라이더에 기본값을 복제하면 어긋날 수 있으므로 **호출자는 `INewsModel&`로 부른다**(컨트롤러가 원래 그렇다).
@@ -687,6 +687,122 @@ QtTest가 **런타임에** `docs/api-contract/endpoints.json`과 `web/src/model/
 | MF-5 | `deactivate`가 행을 지움 | exit 1 · 2 red(규율 5 · 배부 대상 왕복) |
 | MF-6 | 기사 투영에서 locker 필드를 안 지움 | exit 1 · 1 red(L131) |
 | MF-7 | 로그인 시점 신원 스냅샷을 캐시 | exit 1 · 1 red(L123-128 — 2026-08 감사 권한상승 패턴) |
+
+## net 계층 — SSE (2026-09-12 · step9)
+
+`GET /api/stream`의 무효화 신호를 받는다. 정본은 `web/src/model/httpModel.js` 313~337행(브라우저 `EventSource`)이고
+와이어 정본은 `docs/api-contract/sse.md`다. 정본·계약·서버는 **읽기만 했다**.
+
+| 부분 | 파일 | 역할 |
+|---|---|---|
+| 순수 파서 | `src/net/sseparser.*` | 바이트 → 이벤트. 네트워크·이벤트 루프·어휘를 모른다 |
+| 스트림 | `src/net/changestream.*` | 연결·헤드 판정·재연결·diag. **인스턴스마다 독립**(모듈 상태 0) |
+| 전송 | `HttpTransport::openStream` | 같은 쿠키 자·URL 조립·캐시/리다이렉트 규칙 + `Accept: text/event-stream` · **본문 데드라인 없음**(R13의 유일한 예외) · `net-request{route:'stream'}` 연결마다 1줄 |
+| Model | `HttpNewsModel::subscribe` | 정본 핸들 `{connected(), unsubscribe()}` · `FakeNewsModel::endStreamSession()`은 같은 순서를 흉내 내는 시험 이음매 |
+
+### 파서 규칙 (정본이 브라우저에 맡기던 WHATWG 규칙)
+
+- **증분 상태기계** — 모든 2분할점 · 1바이트씩 · 「세 개 반」이 같은 결과. 「한 read = 한 프레임」 가정 없음(phase 74 교훈:
+  Node의 「write 1 = 청크 1」은 그 서버의 성질이지 전송의 보증이 아니다).
+- 빈 줄 전에는 **디스패치 0** · 스트림이 끝나면 미완성 프레임은 버린다(내보내지 않는다).
+- event 줄 없음 = `message` · data 여러 줄은 LF 결합 · 콜론 뒤 공백 **1개만** 제거 · data 없는 프레임은 이름까지 잊는다 ·
+  `:` 주석·`id:`·`retry:`·미지 필드 무시 · 미지 이벤트 이름은 파서가 그대로 넘기고 `ChangeStream`이 무시한다.
+- **CRLF·CR 수용(결정)**: 계약은 LF지만 브라우저 EventSource는 셋 다 받는다. 더 엄격하면 줄끝을 바꾸는 프록시 뒤에서
+  **unauthorized 프레임까지 삼켜** sse.md 35행의 「닫지 못하고 무한 재연결」이 된다. 청크 경계에 걸린 CRLF도 줄끝 1개다.
+- 처리 안 함: 선두 UTF-8 BOM(서버가 쓰지 않는다).
+
+### 종결 3 · 재연결 1 (`CloseReason`)
+
+| 사유 | 조건 | 재연결 | `unauthorized()` | diag |
+|---|---|---|---|---|
+| `PreOpenRejected` | HTTP 응답이 「200 + `text/event-stream`」이 아니다(401·503·302·200 text/html·Content-Type 없음) | **0** | **401일 때만** | `sse-closed{reason:'pre-open-rejected',status}` |
+| `UnauthorizedFrame` | 열린 뒤 `unauthorized` 프레임 | **0** | 예 | `sse-unauthorized` → `sse-closed{reason:'unauthorized-frame'}` |
+| `Transient` | **HTTP 응답 없음**(거부·리셋·열기 데드라인) 또는 열린 스트림이 끝남 | 백오프 | 아니오 | `sse-closed{reason:'transient'}` |
+| `Stopped` | `stop()` | 0 | 아니오 | `sse-closed{reason:'stopped'}` |
+
+- **헤드가 판정이다**: 상태 200 **그리고** Content-Type의 MIME 본질이 `text/event-stream`(대소문자·파라미터 무시 ·
+  `text/event-streamx`는 아님). `Cache-Control`·`Connection`은 **판정하지 않고 diag도 안 남긴다** — 프록시가 바꿀 수 있고
+  아무것도 결정하지 않는다(실서버 두 종 모두 `no-cache`·`keep-alive`로 관측).
+- 200인데 SSE가 아니면 **즉시 끊는다**(캡티브 포털 본문은 끝나지 않을 수 있다 · 파싱 0). 비-200은 짧은 본문을 끝까지 읽어
+  **401 + `unauthenticated`면 `send()`와 같은 규칙으로 세션을 버린다**(`classifyResponse` 재사용).
+- **열리기 전 「응답 없음」은 Transient다** — WHATWG는 네트워크 오류에서 재연결하고 **틀린 HTTP 응답만** 실패로 닫는다(서버
+  재시작 중의 연결 거부가 실시간을 영구히 끄면 안 된다). 열기 데드라인은 **헤드까지만**(기본 15 s = 전송 계층 기본값) — 본문은
+  무기한이다(서버에 하트비트가 없어 무이벤트 스트림은 몇 시간씩 조용하다 · ADR-008).
+- **읽고 나서 판정**: 서버는 unauthorized 프레임을 쓰고 곧바로 `res.end()`한다(sse.md 60) — 바이트와 종료가 한 번에 오면
+  `finished`에서 남은 바이트를 **먼저** 파싱한다. 거꾸로 하면 일시 단절로 분류돼 재연결한다(포트 스펙 sse 실측 함정 (c)).
+- **봉인**: 닫힌 뒤에는 같은 read에 실린 후속 프레임도 내보내지 않는다(정본 R6 — `QNetworkReply::abort()`에는
+  `EventSource.close()`의 보증이 없다).
+- **백오프**: 1 s → 2 s → 4 s … 상한 30 s · **`ready`를 받으면 사다리 초기화**(살아 있음이 증명된 스트림은 처음부터).
+  브라우저 EventSource는 `retry:` 없이 대략 상수 간격이다 → **완화 방향의 divergence**. ADR-008의 「앱 내 주기 실행」이
+  아니다(클라 연결 복구 · decisions (8)).
+
+### 단일 무효화 신호 · 세션 종료 · 동시 연결
+
+- `change`는 **kind와 무관하게 같은 신호**(`changed(kind)`) — kind는 diag 기록용이고 분기 0(L80 · sse.md 89행이 정확 kind
+  단언을 flake로 경고). 빈 data·파싱 불가·객체 아닌 JSON도 change(kind `""`) — 정본 318~324행의 `{}` 폴백.
+- Model 결선: `onChange({kind}` 또는 `{}`, **호출자 filter 그대로**) · ready → `onStatus(true)` · unsubscribe를 뺀 모든 종료 →
+  `onStatus(false)` · unauthorized 프레임 또는 열리기 전 401 → **`onSessionEnd()`**(선택 인자 · **네이티브 추가** — 정본은
+  EventSource를 닫고 `onStatus(false)`만 한다). 순서는 `onStatus(false)` → `onSessionEnd()`. `unsubscribe()`·핸들 파기는
+  **화면을 부르지 않는다**(사라지는 중일 수 있다).
+- **동시 연결**: 같은 세션(전송 계층의 쿠키 자)으로 두 스트림이 동시에 돌고, 하나를 멈춰도 다른 하나는 계속 받는다 — 반 프레임을
+  교차 주입해 파서 분리까지 잠갔다.
+- **세션 연장 착각 금지(L127)**: 스트림은 `GET /api/stream` 외에 어떤 요청도 보내지 않고 유휴 타이머가 없다.
+
+### 정본과의 의도적 이탈 (net · step9)
+
+1. 지수 백오프(정본 = 브라우저의 상수 간격 재시도).
+2. `onSessionEnd` 추가(열리기 전 401 → 로그인 화면 — step9.md의 「상위에 세션 종료」).
+3. change 신호 객체는 `{kind}` 또는 `{}`뿐이다(정본은 파싱한 값을 그대로 넘긴다 — 서버는 `{kind}`만 보낸다).
+4. 열리기 전 401 + `unauthenticated`에서 세션 폐기(정본에 없음 — step7 규칙을 스트림 경로에도 적용).
+5. `unsubscribe()` 뒤 `connected()`는 false(정본은 마지막 값을 유지한다 — 그것을 단언하는 정본 테스트는 없다).
+
+### 실측 — `open_questions` (2) (2026-09-12 · 이 머신 · Qt 6.8.3 · 루프백)
+
+`LiveStreamTest`(수동 — `CLIENT_QT_LIVE_SSE`가 있을 때만 러너가 등록한다. **`build.bat`에서는 돌지도, skip으로 세지도 않는다** —
+step7 `LiveServerTest` 선례). 같은 이벤트 루프의 **raw `QTcpSocket` 기준 리더**(QNAM 미경유 · 별도 계정)와 Qt 스트림이 같은
+서버 스트림을 읽고, 작성자 세션의 `POST /api/articles`를 트리거로 각자의 도착 시각을 잰다. **`qt − raw`가 QNAM이 더하는 지연이다.**
+
+| 서버 | 헤드 | 첫 프레임(ready) Qt / raw | change qt−raw min/median/max | 트리거→Qt median | 35 s 무이벤트 뒤 |
+|---|---|---|---|---|---|
+| Node exe | 200 · HTTP/2 **미사용** · Content-Encoding **없음** · chunked | 17 ms(헤드 15) / 32 ms · 앞 회차 206 / 221 ms | **1 / 1 / 2 ms**(9회) · 앞 회차 0 / 1 / 1 | 35 ms · 앞 회차 21 | 끊김 0 · change 도착 +80 ms |
+| Spring | 동일 | 33 ms(헤드 31) / 49 ms · 2회차 36 / 51 | **1 / 2 / 4 ms**(9회) · 2회차 1 / 2 / 3 | 35 ms · 2회차 29 | 끊김 0 · change 도착 +67 ms |
+
+- **결론: 이 트리의 두 서버에서 QNAM은 프레임을 늦추지 않았다**(qt−raw ≤ 4 ms · median 1~2 ms) → **회피책(HTTP/2 비활성 ·
+  raw socket)은 필요 없다.** 이유도 관측됐다: `http://`라 HTTP/2가 쓰이지 않고(Qt는 h2를 https ALPN이나
+  `Http2CleartextAllowedAttribute`에서만 쓴다) 서버가 SSE를 압축하지 않아 자동 압축 해제 경로가 없으며, chunked 본문이
+  `readyRead`로 증분 도착한다.
+- Node 앞 회차의 첫 프레임 206/221 ms는 **raw도 같아서 Qt 무관**이다(재현 안 됨 — 이후 17~36 ms). Spring 첫 change의
+  391 ms도 raw 387 ms와 같다(서버 첫 요청 워밍업).
+- **미측정**: https(ALPN으로 HTTP/2가 켜질 수 있다) · 압축하는 프록시 경유 · 원격 호스트.
+
+### 무잠금 3건의 처분 (net 포트 스펙 sse 갈래)
+
+| 규칙 | 처분 |
+|---|---|
+| R3 change의 빈/파싱 불가 data → `{}` | **잠금** — `raisesOneSignalPerChangeWhateverTheKind`(빈 data · `not-json` · JSON 배열 → kind `""`) + Model `subscribeRunsTheChangeStream`(`{}` 전달) |
+| R10 바이트 프레이밍 | **잠금** — `SseParserTest` 16케이스(sse.md 픽스처 그대로 · 전 분할점 · 1바이트 · CRLF/CR · UTF-8 분할) + 와이어 `assemblesAFrameSplitAcrossHttpChunks` |
+| R11 SSE ≠ 세션 활동 | **행동으로 잠금** — `neverSendsAnythingButTheStreamRequest`(프레임·단절·재연결 내내 `GET /api/stream` 외 요청 0) · 유휴 타이머 코드 없음(리뷰 항목으로도 남긴다) |
+
+### 변이 결과표 (2026-09-12 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
+
+| 변이 | 내용 | 결과(`build.bat`) |
+|---|---|---|
+| **M9-1** | data 줄이 오면 즉시 디스패치 | exit 1 · 5 red(파서 4 — 종결자 없음 · 반 프레임 · 여러 data 줄 · reset + 와이어 청크 분할 1) |
+| **M9-2** | unauthorized 처리 삭제 | exit 1 · 4 red(`stopsForGoodOnTheUnauthorizedFrame` · `readsTheUnauthorizedFrameThatArrivesWithTheClose` = `transient/-1`, 즉 재연결 경로 · Model 2) |
+| **M9-3** | 백오프 제거(즉시 재시도) | exit 1 · 2 red(와이어 간격 `46 47 47 47 46` ms — 늘지 않음 · 사다리 2단 47 ms) |
+| **M9-4** | 열리기 전 401을 Transient로 | exit 1 · 3 red(`transient/-1` · 재연결 뒤의 401도 `transient` · Model 세션 종료 0) |
+| **M9-5** | Content-Type 검사 삭제 | exit 1 · 5 red(5행 전부 — 포털 본문의 프레임이 디스패치돼 `unauthorized-frame`으로 닫힘) |
+| **M9-6** | 파서를 모듈 전역(싱글턴)으로 | exit 1 · 1 red(반 프레임 교차 → 두 번째 스트림 kind `""`) |
+
+### step10·11에 넘기는 사실
+
+- **같은 사용자로 로그인하면 그 사용자의 기존 세션이 전부 무효화된다**(`src/services/sessionService.js` `createSession`).
+  드라이버가 클라와 **같은 계정**으로 로그인하면 클라 세션이 죽고, 스트림은 열리기 전 401 → 세션 종료로 끝난다(이번 실측에서
+  실제로 밟았다 — 스트림은 재연결하지 않았다). step11의 서버 측 사실은 클라(desk)와 **다른 계정**(reporter)으로 만든다.
+- `HttpTransport::send()`는 로컬 이벤트 루프로 기다리므로 **그 사이 도착한 change가 재조회를 다시 부를 수 있다**(재진입).
+  컨트롤러는 재조회 중 도착한 신호를 합쳐라.
+- QNAM은 호스트당 HTTP/1.1 연결 6개 — 스트림은 연결 하나를 계속 쥔다(P4 1개 · P5 +1).
+- 원장: 스트림은 **연결마다** `net-request{route:'stream'}` 1줄(재연결도 1줄) — step11 기대 집합의 `stream`.
 
 ## 무엇이 P4가 아닌가
 
