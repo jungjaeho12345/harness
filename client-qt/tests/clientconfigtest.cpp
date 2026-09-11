@@ -11,6 +11,8 @@
 #include <QStringList>
 #include <QtTest>
 
+#include <limits>
+
 using shell::Bounds;
 using shell::ClientConfig;
 
@@ -462,4 +464,45 @@ void ClientConfigTest::sanitizesBoundsAgainstWorkAreas()
     QCOMPARE(shell::sanitizeBounds(barelyVisible, single), barelyVisible);
     // An empty work area rectangle (a monitor reported with zero size) overlaps nothing.
     QCOMPARE(shell::sanitizeBounds(visible, QList<QRect>{QRect(0, 0, 0, 0)}), Bounds());
+}
+
+// ---------------------------------------------------------------------------
+// Gate review 2026-09-12 (low): the four inequalities add two ints each, and wholeNumber() lets
+// the WHOLE int range through, so a hand-edited config can push x + width past INT_MAX. Signed
+// overflow is undefined behaviour - the effect seen here is a wrap into a negative number, which
+// reads as "this rectangle is on no monitor" and silently re-centres the window. Every term is
+// widened to qint64 instead. The work area side is checked too: it is an int rectangle as well.
+void ClientConfigTest::keepsBoundsArithmeticWithinRange()
+{
+    const int intMax = std::numeric_limits<int>::max();
+    const int intMin = std::numeric_limits<int>::min();
+    const QList<QRect> single{QRect(0, 0, 1920, 1080)};
+
+    // Starts inside the work area and is absurdly wide/tall - that is still ON the screen.
+    const Bounds wide = makeBounds(intMax, 720, 1000, 50);
+    QVERIFY2(shell::sanitizeBounds(wide, single) == wide, qPrintable(describe(shell::sanitizeBounds(wide, single))));
+    const Bounds tall = makeBounds(1024, intMax, 100, 50);
+    QVERIFY2(shell::sanitizeBounds(tall, single) == tall, qPrintable(describe(shell::sanitizeBounds(tall, single))));
+    const Bounds both = makeBounds(intMax, intMax, 1, 1);
+    QVERIFY2(shell::sanitizeBounds(both, single) == both, qPrintable(describe(shell::sanitizeBounds(both, single))));
+
+    // The same on the work area's side: a monitor whose right edge is past INT_MAX.
+    const QList<QRect> farRight{QRect(intMax - 500, 0, 1000, 1080)};
+    const Bounds onFarRight = makeBounds(1024, 720, intMax - 400, 0);
+    QVERIFY2(shell::sanitizeBounds(onFarRight, farRight) == onFarRight,
+             qPrintable(describe(shell::sanitizeBounds(onFarRight, farRight))));
+    // ... and that monitor still does not hold a window sitting at the origin.
+    QCOMPARE(shell::sanitizeBounds(makeBounds(1024, 720, 0, 0), farRight), Bounds());
+
+    // The bottom of the range stays rejected rather than wrapping into "visible".
+    QCOMPARE(shell::sanitizeBounds(makeBounds(1024, 720, intMin, 0), single), Bounds());
+    QCOMPARE(shell::sanitizeBounds(makeBounds(1024, 720, 0, intMin), single), Bounds());
+
+    // How a file gets there: the numbers are inside the int range, so they parse and reach the
+    // arithmetic above - this is a hand-edited config, not a value the app ever wrote.
+    const ClientConfig parsed =
+        shell::parseConfig(fileWithBounds(R"({"width":2147483647,"height":720,"x":1000,"y":50})"));
+    QVERIFY2(parsed.bounds == wide, qPrintable(describe(parsed.bounds)));
+    QVERIFY2(shell::sanitizeBounds(parsed.bounds, single) == wide,
+             qPrintable(describe(shell::sanitizeBounds(parsed.bounds, single))));
 }

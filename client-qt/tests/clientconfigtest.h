@@ -32,6 +32,7 @@ private slots:
     void roundTripsThroughParse();
     void separatesTheShapeCheckFromTheScreenCheck();
     void sanitizesBoundsAgainstWorkAreas();
+    void keepsBoundsArithmeticWithinRange();
 };
 
 #endif // CLIENT_QT_TESTS_CLIENTCONFIGTEST_H

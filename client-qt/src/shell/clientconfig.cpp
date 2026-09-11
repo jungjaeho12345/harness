@@ -172,9 +172,22 @@ Bounds sanitizeBounds(const Bounds &bounds, const QList<QRect> &workAreas)
         // The four canonical inequalities, spelled out. QRect::intersects() works on the
         // x + width - 1 convention and answers differently where rectangles share an edge;
         // touching is not overlapping here.
-        const bool overlaps = shaped.x < area.x() + area.width()
-            && shaped.x + shaped.width > area.x() && shaped.y < area.y() + area.height()
-            && shaped.y + shaped.height > area.y();
+        //
+        // qint64 on purpose: every term is an int, wholeNumber() accepts the whole int range and
+        // the file can be hand-edited, so x + width may leave the int range. Signed overflow is
+        // undefined behaviour - not a wrap this may lean on - and the observed effect was a
+        // negative sum reading as "on no monitor". Widening costs nothing and is total.
+        const qint64 left = shaped.x;
+        const qint64 top = shaped.y;
+        const qint64 right = left + shaped.width;
+        const qint64 bottom = top + shaped.height;
+        const qint64 areaLeft = area.x();
+        const qint64 areaTop = area.y();
+        const qint64 areaRight = areaLeft + area.width();
+        const qint64 areaBottom = areaTop + area.height();
+
+        const bool overlaps =
+            left < areaRight && right > areaLeft && top < areaBottom && bottom > areaTop;
         if (overlaps)
             return shaped;
     }
