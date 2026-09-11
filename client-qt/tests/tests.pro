@@ -38,7 +38,8 @@ SOURCES += main.cpp \
            logincontrollertest.cpp \
            listcontrollertest.cpp \
            listscreentest.cpp \
-           screeninventorytest.cpp
+           screeninventorytest.cpp \
+           timerpolicytest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -69,4 +70,5 @@ HEADERS += smoketest.h \
            logincontrollertest.h \
            listcontrollertest.h \
            listscreentest.h \
-           screeninventorytest.h
+           screeninventorytest.h \
+           timerpolicytest.h

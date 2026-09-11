@@ -33,6 +33,7 @@
 #include "singleinstancetest.h"
 #include "smoketest.h"
 #include "sseparsertest.h"
+#include "timerpolicytest.h"
 #include "windowpolicytest.h"
 
 #include <QApplication>
@@ -157,6 +158,7 @@ int main(int argc, char **argv)
     runTestClass<ListControllerTest>(baseArgs, logDir.path(), totals);
     runTestClass<ListScreenTest>(baseArgs, logDir.path(), totals);
     runTestClass<ScreenInventoryTest>(baseArgs, logDir.path(), totals);
+    runTestClass<TimerPolicyTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
