@@ -12,6 +12,8 @@
 //   CLIENT_QT_LIVE_ORIGIN                               the server
 //   CLIENT_QT_LIVE_USER / _PASSWORD                     the writer (creates the articles - role R)
 //   CLIENT_QT_LIVE_WATCH_USER / _WATCH_PASSWORD         the watcher (subscribes)
+//   CLIENT_QT_LIVE_REF_USER / _REF_PASSWORD             the reference reader - a third account: a
+//                                                       login ends the user's other sessions
 //   CLIENT_QT_LIVE_SSE_ROUNDS (default 5)               change frames to time
 //   CLIENT_QT_LIVE_SSE_IDLE_MS (default 0)              an idle wait before one more change
 //

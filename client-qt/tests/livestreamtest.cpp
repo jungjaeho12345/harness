@@ -8,6 +8,7 @@
 #include <QByteArray>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QList>
@@ -102,6 +103,7 @@ public:
     void close() { m_socket.abort(); }
 
     qint64 openedAt() const { return m_openedAt; }
+    qint64 firstBytesAt() const { return m_firstBytesAt; }
     const QList<qint64> &readyAt() const { return m_readyAt; }
     const QList<qint64> &changeAt() const { return m_changeAt; }
 
@@ -111,6 +113,8 @@ private:
     void onBytes()
     {
         const qint64 now = m_clock->elapsed();
+        if (m_firstBytesAt < 0)
+            m_firstBytesAt = now;  // the response head
         m_buffer += m_socket.readAll();
         while (m_buffer.count("event: ready") > m_readyAt.size())
             m_readyAt << now;
@@ -125,6 +129,7 @@ private:
     QByteArray m_sid;
     QByteArray m_buffer;
     qint64 m_openedAt = -1;
+    qint64 m_firstBytesAt = -1;
     QList<qint64> m_readyAt;
     QList<qint64> m_changeAt;
 };
@@ -138,9 +143,15 @@ void LiveStreamTest::measuresFrameDeliveryOnARealServer()
     const QString writerPassword = qEnvironmentVariable("CLIENT_QT_LIVE_PASSWORD");
     const QString watchUser = qEnvironmentVariable("CLIENT_QT_LIVE_WATCH_USER");
     const QString watchPassword = qEnvironmentVariable("CLIENT_QT_LIVE_WATCH_PASSWORD");
+    // A THIRD account for the reference reader: a login ends every other session of the same user
+    // (src/services/sessionService.js createSession) - sharing the watcher's account kills its stream.
+    const QString refUser = qEnvironmentVariable("CLIENT_QT_LIVE_REF_USER");
+    const QString refPassword = qEnvironmentVariable("CLIENT_QT_LIVE_REF_PASSWORD");
     QVERIFY2(!origin.isEmpty() && !writerUser.isEmpty() && !writerPassword.isEmpty() && !watchUser.isEmpty()
-                 && !watchPassword.isEmpty(),
-             "CLIENT_QT_LIVE_ORIGIN / _USER / _PASSWORD / _WATCH_USER / _WATCH_PASSWORD are required");
+                 && !watchPassword.isEmpty() && !refUser.isEmpty() && !refPassword.isEmpty(),
+             "CLIENT_QT_LIVE_ORIGIN / _USER / _PASSWORD / _WATCH_USER / _WATCH_PASSWORD / _REF_USER / "
+             "_REF_PASSWORD are required");
+    QVERIFY2(refUser != watchUser && refUser != writerUser && watchUser != writerUser, "three different accounts");
     const int rounds = envInt("CLIENT_QT_LIVE_SSE_ROUNDS", 5);
     const int idleMs = envInt("CLIENT_QT_LIVE_SSE_IDLE_MS", 0);
 
@@ -157,7 +168,7 @@ void LiveStreamTest::measuresFrameDeliveryOnARealServer()
     QCOMPARE(watcher.send(loginSpec(watchUser, watchPassword)).status, 200);
     QCOMPARE(writer.send(loginSpec(writerUser, writerPassword)).status, 200);
     RawStream raw(url.host(), quint16(url.port(80)), &clock);
-    QVERIFY(raw.login(watchUser, watchPassword));
+    QVERIFY(raw.login(refUser, refPassword));
 
     // What the head of the Qt stream says - the three suspects of open_questions (2).
     {
@@ -188,8 +199,24 @@ void LiveStreamTest::measuresFrameDeliveryOnARealServer()
     const qint64 qtStartedAt = clock.elapsed();
     stream.start();
     QTRY_VERIFY_WITH_TIMEOUT(qtReadyAt >= 0 && !raw.readyAt().isEmpty(), 10000);
-    qInfo("LIVE-SSE first frame (ready): qt=%lld ms raw=%lld ms (each from its own connect)",
-          qtReadyAt - qtStartedAt, raw.readyAt().first() - raw.openedAt());
+    // The Qt stream's time to its head is the ms of its net-request line (the transport writes it
+    // at the head); the raw reader stamps its first bytes.
+    qint64 qtHeadMs = -1;
+    {
+        QFile file(diag.filePath());
+        if (file.open(QIODevice::ReadOnly)) {
+            for (const QByteArray &line : file.readAll().split('\n')) {
+                const QJsonObject event = QJsonDocument::fromJson(line).object();
+                if (event.value(QStringLiteral("event")).toString() == QLatin1String("net-request")
+                    && event.value(QStringLiteral("route")).toString() == QLatin1String("stream"))
+                    qtHeadMs = event.value(QStringLiteral("ms")).toInteger();  // the last one = this stream
+            }
+        }
+    }
+    qInfo("LIVE-SSE first frame (ready): qt=%lld ms (head %lld ms) | raw=%lld ms (first bytes %lld ms) - each from "
+          "its own connect",
+          qtReadyAt - qtStartedAt, qtHeadMs, raw.readyAt().first() - raw.openedAt(),
+          raw.firstBytesAt() - raw.openedAt());
 
     // The change frames - from the trigger. The server writes the frame before it answers the POST
     // (server/index.js notifyChange on the route's stack), so both readers usually hear it while
