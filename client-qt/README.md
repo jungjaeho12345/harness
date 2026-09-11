@@ -1089,3 +1089,94 @@ M10-2b의 드라이버 증거는 `articles-list`가 아니라 **목록 진입의
 
 **서버·웹·Electron 클라·계약(`server/**`·`src/**`·`web/**`·`client/**`·`contract/**`·`docs/api-contract/**`)은 이
 모듈이 한 줄도 고치지 않는다.** 계약은 동결(P1)이고 클라이언트는 그것만 믿는다.
+
+## P4 마감 (2026-09-12 · step12)
+
+### 마감 실측 — 연속 2회 (두 회차 수치 전건 동일 · flake 0)
+
+같은 트리(`feat-77-qt-client-skeleton` · HEAD `8544a1b` · 트리 clean)에서 **전 커맨드를 연속 2회** 돌렸다.
+시간은 프로세스 전체 소요(ms)이고, 괄호 안은 그 커맨드가 자기 입으로 보고한 수치다.
+
+| # | 커맨드 | 회차 1 | 회차 2 |
+|---|---|---|---|
+| 1 | `cmd /c client-qt\build.bat` | exit 0 · 35,440 ms · `Totals: 305 passed, 0 failed (classes: 24)` · `BUILD OK` | exit 0 · 35,776 ms · **동일** |
+| 2 | `verify-qt-client --scenario boot --server exe` | exit 0 · 4,231 ms · 관측 8(A 4 · B 4) · 판정 33 · 실패 0 | exit 0 · 4,330 ms · **동일** |
+| 3 | `verify-qt-client --scenario login --server exe` | exit 0 · 5,499 ms · 관측 17(G 0 · L+ 12 · L- 5) · 판정 40 · 실패 0 | exit 0 · 5,504 ms · **동일** |
+| 4 | `verify-qt-client --scenario list --server exe` | exit 0 · 7,891 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 7,897 ms · **동일** |
+| 5 | `verify-qt-client --scenario list --server spring` | exit 0 · 11,786 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 12,006 ms · **동일** |
+| 6 | `npm test` | exit 0 · 21,453 ms · tests **1349** · pass 1349 · fail 0 · skipped 0 · suites 59 | exit 0 · 21,466 ms · **동일** |
+| 7 | `npm run lint` | exit 0 · 7,032 ms | exit 0 · 7,123 ms |
+| 8 | `npm run build` | exit 0 · 3,336 ms · `built in 2.08s`(3파일) | exit 0 · 3,377 ms · `built in 2.01s` |
+| 9 | `node scripts/spa-parity.mjs --java-home …` | exit 0 · 6,405 ms · 관측 **39** · diffs **0** · 허용 diff 528 | exit 0 · 6,174 ms · **동일** |
+| 10 | `node scripts/spool-parity.mjs --java-home …` | exit 0 · 7,367 ms · 폴더 3 · 파일 11 · diffs **0** · 눈감은 자리 66/66(db=sqlite) | exit 0 · 7,595 ms · **동일** |
+| 11 | `node scripts/spring-contract.mjs --parity --java-home …` | exit 0 · 55,755 ms · **313관측 diffs 0**(default 246 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3) | exit 0 · 55,851 ms · **동일** |
+| 12 | `git status --porcelain` | **무출력** | **무출력** |
+
+- **자산 지문(두 회차 · 각 회차의 측정 전·후 전부 동일)**: 리포 `news.db` **606,208 B · md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 무변**(읽기만 — DB로 열지 않았다) ·
+  `uploads/` **32파일 6,068,792 B** · `client-qt/release/news-client.exe` **362,496 B**(재빌드해도 크기는 같다 — **md5는 빌드마다 다르므로 원복 판정은 언제나 소스 diff로** 한다).
+- **`--java-home`이 필요한 이유**: 이 셸에는 `JAVA_HOME`이 없다. 9·10·11번은 `--java-home D:/agents/tools/jdk-25.0.4.1+1`(또는 `SPRING_JAVA_HOME`)이 없으면 **usage로 exit 1**이고, 그것은 회귀가 아니다.
+- **미측정(정직하게)**: `server-spring`의 `./mvnw clean verify`와 `tools/news-migrator`의 `clean verify`는 **이 phase에서 한 번도 돌리지 않았다**. 이 phase는 Java를 한 줄도 고치지 않았고
+  (`git diff -- server-spring tools` 무출력) spring 모드 하네스는 step0이 `-DskipTests package`로 만든 jar를 그대로 쓴다. **그러므로 「Java 테스트 1526/0」을 이 phase의 실측으로 인용하지 마라** — 그것은 phase 76의 값이다.
+
+### 무엇이 기계로 판정되는가 (그리고 무엇이 아닌가)
+
+**아래 표의 각 행은 실제로 도는 커맨드·테스트가 있다.** 대응이 없는 주장은 적지 않는다 — 있는 척하는 게이트가 가장 비싼 부채다.
+
+| 축 | 판정자 | 기준값(2026-09-12) |
+|---|---|---|
+| Qt 모듈 전부(셸 순수 판정 · net · 컨트롤러 · 화면) | `cmd /c client-qt\build.bat`(빌드 + `tests/release/client-qt-tests.exe`) | 305 passed · 0 failed · 24 classes. **실행한 테스트 함수가 0이면 러너가 green을 거부**한다(exit 2) |
+| 라우트 표 ↔ 동결 계약 39 · Model 35 · `x-edit-client` 3 · 금지 2 | 같은 커맨드 안의 `RouteContractTest` C-1~C-8(`docs/api-contract/endpoints.json`·`web/src/model/contract.js`를 **런타임에 읽는다**) | 표 37 + 금지 2 = 39 · `MODEL_KEYS` 35 개수·이름·순서 일치. **계약 파일이 없으면 skip이 아니라 FAIL 11** |
+| diag JSONL 계약(허용 이벤트 21 · 금지 키 7 · URL 리댁션 · 정본 바이트 대조) | `DiagTest` | 정본 `client/diag.js` 출력과 **바이트 동일**(매 빌드 로그에 두 줄이 나란히 찍힌다) |
+| SSE 프레임 파싱 · 종결 4사유 · 백오프 · 세션 종료 | `SseParserTest`·`ChangeStreamTest`(루프백 chunked 스텁) | 파서 16케이스 · 스트림 20케이스 |
+| 화면이 3개뿐인가(범위 확장 감지) | `ScreenInventoryTest` — 레지스트리 + `client-qt/src/**`·`app/**` 소스 스캔 교차 | `{login, list, setup}` + 창 껍데기 `{MainWindow}`. 네 번째를 **등록해도**(M11-4) **등록하지 않아도**(M11-5) red |
+| 부팅 2경로 · 단일 인스턴스 · 실사용자 폴더 무변 | `node scripts/verify-qt-client.mjs --scenario boot --server exe` | 관측 8 · 판정 33 · 실패 0 |
+| 로그인 성공/거부 · 훅 가드 거부 · 비밀번호 유출 0 · 라우트 원장 | `… --scenario login --server exe` | 관측 17 · 판정 40 · 실패 0 |
+| **P4 완료 게이트**(로그인 → 목록 → SSE 실시간 갱신) | `… --scenario list --server exe` **와** `--server spring` | 각각 관측 15 · 판정 30 · 실패 0 · N0 **11 → 12** · `articles-list` **정확히 2** |
+| 판정부 자신의 비공허성 | 드라이버가 시작 시 `scripts/lib/qtClientDiag.self-test.mjs`를 돌린다(pass ≥ 1 · fail 0) + `npm test`의 `test/harness-vacuity-guards.test.js`가 고아 자기검사를 red로 만든다 | 자기검사 65 · 고아 0 |
+| 기존 축(웹·서버·계약) 무회귀 | `npm test` · `npm run lint` · `npm run build` · `spa-parity` · `spool-parity` · `spring-contract --parity` | 위 실측표 6~11 |
+
+**기계가 판정하지 않는 것 — 여기에 있는 항목을 「검증됐다」고 적지 마라.**
+
+1. **화면 픽셀.** diag는 앱의 자기 신고이고 화면을 보지 못한다. 재조회는 하되 화면을 갱신하지 않는 변이(M11-2)에서 **드라이버는 green**이었다 — 그 자리는 `ListScreenTest`/`AppShellTest` 2건과 **육안 1항목**이 메운다.
+2. **목록 필터의 내용.** 필터를 `{status:['RDS']}`로 좁히는 변이(M11-3)도 **드라이버 green**이다(사전·트리거 기사가 전부 RDS다). `ListControllerTest`와 와이어 테스트가 잡는다.
+3. **요청 body shape의 전수 일치.** 라우트 표 대조가 보증하는 것은 「클라가 계약 밖 경로를 부르지 않는다」와 「부른 경로가 계약에 있다」까지다(step8 한계 문장 그대로). 본문 구성은 실기 200으로만 부분 확인된다.
+4. **실서버 왕복은 Model 35 중 6개**(`login`·`restoreSession`·`logout`·`queryArticles`·`subscribe` + 선택 `getArticle`)까지다. 나머지 29개는 **스텁 서버 위 요청 조립만** 잠갔다.
+5. **423(계정 잠금)·429(IP 제한)는 실기로 재현하지 않는다**(확정 결정 — 같은 인스턴스에서 재현하면 이후 시나리오의 로그인이 죽는다). 순수 매핑만 단위로 잠갔다.
+6. **폴링 배제는 관측 창(5초) 안의 주기에 대해서만 결정적이다.** 2초 주기(M11-1p)는 결정적으로 red지만, 창보다 긴 주기는 통과할 수 있다.
+7. **https·압축 프록시·원격 호스트의 SSE 지연**은 미측정이다(루프백 http에서 qt−raw median 1~2 ms).
+8. **실서버 왕복 QtTest**(`LiveServerTest`·`LiveStreamTest`)는 env 게이트 뒤에 있어 `build.bat`에서 **돌지도, skip으로 세지도 않는다** — **`build.bat` green은 실서버 동작의 증거가 아니다**(실서버 축은 드라이버 세 시나리오가 소유한다).
+
+### 육안 확인 체크리스트 (P4 — 자동 판정이 못 보는 축만)
+
+**여기에는 자동 판정이 되는 항목을 넣지 않았다.** 자동으로 판정되는 축은 위 표의 커맨드가 소유한다 — 자동 커맨드가 있는 항목을 육안으로 내리면
+그 축은 **다음 회차부터 아무도 안 본다**. 결과 칸에 `정상` / `제약 있음` / `미확인` 중 하나를 적는다.
+
+준비(한 번): ① `cmd /c client-qt\build.bat`(exit 0) ② 시험용 서버를 **임시 `DATA_DIR`** 로 띄운다(리포 `news.db`를 열지 마라) ③ `cmd /c client-qt\run.bat`
+— **`CLIENT_SELFTEST`도 `--scenario`도 주지 않는다**(자동화 훅이 아니라 사람이 쓰는 경로를 본다) ④ 주소 입력 화면에 서버 주소를 넣고 [연결 확인] → 저장 ⑤ `desk` 계정으로 로그인.
+
+| # | 항목 | 절차 | 기대 결과(판정 문구) | 실패하면 어디를 보는가 | 결과 |
+|---|---|---|---|---|---|
+| 1 | 목록이 **실제로 그려지는가** | 로그인 직후 목록 화면을 본다 | 표에 **11컬럼**(배부시간 없음)이 보이고 행이 최신순으로 차 있다 · 페이저에 `1 / N · 총 M건` · 상태 배지가 색으로 보인다 | diag가 `list-loaded{count}`를 남겼는데 화면이 비었으면 **뷰 결선**이다(M11-2의 모양). `ListScreenTest`를 먼저 돌려라 | |
+| 2 | SSE 갱신이 **눈에 보이는가** | 앱을 그대로 둔 채, **다른 계정**(예: `reporter`)으로 기사를 1건 만든다(웹·다른 클라·`curl` 무엇이든) | 아무것도 누르지 않았는데 **몇 백 ms 안에** 새 기사가 맨 위에 나타나고 `총 M+1건`이 된다 | 같은 계정으로 만들면 **클라 세션이 끊긴다**(같은 사용자 로그인이 기존 세션을 전부 무효화한다) — 계정을 먼저 확인하라. 그 다음 상단바의 실시간 표시 | |
+| 3 | **한글 표시·폰트** | 목록·상단바·배지·페이저·로그인 화면의 한글을 읽는다 | 깨진 글자(`???`·두부)나 잘림이 없고, 시간이 `YYYY-MM-DD HH:mm`으로 보인다 | 배치 파일·소스는 전부 ASCII로 유지돼 있다(한글은 UTF-8 소스 리터럴과 `appidentity.h`의 universal character name) — 깨지면 **폰트**가 아니라 인코딩 경로를 의심하라 | |
+| 4 | 상단바 **실시간 표시 점의 색** | 상단바 우측 `● 실시간`을 본다. 그 다음 서버를 잠깐 내려 `● 연결 끊김`도 본다 | **사람이 판정한다**: 현재 연결됨은 **빨간 점**이다(방송 「on-air」 관례). 두 상태를 나란히 보고 **빨강을 「오류」로 읽게 되는지** 판단해 적는다 | 자동 판정 불가 축이다(색은 코드에 상수로 있고 테스트는 「색이 있다」까지만 본다). 「오류로 읽힌다」는 답이면 **색 규약을 P6(테마·환경설정)로 올린다** — P4에서 고치지 않는다 | |
+
+**왜 이 넷은 자동화할 수 없는가**: 1·2는 **화면에 픽셀이 그려졌는가**이고 diag·서버 측 사실 어느 쪽도 그것을 보지 못한다(위 「기계가 판정하지 않는 것」 1·2).
+3은 글꼴 대체·자소 조합의 결과라 문자열 비교로는 드러나지 않는다. 4는 **판정 자체가 사람의 해석**이다.
+
+**여기 없는 것(자동 커맨드가 판정한다 — 육안으로 내리지 마라)**: 부팅·단일 인스턴스(`--scenario boot`) · 로그인 성공/거부와 훅 가드(`--scenario login`) ·
+SSE 실시간 갱신의 **기계 판정**(`--scenario list` — (i)(ii)(iii)) · 라우트 원장과 계약 대조(`build.bat`의 `RouteContractTest`) · 비밀번호·기사 제목·아이디 유출 0건(드라이버 매 실행).
+
+### P5(에디터 코어)가 곧바로 쓸 것
+
+정본은 `phases/77-qt-client-skeleton/index.json`의 **`forward_notes`**다. 코드에서 시작할 자리만 적는다.
+
+- **의존 방향**: `src/ui`(View) ← `src/ui`(Controller) ← `src/net`(Model 인터페이스). **컨트롤러는 위젯 타입을 모른다**(소스 스캔으로 잠겨 있다) ·
+  `src/shell`은 순수 판정 우선이고 파일시스템·OS는 주입 이음매(`ConfigFileSystem`·`ProbeRunner`·`Diag`) 뒤에 있다.
+- **새 모듈 등록 2곳**: `common.pri`의 `CLIENT_SOURCES`/`CLIENT_HEADERS`(앱과 테스트가 같은 코드를 컴파일한다) · `tests/main.cpp`의 `runTestClass<…>()` 한 줄.
+- **편집 표면 clientId 결선 지점**: 발급기와 보관소는 `src/net/editclientid.h`(`issueEditClientId()` · 복사·이동 **금지**인 `EditClientId`). P5는 **에디터 표면의 생성·소멸에 `EditClientId`의 수명을 붙인다** —
+  프로세스당·세션당·창당이 아니다. 전달은 `HttpNewsModel`의 `editClientId` 인자 → `RequestSpec::editClientId`이고, 전송 계층은 **`routetable.cpp`의 `sendsEditClient` 3행에서만** 싣는다(그 밖에서는 값이 있어도 붙지 않는다).
+  `lockerSessionId`·`lockerClientId`를 읽는 코드를 짜지 마라(어떤 응답에도 없다).
+- **diag 이벤트를 늘리려면**: `shell::allowedDiagEvents()`(21) + 신설 이벤트면 `contractedFields()` + 위 처분 표 + `DiagTest` 케이스. 집합 밖 이름은 `log()`가 **거부**한다.
+- **자동화 훅**: `CLIENT_SELFTEST=1` + `--scenario boot|login|list` + `CLIENT_SCENARIO_USER`/`_PASSWORD`. 드라이버는 `scripts/verify-qt-client.mjs`이고 **새 드라이버를 만들지 말고 시나리오를 덧붙인다**.
+- **P5 착수 전제**: 실물 **MS-IME 육안 확인**(P0 스파이크의 잔여) · 에디터 요구사항을 `docs/news.md`로 읽을 때는 **`docs/news-md-overrides.md`를 함께** 볼 것(줄 번호가 부딪히면 대장이 이긴다).
