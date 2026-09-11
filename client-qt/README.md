@@ -9,8 +9,13 @@
 ```
 cmd /c client-qt\build.bat        빌드(app + tests) 후 테스트 실행 — 실패하면 비-0 종료
 cmd /c client-qt\run.bat          앱 실행(인자는 그대로 전달)
-cmd /c client-qt\run.bat --selftest   창 없이 Qt 런타임 확인만 하고 0으로 종료
+cmd /c client-qt\run.bat --selftest   CLIENT_SELFTEST=1과 똑같이 부팅(창 생성·diag 기록·표시 없음)한 뒤
+                                      셸 불변식을 자기검사하고 이벤트 루프 없이 종료 — 통과 0 · 위반 1
 ```
+
+- `--selftest`는 **실제 부팅과 같은 user-data 폴더를 쓴다**(`CLIENT_USER_DATA`가 없으면 `%APPDATA%\기사작성기-qt`를
+  만든다). 하네스·검증은 언제나 `CLIENT_USER_DATA`로 임시 폴더를 준다. 같은 폴더를 쥔 인스턴스가 이미 떠 있으면
+  자기검사를 돌리지 못했으므로 **exit 1**이다(돌지 않은 자기검사가 성공으로 보고되는 길을 막는다).
 
 - **`run.bat`을 거치지 않고 `release\news-client.exe`를 맨 셸에서 실행하면 Qt DLL 부재로 즉사한다.** Qt는 동적
   링크이고 PATH에 `D:\agents\tools\Qt\6.8.3\msvc2022_64\bin`이 있어야 한다. Qt 경로의 정본은 **`env.bat` 한 곳**이고
@@ -25,9 +30,9 @@ cmd /c client-qt\run.bat --selftest   창 없이 Qt 런타임 확인만 하고 0
 ```
 client-qt.pro   subdirs(app, tests)     — 두 타깃을 순차 빌드
 common.pri      공통 소스/헤더 목록 · INCLUDEPATH · CONFIG(c++17) · QT 모듈
-src/shell/      프로브 판정 · config · diag · 창 정책            (step2~5)
+src/shell/      프로브 판정 · config · diag · 창 정책 · 단일 인스턴스 · 앱 셸   (step2~5)
 src/net/        라우트 표 · 전송 · Model 인터페이스 · SSE        (step7~9)
-src/ui/         로그인 · 목록 · 서버 주소 설정                   (step10~11)
+src/ui/         서버 주소 설정 · 빈 메인 창(step5) · 로그인 · 목록(step10~11)
 app/            TARGET = news-client        → client-qt/release/news-client.exe
 tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-qt-tests.exe
 ```
@@ -55,6 +60,12 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 | 설정 저장소(파일시스템 경계) | `client/lib/clientConfig.js` + `client/main.js`의 경로 결선 | `src/shell/configstore.{h,cpp}` · 테스트 `tests/configstoretest.{h,cpp}` | step3 |
 | OS 가시 이름 상수 블록 | (정본에 대응 파일 없음) | `src/shell/appidentity.h` | step3 |
 | 진단 JSONL(diag) | `client/diag.js` + `client/main.js`의 19개 호출 지점 | `src/shell/diag.{h,cpp}` · 테스트 `tests/diagtest.{h,cpp}` | step4 |
+| 창 정책(순수 결정) | `client/lib/windowPolicy.js` 39-42·46-53·61-62 + `client/main.js` 263-277·367-377의 결정부 | `src/shell/windowpolicy.{h,cpp}` · 테스트 `tests/windowpolicytest.{h,cpp}` | step5 |
+| 단일 인스턴스(잠금 + 알림) | `client/main.js` 55-63·81-89(`requestSingleInstanceLock` + `second-instance`) | `src/shell/singleinstance.{h,cpp}` · 테스트 `tests/singleinstancetest.{h,cpp}` | step5 |
+| 프로브 주입 지점 | `client/main.js` 188-200(`probeOrigin`) | `src/shell/proberunner.{h,cpp}` · 테스트 `tests/proberunnertest.{h,cpp}` | step5 |
+| 앱 셸(부팅·화면 수명·bounds 저장) | `client/main.js` 결선 전체(`wireApp`·`createAppWindow`·`showLocalWindow`·`saveBoundsFrom`·`persistConfig`) | `src/shell/appshell.{h,cpp}` · 테스트 `tests/appshelltest.{h,cpp}` | step5 |
+| 화면 2개 · 테마 상수 | `client/pages/setup.html` · (앱 창은 원격 SPA라 대응 없음) | `src/ui/setupscreen.*` · `src/ui/mainwindow.*` · `src/ui/theme.h` | step5 |
+| 합성 루트 | `client/main.js` 26-63 | `app/main.cpp` | step5 |
 
 ### `serverUrl` — 정본과의 의도적 이탈 (2026-09-10 · step2)
 
@@ -101,6 +112,8 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 - **R26 — 승격은 성공 판정일 때만.** `resolveFinalOrigin`은 프로브 성공/실패를 스스로 판정하지 않는다. 호출부가
   `verdict.ok ? resolveFinalOrigin(...) : {요청 origin, changed=false}`로 갈라야 하며, 그 잠금은 **프로브 실행
   step(step5·step7)의 몫**이다(정본에서도 이 규칙은 순수 함수가 아니라 `client/main.js` 결선에만 있다).
+  → **step5가 `shell::probeOrigin()`으로 이식해 행동 테스트로 잠갔다**(`promotesTheOriginOnlyOnASuccessfulProbe` · 변이
+  M5-10). step7의 실제 러너는 이 함수를 거쳐 호출돼야 한다.
 - **리다이렉트 최종 URL 관측 가능성은 미검증이다.** 정본조차 Electron 실왕복으로 검증한 적이 없다(phase 66 step4
   기록). Qt에서 `QNetworkReply::redirected`가 진짜 최종 URL을 주는지는 전송 계층 step이 **자기 손으로 실측**해야
   하고, 그 전에는 `resolveFinalOrigin`의 입력을 신뢰한다고 주장하면 안 된다.
@@ -282,6 +295,182 @@ URL 리댁션 17행(위 표의 케이스들)도 전부 정본을 직접 실행�
 **형식 상호운용도 실측했다**: C++가 쓴 diag 파일을 `scripts/verify-client.mjs`의 `readDiag`(94행)와 **같은 방식**으로
 (`split('\n')` → `filter(Boolean)` → `JSON.parse`) node로 읽어 **전 줄 파싱 · 전 줄 `event`·`ts` 보유 · CR 0바이트**를
 확인했다. 같은 판정을 `writesLinesTheJudgeCanParse`가 QtTest 안에서 상시 반복한다.
+
+### `appShell` — 부팅 순서와 두 부팅 경로 (2026-09-11 · step5)
+
+`app/main.cpp`는 **얇은 합성 루트**다: user-data 폴더를 해석하고, 잠금 가드·diag·설정 파일시스템·프로브 러너·
+workArea 공급원을 만들어 `shell::AppShell`에 **주입**한 뒤 이벤트 루프를 돈다. 결정은 전부 `src/shell`에 있고,
+화면(`src/ui`)은 받은 데이터를 그리고 신호만 낸다(전역·싱글턴에서 의존성을 꺼내지 않는다 — ADR-003의 정신).
+
+```
+(0) user-data 폴더 해석 — CLIENT_USER_DATA가 있으면 그것, 없으면 %APPDATA%\기사작성기-qt   (R1 · W-N3)
+(1) 잠금 가드(이름은 (0)의 폴더에서 파생) — 두 번째 실행이면 노크만 하고 exit 0              (R2)
+(2) user-data 폴더 생성 → app-ready → 설정 1회 읽기 → config-loaded{hasServerUrl}
+(3) serverUrl ? app-window{origin} : local-window{page:setup} → setup-shown{reason:no-config}
+    — 부팅 경로에 probe 없음(프로브는 사용자 액션에만)
+```
+
+실측 diag 원문(`run.bat` 경유 · `CLIENT_SELFTEST=1` · 임시 폴더):
+
+```
+A  {"event":"app-ready"} → {"event":"config-loaded","hasServerUrl":true} → {"event":"app-window","origin":"http://127.0.0.1:3001"}
+B  {"event":"app-ready"} → {"event":"config-loaded","hasServerUrl":false} → {"event":"local-window","page":"setup"}
+   → {"event":"setup-shown","reason":"no-config"}
+```
+
+- **B의 순서는 정본을 따른다(`local-window` → `setup-shown`).** `client/main.js:338-339`가 그 순서로 쓰고, 판정자
+  (`scripts/verify-client.mjs:293-303`)는 둘의 상대 순서를 고정하지 않는다(`local-window`는 별도 시퀀스로 존재만 본다).
+  step5.md 검증 절차 2-B의 산문은 `setup-shown` → `local-window`로 적었지만 X4(코드 > 계획 산문)로 코드를 따랐다.
+- **닫을 때의 bounds 저장은 `config-saved`를 남기지 않는다.** step5.md 배경 4는 「창을 닫을 때 bounds 1회 저장
+  (`config-saved`)」으로 적었지만, 정본 `saveBoundsFrom()` → `persistConfig()`는 **조용히** 쓰고 `config-saved{origin}`은
+  **주소 저장**(`saveServer`)에서만 남긴다(`main.js:136-137`). X4로 코드를 따랐다.
+- **`CLIENT_SELFTEST=1`**(값이 정확히 `"1"` — `main.js:28`): 창은 **생성**되고 diag도 전부 쓰이지만 **표시하지 않는다**.
+  그래서 `shown`이 영영 거짓이라 bounds도 저장되지 않는다(R10). 보안 경계가 아니라 사고 방지 장치다(ADR-018 ②).
+
+### 단일 인스턴스 — 잠금과 알림을 따로 만들었다 (R-instance-ipc)
+
+Electron `requestSingleInstanceLock()`은 **배타 잠금 + 두 번째 실행 알림**을 한 번에 준다. Qt에는 둘 다 없어 분리했다.
+
+| 기능 | 수단 | 이름 |
+|---|---|---|
+| 배타 잠금 | Windows named mutex(`CreateMutexW` · `ERROR_ALREADY_EXISTS` = 이미 누가 쥠) — 핸들이 살아 있는 동안이 잠금이고, 프로세스가 죽으면 OS가 치운다(잔류 잠금 없음) | `Local\ArticleClientQt-SingleInstance-<digest>` |
+| 두 번째 실행 알림 | 잠금 보유자가 `QLocalServer`(사용자 한정 접근)를 연다. 두 번째 실행은 `QLocalSocket`으로 붙었다 끊는다 — **연결 자체가 메시지** | `ArticleClientQt-Shell-<digest>` |
+
+- **`<digest>` = 해석된 user-data 폴더의 SHA-256 앞 16 hex**(구분자·`.`·끝 슬래시 정규화, 대소문자 접기 — Windows 경로는
+  대소문자 무시). 정본 잠금 키가 userData에서 파생되는 것(`main.js:6-7`)과 **같은 범위**다: 임시 `CLIENT_USER_DATA`로 뜬
+  하네스는 실사용자의 클라와 잠금을 다투지도, 그 창을 앞으로 끌어내지도 않는다. 그래서 **폴더 해석이 잠금보다 먼저**다
+  (R1) — `main.cpp`에서 가드는 폴더 문자열로부터만 만들어지므로 순서를 뒤집을 수 없다.
+- 기반 이름 두 개는 `src/shell/appidentity.h` 한 블록에 있고 **Electron 이름이 아니다**(R13 — 두 클라를 나란히 띄워 대조).
+- **두 번째 실행은 노크 외에 아무것도 하지 않는다**(R2): 폴더 생성·설정 읽기·diag 한 줄·창 전부 0. 실측 163 ms에 exit 0,
+  첫 인스턴스 diag에 새로 생긴 줄은 `second-instance` **한 줄뿐**이었다.
+- **첫 인스턴스**는 `second-instance`를 남기고, SELFTEST면 창을 건드리지 않으며, 아니면 앱 창(없으면 설정 화면)을 앞으로
+  가져온다 — **최소화일 때만** 최소화 비트를 풀고(R3), 그다음 `show` · `raise` · `activateWindow`.
+- **알려진 한계**: 두 실행이 **같은 순간** 뜨면 이긴 쪽이 `listen()` 하기 전에 진 쪽이 노크할 수 있다 — 진 쪽은 노크 실패를
+  무시하고 exit 0(잠금이 이미 1차 인스턴스의 존재를 증명했으므로 잃는 것은 「창을 앞으로」 한 번이다). 재시도 루프는
+  두지 않았다(ADR-008 — 앱 내 주기 작업 금지).
+
+### 창과 bounds — 정본 계약의 「살아 있는 창」 절반
+
+정본은 bounds 계약의 **순수 절반**(`sanitizeBoundsShape`·`sanitizeBounds`·`buildWindowOptions`)만 테스트로 잠갔고, 살아
+있는 창 절반(`createAppWindow`·`saveBoundsFrom`·second-instance 핸들러)은 BrowserWindow가 필요해 **무잠금**이었다. 이
+포트는 그 결정을 `src/shell/windowpolicy.*`의 순수 함수로 끌어내고, 결선은 `AppShell`에 가짜를 주입해 잠갔다.
+
+- **복원 = all-or-nothing.** 저장된 사각형이 **어느 workArea와도 겹치지 않으면 bounds 전체(위치 + 크기)를 버리고**
+  기본 1440×900으로 연다(`clientConfig.js:82`). 겹침은 **엄격 부등호**(모서리만 닿으면 겹침 아님) — 판정은 step3의
+  `sanitizeBounds` 하나이고, 복원 경로가 그것을 **실제로 부르는지**를 `opensAtTheDefaultsWhenNoWorkAreaHoldsTheStoredBounds`가
+  잠근다(위치를 받지 못한 창은 `WA_Moved`가 거짓 — `move(0,0)` 같은 센티널을 쓰지 않았다는 증거).
+- **최소 크기 상수는 2개이고 통일하지 않는다**(X5): 저장 검증 하한 **800×600** vs 창 최소 **1024×720**. 저장된 850×650은
+  검증을 **통과**한 뒤 창에서 **1024×720으로 조용히 clamp**된다(W-N1). `setMinimumSize`를 크기보다 **먼저** 부른다. 밴드
+  7행(850×650 · 800×600 · 1023×719 · 한 축만 밴드 2행 · 경계·상한 대조군 2행)을 새로 잠갔고, 두 상수를 합치면
+  `appshell.cpp`의 `static_assert`가 **컴파일을 막는다**.
+- **생성 후 최대화**(R8): 저장된 normal 사각형으로 만든 뒤 `maximized`면 `showMaximized()` — 최대화된 창 밑에 normal
+  사각형이 남는다.
+- **저장은 `normalGeometry()`**(R9 — `getNormalBounds()` 대응): 최대화 상태로 닫혀도 normal 사각형 + `maximized:true`를
+  저장한다. **포트 스펙이 「가정하지 말고 재라」고 한 stale/0 사각형 함정은 이 타깃(Windows · Qt 6.8.3)에서 재현되지 않았다** —
+  QtTest 바이너리를 **실 windows QPA**로도 1회 돌려(기본은 offscreen) 최대화 캡처 케이스가 green이었다(2026-09-11). 만일
+  빈 사각형이 오면 `capturedBounds`가 무효로 만들고, 아래 W-N2 규칙이 직전 값을 지킨다.
+- **화면에 뜬 적 없는 창은 저장하지 않는다**(R10) · **저장은 닫을 때 1회**(R11 — resize/move 훅 없음. 리사이즈·이동을 여러
+  번 해도 쓰기 0, 닫으면 정확히 1회를 행동으로 잠갔다) · **쓰기 실패는 삼키고 창은 닫힌다**(R12 — 표준 오류에 경고 1줄).
+- **닫는 시점 검증 실패 = 이전 값 유지 후 그대로 기록 — 정본 재현으로 결정했다**(W-N2). `main.js:371-373`에는 `else`가
+  없다: 모니터를 뗀 뒤 닫혀 지금 사각형이 어느 workArea와도 안 겹치면, 부팅 때 읽은(또는 마지막으로 통과한) 값을 **그대로
+  다시 쓴다** — null로 리셋하지도 새(무효) 위치를 쓰지도 않는다. 근거: 사용자가 마지막으로 **보이게** 둔 배치를 잃지 않는
+  쪽이 fail-safe이고, 리셋은 정본에 없는 새 동작이다.
+
+### 프로브 — 주입 지점만 있다. **연결 확인은 step7에서 실제 HTTP로 붙는다**
+
+- `shell::ProbeRunner`가 주입 지점이고, step5의 합성 루트는 **`UnimplementedProbeRunner`**를 넣는다: 요청을 **보내지
+  않고** 항상 `{ok:false, reason:"unreachable"}`을 돌려준다. **성공한 척하지 않는다.** 그 사실은 러너의
+  `limitationNotice()`가 설정 화면 하단에 **경고색으로 그대로 표시**한다 — 실제 러너(step7)가 주입되는 날 문구가 저절로
+  사라지도록 화면이 아니라 러너가 그 문장을 소유한다.
+- `shell::probeOrigin()`이 정본 `probeOrigin`(`main.js:188-200`)의 이식이고, 정본에서 `main.js` 텍스트 스캔으로만 잠겨
+  있던 **R26**(승격은 **성공 판정일 때만** — 캡티브 포털·오류 페이지로의 리다이렉트가 저장 주소를 바꾸지 못하게)을 행동
+  테스트로 잠갔다. diag는 `probe{origin, ok, finalOrigin, promoted[, reason]}` 한 줄(정본 필드 그대로).
+- 부팅 경로는 프로브를 부르지 않는다(A·B 실측 모두 `probe` 0줄). 프로브는 [연결 확인] 버튼에서만 돈다.
+
+### `appShell` — 정본과의 의도적 이탈 (2026-09-11 · step5)
+
+정본(`client/main.js`·`client/lib/windowPolicy.js`·`client/lib/clientConfig.js`)과 명세서(`test/**`)는 **한 줄도 고치지
+않았다**(읽기 전용).
+
+1. **[저장]은 프로브 없이 정규화 통과만으로 저장한다**(step5.md D의 결정). 정본 `saveServer`는 **먼저 프로브하고 성공한
+   판정의 최종 origin만** 저장한다(`main.js:129-134` — 「실패한 주소는 저장하지 않는다」). 러너가 미구현이라 정본 순서로는
+   저장이 영영 불가능하기 때문이며, **step7이 실제 러너를 붙일 때 정본 순서(프로브 성공 → 최종 origin 저장 · R26)로 되돌려야
+   한다.** 설정 화면 경고문이 이 사실도 함께 적는다.
+2. **잠금 = named mutex + `QLocalServer`, 알림 = 연결 자체.** Electron은 두 번째 실행의 argv/cwd를 실어 보내지만 정본이
+   쓰지 않으므로(`main.js:81`) 싣지 않았다.
+3. **최소화 복원은 `setWindowState(state & ~WindowMinimized)`다 — `showNormal()`이 아니다.** Electron `restore()`는
+   최소화 이전 상태로 돌아가지만 Qt `showNormal()`은 그 밑의 최대화까지 푼다. 포트 스펙 R3의 대응 스케치(`if (isMinimized())
+   showNormal()`)를 그대로 쓰면 「최대화 상태에서 최소화한 창」이 되살아날 때 최대화가 풀린다(변이 M5-3a가 red).
+4. **bounds 사각형은 창 프레임 제외(클라이언트 영역)다.** Electron bounds는 프레임 포함이다. 저장은 `normalGeometry()`,
+   복원은 `setGeometry()`로 **둘 다 프레임 제외**라 왕복이 일치한다 — `resize()`+`move()`로 복원하면 `move()`는 프레임
+   위치라 **재시작마다 창이 제목 표시줄 높이만큼 내려간다.** 두 클라는 파일을 공유하지 않으므로 호환 축이 아니고, workArea
+   겹침도 클라이언트 사각형으로 판정한다(바깥 사각형보다 몇 픽셀 작다 — 실무상 무의미).
+5. **「크기만 있고 위치 없는 bounds」는 표현할 수 없다**(R5 일부 타입 소멸). 유효한 `Bounds`는 네 정수를 모두 가져야
+   통과하므로(`sanitizeBoundsShape`), 위치 부재 경로는 「bounds 없음 = 기본값」에서만 생긴다. 그 경로가 창을 **옮기지 않는다**는
+   것을 `WA_Moved`로 잠갔다.
+6. **부팅 시 user-data 폴더를 만든다.** Electron은 Chromium이 userData를 시작 시 만든다 — Qt에는 그 주체가 없어 `AppShell`이
+   잠금을 쥔 **직후** 만든다(두 번째 실행은 만들지 않는다). 결과: 운영 첫 부팅은 빈 `%APPDATA%\기사작성기-qt`를 만든다
+   (Electron의 첫 부팅과 같다). 하네스 diag 파일이 그 폴더 안에 있으므로(`verify-client.mjs:208-209`) 폴더가 없으면
+   diag가 조용히 사라진다(diag는 폴더를 만들지 않는다 — step4 R17).
+7. **`app-window` payload는 `{origin}`이다**(정본 `{url: appUrl(origin)}` — `appUrl`은 R13 소멸). 앱 창 표시에서
+   `did-finish-load`는 남기지 않는다(원격 SPA 로드 개념이 없다 — Qt 부팅 시퀀스의 판정 어휘는 step6이 정한다).
+8. **`restart-required`는 발생하지 않는다.** 원인(secure-origin 스위치)이 네이티브에서 소멸했다(ADR-018 ⑤).
+9. **mutex 생성 자체가 실패하면(예: 같은 이름의 다른 종류 커널 객체) 경고 후 가드 없이 부팅한다.** 막아서 못 뜨게 하는 오탐보다
+   낫다는 ADR-012(서버 잠금)의 선택을 따랐다. `ERROR_ALREADY_EXISTS`(= 진짜 두 번째 실행)와는 다른 경로다.
+10. **메뉴(서버 변경 · 다시 연결 · 정보)는 이 step 범위 밖이다.** 그래서 주소를 한 번 저장하면 **화면 안에서 설정 화면으로
+    돌아갈 길이 없다**(`config.json`을 지우거나 `CLIENT_USER_DATA`로 새 폴더를 주는 수밖에 없다). 어느 step이 소유할지
+    계획에 없다 — step12 `forward_notes` 후보.
+11. **`--selftest`는 정본에 대응물이 없다.** CLIENT_SELFTEST 부팅 + 불변식 자기검사(부팅 후 잠금 보유 · 잠금 이름이 폴더에서
+    파생 · 화면 정확히 1개이고 부팅 판정과 일치 · 창 비표시 · 부팅 중 프로브 0 · diag 거부 0 · 셸 어휘 ⊂ step4 허용 집합).
+
+### `appShell` — 안전망 없는 규칙 11건의 처분
+
+포트 스펙 §6이 창/bounds/단일 인스턴스 축에서 「오늘 어떤 테스트로도 잠기지 않는다」고 지목한 11건 — **11건 전부 새 케이스로
+잠갔고, 각각 변이로 red를 실증했다.**
+
+| 규칙 | 잠근 케이스 | 변이 |
+|---|---|---|
+| R3 최소화일 때만 복원 · SELFTEST는 기록만 | `restoresOnlyAMinimizedWindow`(5행) · `bringsAMinimizedWindowBackWithoutUnmaximizingIt` · `leavesAMaximizedWindowMaximizedWhenActivated` · `recordsASecondInstanceWithoutTouchingWindowsUnderSelftest` | M5-3a · M5-3b |
+| R-instance-ipc 잠금 + 알림 분리 | `grantsTheLockToExactlyOneGuard` · `releasesTheLockWithItsHolder` · `carriesASecondLaunchToThePrimary` · `failsQuietlyWhenNobodyListens` · `aSecondShellOnTheSameFolderOpensNoWindow` | M5-1a · M5-1b |
+| R8 생성 후 최대화 | `startsMaximizedOnlyWhenTheStoredBoundsSaySo` · `restoresTheStoredRectangleThenMaximizes` | M5-9 |
+| R9 normal 사각형 저장 | `capturesTheNormalRectangleOfAMaximizedWindow` · `savesTheNormalRectangleOfAMaximizedWindow`(둘 다 「최대화가 실제로 다른 사각형」 비공허성 가드 포함 · 실 windows QPA에서도 green) | M5-4 |
+| R10 shown 게이트 | `savesBoundsOnlyForAWindowThatWasShown` · `doesNotSaveBoundsForAWindowThatWasNeverShown` | M5-8 |
+| R11 close 1회 · resize 훅 없음 | `savesBoundsOnceOnCloseAndNeverOnResize` | M5-5 |
+| R12 저장 실패 삼킴 | `closesEvenWhenTheConfigCannotBeWritten` | M5-14 |
+| R13 폴더·잠금 이름 분리 | step3 `namesAreDistinctFromTheElectronShell` + step5 `derivesTheNamesFromTheUserDataFolder`(실제로 쓰는 OS 객체 이름) | M5-13 (+ step3 M3-3) |
+| W-N1 clamp 밴드 | `clampsTheMinimumSizeBandToTheWindowMinimum`(7행) · `clampsBandBoundsToTheWindowMinimumOnBoot` · `usesTheCanonicalWindowConstants` + `static_assert` | M5-7a · M5-7b |
+| W-N2 닫는 시점 stale 유지 | `keepsThePreviousBoundsWhenTheClosingRectangleIsOffScreen` · `keepsThePreviousBoundsWhenTheWindowClosesOffScreen` | M5-6 |
+| W-N3 `CLIENT_USER_DATA` 조건부 | `followsTheResolvedUserDataFolder`(설정/미설정 두 갈래 모두 잠금 이름까지 따라감) | M5-13(이 케이스 포함 red) |
+
+부분 잠금 2건도 넓혔다: **R1**(정본은 AC의 grep 위치 게이트뿐) — 잠금 이름이 폴더 문자열의 함수라 순서가 구조로 강제되고,
+파생을 끊는 변이 M5-13이 red · **R2**(정본은 첫 인스턴스 쪽 절반만) — 두 번째 실행의 「폴더·설정·diag·창 0」을
+`staysSilentAsASecondInstance`가 잠그고 변이 M5-12(노크 전에 diag 1줄)가 red.
+
+### `appShell` — 변이 결과표 (2026-09-11 · 전건 기대 = 실제 · 원복 후 소스 md5 동일)
+
+| 변이 | 내용 | 결과(`build.bat`) |
+|---|---|---|
+| **M5-1a** | `AppShell::start()`에서 잠금 판정 제거 | exit 1 · 3 red(`staysSilentAsASecondInstance` · `aSecondShellOnTheSameFolderOpensNoWindow` · `selfTestPassesAfterACleanBoot`) |
+| M5-1a 프로세스 | 같은 변이 바이너리로 실프로세스 2개(`run.bat`) | 두 번째가 **15초 안에 끝나지 않고** 자기 `app-ready → config-loaded → app-window`를 씀(= 창 하나 더) · `second-instance` 없음 |
+| **M5-1b** | `ERROR_ALREADY_EXISTS` 무시(모든 가드가 1차) | exit 1 · 4 red(SingleInstance 3 + AppShell 1) |
+| **M5-2a** | 복원 경로가 workArea 검사 없이 구조 검사만 | exit 1 · 1 red(`opensAtTheDefaultsWhenNoWorkAreaHoldsTheStoredBounds`) |
+| **M5-2b** | `sanitizeBounds` 겹침을 항상 참으로 | exit 1 · 4 red(step3 2 + step5 2) |
+| M5-3a | 최소화 복원을 `showNormal()`로 | exit 1 · 1 red |
+| M5-3b | 최소화 여부와 무관하게 항상 `showNormal()` | exit 1 · 3 red |
+| M5-4 | `normalGeometry()` → `geometry()` | exit 1 · 2 red |
+| M5-5 | 리사이즈마다 저장(`resizeEvent` → `closing()`) | exit 1 · 1 red |
+| M5-6 | 닫는 시점 검증 실패 시 「bounds 없음」으로 리셋 | exit 1 · 2 red |
+| M5-7a | `setMinimumSize` 제거 | exit 1 · 8 red(밴드 표 7행 전부 + 부팅 경로 1) |
+| M5-7b | 저장 하한을 1024×720으로 통일 | exit 1 · **컴파일 실패**(`static_assert` C2338) |
+| M5-8 | 표시된 적 없는 창도 저장 | exit 1 · 2 red |
+| M5-9 | 저장된 `maximized` 무시 | exit 1 · 2 red |
+| M5-10 | 실패 판정에서도 승격(R26 위반) | exit 1 · 2 red(FAILURE 2행) |
+| M5-11 | 부팅 경로에 프로브 | exit 1 · 3 red |
+| M5-12 | 두 번째 실행이 노크 전에 diag 1줄 | exit 1 · 2 red |
+| M5-13 | 잠금 이름을 폴더와 무관하게 | exit 1 · 5 red |
+| M5-14 | 닫기 이벤트 거부 | exit 1 · 4 red |
+| M5-15a | 미구현 러너가 경고문을 숨김 | exit 1 · 2 red |
+| M5-15b | 미구현 러너가 성공한 척 | exit 1 · 3 red |
 
 ## 무엇이 P4가 아닌가
 
