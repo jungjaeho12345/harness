@@ -12,12 +12,16 @@
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
+#include "fakenewsmodeltest.h"
+#include "httpnewsmodeltest.h"
 #include "httpproberunnertest.h"
 #include "httptransporttest.h"
 #include "liveservertest.h"
 #include "netpolicytest.h"
 #include "proberunnertest.h"
 #include "querystringtest.h"
+#include "routecontracttest.h"
+#include "routetabletest.h"
 #include "serverurltest.h"
 #include "singleinstancetest.h"
 #include "smoketest.h"
@@ -134,6 +138,10 @@ int main(int argc, char **argv)
     runTestClass<NetPolicyTest>(baseArgs, logDir.path(), totals);
     runTestClass<HttpTransportTest>(baseArgs, logDir.path(), totals);
     runTestClass<HttpProbeRunnerTest>(baseArgs, logDir.path(), totals);
+    runTestClass<RouteTableTest>(baseArgs, logDir.path(), totals);
+    runTestClass<RouteContractTest>(baseArgs, logDir.path(), totals);
+    runTestClass<HttpNewsModelTest>(baseArgs, logDir.path(), totals);
+    runTestClass<FakeNewsModelTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.

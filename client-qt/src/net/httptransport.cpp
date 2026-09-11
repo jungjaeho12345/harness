@@ -1,6 +1,7 @@
 #include "net/httptransport.h"
 
 #include "net/querystring.h"
+#include "net/routetable.h"
 #include "shell/diag.h"
 
 #include <QElapsedTimer>
@@ -103,8 +104,15 @@ Outcome classifyResponse(const QString &routeId, int status, bool jsonOk, const 
 
 const QSet<QString> &editClientRouteIds()
 {
-    static const QSet<QString> ids{QStringLiteral("articles-lock"), QStringLiteral("articles-unlock"),
-                                   QStringLiteral("articles-update")};
+    // Derived from the route table's sendsEditClient column (step8) - one source, not two.
+    static const QSet<QString> ids = [] {
+        QSet<QString> fromTable;
+        for (const RouteSpec &route : routeTable()) {
+            if (route.sendsEditClient)
+                fromTable.insert(route.id);
+        }
+        return fromTable;
+    }();
     return ids;
 }
 

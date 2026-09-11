@@ -1,6 +1,7 @@
 #include "net/httpproberunner.h"
 
 #include "net/httptransport.h"
+#include "net/routetable.h"
 #include "shell/serverurl.h"
 
 namespace net {
@@ -12,10 +13,18 @@ shell::HealthVerdict HttpProbeRunner::probe(const QString &origin, QString *fina
     // A fresh transport - and so a fresh, empty cookie jar - per probe.
     HttpTransport transport(origin, m_diag);
 
+    // The health row of the route table (step8) - its only consumer is this runner. Without it
+    // nothing is sent (an empty path would probe the server root instead).
+    const RouteSpec *health = findRoute(QStringLiteral("health"));
+    if (!health) {
+        if (finalUrl)
+            finalUrl->clear();
+        return shell::interpretHealthResponse(-1, QByteArray());
+    }
     RequestSpec spec;
-    spec.routeId = QStringLiteral("health");  // endpoints.json id; path = shell::healthUrl() minus origin
-    spec.method = QStringLiteral("GET");
-    spec.path = QStringLiteral("/api/health");
+    spec.routeId = health->id;
+    spec.method = health->method;
+    spec.path = buildPath(health->id);
     spec.timeoutMs = m_timeoutMs;
     spec.redirects = RedirectPolicy::FollowUnlessDowngrade;  // a proxy/https redirect is followed (main.js:231-233)
     const HttpResponse response = transport.send(spec);

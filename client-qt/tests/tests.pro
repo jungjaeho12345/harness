@@ -24,7 +24,12 @@ SOURCES += main.cpp \
            netpolicytest.cpp \
            httptransporttest.cpp \
            httpproberunnertest.cpp \
-           liveservertest.cpp
+           liveservertest.cpp \
+           repofiles.cpp \
+           routetabletest.cpp \
+           routecontracttest.cpp \
+           httpnewsmodeltest.cpp \
+           fakenewsmodeltest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -40,4 +45,9 @@ HEADERS += smoketest.h \
            netpolicytest.h \
            httptransporttest.h \
            httpproberunnertest.h \
-           liveservertest.h
+           liveservertest.h \
+           repofiles.h \
+           routetabletest.h \
+           routecontracttest.h \
+           httpnewsmodeltest.h \
+           fakenewsmodeltest.h

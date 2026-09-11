@@ -70,7 +70,8 @@ Outcome classifyResponse(const QString &routeId, int status, bool jsonOk, const 
 
 // The three routes on which the server reads x-edit-client (server/index.js 932 / 961 / 974 =
 // articles-update / articles-lock / articles-unlock). Everywhere else the header is NOT sent,
-// even when a value is supplied. step8's route table has to agree with this set.
+// even when a value is supplied. Since step8 the set is DERIVED from the route table's
+// sendsEditClient column (net/routetable.h) - the table is the one source.
 const QSet<QString> &editClientRouteIds();
 bool sendsEditClient(const QString &routeId);
 
