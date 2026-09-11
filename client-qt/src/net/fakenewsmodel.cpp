@@ -24,6 +24,7 @@ using Handler = std::function<void(const QJsonObject &)>;
 // call order differ from run to run - rule 1).
 struct Registry {
     std::map<quint64, Handler> handlers;
+    std::map<quint64, std::function<void()>> sessionEnds;  // change streams: what endStreamSession() calls
     quint64 next = 1;
 };
 
@@ -32,14 +33,21 @@ class FakeSubscription : public Subscription
 public:
     FakeSubscription(const std::shared_ptr<Registry> &registry, quint64 id) : m_registry(registry), m_id(id) {}
     ~FakeSubscription() override { unsubscribe(); }
-    bool connected() const override { return m_active && !m_registry.expired(); }
+    // Connected while registered: unsubscribe(), a dead fake and endStreamSession() all end it.
+    bool connected() const override
+    {
+        const std::shared_ptr<Registry> registry = m_registry.lock();
+        return m_active && registry && registry->handlers.count(m_id) > 0;
+    }
     void unsubscribe() override
     {
         if (!m_active)
             return;
         m_active = false;
-        if (const std::shared_ptr<Registry> registry = m_registry.lock())
+        if (const std::shared_ptr<Registry> registry = m_registry.lock()) {
             registry->handlers.erase(m_id);
+            registry->sessionEnds.erase(m_id);
+        }
     }
 
 private:
@@ -621,13 +629,30 @@ ModelResult FakeNewsModel::runDistributionTick()
 }
 
 // --- realtime ------------------------------------------------------------------------------------
+void FakeNewsModel::endStreamSession()
+{
+    // Every change stream closes first (a handler may unsubscribe or subscribe again - safe), then
+    // each subscriber hears it in registration order: status down, then the session is over.
+    const std::map<quint64, std::function<void()>> ends = d->changes->sessionEnds;
+    d->changes->handlers.clear();
+    d->changes->sessionEnds.clear();
+    for (const auto &entry : ends)
+        entry.second();
+}
+
 std::unique_ptr<Subscription> FakeNewsModel::subscribe(const QVariantMap &filter, ChangeHandler onChange,
-                                                       StatusHandler onStatus)
+                                                       StatusHandler onStatus, SessionEndHandler onSessionEnd)
 {
     const quint64 id = d->changes->next++;
     d->changes->handlers.emplace(id, [filter, onChange](const QJsonObject &signal) {
         if (onChange)
             onChange(signal, filter);
+    });
+    d->changes->sessionEnds.emplace(id, [onStatus, onSessionEnd] {
+        if (onStatus)
+            onStatus(false);
+        if (onSessionEnd)
+            onSessionEnd();
     });
     if (onStatus)
         onStatus(true);  // the fake stream is connected at once (canonical)

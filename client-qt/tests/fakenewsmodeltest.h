@@ -38,6 +38,7 @@ private slots:
     void distributionFailuresAndTick();
     void subscriptionsEndWithTheirHandle();
     void subscribeLogsReplaysTheSeed();
+    void endsTheStreamSessionLikeTheServer();  // step9: the same order HttpNewsModel reports
 };
 
 #endif // CLIENT_QT_TESTS_FAKENEWSMODELTEST_H

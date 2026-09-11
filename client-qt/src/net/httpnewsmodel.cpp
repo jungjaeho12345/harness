@@ -1,9 +1,12 @@
 #include "net/httpnewsmodel.h"
 
+#include "net/changestream.h"
 #include "net/routetable.h"
 
 #include <QDateTime>
 #include <QJsonValue>
+#include <QObject>
+#include <QPointer>
 #include <QVariant>
 
 #include <cmath>
@@ -11,13 +14,64 @@
 namespace net {
 namespace {
 
-// subscribe() until step9 wires ChangeStream, and subscribeLogs() for the whole of P4: nothing is
-// opened, nothing is reported, unsubscribe() is a no-op.
+// subscribeLogs() for the whole of P4: nothing is opened, nothing is reported, unsubscribe() is a
+// no-op (the log stream is Z-only and P7's).
 class InertSubscription : public Subscription
 {
 public:
     bool connected() const override { return false; }
     void unsubscribe() override {}
+};
+
+// subscribe(): the canonical {connected(), unsubscribe()} handle over one ChangeStream (step9).
+//   ready        -> onStatus(true)
+//   change       -> onChange({kind} or {} , filter) - the caller's filter handed back as given (L80)
+//   any close but unsubscribe -> onStatus(false)   (httpModel.js:330-332 - unauthorized and error)
+//   unauthorized frame / 401 before opening -> onSessionEnd() after onStatus(false)
+// unsubscribe() - and dropping the handle - says nothing to the screen: it may be going away.
+class StreamSubscription : public Subscription
+{
+public:
+    StreamSubscription(HttpTransport *transport, const QVariantMap &filter, ChangeHandler onChange,
+                       StatusHandler onStatus, SessionEndHandler onSessionEnd)
+        : m_stream(new ChangeStream(transport, transport ? transport->diag() : nullptr))
+    {
+        ChangeStream *stream = m_stream.data();
+        QObject::connect(stream, &ChangeStream::readyReceived, stream, [onStatus] {
+            if (onStatus)
+                onStatus(true);
+        });
+        QObject::connect(stream, &ChangeStream::changed, stream, [onChange, filter](const QString &kind) {
+            if (onChange)
+                onChange(kind.isEmpty() ? QJsonObject() : QJsonObject{{QStringLiteral("kind"), kind}}, filter);
+        });
+        QObject::connect(stream, &ChangeStream::disconnected, stream, [onStatus](CloseReason reason, int) {
+            if (reason != CloseReason::Stopped && onStatus)
+                onStatus(false);
+        });
+        QObject::connect(stream, &ChangeStream::unauthorized, stream, [onSessionEnd] {
+            if (onSessionEnd)
+                onSessionEnd();
+        });
+        stream->start();
+    }
+    ~StreamSubscription() override { unsubscribe(); }
+
+    bool connected() const override { return m_stream && m_stream->isConnected(); }
+
+    void unsubscribe() override
+    {
+        ChangeStream *stream = m_stream.data();
+        m_stream = nullptr;
+        if (!stream)
+            return;
+        QObject::disconnect(stream, nullptr, nullptr, nullptr);  // no handler hears the stop
+        stream->stop();
+        stream->deleteLater();  // this may run inside one of the stream's own signals
+    }
+
+private:
+    QPointer<ChangeStream> m_stream;
 };
 
 // JS truthiness of dto.articleId (httpModel.js:189 - "if (dto.articleId)").
@@ -258,10 +312,13 @@ ModelResult HttpNewsModel::runDistributionTick()
 }
 
 // --- realtime --------------------------------------------------------------------------------------
-std::unique_ptr<Subscription> HttpNewsModel::subscribe(const QVariantMap &, ChangeHandler, StatusHandler)
+std::unique_ptr<Subscription> HttpNewsModel::subscribe(const QVariantMap &filter, ChangeHandler onChange,
+                                                       StatusHandler onStatus, SessionEndHandler onSessionEnd)
 {
-    // step9 replaces this with a ChangeStream on the stream route (the table's "stream" row).
-    return std::make_unique<InertSubscription>();
+    // One independent stream per call, like the canonical's new EventSource per subscribe() - two
+    // at once (writer + list) is the normal pattern (sse.md 90). Same session: the transport's jar.
+    return std::make_unique<StreamSubscription>(m_transport, filter, std::move(onChange), std::move(onStatus),
+                                                std::move(onSessionEnd));
 }
 
 // --- history / derive / translate / upload / snapshot ----------------------------------------------

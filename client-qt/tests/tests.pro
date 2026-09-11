@@ -29,7 +29,11 @@ SOURCES += main.cpp \
            routetabletest.cpp \
            routecontracttest.cpp \
            httpnewsmodeltest.cpp \
-           fakenewsmodeltest.cpp
+           fakenewsmodeltest.cpp \
+           ssestubserver.cpp \
+           sseparsertest.cpp \
+           changestreamtest.cpp \
+           livestreamtest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -50,4 +54,8 @@ HEADERS += smoketest.h \
            routetabletest.h \
            routecontracttest.h \
            httpnewsmodeltest.h \
-           fakenewsmodeltest.h
+           fakenewsmodeltest.h \
+           ssestubserver.h \
+           sseparsertest.h \
+           changestreamtest.h \
+           livestreamtest.h

@@ -14,8 +14,9 @@
 // against the route table on a loopback stub (tests/httpnewsmodeltest.cpp) - no P4 screen calls
 // them, so a real round trip for them is NOT verified here (P5/P7 own that).
 //
-// SSE: subscribe() is inert until step9 wires ChangeStream (it opens nothing and reports nothing).
-// subscribeLogs() stays inert for the whole of P4 - the log stream is Z-only and P7's.
+// SSE: subscribe() opens one ChangeStream per call on the table's "stream" row (step9 - see
+// net/changestream.h for the close/reconnect discipline). subscribeLogs() stays inert for the whole
+// of P4 - the log stream is Z-only and P7's.
 
 #include "net/newsmodel.h"
 
@@ -59,7 +60,7 @@ public:
     ModelResult retryDistribution(qint64 historyId) override;
     ModelResult runDistributionTick() override;
     std::unique_ptr<Subscription> subscribe(const QVariantMap &filter, ChangeHandler onChange,
-                                            StatusHandler onStatus) override;
+                                            StatusHandler onStatus, SessionEndHandler onSessionEnd) override;
     ModelResult queryHistory(const QString &articleId, bool sendOnly) override;
     ModelResult deriveArticle(const QString &articleId, const QString &mode) override;
     ModelResult translate(const QString &articleId, const QString &targetLang) override;

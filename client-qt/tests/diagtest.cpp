@@ -497,6 +497,29 @@ void DiagTest::keepsOnlyTheContractedFieldsOfTheNewEvents()
     QCOMPARE(keys, (QStringList{QStringLiteral("count"), QStringLiteral("menu")}));
 }
 
+// step9.md: sse-closed carries the close reason and, for pre-open-rejected, the HTTP status;
+// sse-change carries the kind (for the record - nothing judges by it); the rest carry nothing.
+void DiagTest::keepsOnlyTheContractedFieldsOfTheSseEvents()
+{
+    QVariantMap closed;
+    closed[QStringLiteral("reason")] = QStringLiteral("pre-open-rejected");
+    closed[QStringLiteral("status")] = 401;
+    closed[QStringLiteral("url")] = QStringLiteral("http://h:3001/api/stream");
+    closed[QStringLiteral("note")] = QStringLiteral("free text");
+    QStringList keys = redactDiagEvent(QStringLiteral("sse-closed"), closed).keys();
+    keys.sort();
+    QCOMPARE(keys, (QStringList{QStringLiteral("reason"), QStringLiteral("status")}));
+
+    QVariantMap change;
+    change[QStringLiteral("kind")] = QStringLiteral("create");
+    change[QStringLiteral("data")] = QStringLiteral("{\"kind\":\"create\"}");
+    change[QStringLiteral("status")] = 200;
+    QCOMPARE(redactDiagEvent(QStringLiteral("sse-change"), change).keys(), QStringList{QStringLiteral("kind")});
+
+    for (const QString &bare : {QStringLiteral("sse-open"), QStringLiteral("sse-ready"), QStringLiteral("sse-unauthorized")})
+        QVERIFY2(redactDiagEvent(bare, closed).isEmpty(), qPrintable(bare));
+}
+
 void DiagTest::dropsArticleAndUserTextFields_data()
 {
     QTest::addColumn<QString>("key");

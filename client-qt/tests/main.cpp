@@ -9,6 +9,7 @@
 //      normally. build.bat redirects, so each class logs to a temp file that we echo
 //      ourselves; otherwise the log would show a failure count and no diagnosis.
 #include "appshelltest.h"
+#include "changestreamtest.h"
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
@@ -17,6 +18,7 @@
 #include "httpproberunnertest.h"
 #include "httptransporttest.h"
 #include "liveservertest.h"
+#include "livestreamtest.h"
 #include "netpolicytest.h"
 #include "proberunnertest.h"
 #include "querystringtest.h"
@@ -25,6 +27,7 @@
 #include "serverurltest.h"
 #include "singleinstancetest.h"
 #include "smoketest.h"
+#include "sseparsertest.h"
 #include "windowpolicytest.h"
 
 #include <QApplication>
@@ -142,11 +145,16 @@ int main(int argc, char **argv)
     runTestClass<RouteContractTest>(baseArgs, logDir.path(), totals);
     runTestClass<HttpNewsModelTest>(baseArgs, logDir.path(), totals);
     runTestClass<FakeNewsModelTest>(baseArgs, logDir.path(), totals);
+    runTestClass<SseParserTest>(baseArgs, logDir.path(), totals);
+    runTestClass<ChangeStreamTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
     if (qEnvironmentVariableIsSet("CLIENT_QT_LIVE_ORIGIN"))
         runTestClass<LiveServerTest>(baseArgs, logDir.path(), totals);
+    // The same for step9's SSE delivery measurement (open_questions (2)).
+    if (qEnvironmentVariableIsSet("CLIENT_QT_LIVE_SSE"))
+        runTestClass<LiveStreamTest>(baseArgs, logDir.path(), totals);
 
     if (totals.classes == 0 || totals.tests == 0) {
         std::fprintf(stderr,

@@ -89,7 +89,7 @@ public:
     ModelResult retryDistribution(qint64 historyId) override;
     ModelResult runDistributionTick() override;
     std::unique_ptr<Subscription> subscribe(const QVariantMap &filter, ChangeHandler onChange,
-                                            StatusHandler onStatus) override;
+                                            StatusHandler onStatus, SessionEndHandler onSessionEnd) override;
     ModelResult queryHistory(const QString &articleId, bool sendOnly) override;
     ModelResult deriveArticle(const QString &articleId, const QString &mode) override;
     ModelResult translate(const QString &articleId, const QString &targetLang) override;
@@ -97,6 +97,11 @@ public:
     ModelResult getHistorySnapshot(const QString &articleId, qint64 historyId) override;
     std::unique_ptr<Subscription> subscribeLogs(LogHandler onLog, StatusHandler onStatus) override;
     ModelResult getLogsDigest() override;
+
+    // Test seam: the server ends every change stream as it does for a dead session - the
+    // unauthorized frame. Each subscriber hears onStatus(false) then onSessionEnd(), and its stream
+    // is closed for good (no more changes, connected() false). Same order as the real stream.
+    void endStreamSession();
 
 private:
     struct State;

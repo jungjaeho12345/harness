@@ -32,6 +32,7 @@
 #include <optional>
 
 class QNetworkAccessManager;
+class QNetworkReply;
 
 namespace shell {
 class Diag;
@@ -118,13 +119,24 @@ public:
     // Writes exactly one net-request{route,method,status,ms} diag line per call.
     HttpResponse send(const RequestSpec &spec);
 
+    // The streaming request (SSE - step9's ChangeStream). Same URL assembly, cookie jar, cache and
+    // redirect rules as send(), plus Accept: text/event-stream. It does NOT wait and has NO deadline
+    // on the body - the one exception to the request deadline (an idle stream is silent for hours);
+    // the caller reads the reply as it arrives, bounds the wait for the head itself, and owns the
+    // reply (deleteLater). Exactly one net-request line per call: when the status is known, or when
+    // the reply ends without one (status null). nullptr - and a status:null line - when the request
+    // cannot be built (not a GET, a body, an invalid URL); nothing is sent then.
+    QNetworkReply *openStream(const RequestSpec &spec);
+
     // Forget every cookie (logout; also done by send() itself on 401 + unauthenticated).
     void clearSession();
 
     QString origin() const;
+    shell::Diag *diag() const;  // may be null - the stream writes its sse-* lines to the same file
 
 private:
     void logRequest(const RequestSpec &spec, const HttpResponse &response, qint64 elapsedMs);
+    void logLine(const QString &routeId, const QString &method, int status, qint64 elapsedMs);
 
     QString m_origin;
     shell::Diag *m_diag = nullptr;

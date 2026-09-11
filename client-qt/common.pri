@@ -28,6 +28,8 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/net/newsmodel.cpp \
                  $$PWD/src/net/httpnewsmodel.cpp \
                  $$PWD/src/net/fakenewsmodel.cpp \
+                 $$PWD/src/net/sseparser.cpp \
+                 $$PWD/src/net/changestream.cpp \
                  $$PWD/src/ui/setupscreen.cpp \
                  $$PWD/src/ui/mainwindow.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
@@ -47,6 +49,8 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/net/newsmodel.h \
                  $$PWD/src/net/httpnewsmodel.h \
                  $$PWD/src/net/fakenewsmodel.h \
+                 $$PWD/src/net/sseparser.h \
+                 $$PWD/src/net/changestream.h \
                  $$PWD/src/ui/theme.h \
                  $$PWD/src/ui/setupscreen.h \
                  $$PWD/src/ui/mainwindow.h

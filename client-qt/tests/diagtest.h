@@ -58,6 +58,7 @@ private slots:
     void dropsRouteValuesThatCarryAConcreteId_data();
     void dropsRouteValuesThatCarryAConcreteId();
     void keepsOnlyTheContractedFieldsOfTheNewEvents();
+    void keepsOnlyTheContractedFieldsOfTheSseEvents();
     void dropsArticleAndUserTextFields_data();
     void dropsArticleAndUserTextFields();
 

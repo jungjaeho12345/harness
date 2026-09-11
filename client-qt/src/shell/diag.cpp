@@ -64,7 +64,8 @@ const QHash<QString, QStringList> &contractedFields()
         {QStringLiteral("sse-ready"), {}},
         {QStringLiteral("sse-change"), {QStringLiteral("kind")}},
         {QStringLiteral("sse-unauthorized"), {}},
-        {QStringLiteral("sse-closed"), {QStringLiteral("reason")}},
+        // step9: reason is one of the four CloseReason names; status only for pre-open-rejected.
+        {QStringLiteral("sse-closed"), {QStringLiteral("reason"), QStringLiteral("status")}},
         {QStringLiteral("list-loaded"), {QStringLiteral("menu"), QStringLiteral("count")}}};
     return table;
 }

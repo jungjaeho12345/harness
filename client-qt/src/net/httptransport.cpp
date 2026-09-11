@@ -19,6 +19,9 @@
 #include <QVariant>
 #include <QVariantMap>
 
+#include <chrono>
+#include <memory>
+
 namespace net {
 namespace {
 
@@ -230,12 +233,66 @@ void HttpTransport::clearSession()
     m_manager->setCookieJar(new QNetworkCookieJar(m_manager.get()));
 }
 
+QNetworkReply *HttpTransport::openStream(const RequestSpec &spec)
+{
+    QElapsedTimer clock;
+    clock.start();
+    const QUrl url = QUrl::fromEncoded((m_origin + spec.path + buildQuery(spec.query)).toUtf8(), QUrl::StrictMode);
+    if (!url.isValid() || spec.method.toLatin1() != "GET" || spec.body.has_value()) {
+        logLine(spec.routeId, spec.method, -1, clock.elapsed());
+        return nullptr;
+    }
+
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, qtRedirectPolicy(spec.redirects));
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+    // What EventSource sends (WHATWG). The server does not read it; a proxy in between may.
+    request.setRawHeader("Accept", "text/event-stream");
+    // The one request whose body has no deadline (step7 R13's exception): an idle stream is silent
+    // for hours. Explicit, so a manager-wide transfer timeout set later cannot cut it.
+    request.setTransferTimeout(std::chrono::milliseconds::zero());
+    if (sendsEditClient(spec.routeId) && !spec.editClientId.isEmpty())
+        request.setRawHeader("x-edit-client", spec.editClientId.toUtf8());
+
+    QNetworkReply *reply = m_manager->get(request);
+
+    // Exactly one net-request line: at the head (the status is known), or when the reply ends
+    // without one (refused, reset, aborted before the head - status null, as send() writes it).
+    const auto logged = std::make_shared<bool>(false);
+    const QString route = spec.routeId;
+    const QString method = spec.method;
+    const auto logOnce = [this, reply, logged, clock, route, method] {
+        if (*logged)
+            return;
+        *logged = true;
+        const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+        logLine(route, method, status.isValid() ? status.toInt() : -1, clock.elapsed());
+    };
+    QObject::connect(reply, &QNetworkReply::metaDataChanged, reply, [reply, logOnce] {
+        if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).isValid())
+            logOnce();
+    });
+    QObject::connect(reply, &QNetworkReply::finished, reply, logOnce);
+    return reply;
+}
+
 QString HttpTransport::origin() const
 {
     return m_origin;
 }
 
+shell::Diag *HttpTransport::diag() const
+{
+    return m_diag;
+}
+
 void HttpTransport::logRequest(const RequestSpec &spec, const HttpResponse &response, qint64 elapsedMs)
+{
+    logLine(spec.routeId, spec.method, response.status, elapsedMs);
+}
+
+void HttpTransport::logLine(const QString &routeId, const QString &method, int status, qint64 elapsedMs)
 {
     if (!m_diag)
         return;
@@ -243,9 +300,9 @@ void HttpTransport::logRequest(const RequestSpec &spec, const HttpResponse &resp
     // id - a concrete path would keep its article id (diag redaction is fail-open on relative
     // paths), and a query value could be a headline.
     QVariantMap payload;
-    payload.insert(QStringLiteral("route"), spec.routeId);
-    payload.insert(QStringLiteral("method"), spec.method);
-    payload.insert(QStringLiteral("status"), response.status >= 0 ? QVariant(response.status) : QVariant());
+    payload.insert(QStringLiteral("route"), routeId);
+    payload.insert(QStringLiteral("method"), method);
+    payload.insert(QStringLiteral("status"), status >= 0 ? QVariant(status) : QVariant());
     payload.insert(QStringLiteral("ms"), elapsedMs);
     m_diag->log(QStringLiteral("net-request"), payload);
 }

@@ -707,3 +707,34 @@ void FakeNewsModelTest::subscribeLogsReplaysTheSeed()
     QVERIFY(sub->connected());
     QCOMPARE(items(fake.getLogsDigest()).size(), 2);
 }
+
+// step9: what the real stream does on the unauthorized frame - status down, then "session over",
+// then silence - so a controller test on the fake sees the order it will see on the wire.
+void FakeNewsModelTest::endsTheStreamSessionLikeTheServer()
+{
+    FakeSeed seed;
+    seed.articles << QJsonObject{{QStringLiteral("articleId"), QStringLiteral("AKR1")}};
+    FakeNewsModel fakeModel(seed);
+    net::INewsModel &fake = fakeModel;
+    QStringList heard;
+    std::unique_ptr<net::Subscription> sub = fake.subscribe(
+        QVariantMap(), [&heard](const QJsonObject &, const QVariantMap &) { heard << QStringLiteral("change"); },
+        [&heard](bool up) { heard << (up ? QStringLiteral("up") : QStringLiteral("down")); },
+        [&heard] { heard << QStringLiteral("session-end"); });
+    // The optional handlers are optional here too.
+    const std::unique_ptr<net::Subscription> bare =
+        fake.subscribe(QVariantMap(), [](const QJsonObject &, const QVariantMap &) {});
+
+    fake.applyAction(QStringLiteral("AKR1"), QStringLiteral("send"));
+    fakeModel.endStreamSession();
+    QCOMPARE(heard, (QStringList{QStringLiteral("up"), QStringLiteral("change"), QStringLiteral("down"),
+                                 QStringLiteral("session-end")}));
+    QVERIFY(!sub->connected());
+    QVERIFY(!bare->connected());
+
+    fake.applyAction(QStringLiteral("AKR1"), QStringLiteral("send"));  // closed for good
+    fakeModel.endStreamSession();                                       // nothing left to end
+    QCOMPARE(heard.size(), 4);
+    sub->unsubscribe();  // still safe after the stream ended itself
+    QVERIFY(!sub->connected());
+}

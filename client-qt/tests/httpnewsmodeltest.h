@@ -27,6 +27,11 @@ private slots:
     void forgetsTheSessionOnLogoutWhateverTheServerSays();
     void resolvesUploadFilenamesLikeTheCanonical();
     void neverOpensTheLogStreamInP4();
+
+    // step9: subscribe() over ChangeStream
+    void subscribeRunsTheChangeStream();
+    void subscribeEndsTheSessionOnlyWhenTheStreamSaysSo();
+    void unsubscribeIsSilentToTheScreen();
 };
 
 #endif // CLIENT_QT_TESTS_HTTPNEWSMODELTEST_H

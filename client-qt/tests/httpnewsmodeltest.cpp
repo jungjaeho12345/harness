@@ -1,5 +1,6 @@
 #include "httpnewsmodeltest.h"
 
+#include "ssestubserver.h"
 #include "stubhttpserver.h"
 
 #include "net/editclientid.h"
@@ -548,4 +549,150 @@ void HttpNewsModelTest::neverOpensTheLogStreamInP4()
     logs->unsubscribe();  // idempotent
     QVERIFY(stub.requests().isEmpty());
     QCOMPARE(records, 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// step9: subscribe() is a ChangeStream on the table's "stream" row, behind the canonical handle
+// {connected(), unsubscribe()} and the canonical callbacks (httpModel.js:313-337).
+
+namespace {
+
+SseAnswer sseLoginAnswer()
+{
+    SseAnswer answer = SseAnswer::complete(
+        200, "application/json; charset=utf-8",
+        R"json({"ok":true,"sessionId":"sid-m","user":{"userId":"desk","name":"D","role":"D","department":"E","departmentCode":"EC","active":"Y"}})json");
+    answer.headers.append({"Set-Cookie", sessionCookieLine("sid-m")});
+    return answer;
+}
+
+} // namespace
+
+void HttpNewsModelTest::subscribeRunsTheChangeStream()
+{
+    SseStubServer stub;
+    QVERIFY(stub.listen());
+    stub.handle([](const StubRequest &request, int) {
+        return request.target == "/api/login" ? sseLoginAnswer() : SseAnswer::stream(kSseReadyFrame);
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString diagPath = QDir(dir.path()).filePath(QStringLiteral("diag.jsonl"));
+    shell::Diag diag(diagPath);
+    net::HttpTransport transport(stub.origin(), &diag);
+    net::HttpNewsModel httpModel(&transport);
+    net::INewsModel &model = httpModel;
+    QVERIFY(model.login(QStringLiteral("desk"), QStringLiteral("pw")).ok());
+
+    QList<QJsonObject> signals_;
+    QList<QVariantMap> filters;
+    QList<bool> statuses;
+    int ended = 0;
+    std::unique_ptr<net::Subscription> sub = model.subscribe(
+        QVariantMap{{QStringLiteral("menu"), QStringLiteral("desk")}},
+        [&signals_, &filters](const QJsonObject &signal, const QVariantMap &filter) {
+            signals_ << signal;
+            filters << filter;
+        },
+        [&statuses](bool up) { statuses << up; }, [&ended] { ++ended; });
+    QVERIFY(sub != nullptr);
+    QVERIFY(!sub->connected());  // httpModel.test.js:387
+    QTRY_COMPARE_WITH_TIMEOUT(statuses, QList<bool>{true}, 5000);
+    QVERIFY(sub->connected());
+    QCOMPARE(stub.requests().at(1).target, QByteArray("/api/stream"));
+    QVERIFY(stub.requests().at(1).header("cookie").contains("sid=sid-m"));  // the login's session
+
+    stub.write(1, sseChangeFrame("create") + "event: change\ndata: not-json\n\n");
+    QTRY_COMPARE_WITH_TIMEOUT(signals_.size(), 2, 5000);
+    QCOMPARE(compact(signals_.at(0)), QByteArray(R"json({"kind":"create"})json"));  // no row data (L80)
+    QCOMPARE(compact(signals_.at(1)), QByteArray("{}"));  // httpModel.js:319-324 - unparseable is {}
+    for (const QVariantMap &filter : filters)
+        QCOMPARE(filter.value(QStringLiteral("menu")).toString(), QStringLiteral("desk"));  // handed back as given
+
+    stub.write(1, kSseUnauthorizedFrame);
+    QTRY_COMPARE_WITH_TIMEOUT(ended, 1, 5000);
+    QCOMPARE(statuses, (QList<bool>{true, false}));  // httpModel.js:330 - setStatus(false), then close
+    QVERIFY(!sub->connected());
+    sub->unsubscribe();
+    sub->unsubscribe();  // idempotent after the stream closed itself (httpModel.test.js:693)
+    QTest::qWait(300);
+    QCOMPARE(stub.streamRequestCount(), 1);
+    QCOMPARE(signals_.size(), 2);
+
+    // The stream is in the route ledger under its id (step11 expects "stream").
+    int streamLines = 0;
+    for (const QJsonObject &event : readEvents(diagPath)) {
+        if (event.value(QStringLiteral("event")).toString() == QLatin1String("net-request")
+            && event.value(QStringLiteral("route")).toString() == QLatin1String("stream"))
+            ++streamLines;
+    }
+    QCOMPARE(streamLines, 1);
+}
+
+// Before the stream opens: a 401 ends the session (back to login), a 503 only reports "down".
+void HttpNewsModelTest::subscribeEndsTheSessionOnlyWhenTheStreamSaysSo()
+{
+    for (const int status : {401, 503}) {
+        SseStubServer stub;
+        QVERIFY(stub.listen());
+        stub.handle([status](const StubRequest &, int) {
+            return SseAnswer::complete(status, "application/json; charset=utf-8",
+                                       status == 401 ? QByteArray(R"json({"ok":false,"reason":"unauthenticated"})json")
+                                                     : QByteArray(R"json({"ok":false,"reason":"unavailable"})json"));
+        });
+        net::HttpTransport transport(stub.origin(), nullptr);
+        net::HttpNewsModel httpModel(&transport);
+        net::INewsModel &model = httpModel;
+        QList<bool> statuses;
+        int ended = 0;
+        int changes = 0;
+        const std::unique_ptr<net::Subscription> sub = model.subscribe(
+            QVariantMap(), [&changes](const QJsonObject &, const QVariantMap &) { ++changes; },
+            [&statuses](bool up) { statuses << up; }, [&ended] { ++ended; });
+        QTRY_COMPARE_WITH_TIMEOUT(statuses, QList<bool>{false}, 5000);
+        QTest::qWait(100);
+        QCOMPARE(ended, status == 401 ? 1 : 0);
+        QCOMPARE(changes, 0);
+        QVERIFY(!sub->connected());
+        QCOMPARE(stub.streamRequestCount(), 1);
+    }
+}
+
+void HttpNewsModelTest::unsubscribeIsSilentToTheScreen()
+{
+    SseStubServer stub;
+    QVERIFY(stub.listen());
+    net::HttpTransport transport(stub.origin(), nullptr);
+    net::HttpNewsModel httpModel(&transport);
+    net::INewsModel &model = httpModel;
+
+    QList<bool> statuses;
+    std::unique_ptr<net::Subscription> sub =
+        model.subscribe(QVariantMap(), [](const QJsonObject &, const QVariantMap &) {},
+                        [&statuses](bool up) { statuses << up; });
+    QTRY_COMPARE_WITH_TIMEOUT(statuses, QList<bool>{true}, 5000);
+    sub->unsubscribe();
+    QVERIFY(!sub->connected());
+    QTRY_VERIFY_WITH_TIMEOUT(!stub.isOpen(0), 5000);  // the stream is really closed
+    QCOMPARE(statuses, QList<bool>{true});  // no call into a screen that may be going away
+
+    // Dropping the handle does the same.
+    std::unique_ptr<net::Subscription> second =
+        model.subscribe(QVariantMap(), [](const QJsonObject &, const QVariantMap &) {},
+                        [&statuses](bool up) { statuses << up; });
+    QTRY_COMPARE_WITH_TIMEOUT(statuses.size(), 2, 5000);
+    second.reset();
+    QTRY_VERIFY_WITH_TIMEOUT(!stub.isOpen(1), 5000);
+    QCOMPARE(statuses, (QList<bool>{true, true}));
+
+    // Net port spec R13: the status and session handlers are optional - a subscription with only
+    // onChange lives through a change and the terminal frame.
+    int changes = 0;
+    const std::unique_ptr<net::Subscription> bare =
+        model.subscribe(QVariantMap(), [&changes](const QJsonObject &, const QVariantMap &) { ++changes; });
+    QTRY_VERIFY_WITH_TIMEOUT(bare->connected(), 5000);
+    stub.write(2, sseChangeFrame("lock") + kSseUnauthorizedFrame);
+    QTRY_VERIFY_WITH_TIMEOUT(!bare->connected(), 5000);
+    QCOMPARE(changes, 1);
+    QCOMPARE(stub.streamRequestCount(), 3);
 }

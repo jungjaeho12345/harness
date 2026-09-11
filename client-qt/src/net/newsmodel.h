@@ -71,6 +71,10 @@ public:
 using ChangeHandler = std::function<void(const QJsonObject &signal, const QVariantMap &filter)>;
 using StatusHandler = std::function<void(bool connected)>;
 using LogHandler = std::function<void(const QJsonObject &record)>;
+// The stream said the session is over - the unauthorized frame, or a 401 before the stream opened
+// (step9). The stream has already stopped for good; the screen goes back to login (step10). A
+// native addition: the canonical only closes its EventSource and reports onStatus(false).
+using SessionEndHandler = std::function<void()>;
 
 class INewsModel
 {
@@ -123,8 +127,11 @@ public:
     virtual ModelResult runDistributionTick() = 0;
 
     // --- realtime (28) ---------------------------------------------------------------------------
+    // onStatus(true) on ready, onStatus(false) when the stream drops or closes - never on
+    // unsubscribe (the screen may be going away). onSessionEnd after the stream ended the session.
     virtual std::unique_ptr<Subscription> subscribe(const QVariantMap &filter, ChangeHandler onChange,
-                                                    StatusHandler onStatus = StatusHandler()) = 0;
+                                                    StatusHandler onStatus = StatusHandler(),
+                                                    SessionEndHandler onSessionEnd = SessionEndHandler()) = 0;
 
     // --- history / derive / translate / upload / snapshot (29-33) --------------------------------
     virtual ModelResult queryHistory(const QString &articleId, bool sendOnly = false) = 0;
