@@ -11,14 +11,24 @@
 //   OS 기본 키 목록만 import 해 재사용한다.
 // 하네스 3키(CLIENT_USER_DATA·CLIENT_DIAG_FILE·CLIENT_SELFTEST)는 Electron 셸에서 이름 그대로 승계했다
 // (client-qt/src/shell/appidentity.h). 부모의 같은 키·QT_*·NODE_OPTIONS 는 허용목록 밖이라 실리지 않는다.
+// step10: 시나리오 자격 2키(CLIENT_SCENARIO_USER·CLIENT_SCENARIO_PASSWORD)는 **호출자가 명시로 줄 때만** 싣는다(부모 env 에서
+//   절대 물려받지 않는다). selftest:false 는 가드 거부 실증(「CLIENT_SELFTEST 없이 --scenario 는 부팅 전에 거부된다」) 전용이다.
 
 import { osEnvAllowlist } from './integrationMode.mjs';
 
-export function qtClientEnv({ parentEnv = {}, platform, qtBinDir, userDataDir, diagFile } = {}) {
+export function qtClientEnv({ parentEnv = {}, platform, qtBinDir, userDataDir, diagFile, selftest = true, scenario } = {}) {
   const required = { qtBinDir, userDataDir, diagFile };
   for (const [key, v] of Object.entries(required)) {
     if (v === undefined || v === null || String(v).trim() === '') {
       throw new Error(`Qt 자식 env 조립 거부: ${key} 미지정 — 조용한 기본값 폴백은 없다(실사용자 폴더로 새는 길).`);
+    }
+  }
+  if (typeof selftest !== 'boolean') throw new Error(`Qt 자식 env 조립 거부: selftest 는 true|false 다: ${String(selftest)}`);
+  if (scenario !== undefined) {
+    const { userId, password } = scenario ?? {};
+    for (const [key, v] of Object.entries({ userId, password })) {
+      // 값은 오류 메시지에 싣지 않는다(비밀번호가 로그로 새는 길).
+      if (typeof v !== 'string' || v === '') throw new Error(`Qt 자식 env 조립 거부: scenario.${key} 는 비지 않은 문자열이어야 한다.`);
     }
   }
   const env = {};
@@ -32,6 +42,11 @@ export function qtClientEnv({ parentEnv = {}, platform, qtBinDir, userDataDir, d
   env.PATH = pathParts.join(platform === 'win32' ? ';' : ':');
   env.CLIENT_USER_DATA = String(userDataDir);
   env.CLIENT_DIAG_FILE = String(diagFile);
-  env.CLIENT_SELFTEST = '1'; // 창을 띄우지 않는다(검증이 데스크톱을 점유하지 않는다) — 보안 경계가 아닌 사고 방지 장치(ADR-018).
+  // 창을 띄우지 않는다(검증이 데스크톱을 점유하지 않는다) · 시나리오 훅을 연다 — 보안 경계가 아닌 사고 방지 장치(ADR-018).
+  if (selftest) env.CLIENT_SELFTEST = '1';
+  if (scenario !== undefined) {
+    env.CLIENT_SCENARIO_USER = scenario.userId;
+    env.CLIENT_SCENARIO_PASSWORD = scenario.password;
+  }
   return env;
 }

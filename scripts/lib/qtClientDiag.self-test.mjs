@@ -12,6 +12,9 @@
 //   · 라우트 원장 ①~④ — 특히 ④ 정확 횟수(폴링 클라 배제)가 **지정 라우트에만** 걸리는가
 //   · 부팅 경로 A/B 판정이 step5 실측 diag 에 green 이고, 이벤트 하나를 빼거나 더하면 red 인가
 //   · Qt 자식 env 가 부모 PATH 를 상속하지 않고 Qt bin 을 싣는가(--qt-bin 오지정이 무음 green 이 되는 길)
+//   · (step10) 로그인 성공/거부 판정 — 거부인데 화면이 넘어간 diag(session 요청이 생긴다)가 red 인가(M10-2 의 판정부 쪽 증거)
+//   · (step10) 비밀 유출 점검이 원문·JSON 이스케이프 형을 세고, 보고에 비밀을 싣지 않는가
+//   · (step10) 시나리오 자격은 호출자가 줄 때만 실리고 부모 env 에서 새지 않는가 · selftest:false 가 가드 키를 뺀다
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,9 +22,9 @@ import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS,
-  bootSequences, contractRouteIds, diffSnapshots, findSequence, judgeBoot, judgeEventNames,
-  judgeObservationCount, judgeRouteLedger, loadContractRouteIds, parseDiagLines,
+  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS, LOGIN_ALLOWED_EVENTS, LOGIN_MIN_EVENTS, LOGIN_ROUTE_COUNTS,
+  bootSequences, contractRouteIds, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeEventNames, judgeLogin,
+  judgeObservationCount, judgeRouteLedger, loadContractRouteIds, loginSequences, parseDiagLines,
 } from './qtClientDiag.mjs';
 import { qtClientEnv } from './qtClientEnv.mjs';
 
@@ -359,6 +362,100 @@ test('judgeBoot 은 알 수 없는 경로·routeIds 누락을 던진다', () => 
   assert.throws(() => judgeBoot('B', { lines: [], rejected: [] }), /knownRouteIds/);
 });
 
+// --- 로그인 시나리오 판정 (step10) ---
+
+// client-qt 가 --scenario login 으로 남기는 모양(step10 QtTest 의 AppShell 순서 + 전송 계층 net-request).
+const HEAD = [line('app-ready'), line('config-loaded', { hasServerUrl: true }), line('app-window', { origin: ORIGIN })].join('');
+const netReq = (route, status, method = route === 'login' ? 'POST' : 'GET') => line('net-request', { route, method, status, ms: 12 });
+const LOGIN_OK = HEAD + netReq('login', 200) + line('login', { status: 200 }) + netReq('session', 200) + line('session', { status: 200 });
+const LOGIN_REJECTED = HEAD + netReq('login', 401) + line('login', { status: 401 });
+const login = (kind, text, extra = {}) => {
+  const { lines, rejected } = parseDiagLines(text);
+  return judgeLogin(kind, { lines, rejected, origin: ORIGIN, routeIds: ROUTES, ...extra });
+};
+
+test('로그인 판정 상수: 허용 집합·최소 관측·원장 횟수가 시퀀스와 맞물린다', () => {
+  assert.deepEqual([...LOGIN_ALLOWED_EVENTS.success], ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login', 'session']);
+  assert.deepEqual([...LOGIN_ALLOWED_EVENTS.rejected], ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login']);
+  assert.equal(LOGIN_MIN_EVENTS.success, 7);
+  assert.equal(LOGIN_MIN_EVENTS.rejected, 5);
+  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.success }, { login: 1, session: 1 });
+  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.rejected }, { login: 1, session: 0 });
+  assert.equal(loginSequences('success', { origin: ORIGIN })[0].length, 7);
+  assert.equal(loginSequences('rejected', { origin: ORIGIN })[0].length, 5);
+  assert.throws(() => loginSequences('success'), /origin/);
+  assert.throws(() => loginSequences('maybe', { origin: ORIGIN }), /경로/);
+});
+
+test('로그인 성공 diag 는 전 항목 green · 거부 diag 도 전 항목 green · 항목 이름은 경로 접두어를 단다', () => {
+  const ok = login('success', LOGIN_OK);
+  assert.deepEqual(failedNames(ok), []);
+  assert.ok(ok.length >= 7, `판정 항목이 너무 적다: ${ok.length}`);
+  for (const c of ok) assert.ok(c.name.startsWith('L+: '), c.name);
+  const no = login('rejected', LOGIN_REJECTED);
+  assert.deepEqual(failedNames(no), []);
+  for (const c of no) assert.ok(c.name.startsWith('L-: '), c.name);
+});
+
+test('성공: 신원 재확인이 없거나 401 이면 red(로그인 응답 신원을 믿고 넘어간 앱)', () => {
+  const noSession = HEAD + netReq('login', 200) + line('login', { status: 200 });
+  const failed = failedNames(login('success', noSession));
+  assert.ok(failed.some((n) => n.includes('session{200}')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('session 정확히 1회')), JSON.stringify(failed));
+  const denied = HEAD + netReq('login', 200) + line('login', { status: 200 }) + netReq('session', 401) + line('session', { status: 401 });
+  assert.ok(failedNames(login('success', denied)).some((n) => n.includes('session{200}')));
+});
+
+test('거부인데 화면이 넘어갔다(session 요청·줄이 생긴다) — M10-2 모양은 세 항목이 red', () => {
+  const moved = LOGIN_REJECTED + netReq('session', 401) + line('session', { status: 401 });
+  const failed = failedNames(login('rejected', moved));
+  assert.ok(failed.some((n) => n.includes('화면이 넘어가지 않았다')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('허용 이벤트')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+  const listed = LOGIN_REJECTED + line('list-loaded', { menu: 'deskUnsent', count: 0 });
+  assert.ok(failedNames(login('rejected', listed)).some((n) => n.includes('화면이 넘어가지 않았다')));
+});
+
+test('로그인: 훅이 두 번 불렀거나(login 2회) 시나리오 밖 라우트를 부르면 red', () => {
+  const twice = LOGIN_REJECTED + netReq('login', 401) + line('login', { status: 401 });
+  const failed = failedNames(login('rejected', twice));
+  assert.ok(failed.some((n) => n.includes('login 정확히 1회')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+  const listed = LOGIN_OK + netReq('articles-list', 200);
+  assert.ok(failedNames(login('success', listed)).some((n) => n.includes('라우트 원장')));
+  const pulled = LOGIN_OK + netReq('collection-pull', 200, 'POST');
+  assert.ok(failedNames(login('success', pulled)).some((n) => n.includes('라우트 원장')));
+});
+
+test('로그인: 앱이 다른 서버를 겨눴거나(origin 불일치) diag 가 비면 red', () => {
+  assert.ok(failedNames(login('success', LOGIN_OK.replace(ORIGIN, 'http://127.0.0.1:3001'))).some((n) => n.includes('app-window{origin}')));
+  const empty = failedNames(login('rejected', ''));
+  assert.ok(empty.some((n) => n.includes('관측 이벤트 수')), JSON.stringify(empty));
+  assert.ok(failedNames(login('success', `${LOGIN_OK}{broken}\n`)).some((n) => n.includes('깨진 줄')));
+});
+
+test('judgeLogin 은 알 수 없는 경로·routeIds 누락을 던진다', () => {
+  assert.throws(() => judgeLogin('maybe', { lines: [], rejected: [], origin: ORIGIN, routeIds: ROUTES }), /경로/);
+  assert.throws(() => judgeLogin('success', { lines: [], rejected: [], origin: ORIGIN }), /knownRouteIds/);
+});
+
+// --- 비밀 유출 점검 ---
+
+test('countSecretOccurrences: 원문과 JSON 이스케이프 형을 세고, 없으면 0 · 보고에 비밀이 없다', () => {
+  assert.deepEqual(countSecretOccurrences('abc desk123 x desk123', ['desk123']), { total: 2, bySecret: [{ index: 0, count: 2 }] });
+  assert.equal(countSecretOccurrences(JSON.stringify({ p: 'pa"ss\\w' }), ['pa"ss\\w']).total, 1);
+  const clean = countSecretOccurrences(LOGIN_OK, ['desk123', 'wrong-1a2b3c']);
+  assert.equal(clean.total, 0);
+  assert.ok(!JSON.stringify(countSecretOccurrences('desk123', ['desk123'])).includes('desk123'), '보고가 비밀을 되풀이했다');
+});
+
+test('countSecretOccurrences: 빈 목록·짧은 비밀·문자열 아닌 입력은 던진다(공허·거짓 양성 차단)', () => {
+  assert.throws(() => countSecretOccurrences('x', []), /비었다/);
+  assert.throws(() => countSecretOccurrences('x', ['abc']), /4자/);
+  assert.throws(() => countSecretOccurrences('x', [undefined]), /4자/);
+  assert.throws(() => countSecretOccurrences(Buffer.from('x'), ['desk123']), TypeError);
+});
+
 // --- qtClientEnv: Qt 자식 env 조립 ---
 
 const PARENT = {
@@ -396,4 +493,32 @@ test('Qt 자식 env 는 필수 값이 비면 조립을 거부한다(조용한 �
   assert.throws(() => envOf({ qtBinDir: undefined }), /qtBinDir/);
   assert.throws(() => envOf({ userDataDir: '  ' }), /userDataDir/);
   assert.throws(() => envOf({ diagFile: null }), /diagFile/);
+});
+
+test('(step10) 시나리오 자격은 호출자가 줄 때만 실리고 부모 env 의 같은 키는 새지 않는다', () => {
+  const parent = { ...PARENT, CLIENT_SCENARIO_USER: 'admin', CLIENT_SCENARIO_PASSWORD: 'admin123' };
+  const plain = qtClientEnv({ parentEnv: parent, platform: 'win32', qtBinDir: QT_BIN, userDataDir: 'C:\\tmp\\u', diagFile: 'C:\\tmp\\d' });
+  assert.equal(plain.CLIENT_SCENARIO_USER, undefined);
+  assert.equal(plain.CLIENT_SCENARIO_PASSWORD, undefined);
+  const withCreds = qtClientEnv({ parentEnv: parent, platform: 'win32', qtBinDir: QT_BIN, userDataDir: 'C:\\tmp\\u', diagFile: 'C:\\tmp\\d',
+    scenario: { userId: 'desk', password: 'desk123' } });
+  assert.equal(withCreds.CLIENT_SCENARIO_USER, 'desk');
+  assert.equal(withCreds.CLIENT_SCENARIO_PASSWORD, 'desk123');
+  assert.equal(withCreds.CLIENT_SELFTEST, '1');
+});
+
+test('(step10) selftest:false 는 가드 키를 아예 빼고(가드 거부 실증용) · 잘못된 옵션은 값 없이 거부한다', () => {
+  const noGuard = envOf({ selftest: false, scenario: { userId: 'desk', password: 'desk123' } });
+  assert.ok(!('CLIENT_SELFTEST' in noGuard), 'selftest:false 인데 CLIENT_SELFTEST 가 실렸다');
+  assert.equal(noGuard.CLIENT_SCENARIO_PASSWORD, 'desk123');
+  assert.throws(() => envOf({ selftest: 'yes' }), /selftest/);
+  assert.throws(() => envOf({ scenario: { userId: 'desk' } }), /scenario\.password/);
+  assert.throws(() => envOf({ scenario: { userId: '', password: 'desk123' } }), /scenario\.userId/);
+  assert.throws(() => envOf({ scenario: null }), /scenario\.userId/);
+  try {
+    envOf({ scenario: { userId: 7, password: 'sekret-9f' } });
+    assert.fail('숫자 userId 가 통과했다');
+  } catch (err) {
+    assert.ok(!String(err.message).includes('sekret-9f'), '거부 메시지가 비밀번호를 실었다');
+  }
 });

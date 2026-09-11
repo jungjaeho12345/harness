@@ -1,5 +1,5 @@
-// Qt 네이티브 클라 자동 검증 드라이버 v1 — 부팅 축 (phase 77 step6 · ADR-018 (2)).
-// 사용: node scripts/verify-qt-client.mjs [--scenario boot|all] [--server exe|spring] [--client-exe <path>]
+// Qt 네이티브 클라 자동 검증 드라이버 — 부팅 축(step6) + 로그인 축(step10) (phase 77 · ADR-018 (2)).
+// 사용: node scripts/verify-qt-client.mjs [--scenario boot|login|all] [--server exe|spring] [--client-exe <path>]
 //        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
 //
 // 판정은 두 축의 교차다(네이티브 클라에는 CDP 가 없다):
@@ -13,6 +13,19 @@
 //   A 설정 있음 → app-ready → config-loaded{true} → app-window{origin} + 두 번째 인스턴스 즉시 exit 0 · 첫 diag 에 second-instance
 //   B 설정 없음 → app-ready → config-loaded{false} → local-window{setup} · setup-shown{no-config}(둘의 순서는 보지 않는다)
 //   두 경로 모두 부팅만으로 probe 가 없다.
+// 시나리오 login(step10) — 앱의 시나리오 훅(--scenario login · CLIENT_SELFTEST=1 · 자격은 env 주입)이 로그인 **컨트롤러**를 1회
+//   부르고 그 뒤는 앱의 정상 경로다. 한 서버 인스턴스에서 로그인 시도는 3회(교차 1 · 성공 1 · 거부 1)뿐이다 — 계정 잠금 5회/15분 ·
+//   IP 제한 10회/15분이라 부정 경로를 반복하면 뒤 시나리오가 423/429 로 죽는다(open_questions (3) — 423/429 는 실기 재현하지 않는다).
+//   G  가드 거부: CLIENT_SELFTEST 없이 --scenario login → 부팅 전 exit 2 · diag·user-data 무생성(M10-3 가 여기서 red)
+//   X  서버 측 교차 — **클라 기동 전에** 드라이버가 같은 계정으로 Node fetch 로그인(200 · sessionId · sid 쿠키 · /api/session 200).
+//      순서가 규칙이다: 같은 계정 로그인은 그 계정의 기존 세션을 전부 끊는다(src/services/sessionService.js createSession ·
+//      server-spring SessionStore.createSession — step9 실측). 클라 뒤에 하면 드라이버가 클라 세션을 죽인다.
+//   L+ 성공: 부팅 A → net-request{login,200} → login{200} → net-request{session,200} → session{200}
+//   X2 클라 로그인 뒤 드라이버의 X 세션이 401 — 같은 계정의 새 로그인이 서버에서 그것을 끊었다 = 클라 로그인이 **이 서버에 desk 로**
+//      닿았다(diag 자기 신고가 아닌 서버 측 사실)
+//   L- 거부: 틀린 비밀번호로 새 클라 1회 → login{401} · 화면이 넘어가지 않는다(session 0 · list-loaded 0)(M10-2 가 여기서 red)
+//   두 실행 모두 라우트 원장(계약 39 안 · 금지 2 0건 · login/session 정확 횟수 · 그 밖 0) · diag·stdout·stderr 비밀번호 0건 ·
+//   user-data 에 config.json 외 파일 0(세션을 디스크에 쓰지 않는다 — decisions (6)).
 // 절차: 판정부 자기검사 → 계약 라우트 목록(docs/api-contract/endpoints.json) → 자산 해석(없으면 exit 1 + 빌드 힌트 · skip 금지)
 //   → 데이터 안전 사전 스냅샷 → 리포 밖 임시 루트(DATA_DIR 시드 · 스풀 · CLIENT_USER_DATA · diag) → 서버 기동 + health
 //   → Qt exe 직접 spawn(run.bat 경유 금지 — 배치를 거치면 종료 제어와 종료 코드가 흐려진다) → 시나리오 → 자식 강제 종료
@@ -27,15 +40,16 @@ import net from 'node:net';
 import os from 'node:os';
 import nodePath from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createSchema } from '../src/db/schema.js';
-import { seedUsers } from '../src/db/seed.js';
+import { SAMPLE_USERS, seedUsers } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
 import { listFilesRecursive, osEnvAllowlist, parseServerMode, springServerEnv } from './lib/integrationMode.mjs';
 import {
-  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, diffSnapshots, findSequence, judgeBoot, loadContractRouteIds, parseDiagLines,
+  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeLogin,
+  loadContractRouteIds, loginSequences, parseDiagLines,
 } from './lib/qtClientDiag.mjs';
 import { qtClientEnv } from './lib/qtClientEnv.mjs';
 
@@ -63,10 +77,17 @@ const SECOND_INSTANCE_TIMEOUT_MS = 15000;
 const SETTLE_MS = 1000; // 시퀀스 관측 뒤 늦게 오는 이벤트(부팅 뒤 비동기 probe 등)를 판정에 넣기 위한 대기
 // 실사용자 폴더 — Electron 셸(client/package.json productName)과 Qt 클라(client-qt/src/shell/appidentity.h).
 const APPDATA_FOLDERS = ['기사작성기', '기사작성기-qt'];
+// --- 로그인 시나리오(step10) ---
+// 계정은 시드 정본(src/db/seed.js SAMPLE_USERS)에서 읽는다 — 비밀번호를 여기 다시 적지 않는다.
+const SCENARIO_ACCOUNT = SAMPLE_USERS.find((u) => u.userId === 'desk');
+const SCENARIO_REFUSED_EXIT_CODE = 2; // client-qt/src/shell/scenario.h kScenarioRefusedExitCode
+const GUARD_EXIT_TIMEOUT_MS = 10000;
+const SCENARIO_ARGS = Object.freeze(['--scenario', 'login']);
 
-const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|all] [--server exe|spring] [--client-exe <path>]
+const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|login|all] [--server exe|spring] [--client-exe <path>]
        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
-  --scenario      boot | all(기본 — 현재 boot 만). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
+  --scenario      boot | login | all(기본 — boot + login). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
+                  login = 가드 거부(G) · 서버 교차(X·X2) · 로그인 성공(L+) · 틀린 비밀번호 1회(L-).
   --server        exe(기본) | spring. exe = 서버 SEA exe(dist/), spring = java -jar server-spring/target/*.jar.
   --client-exe    Qt 클라 exe(기본 client-qt/release/news-client.exe). .exe 만 받는다(run.bat 경유 금지).
   --qt-bin <dir>  Qt bin 디렉토리 — 자식 PATH 맨 앞에 싣는다(기본: env QT_BIN_DIR → ${DEFAULT_QT_BIN}).
@@ -103,7 +124,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
-  if (!['boot', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|all): ${opts.scenario}`);
+  if (!['boot', 'login', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|login|all): ${opts.scenario}`);
   const mode = parseServerMode(opts.server);
   if (!mode.ok) die(mode.message);
   // 모드 전용 플래그가 다른 모드에 오면 거부다(값을 줬는데 아무 효과가 없는 실행 금지).
@@ -185,8 +206,16 @@ function spawnChild(cmd, args, options) {
     // spawn 실패(ENOENT·EINVAL)는 exit 없이 error 만 온다 — 대기가 한도까지 헛돌지 않게 여기서 끝낸다.
     child.once('error', (err) => { child._spawnError = err; resolve(); });
   });
+  // exit 가 stdout/stderr data 보다 먼저 올 수 있다(step6 발견) — 출력 내용을 판정에 쓰는 자리는 close(스트림 종결)까지 기다린다.
+  child._closed = new Promise((resolve) => {
+    child.once('close', () => resolve());
+    child.once('error', () => resolve());
+  });
   return child;
 }
+
+// 자식의 stdout/stderr 가 끝까지 들어올 때까지(close) 기다린다 — 한도가 지나면 있는 데까지로 판정한다.
+const waitStreams = (child, ms = 2000) => Promise.race([child._closed, sleep(ms)]);
 
 function waitExit(child, ms) {
   if (childDead(child)) return Promise.resolve(true);
@@ -387,6 +416,126 @@ async function scenarioBootB(ctx) {
   return { lines: final.lines, diagFile, children: [child] };
 }
 
+// --- 시나리오 login (step10) ---
+// 서버 측 사실은 Node fetch 로 직접 만든다. 세션 토큰(sid·sessionId)은 어떤 출력에도 싣지 않는다 — 상태 코드만 보고한다.
+async function serverLogin(origin, userId, password) {
+  try {
+    const res = await fetch(`${origin}/api/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userId, password }),
+      signal: AbortSignal.timeout(10000),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    const sid = (res.headers.getSetCookie?.() ?? []).map((c) => /^sid=([^;]+)/.exec(c)?.[1]).find(Boolean) ?? null;
+    return { status: res.status, body, sid };
+  } catch (err) {
+    return { status: -1, body: null, sid: null, error: String(err && err.name) };
+  }
+}
+
+async function serverSession(origin, sid) {
+  try {
+    const res = await fetch(`${origin}/api/session`, { headers: { cookie: `sid=${sid}` }, signal: AbortSignal.timeout(10000) });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    return { status: res.status, body };
+  } catch (err) {
+    return { status: -1, body: null, error: String(err && err.name) };
+  }
+}
+
+// G — 가드 거부. 자격까지 다 주고 CLIENT_SELFTEST 만 뺀다: 막는 것이 가드뿐임을 보인다. 거부는 부팅 전이라 흔적이 없어야 한다.
+async function scenarioLoginGuard(ctx, secrets) {
+  const { tmpRoot, check } = ctx;
+  const userData = nodePath.join(tmpRoot, 'ud-g'); // 만들지 않는다 — 생기면 거부가 부팅 뒤에 일어났다는 뜻이다
+  const diagFile = nodePath.join(tmpRoot, 'diag-g.jsonl');
+  const env = ctx.clientEnv(userData, diagFile, { selftest: false, scenario: { userId: SCENARIO_ACCOUNT.userId, password: SCENARIO_ACCOUNT.password } });
+  const t0 = Date.now();
+  const child = ctx.spawnClient(env, SCENARIO_ARGS);
+  const exited = await waitExit(child, GUARD_EXIT_TIMEOUT_MS);
+  const ms = Date.now() - t0;
+  if (exited) await waitStreams(child);
+  check(`G: CLIENT_SELFTEST 없이 --scenario login → 부팅 전 거부 exit ${SCENARIO_REFUSED_EXIT_CODE}`,
+    exited && child.exitCode === SCENARIO_REFUSED_EXIT_CODE, `exit=${describeExit(child)} ${ms}ms`);
+  check('G: 거부 사유가 가드다(stderr 에 CLIENT_SELFTEST=1)', child._err.includes('CLIENT_SELFTEST=1'), JSON.stringify(tail(child._err, 300)));
+  check('G: 거부는 흔적이 없다(diag 파일·CLIENT_USER_DATA 폴더 미생성)', !fs.existsSync(diagFile) && !fs.existsSync(userData),
+    `diag=${fs.existsSync(diagFile)} userData=${fs.existsSync(userData)}`);
+  if (!exited) await killChild(child);
+  const leak = countSecretOccurrences(`${child._out}\n${child._err}`, secrets);
+  check('G: stdout·stderr 에 비밀번호 0건', leak.total === 0, `발견 ${leak.total}`);
+  return { lines: [], diagFile, children: [child] };
+}
+
+// L+ / L- 한 번: 유효 serverUrl config · 훅 인자 · env 자격으로 새 클라를 띄우고 시퀀스를 기다려 판정한다.
+async function runLoginClient(ctx, { kind, label, dirName, diagName, password, secrets, afterSequence }) {
+  const { tmpRoot, origin, check, opts, routeIds } = ctx;
+  const userData = nodePath.join(tmpRoot, dirName);
+  fs.mkdirSync(userData);
+  const configFile = nodePath.join(userData, 'config.json');
+  fs.writeFileSync(configFile, `${JSON.stringify({ schemaVersion: 1, serverUrl: origin })}\n`);
+  const configBytes = fs.readFileSync(configFile);
+  const diagFile = nodePath.join(tmpRoot, diagName);
+  const env = ctx.clientEnv(userData, diagFile, { scenario: { userId: SCENARIO_ACCOUNT.userId, password } });
+
+  const t0 = Date.now();
+  const child = ctx.spawnClient(env, SCENARIO_ARGS);
+  const seen = await waitForDiag(diagFile, loginSequences(kind, { origin }), opts.timeout, child);
+  check(`${label}: 로그인 시퀀스 관측`, seen.ok, seen.ok ? `${Date.now() - t0}ms` : waitDetail(seen, child));
+  if (afterSequence) await afterSequence(seen.ok);
+  await sleep(SETTLE_MS); // 늦게 오는 줄(잘못된 화면 전환의 session 요청 등)까지 판정에 넣는다
+  check(`${label}: 인스턴스가 판정 시점까지 살아 있다(로그인 뒤에도 앱은 제 경로로 계속 돈다)`, !childDead(child),
+    childDead(child) ? `exit=${describeExit(child)}` : '');
+  await killChild(child);
+  await waitStreams(child);
+
+  const final = readDiag(diagFile);
+  for (const c of judgeLogin(kind, { ...final, origin, routeIds })) check(c.name, c.ok, c.detail);
+  const files = listFilesRecursive(userData) ?? [];
+  check(`${label}: config.json 무변 · user-data 에 config.json 외 파일 0(세션·자격을 디스크에 쓰지 않는다)`,
+    fs.readFileSync(configFile).equals(configBytes) && files.length === 1 && files[0] === 'config.json', `files=${JSON.stringify(files)}`);
+  const diagText = fs.existsSync(diagFile) ? fs.readFileSync(diagFile, 'utf8') : '';
+  const leak = countSecretOccurrences(`${diagText}\n${child._out}\n${child._err}`, secrets);
+  check(`${label}: diag 전문·stdout·stderr 에 비밀번호 0건`, diagText.length > 0 && leak.total === 0,
+    `diag ${Buffer.byteLength(diagText)}B · 발견 ${leak.total}`);
+  return { lines: final.lines, diagFile, children: [child] };
+}
+
+async function scenarioLogin(ctx) {
+  const { origin, check } = ctx;
+  const account = SCENARIO_ACCOUNT;
+  // 틀린 비밀번호는 실행마다 새로 만든다 — 유출 검색이 우연한 일치 없이 정확해진다.
+  const wrongPassword = `wrong-${randomBytes(6).toString('hex')}`;
+  const secrets = [account.password, wrongPassword];
+  const parts = [];
+
+  parts.push(['G', await scenarioLoginGuard(ctx, secrets)]);
+
+  // X — 클라 기동 **전**(파일 머리 주석의 순서 규칙).
+  const pre = await serverLogin(origin, account.userId, account.password);
+  check('X: 클라 기동 전 드라이버 로그인(Node fetch · desk) → 200 · body.ok · sessionId · sid 쿠키',
+    pre.status === 200 && pre.body?.ok === true && typeof pre.body?.sessionId === 'string' && pre.body.sessionId.length > 0 && Boolean(pre.sid),
+    `status=${pre.status}${pre.error ? ` ${pre.error}` : ''}`);
+  const preSession = pre.sid ? await serverSession(origin, pre.sid) : { status: -1 };
+  check('X: 그 세션으로 GET /api/session → 200 · user.userId=desk', preSession.status === 200 && preSession.body?.user?.userId === account.userId,
+    `status=${preSession.status}`);
+
+  parts.push(['L+', await runLoginClient(ctx, {
+    kind: 'success', label: 'L+', dirName: 'ud-login-ok', diagName: 'diag-login-ok.jsonl', password: account.password, secrets,
+    afterSequence: async (seenOk) => {
+      // X2 — 클라가 session{200}까지 간 뒤. 드라이버의 X 세션이 끊겼으면 클라 로그인이 이 서버에 desk 로 닿은 것이다.
+      const post = pre.sid ? await serverSession(origin, pre.sid) : { status: -1 };
+      check('X2: 클라 로그인 뒤 드라이버의 X 세션 → 401(같은 계정의 새 로그인이 서버에서 기존 세션을 끊었다)',
+        seenOk && post.status === 401, `status=${post.status}${seenOk ? '' : ' (L+ 시퀀스 미관측)'}`);
+    },
+  })]);
+
+  // L- — 틀린 비밀번호 **1회**(같은 인스턴스에서 반복 금지 — 계정 잠금 5회 · IP 10회).
+  parts.push(['L-', await runLoginClient(ctx, {
+    kind: 'rejected', label: 'L-', dirName: 'ud-login-wrong', diagName: 'diag-login-wrong.jsonl', password: wrongPassword, secrets,
+  })]);
+  return { parts };
+}
+
 function dumpScenario(label, result) {
   if (!result) return;
   process.stderr.write(`--- ${label} diag ---\n${result.lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
@@ -462,18 +611,24 @@ async function main() {
 
     const ctx = {
       tmpRoot, origin, check, opts, routeIds,
-      clientEnv: (userDataDir, diagFile) => qtClientEnv({ parentEnv: process.env, platform: process.platform, qtBinDir: client.qtBin, userDataDir, diagFile }),
-      spawnClient: (env) => {
-        const child = spawnChild(client.exe, [], { cwd: clientCwd, env });
+      clientEnv: (userDataDir, diagFile, extra = {}) => qtClientEnv({
+        parentEnv: process.env, platform: process.platform, qtBinDir: client.qtBin, userDataDir, diagFile, ...extra,
+      }),
+      spawnClient: (env, args = []) => {
+        const child = spawnChild(client.exe, [...args], { cwd: clientCwd, env });
         children.push(child);
         return child;
       },
     };
-    for (const [label, run] of [['A', scenarioBootA], ['B', scenarioBootB]]) {
+    const plan = [];
+    if (opts.scenario === 'boot' || opts.scenario === 'all') plan.push(['A', scenarioBootA], ['B', scenarioBootB]);
+    if (opts.scenario === 'login' || opts.scenario === 'all') plan.push(['login', scenarioLogin]);
+    for (const [label, run] of plan) {
       const failedBefore = failures.length;
       const result = await run(ctx);
-      observed[label] = result.lines.length;
-      if (failures.length > failedBefore) dumpScenario(label, result);
+      const parts = result.parts ?? [[label, result]];
+      for (const [partLabel, part] of parts) observed[partLabel] = part.lines.length;
+      if (failures.length > failedBefore) for (const [partLabel, part] of parts) dumpScenario(partLabel, part);
     }
 
     // 서버 측 사실 — 클라 시나리오 뒤에도 우리 서버 자식이 살아서 health 를 준다.
