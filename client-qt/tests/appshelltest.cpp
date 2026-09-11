@@ -408,10 +408,16 @@ void AppShellTest::bringsAMinimizedWindowBackWithoutUnmaximizingIt()
     QVERIFY2(window->isMaximized(), "un-minimizing must not un-maximize");
     QVERIFY(window->isVisible());
 
+    // A window minimized from the NORMAL state comes back normal. It has to be normal before it
+    // is minimized: on the real windows platform the OS restores a window minimized from
+    // maximized straight back to maximized (measured 2026-09-11 - offscreen has no such memory).
+    window->showNormal();
+    QTRY_VERIFY(!window->isMaximized());
     window->setWindowState(Qt::WindowMinimized);
+    QVERIFY(window->isMinimized());
     rig.guard.knock();
     QVERIFY(!window->isMinimized());
-    QVERIFY(!window->isMaximized());
+    QTRY_VERIFY(!window->isMaximized());
 
     QCOMPARE(rig.eventNames().count(QStringLiteral("second-instance")), 2);
 }
