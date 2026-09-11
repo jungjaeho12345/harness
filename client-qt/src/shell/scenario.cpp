@@ -12,6 +12,7 @@ const QLatin1String kScenarioFlag("--scenario");
 const QLatin1String kScenarioFlagEquals("--scenario=");
 const QLatin1String kSelftestFlag("--selftest");
 const QLatin1String kLoginName("login");
+const QLatin1String kListName("list");
 
 ScenarioRequest refuse(const char *why)
 {
@@ -60,14 +61,20 @@ ScenarioRequest parseScenarioRequest(const QStringList &arguments, const QString
     const qsizetype at = arguments.indexOf(kScenarioFlag);
     if (at + 1 >= arguments.size())
         return refuse("--scenario is refused: the scenario name is missing");
-    if (arguments.at(at + 1) != kLoginName)
-        return refuse("--scenario is refused: unknown scenario name (step10 knows: login)");
+    const QString name = arguments.at(at + 1);
+    Scenario scenario = Scenario::None;
+    if (name == kLoginName)
+        scenario = Scenario::Login;
+    else if (name == kListName)
+        scenario = Scenario::List;
+    else
+        return refuse("--scenario is refused: unknown scenario name (known: login, list)");
 
     if (userId.isEmpty() || password.isEmpty())
-        return refuse("--scenario login is refused: CLIENT_SCENARIO_USER and CLIENT_SCENARIO_PASSWORD must both be set");
+        return refuse("--scenario is refused: CLIENT_SCENARIO_USER and CLIENT_SCENARIO_PASSWORD must both be set");
 
     ScenarioRequest request;
-    request.scenario = Scenario::Login;
+    request.scenario = scenario;
     request.userId = userId;
     request.password = password;
     return request;

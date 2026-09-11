@@ -24,7 +24,10 @@
 
 namespace shell {
 
-enum class Scenario { None, Login };
+// Login and List make the same single controller call (login). List exists so the harness names what it
+// judges (step11's live list): the list screen follows from the login success path on its own - the hook
+// never touches the list controller, so the gate proves the app's path, not the hook's.
+enum class Scenario { None, Login, List };
 
 // The exit code of a refused request - distinct from a crash, a missing DLL (0xC0000135) and the
 // self-test's 1, so a harness can tell "refused" from "broke".

@@ -1,5 +1,6 @@
 #include "ui/mainwindow.h"
 
+#include "ui/listscreen.h"
 #include "ui/loginscreen.h"
 #include "ui/theme.h"
 
@@ -41,23 +42,46 @@ MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent)
     m_status->setObjectName(QStringLiteral("statusLabel"));
     m_status->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kInk)));
 
+    // The live indicator (.yh-live): red dot = the change stream is connected, grey = dropped.
+    m_live = new QLabel(topBar);
+    m_live->setObjectName(QStringLiteral("liveLabel"));
+    m_live->setTextFormat(Qt::RichText);
+    m_live->setHidden(true);
+
     bar->addWidget(title);
     bar->addStretch(1);
     bar->addWidget(m_status);
+    bar->addWidget(m_live);
 
-    // The content pages. The login card first - an app window always starts logged out (the cookie
-    // jar is memory only: decisions (6)).
+    // The content pages. The login screen first - an app window always starts logged out (the cookie
+    // jar is memory only: decisions (6)). The list screen is the page after login.
     m_pages = new QStackedWidget(this);
     m_pages->setObjectName(QStringLiteral("content"));
     m_login = new LoginScreen(m_pages);
-    m_listSlot = new QWidget(m_pages);
-    m_listSlot->setObjectName(QStringLiteral("listSlot"));  // empty on purpose until step11
+    m_list = new ListScreen(m_pages);
     m_pages->addWidget(m_login);
-    m_pages->addWidget(m_listSlot);
+    m_pages->addWidget(m_list);
     m_pages->setCurrentWidget(m_login);
+    // Two pages: becoming current = the list page entered; any other change = it was left.
+    connect(m_pages, &QStackedWidget::currentChanged, this, [this](int) {
+        const bool onList = m_pages->currentWidget() == m_list;
+        m_live->setHidden(!onList);
+        if (onList)
+            emit listPageEntered();
+        else
+            emit listPageLeft();
+    });
+    setLiveStatus(false);
 
     layout->addWidget(topBar);
     layout->addWidget(m_pages, 1);
+}
+
+MainWindow::~MainWindow()
+{
+    // The pages go with this window; their removal must not read as "the list page was left" to whoever
+    // listens (the shell's controllers may be on their way out too).
+    disconnect(m_pages, nullptr, this, nullptr);
 }
 
 QString MainWindow::statusText() const
@@ -75,9 +99,33 @@ QString MainWindow::idleStatusText() const
     return m_idleStatus;
 }
 
+void MainWindow::setLiveStatus(bool connected)
+{
+    // ListPage.jsx live-status: '실시간' / '연결 끊김', the same two titles.
+    const QString dot = QLatin1String(connected ? theme::kRed : theme::kGrayMid);
+    m_live->setText(QStringLiteral("<span style=\"color:%1\">&#9679;</span> %2")
+                        .arg(dot, connected ? QStringLiteral("실시간") : QStringLiteral("연결 끊김")));
+    m_live->setToolTip(connected ? QStringLiteral("실시간 연결됨") : QStringLiteral("실시간 연결 끊김 — 자동 재연결 시도 중"));
+}
+
+QString MainWindow::liveStatusText() const
+{
+    return m_live->text();
+}
+
+bool MainWindow::liveStatusVisible() const
+{
+    return !m_live->isHidden();
+}
+
 LoginScreen *MainWindow::loginScreen() const
 {
     return m_login;
+}
+
+ListScreen *MainWindow::listScreen() const
+{
+    return m_list;
 }
 
 void MainWindow::showLoginPage()
@@ -87,7 +135,7 @@ void MainWindow::showLoginPage()
 
 void MainWindow::showListPage()
 {
-    m_pages->setCurrentWidget(m_listSlot);
+    m_pages->setCurrentWidget(m_list);
 }
 
 bool MainWindow::loginPageShown() const
@@ -97,7 +145,7 @@ bool MainWindow::loginPageShown() const
 
 bool MainWindow::listPageShown() const
 {
-    return m_pages->currentWidget() == m_listSlot;
+    return m_pages->currentWidget() == m_list;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

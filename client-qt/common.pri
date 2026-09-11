@@ -34,7 +34,10 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/ui/setupscreen.cpp \
                  $$PWD/src/ui/mainwindow.cpp \
                  $$PWD/src/ui/logincontroller.cpp \
-                 $$PWD/src/ui/loginscreen.cpp
+                 $$PWD/src/ui/loginscreen.cpp \
+                 $$PWD/src/ui/listcontroller.cpp \
+                 $$PWD/src/ui/listscreen.cpp \
+                 $$PWD/src/ui/screens.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
@@ -59,7 +62,10 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/ui/setupscreen.h \
                  $$PWD/src/ui/mainwindow.h \
                  $$PWD/src/ui/logincontroller.h \
-                 $$PWD/src/ui/loginscreen.h
+                 $$PWD/src/ui/loginscreen.h \
+                 $$PWD/src/ui/listcontroller.h \
+                 $$PWD/src/ui/listscreen.h \
+                 $$PWD/src/ui/screens.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

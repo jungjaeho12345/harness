@@ -11,6 +11,8 @@
 #include "shell/proberunner.h"
 #include "shell/serverurl.h"
 #include "shell/singleinstance.h"
+#include "ui/listcontroller.h"
+#include "ui/listscreen.h"
 #include "ui/logincontroller.h"
 #include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
@@ -191,6 +193,8 @@ struct Rig {
     std::unique_ptr<net::HttpProbeRunner> http;
     QList<QRect> workAreas{QRect(0, 0, 1920, 1080)};
     // The app window's Model (owned by the shell; this is a view of it) and what the factory saw.
+    // seed = what that Model starts with (step11's list tests put articles in it before start()).
+    net::FakeSeed seed = loginwire::deskSeed();
     loginwire::WireScriptedModel *model = nullptr;
     int modelsMade = 0;
     QString modelOrigin;
@@ -211,7 +215,7 @@ struct Rig {
         options.workAreas = [this] { return workAreas; };
         if (wiring == ModelWiring::Fake) {
             options.modelFactory = [this](const QString &origin) -> std::unique_ptr<net::INewsModel> {
-                auto made = std::make_unique<loginwire::WireScriptedModel>();
+                auto made = std::make_unique<loginwire::WireScriptedModel>(seed);
                 model = made.get();
                 ++modelsMade;
                 modelOrigin = origin;
@@ -988,8 +992,9 @@ void AppShellTest::masksThePasswordAndLetsGoOfItOnSubmit()
     QVERIFY(!rig.diagRaw().contains("pw-typed-4d2a"));
 }
 
-// Success = login{200}, then the identity asked of the server (session{200}), THEN the list slot with
-// the server's display label. Nothing past the login page before that answer.
+// Success = login{200}, then the identity asked of the server (session{200} - the list's entry, step11),
+// THEN the list slot with the server's display label and the list (list-loaded). Nothing past the login
+// page before that answer.
 void AppShellTest::entersTheListSlotOnlyAfterTheServerConfirmsTheIdentity()
 {
     Rig rig(true);
@@ -1009,7 +1014,7 @@ void AppShellTest::entersTheListSlotOnlyAfterTheServerConfirmsTheIdentity()
     const QList<QJsonObject> events = rig.events();
     QCOMPARE(namesOf(events), (QStringList{QStringLiteral("app-ready"), QStringLiteral("config-loaded"),
                                            QStringLiteral("app-window"), QStringLiteral("login"),
-                                           QStringLiteral("session")}));
+                                           QStringLiteral("session"), QStringLiteral("list-loaded")}));
     QCOMPARE(events.at(3).value(QStringLiteral("status")).toInt(), 200);
     QCOMPARE(events.at(4).value(QStringLiteral("status")).toInt(), 200);
 }
@@ -1045,6 +1050,8 @@ void AppShellTest::staysOnTheLoginPageWhenLoginFails()
     QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::RateLimited));
     QCOMPARE(rig.model->sessionCalls, 0);
     QVERIFY(!rig.eventNames().contains(QStringLiteral("session")));
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("list-loaded")));  // step11: the list never entered
+    QVERIFY(!rig.app->listController()->isEntered());
 }
 
 // The identity check says "no session" (or cannot be answered): back to the login page with the
@@ -1072,9 +1079,10 @@ void AppShellTest::goesBackToLoginWhenTheIdentityCheckFails()
     QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::Unreachable));
 }
 
-// step9's onSessionEnd, wired at the composition root: a stream that ends the session says
-// onStatus(false) first, then calls the shell's handler, which takes the window back to the login
-// page. A handler kept past the shell's life does nothing.
+// step9's onSessionEnd, now on the list's own stream (step11): the stream that ends the session says
+// onStatus(false) first - the live indicator drops while the list is still on screen - then the session
+// end takes the window back to the login page. The shell's sessionEndHandler() does the same for any
+// other stream, and a handler kept past the shell's life does nothing.
 void AppShellTest::goesBackToLoginWhenTheStreamEndsTheSession()
 {
     Rig rig(true);
@@ -1084,26 +1092,34 @@ void AppShellTest::goesBackToLoginWhenTheStreamEndsTheSession()
     rig.submitLogin(loginwire::kUser, loginwire::kPassword);
     ui::MainWindow *window = rig.app->appWindow();
     QVERIFY(window->listPageShown());
+    QVERIFY(window->liveStatusVisible());
 
-    const net::SessionEndHandler toLogin = rig.app->sessionEndHandler();
-    QVERIFY(toLogin);
     QStringList order;
-    std::unique_ptr<net::Subscription> subscription = rig.model->subscribe(
-        QVariantMap(), net::ChangeHandler(),
-        [&order, window](bool connected) {
-            if (!connected)
-                order << (window->listPageShown() ? QStringLiteral("status-false-on-list") : QStringLiteral("status-false-elsewhere"));
-        },
-        [&order, window, toLogin] {
-            toLogin();
-            order << (window->loginPageShown() ? QStringLiteral("login-page") : QStringLiteral("still-on-list"));
-        });
+    connect(rig.app->listController(), &ui::ListController::liveChanged, this, [&order, window](bool live) {
+        if (!live)
+            order << (window->listPageShown() ? QStringLiteral("status-false-on-list") : QStringLiteral("status-false-elsewhere"));
+    });
+    connect(rig.app->listController(), &ui::ListController::sessionEnded, this,
+            [&order] { order << QStringLiteral("session-ended"); });
 
     rig.model->endStreamSession();
 
-    QCOMPARE(order, (QStringList{QStringLiteral("status-false-on-list"), QStringLiteral("login-page")}));
+    QCOMPARE(order.mid(0, 2), (QStringList{QStringLiteral("status-false-on-list"), QStringLiteral("session-ended")}));
+    QVERIFY(window->loginPageShown());
     QCOMPARE(rig.loginScreen()->errorText(), ui::sessionEndedMessage());
     QCOMPARE(window->statusText(), window->idleStatusText());
+    QVERIFY(!window->liveStatusVisible());
+    QVERIFY(!rig.app->listController()->isEntered());
+
+    // The shell's own handler: back on the list, then called directly.
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    QVERIFY(window->listPageShown());
+    const net::SessionEndHandler toLogin = rig.app->sessionEndHandler();
+    QVERIFY(toLogin);
+    toLogin();
+    QVERIFY(window->loginPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::sessionEndedMessage());
+    QVERIFY(!rig.app->listController()->isEntered());
 
     rig.app.reset();
     toLogin();  // the shell is gone: nothing to do, nothing to crash on
@@ -1127,7 +1143,7 @@ void AppShellTest::runsTheLoginScenarioThroughTheControllerNotTheWidgets()
     QCOMPARE(rig.model->loginCalls, 1);
     QCOMPARE(rig.eventNames(), (QStringList{QStringLiteral("app-ready"), QStringLiteral("config-loaded"),
                                             QStringLiteral("app-window"), QStringLiteral("login"),
-                                            QStringLiteral("session")}));
+                                            QStringLiteral("session"), QStringLiteral("list-loaded")}));
 
     Rig wrong(true);
     QVERIFY(wrong.writeConfig(configJson(kOrigin)));
@@ -1156,6 +1172,125 @@ void AppShellTest::cannotRunTheLoginScenarioWithoutAnAppWindow()
     QVERIFY(noModel.app->appWindow());
     QVERIFY(!noModel.app->loginController());
     QVERIFY(!noModel.app->runLoginScenario(loginwire::kUser, loginwire::kPassword));
+}
+
+// ---------------------------------------------------------------------------
+// List (step11).
+namespace {
+
+QJsonObject listRow(const QString &id, const QString &status, const QString &createdAt)
+{
+    return QJsonObject{{QStringLiteral("articleId"), id},
+                       {QStringLiteral("status"), status},
+                       {QStringLiteral("title"), QStringLiteral("제목 ") + id},
+                       {QStringLiteral("createdAt"), createdAt},
+                       {QStringLiteral("lockYN"), QStringLiteral("N")}};
+}
+
+int countOf(const QStringList &names, const QString &name)
+{
+    return static_cast<int>(names.count(name));
+}
+
+} // namespace
+
+// After login the list slot holds the list screen: the deskUnsent rows only, newest first, the live
+// indicator on. A change re-queries AND re-renders the screen - the driver's diag cannot see pixels
+// (M11-2: a re-query that never reaches the screen stays green there), so the screen's half is locked
+// here. Paging goes from the screen's buttons to the controller, and is not a query.
+void AppShellTest::showsTheListAndRefreshesTheScreenOnAChange()
+{
+    Rig rig(true);
+    rig.seed.articles = {listRow(QStringLiteral("A1"), QStringLiteral("RDS"), QStringLiteral("2026-09-12T01:00:00.000Z")),
+                         listRow(QStringLiteral("A2"), QStringLiteral("DDH"), QStringLiteral("2026-09-12T02:00:00.000Z")),
+                         listRow(QStringLiteral("A3"), QStringLiteral("DPS"), QStringLiteral("2026-09-12T03:00:00.000Z"))};
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+
+    ui::MainWindow *window = rig.app->appWindow();
+    ui::ListScreen *screen = window->listScreen();
+    QVERIFY(window->listPageShown());
+    QCOMPARE(screen->rowCount(), 2);
+    QCOMPARE(screen->cellText(0, 0), QStringLiteral("A2"));  // newest first
+    QVERIFY(window->liveStatusVisible());
+    QVERIFY2(window->liveStatusText().contains(QStringLiteral("실시간")), qPrintable(window->liveStatusText()));
+    QCOMPARE(lastEvent(rig.events(), QStringLiteral("list-loaded")).value(QStringLiteral("count")).toInt(), 2);
+
+    // Through the interface: the interface holds the default arguments (step8 - an override hides them).
+    net::INewsModel &model = *rig.model;
+    const QString created = model
+                                .saveArticle(QJsonObject{{QStringLiteral("title"), QStringLiteral("새 기사")},
+                                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-12T09:00:00.000Z")}})
+                                .body.value(QStringLiteral("articleId"))
+                                .toString();
+    QVERIFY(!created.isEmpty());
+
+    QCOMPARE(screen->rowCount(), 3);
+    QCOMPARE(screen->cellText(0, 0), created);
+    QCOMPARE(lastEvent(rig.events(), QStringLiteral("list-loaded")).value(QStringLiteral("count")).toInt(), 3);
+    QCOMPARE(countOf(rig.eventNames(), QStringLiteral("list-loaded")), 2);
+
+    Rig paged(true);
+    for (int i = 0; i < 12; ++i)
+        paged.seed.articles << listRow(QStringLiteral("P%1").arg(i, 2, 10, QLatin1Char('0')), QStringLiteral("RDS"),
+                                       QStringLiteral("2026-09-12T00:%1:00.000Z").arg(i, 2, 10, QLatin1Char('0')));
+    QVERIFY(paged.writeConfig(configJson(kOrigin)));
+    paged.app->start();
+    paged.submitLogin(loginwire::kUser, loginwire::kPassword);
+    ui::ListScreen *pagedScreen = paged.app->appWindow()->listScreen();
+    QCOMPARE(pagedScreen->rowCount(), 10);
+    QPushButton *next = pagedScreen->findChild<QPushButton *>(QStringLiteral("nextPageButton"));
+    QVERIFY(next);
+    next->click();
+    QCOMPARE(pagedScreen->rowCount(), 2);
+    QVERIFY2(pagedScreen->pageText().contains(QStringLiteral("2 / 2")), qPrintable(pagedScreen->pageText()));
+    QCOMPARE(countOf(paged.eventNames(), QStringLiteral("list-loaded")), 1);  // paging is not a query
+}
+
+// A page switch that bypasses the login - M10-2b's shape - still goes through the list's entry: the
+// identity check runs, the server has no session, the window is back on the login page. The list page
+// is never on screen with a list that was not entered.
+void AppShellTest::neverShowsTheListPageWithoutEnteringTheList()
+{
+    Rig rig(true);
+    rig.seed.articles = {listRow(QStringLiteral("A1"), QStringLiteral("RDS"), QStringLiteral("2026-09-12T01:00:00.000Z"))};
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    ui::MainWindow *window = rig.app->appWindow();
+
+    window->showListPage();  // no login happened
+
+    QVERIFY(window->loginPageShown());
+    QCOMPARE(rig.model->sessionCalls, 1);
+    QCOMPARE(rig.loginScreen()->errorText(), ui::sessionEndedMessage());
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("list-loaded")));
+    QCOMPARE(window->listScreen()->rowCount(), 0);
+    QVERIFY(!rig.app->listController()->isEntered());
+    QCOMPARE(window->statusText(), window->idleStatusText());
+}
+
+// Back to the login page: the list is left - stream closed, rows gone from the screen, the live
+// indicator hidden - and a later change reaches nothing.
+void AppShellTest::leavesTheListWhenGoingBackToLogin()
+{
+    Rig rig(true);
+    rig.seed.articles = {listRow(QStringLiteral("A1"), QStringLiteral("RDS"), QStringLiteral("2026-09-12T01:00:00.000Z"))};
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    ui::MainWindow *window = rig.app->appWindow();
+    QCOMPARE(window->listScreen()->rowCount(), 1);
+
+    rig.app->returnToLogin(ui::sessionEndedMessage());
+
+    QVERIFY(window->loginPageShown());
+    QVERIFY(!rig.app->listController()->isEntered());
+    QCOMPARE(window->listScreen()->rowCount(), 0);
+    QVERIFY(!window->liveStatusVisible());
+    const int loaded = countOf(rig.eventNames(), QStringLiteral("list-loaded"));
+    static_cast<net::INewsModel &>(*rig.model).saveArticle(QJsonObject{{QStringLiteral("title"), QStringLiteral("늦은 기사")}});
+    QCOMPARE(countOf(rig.eventNames(), QStringLiteral("list-loaded")), loaded);
 }
 
 // ---------------------------------------------------------------------------

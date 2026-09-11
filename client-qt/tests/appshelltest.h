@@ -71,6 +71,11 @@ private slots:
     void runsTheLoginScenarioThroughTheControllerNotTheWidgets();
     void cannotRunTheLoginScenarioWithoutAnAppWindow();
 
+    // --- list (step11): the list screen in the list slot, live -------------------------------
+    void showsTheListAndRefreshesTheScreenOnAChange();
+    void neverShowsTheListPageWithoutEnteringTheList();
+    void leavesTheListWhenGoingBackToLogin();
+
     // --- --selftest ---------------------------------------------------------------------
     void selfTestPassesAfterACleanBoot();
     void selfTestFailsWhenTheInvariantsDoNotHold();

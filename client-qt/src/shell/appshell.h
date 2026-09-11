@@ -20,14 +20,17 @@
 //   (3) serverUrl ? app-window : local-window{page:setup} + setup-shown{reason:no-config}
 // No probe on this path - probes are user actions only.
 //
-// Login (step10). An app window gets ONE Model (Options::modelFactory, called with the origin the
-// window serves - main.cpp builds an HttpNewsModel over its own transport = its own cookie jar) and
-// one ui::LoginController over it. The window opens on the login page; the screen changes are:
-//   loginSucceeded  -> confirmSession() (GET /api/session - decisions (7) 2) -> ok: list slot + the
-//                      display label / not ok: back to the login page with the reason
+// Login (step10) and the list (step11). An app window gets ONE Model (Options::modelFactory, called with
+// the origin the window serves - main.cpp builds an HttpNewsModel over its own transport = its own
+// cookie jar), and a ui::LoginController and a ui::ListController over it. The window opens on the login
+// page; the screen changes are:
+//   loginSucceeded  -> the list's entry: GET /api/session (decisions (7) 2) -> ok: the query and the
+//                      stream, THEN the list page + the display label / not ok: back to the login page
 //   loginFailed     -> stay on the login page with the message (never past it)
-//   the session ends (a 401 identity check, the stream's unauthorized frame - sessionEndHandler())
-//                   -> back to the login page
+//   the list page becomes current by any other way -> the same entry (the web's ListPage mount): the list
+//                      page is never on screen with a list that was not entered
+//   the session ends (a 401 on the check or a query, the stream's unauthorized frame) -> the list is
+//                      left (stream closed, rows gone) and the window is back on the login page
 // The scenario hook (shell/scenario.h) only calls the controller's login(); everything above follows
 // from that one call exactly as it does from the button.
 
@@ -44,6 +47,7 @@
 #include <memory>
 
 namespace ui {
+class ListController;
 class LoginController;
 class MainWindow;
 class SetupScreen;
@@ -101,6 +105,7 @@ public:
     bool appWindowShown() const;
     int probeCount() const;
     ui::LoginController *loginController() const;
+    ui::ListController *listController() const;
 
     // The scenario hook's one action (step10 A): call the login controller - never a widget. false
     // (and nothing called) when there is no app window to log in from (no server configured).
@@ -124,8 +129,13 @@ private slots:
     void onLoginRequested(const QString &userId, const QString &password);
     void onLoginSucceeded();
     void onLoginFailed(const QString &message);
+    void onListPageEntered();
+    void onListPageLeft();
 
 private:
+    // The list's one door (step11): the list controller enters (identity check -> query -> stream), and
+    // only a confirmed entry puts the list page on screen.
+    void enterList();
     void createAppWindow();
     void showSetupScreen(const QString &reason);
     void closeSetupScreen();
@@ -148,6 +158,7 @@ private:
     // controller they signal), and the controller before the Model it holds a reference to.
     std::unique_ptr<net::INewsModel> m_model;
     std::unique_ptr<ui::LoginController> m_login;
+    std::unique_ptr<ui::ListController> m_list;
     std::unique_ptr<ui::MainWindow> m_appWindow;
     std::unique_ptr<ui::SetupScreen> m_setupScreen;
 };

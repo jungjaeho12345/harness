@@ -35,7 +35,10 @@ SOURCES += main.cpp \
            changestreamtest.cpp \
            livestreamtest.cpp \
            scenariotest.cpp \
-           logincontrollertest.cpp
+           logincontrollertest.cpp \
+           listcontrollertest.cpp \
+           listscreentest.cpp \
+           screeninventorytest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -63,4 +66,7 @@ HEADERS += smoketest.h \
            livestreamtest.h \
            loginwire.h \
            scenariotest.h \
-           logincontrollertest.h
+           logincontrollertest.h \
+           listcontrollertest.h \
+           listscreentest.h \
+           screeninventorytest.h

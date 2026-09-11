@@ -131,17 +131,19 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (scenario.scenario == shell::Scenario::Login) {
+    if (scenario.scenario == shell::Scenario::Login || scenario.scenario == shell::Scenario::List) {
         // The hook, once the event loop runs: ONE call of the login controller (never a widget), over
-        // the real HTTP transport. What follows is the app's normal path. The credentials are dropped
-        // from this process's copy right after the call (best effort - the environment still holds
-        // them for the life of the process; the harness owns that).
+        // the real HTTP transport. What follows is the app's normal path - for `list` too: the list is
+        // entered by the login success path, never by the hook (step11 - the gate judges the app's own
+        // path to a live list). The credentials are dropped from this process's copy right after the
+        // call (best effort - the environment still holds them for the life of the process; the
+        // harness owns that).
         QTimer::singleShot(0, &appShell, [&appShell, &scenario] {
             const bool ran = appShell.runLoginScenario(scenario.userId, scenario.password);
             scenario.password.fill(QLatin1Char('\0'));
             scenario.password.clear();
             if (!ran) {
-                std::fprintf(stderr, "news-client: scenario login could not run - no app window "
+                std::fprintf(stderr, "news-client: the scenario could not run - no app window "
                                      "(no server address is configured)\n");
                 std::fflush(stderr);
                 QCoreApplication::exit(3);

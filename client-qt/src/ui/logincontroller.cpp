@@ -136,7 +136,12 @@ LoginAttempt LoginController::login(const QString &userId, const QString &passwo
 
 SessionCheck LoginController::confirmSession()
 {
-    const net::ModelResult result = m_model.restoreSession();
+    return checkSession(m_model, m_diag);
+}
+
+SessionCheck checkSession(net::INewsModel &model, shell::Diag *diag)
+{
+    const net::ModelResult result = model.restoreSession();
 
     SessionCheck check;
     check.status = result.status;
@@ -151,7 +156,7 @@ SessionCheck LoginController::confirmSession()
         check.message = loginFailureMessage(failure == LoginFailure::None ? LoginFailure::Unexpected : failure,
                                             check.status);
     }
-    logStatus(m_diag, QStringLiteral("session"), check.status);
+    logStatus(diag, QStringLiteral("session"), check.status);
     return check;
 }
 

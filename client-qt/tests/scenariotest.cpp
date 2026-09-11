@@ -20,6 +20,7 @@ namespace {
 const QString kUser = QStringLiteral("desk");
 const QString kPassword = QStringLiteral("desk123");
 const QStringList kLogin{QStringLiteral("--scenario"), QStringLiteral("login")};
+const QStringList kList{QStringLiteral("--scenario"), QStringLiteral("list")};
 
 // Sets one environment variable for the life of the object, then puts the old value back.
 class ScopedEnv
@@ -76,8 +77,13 @@ void ScenarioTest::parses_data()
     QTest::newRow("no password") << kLogin << QStringLiteral("1") << kUser << QString() << Scenario::None << true;
     QTest::newRow("no scenario name") << QStringList{QStringLiteral("--scenario")} << QStringLiteral("1") << kUser
                                       << kPassword << Scenario::None << true;
-    QTest::newRow("unknown scenario (list is step11's)")
-        << QStringList{QStringLiteral("--scenario"), QStringLiteral("list")} << QStringLiteral("1") << kUser << kPassword
+    // step11: list is the same single login call - the list follows from the app's own success path.
+    QTest::newRow("list under the guard with both credentials") << kList << QStringLiteral("1") << kUser << kPassword
+                                                                << Scenario::List << false;
+    QTest::newRow("list without a password") << kList << QStringLiteral("1") << kUser << QString() << Scenario::None
+                                             << true;
+    QTest::newRow("unknown scenario (editor is P5's)")
+        << QStringList{QStringLiteral("--scenario"), QStringLiteral("editor")} << QStringLiteral("1") << kUser << kPassword
         << Scenario::None << true;
     QTest::newRow("name is case sensitive") << QStringList{QStringLiteral("--scenario"), QStringLiteral("LOGIN")}
                                             << QStringLiteral("1") << kUser << kPassword << Scenario::None << true;
@@ -109,7 +115,7 @@ void ScenarioTest::parses()
         QVERIFY(request.userId.isEmpty());
         QVERIFY(request.password.isEmpty());
     }
-    if (scenario == Scenario::Login) {
+    if (scenario == Scenario::Login || scenario == Scenario::List) {
         QCOMPARE(request.userId, user);
         QCOMPARE(request.password, password);
     }
@@ -133,7 +139,8 @@ void ScenarioTest::refusesEveryScenarioWithoutTheSelftestGuard_data()
                                                 {QStringLiteral("11"), QStringLiteral("11")}};
     const QList<QPair<QString, QStringList>> spellings{
         {QStringLiteral("login"), kLogin},
-        {QStringLiteral("unknown"), QStringList{QStringLiteral("--scenario"), QStringLiteral("list")}},
+        {QStringLiteral("list"), kList},
+        {QStringLiteral("unknown"), QStringList{QStringLiteral("--scenario"), QStringLiteral("editor")}},
         {QStringLiteral("bare"), QStringList{QStringLiteral("--scenario")}},
         {QStringLiteral("equals"), QStringList{QStringLiteral("--scenario=login")}}};
     for (const auto &spelling : spellings) {

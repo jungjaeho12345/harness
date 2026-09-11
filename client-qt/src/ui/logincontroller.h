@@ -75,6 +75,11 @@ struct SessionCheck {
     QString message;            // empty on success
 };
 
+// GET /api/session - the identity asked of the server (decisions (7) 2). The one implementation of the
+// check: LoginController::confirmSession() and the list's entry (ListController::enter, step11) both
+// call it. Writes one session{status} line (null without an answer). diag may be null.
+SessionCheck checkSession(net::INewsModel &model, shell::Diag *diag);
+
 class LoginController : public QObject
 {
     Q_OBJECT

@@ -6,6 +6,8 @@
 #include "shell/serverurl.h"
 #include "shell/singleinstance.h"
 #include "shell/windowpolicy.h"
+#include "ui/listcontroller.h"
+#include "ui/listscreen.h"
 #include "ui/logincontroller.h"
 #include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
@@ -140,6 +142,21 @@ void AppShell::createAppWindow()
         connect(m_appWindow->loginScreen(), &ui::LoginScreen::loginRequested, this, &AppShell::onLoginRequested);
         connect(m_login.get(), &ui::LoginController::loginSucceeded, this, &AppShell::onLoginSucceeded);
         connect(m_login.get(), &ui::LoginController::loginFailed, this, &AppShell::onLoginFailed);
+
+        // step11: the list screen shows what the list controller holds (it pulls nothing itself); the
+        // pager asks the controller; the stream's state drives the top bar's live indicator; a session
+        // the list learns is over sends the window back to login. The list page's own entry/exit is
+        // the list controller's enter()/leave().
+        m_list = std::make_unique<ui::ListController>(*m_model, &m_diag);
+        ui::ListController *list = m_list.get();
+        ui::ListScreen *screen = m_appWindow->listScreen();
+        connect(list, &ui::ListController::listChanged, screen, [screen, list] { screen->render(list->viewState()); });
+        connect(list, &ui::ListController::liveChanged, m_appWindow.get(), &ui::MainWindow::setLiveStatus);
+        connect(list, &ui::ListController::sessionEnded, this, &AppShell::returnToLogin);
+        connect(screen, &ui::ListScreen::previousPageRequested, list, &ui::ListController::previousPage);
+        connect(screen, &ui::ListScreen::nextPageRequested, list, &ui::ListController::nextPage);
+        connect(m_appWindow.get(), &ui::MainWindow::listPageEntered, this, &AppShell::onListPageEntered);
+        connect(m_appWindow.get(), &ui::MainWindow::listPageLeft, this, &AppShell::onListPageLeft);
     }
 
     const WindowPlacement plan = planAppWindow(m_savedBounds);
@@ -283,7 +300,7 @@ QStringList AppShell::selfTestFailures() const
         failures << QStringLiteral("a probe ran during boot - probes are user actions only");
     if (m_diag.rejectedEventCount() != 0)
         failures << QStringLiteral("diag refused an event name outside the allowed set");
-    for (const QString &name : shellDiagEvents() + ui::loginControllerDiagEvents()) {
+    for (const QString &name : shellDiagEvents() + ui::loginControllerDiagEvents() + ui::listControllerDiagEvents()) {
         if (!isAllowedDiagEvent(name))
             failures << QStringLiteral("shell event outside the step4 set: ") + name;
     }
@@ -296,6 +313,8 @@ QStringList AppShell::selfTestFailures() const
         failures << QStringLiteral("the screen does not match the boot decision");
     if (haveApp && !m_login)
         failures << QStringLiteral("the app window has no login controller (no Model was injected)");
+    if (haveApp && !m_list)
+        failures << QStringLiteral("the app window has no list controller (no Model was injected)");
     if (m_options.selftest
         && ((haveApp && m_appWindow->isVisible()) || (haveSetup && m_setupScreen->isVisible())))
         failures << QStringLiteral("a window is visible under selftest");
@@ -337,6 +356,11 @@ ui::LoginController *AppShell::loginController() const
     return m_login.get();
 }
 
+ui::ListController *AppShell::listController() const
+{
+    return m_list.get();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Login (step10).
 
@@ -359,17 +383,38 @@ void AppShell::onLoginRequested(const QString &userId, const QString &password)
 
 void AppShell::onLoginSucceeded()
 {
+    enterList();
+}
+
+void AppShell::enterList()
+{
     // decisions (7) 2: entering the post-login screen asks the server who we are - the login answer's
-    // user is never kept. Nothing past the login page is shown before that answer (fail-closed): a
-    // session the server does not confirm - or cannot be asked about - sends the window back.
-    const ui::SessionCheck check = m_login->confirmSession();
-    if (!check.ok) {
-        returnToLogin(check.message);
+    // user is never kept. The list controller's entry is that question, then the query, then the stream
+    // (step11). Nothing past the login page is shown before the answer (fail-closed): a session the
+    // server does not confirm - or cannot be asked about - sends the window back.
+    const ui::ListEntry entry = m_list->enter();
+    if (!entry.ok) {
+        returnToLogin(entry.message);
         return;
     }
-    m_appWindow->setStatusText(check.identityLabel);  // display only - never a permission
+    m_appWindow->setStatusText(entry.identityLabel);  // display only - never a permission
     m_appWindow->loginScreen()->clearError();
-    m_appWindow->showListPage();  // the list slot; the list screen lands here in step11
+    m_appWindow->showListPage();
+}
+
+void AppShell::onListPageEntered()
+{
+    // However the list page became current, it is never on screen with a list that did not enter: a
+    // switch that bypassed the door above (a failed login's, M10-2b's shape) meets the same identity
+    // check here - and goes back to the login page when the server has no session for it.
+    if (m_list && !m_list->isEntered())
+        enterList();
+}
+
+void AppShell::onListPageLeft()
+{
+    if (m_list)
+        m_list->leave();  // the stream closes and no row stays behind
 }
 
 void AppShell::onLoginFailed(const QString &message)
@@ -383,6 +428,8 @@ void AppShell::returnToLogin(const QString &message)
 {
     if (!m_appWindow)
         return;
+    if (m_list)
+        m_list->leave();  // whatever brought us here, the list's stream and rows go with the session
     m_appWindow->setStatusText(m_appWindow->idleStatusText());
     m_appWindow->showLoginPage();
     m_appWindow->loginScreen()->showError(message);
