@@ -63,6 +63,10 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 | 창 정책(순수 결정) | `client/lib/windowPolicy.js` 39-42·46-53·61-62 + `client/main.js` 263-277·367-377의 결정부 | `src/shell/windowpolicy.{h,cpp}` · 테스트 `tests/windowpolicytest.{h,cpp}` | step5 |
 | 단일 인스턴스(잠금 + 알림) | `client/main.js` 55-63·81-89(`requestSingleInstanceLock` + `second-instance`) | `src/shell/singleinstance.{h,cpp}` · 테스트 `tests/singleinstancetest.{h,cpp}` | step5 |
 | 프로브 주입 지점 | `client/main.js` 188-200(`probeOrigin`) | `src/shell/proberunner.{h,cpp}` · 테스트 `tests/proberunnertest.{h,cpp}` | step5 |
+| 쿼리 직렬화(순수) | `web/src/model/httpModel.js` 70-79(`buildQuery`) | `src/net/querystring.{h,cpp}` · 테스트 `tests/querystringtest.{h,cpp}` | step7 |
+| HTTP 전송 계층 | `web/src/model/httpModel.js` 88-118(`request()`) | `src/net/httptransport.{h,cpp}` · 테스트 `tests/httptransporttest.{h,cpp}`(루프백 스텁 `tests/stubhttpserver.*`) · 순수 정책 `tests/netpolicytest.{h,cpp}` | step7 |
+| 편집 표면 식별자 | `web/src/controller/useWriteController.js` 44-51(`nextClientId`) | `src/net/editclientid.{h,cpp}` · 테스트 `tests/netpolicytest.{h,cpp}` | step7 |
+| 실제 프로브 러너 | `client/main.js` 209-248(`requestHealthViaNet`) | `src/net/httpproberunner.{h,cpp}` · 테스트 `tests/httpproberunnertest.{h,cpp}` | step7 |
 | 앱 셸(부팅·화면 수명·bounds 저장) | `client/main.js` 결선 전체(`wireApp`·`createAppWindow`·`showLocalWindow`·`saveBoundsFrom`·`persistConfig`) | `src/shell/appshell.{h,cpp}` · 테스트 `tests/appshelltest.{h,cpp}` | step5 |
 | 화면 2개 · 테마 상수 | `client/pages/setup.html` · (앱 창은 원격 SPA라 대응 없음) | `src/ui/setupscreen.*` · `src/ui/mainwindow.*` · `src/ui/theme.h` | step5 |
 | 합성 루트 | `client/main.js` 26-63 | `app/main.cpp` | step5 |
@@ -376,12 +380,12 @@ Electron `requestSingleInstanceLock()`은 **배타 잠금 + 두 번째 실행 �
   다시 쓴다** — null로 리셋하지도 새(무효) 위치를 쓰지도 않는다. 근거: 사용자가 마지막으로 **보이게** 둔 배치를 잃지 않는
   쪽이 fail-safe이고, 리셋은 정본에 없는 새 동작이다.
 
-### 프로브 — 주입 지점만 있다. **연결 확인은 step7에서 실제 HTTP로 붙는다**
+### 프로브 — 주입 지점(step5) + 실제 러너(step7)
 
-- `shell::ProbeRunner`가 주입 지점이고, step5의 합성 루트는 **`UnimplementedProbeRunner`**를 넣는다: 요청을 **보내지
-  않고** 항상 `{ok:false, reason:"unreachable"}`을 돌려준다. **성공한 척하지 않는다.** 그 사실은 러너의
-  `limitationNotice()`가 설정 화면 하단에 **경고색으로 그대로 표시**한다 — 실제 러너(step7)가 주입되는 날 문구가 저절로
-  사라지도록 화면이 아니라 러너가 그 문장을 소유한다.
+- `shell::ProbeRunner`가 주입 지점이다. step5의 합성 루트는 **`UnimplementedProbeRunner`**(요청을 **보내지 않고** 항상
+  `{ok:false, reason:"unreachable"}`)를 넣었고, **step7부터 합성 루트는 `net::HttpProbeRunner`를 넣는다**(아래 net 절).
+  대역 러너는 테스트용으로 남았고, 그 경고문(`limitationNotice()`)은 러너가 소유하므로 **실 러너가 주입되자 설정 화면에서
+  저절로 사라졌다**(`showsNoNoticeOnceTheRealRunnerIsInjected`가 잠근다).
 - `shell::probeOrigin()`이 정본 `probeOrigin`(`main.js:188-200`)의 이식이고, 정본에서 `main.js` 텍스트 스캔으로만 잠겨
   있던 **R26**(승격은 **성공 판정일 때만** — 캡티브 포털·오류 페이지로의 리다이렉트가 저장 주소를 바꾸지 못하게)을 행동
   테스트로 잠갔다. diag는 `probe{origin, ok, finalOrigin, promoted[, reason]}` 한 줄(정본 필드 그대로).
@@ -392,10 +396,11 @@ Electron `requestSingleInstanceLock()`은 **배타 잠금 + 두 번째 실행 �
 정본(`client/main.js`·`client/lib/windowPolicy.js`·`client/lib/clientConfig.js`)과 명세서(`test/**`)는 **한 줄도 고치지
 않았다**(읽기 전용).
 
-1. **[저장]은 프로브 없이 정규화 통과만으로 저장한다**(step5.md D의 결정). 정본 `saveServer`는 **먼저 프로브하고 성공한
-   판정의 최종 origin만** 저장한다(`main.js:129-134` — 「실패한 주소는 저장하지 않는다」). 러너가 미구현이라 정본 순서로는
-   저장이 영영 불가능하기 때문이며, **step7이 실제 러너를 붙일 때 정본 순서(프로브 성공 → 최종 origin 저장 · R26)로 되돌려야
-   한다.** 설정 화면 경고문이 이 사실도 함께 적는다.
+1. ~~**[저장]은 프로브 없이 정규화 통과만으로 저장한다**(step5.md D의 결정).~~ **→ step7에서 정본 순서로 복원했다**:
+   정규화 → 프로브 → **실패면 아무것도 저장하지 않음**(입력 주소조차) → 성공이면 **프로브가 끝난 최종 origin**(R26 승격값)을
+   저장 → `config-saved{최종 origin}` → 앱 창(`main.js:130-141`). 잠금은 `savesNothingWhenTheProbeFails` ·
+   `savesTheProbedFinalOriginAndOpensTheAppWindow` · `savesTheRedirectedOriginOfARealProbe`(실 HTTP 302) ·
+   `savesNothingWhenARealProbeMeetsAPortal` — 변이 M7-8(step5 순서로 되돌림)이 5건 red.
 2. **잠금 = named mutex + `QLocalServer`, 알림 = 연결 자체.** Electron은 두 번째 실행의 argv/cwd를 실어 보내지만 정본이
    쓰지 않으므로(`main.js:81`) 싣지 않았다.
 3. **최소화 복원은 `setWindowState(state & ~WindowMinimized)`다 — `showNormal()`이 아니다.** Electron `restore()`는
@@ -471,6 +476,91 @@ Electron `requestSingleInstanceLock()`은 **배타 잠금 + 두 번째 실행 �
 | M5-14 | 닫기 이벤트 거부 | exit 1 · 4 red |
 | M5-15a | 미구현 러너가 경고문을 숨김 | exit 1 · 2 red |
 | M5-15b | 미구현 러너가 성공한 척 | exit 1 · 3 red |
+
+## net 계층 — 전송 핵심 (2026-09-11 · step7)
+
+전송 계층은 **한 곳**이다: `net::HttpTransport::send(RequestSpec)`가 헤더·쿠키·타임아웃·오류 판별을 전부 소유한다(정본
+`httpModel.js` `request()`의 대응). 정본(`web/**`)·계약(`docs/api-contract/**`)·서버는 **읽기만 했다**.
+
+### 규율 (코드가 강제하는 것)
+
+| 규율 | 정본 근거 | Qt |
+|---|---|---|
+| 1회 시도 · 재시도 없음 | `httpModel.js` 102-117 | `send()`에 루프 없음 · 모든 상태 1요청(`deliversEachStatusAsADistinctOutcome`이 요청 수를 센다) |
+| 본문은 상태와 무관하게 파싱, 비-JSON은 표시만 | 110-117 | `jsonOk=false` · 전송 계층은 사유 토큰을 **지어내지 않는다**(`network-error`/`invalid-response` 합성은 step8 Model 몫) |
+| **본문 없음 ≠ `{}`** | 98-101 · 247-256 | `RequestSpec.body = std::optional<QJsonObject>` — `nullopt`면 **업로드 장치 자체가 없다**(Content-Type·본문·Content-Length 전부 없음 — 실측) · `{}`면 `application/json` + `{}` |
+| 쿠키 자 = 세션 운반의 유일 수단 | override L126·L128 | 메모리 전용 `QNetworkCookieJar` · `x-session-id` 경로 **없음**(로그인 본문의 `sessionId`도 읽지 않는다) |
+| Origin/Referer 미부착 | `server/index.js` 288-292 | Qt 기본 헤더 그대로(부착 코드 0) — 실서버에서 무-Origin POST가 403이 아니라 404(아래 실측) |
+| `x-edit-client`는 **라우트로** 강제 | `server/index.js` 932·961·974 | `editClientRouteIds()` = {articles-lock, articles-unlock, articles-update}. 그 밖에서는 값이 있어도 **안 붙인다**(웹은 호출부 데이터 흐름으로 같은 트래픽을 지킨다 — 관측 트래픽 동일) · step8 라우트 표가 이 집합과 같아야 한다 |
+| 세션 폐기 = **401 + `unauthenticated`만** | step7.md(네이티브 신규 정책) | 편집 잠금 충돌(401 `locked`)·로그인 자격 오류(401 `invalid-credentials`)·토큰 없는 401 페이지에서는 **유지** |
+| 판별 키 = (라우트, 상태, 토큰) | `reason-tokens.md` 표1 #8·표2 #1 | `classifyResponse()` 순서: ① **429는 본문보다 먼저**(로그인 429는 text/html · 토큰 없음) ② 비-JSON → `InvalidResponse` ③ `(login,423,locked)`=AccountLocked · `(articles-lock,401,locked)`=EditLockConflict · `(login,401,invalid-credentials)` · `(*,401,unauthenticated)` ④ 상태 버킷. `locked`를 토큰만으로 해석하는 코드 없음 |
+| 무한 대기 금지 | 정본 없음(fetch 무기한) | 요청 전체 데드라인(기본 15000 ms · 0 이하도 기본값) · 대기는 사용자 입력을 제외한 로컬 이벤트 루프 |
+| 응답 캐시 없음 | ADR-004 | `AlwaysNetwork` + `CacheSaveControl=false` |
+| diag | step4 C · ADR-018 ④ | 요청마다 `net-request{route,method,status,ms}` — `route`는 **라우트 id**(경로를 싣지 않는다: 상대 경로는 리댁션이 fail-open) · 응답 없음이면 `status:null` |
+
+### 실측 (Qt 6.8.3 · 이 머신 · 2026-09-11)
+
+- **리다이렉트 정책은 코드에서 명시했다**(Qt 6 기본값 `NoLessSafeRedirectPolicy`를 믿지 않는다). 스텁 302로 잰 결과:
+  **API 요청 = `SameOriginRedirectPolicy`** — 같은 출처 302는 **따라가고 쿠키도 동행**(최종 URL = 이동 후) · **교차 출처
+  302는 따르지 않는다**: 상대 서버 요청 0건 · 응답은 302 자체(상태 302 · 텍스트 본문 · URL 불변) → `InvalidResponse`.
+  **프로브 = `NoLessSafeRedirectPolicy`** — 교차 출처 302를 따라가 최종 URL을 보고(승격 입력). 정본 `fetch`(API)는 교차 출처도
+  따르므로 **API 쪽은 의도된 이탈**(쿠키·본문이 설정된 서버 밖으로 나가지 않는다 — 브라우저도 credentials 교차 출처는 CORS가
+  막는다). https→http는 TLS 스텁이 없어 **미실측**이다(정책상 Qt가 거부 → 프로브 실패. 정본은 따라간 뒤 승격만 거절).
+- **쿠키**: express 형식 `sid=…; Max-Age=3600; Path=/; Expires=…; HttpOnly; SameSite=Lax`(비프로덕션 · Secure 없음)를 Qt 자가
+  **저장하고 다음 GET·POST에 `Cookie: sid=…`로 싣는다**(SameSite 판정 없음 — 비브라우저). `Max-Age=0`(logout)이면 지운다.
+  **실서버 2종(Node exe · Spring)에서도 확인**: 로그인 → `/api/session` 200 → 무-Origin POST `/api/articles/<없는 id>/lock`이
+  **404**(403 `forbidden-origin` 아님) → 로그아웃 → `/api/session` 401(수동 `LiveServerTest` — `CLIENT_QT_LIVE_ORIGIN`이 있을 때만
+  러너가 등록하므로 `build.bat`은 돌리지도 skip으로 세지도 않는다).
+- **`QUrl`이 `%7E`를 `~`로 되돌린다**: buildQuery는 URLSearchParams대로 `%7E`를 만들지만 와이어에는 `~`가 나간다(RFC 3986의
+  비예약 문자 정규화 — URLSearchParams가 인코딩하는 문자 중 **비예약은 `~` 하나**다). 서버는 두 철자를 같게 디코드한다.
+  예약 문자(`! ' ( ) , ; $ @ / ? + & =`)는 인코딩된 채 나간다(와이어 행으로 잠금).
+- **`QUrlQuery`는 URLSearchParams가 아니다**: `{q:'a b', p:'a+b'}` → `q=a%20b&p=a+b`. `+`를 인코딩하지 않아 서버가 공백으로
+  읽는다 → 인코더를 손으로 썼다(`documentsWhyQUrlQueryIsNotUsed`).
+- **Windows 루프백의 연결 거부는 즉시가 아니다 — 약 4.1초**(빌드 13회 실측 4056~4109 ms). 프로브 데드라인 5000 ms에 가깝다:
+  거부는 여전히 `NetworkError`(→ unreachable)로 데드라인 전에 판정된다.
+
+### 정본과의 의도적 이탈 (net · step7)
+
+1. **API 교차 출처 리다이렉트를 따르지 않는다**(위 실측).
+2. **쿼리 쌍의 순서는 키 순서다**(`QVariantMap` 정렬 — 정본은 삽입 순서). 서버는 이름으로 읽는다.
+3. **와이어의 `~`**(위 실측 — 비예약 문자 정규화).
+4. **JSON 객체가 아닌 JSON 본문**(배열·문자열)은 `jsonOk=false`다(정본은 그 값을 그대로 돌려준다 — 서버의 모든 응답은 객체).
+5. **GET에 본문을 주면 보내지 않고 `NetworkError`**(정본 `fetch`의 TypeError → network-error와 동형 · Qt는 그대로 보냈을 것이다).
+6. **새 정책 3종은 정본에 대응이 없다**: 데드라인 · 401+unauthenticated 세션 폐기 · 라우트 강제 `x-edit-client`.
+7. **재시작 = 재로그인**(쿠키 디스크 미저장 — ADR-018 ⑤의 divergence 그대로).
+
+### 무잠금 7건의 처분 (net 포트 스펙 transport 갈래)
+
+포트 스펙이 「오늘 어떤 테스트도 잠그지 않는다」고 센 transport 규칙 7건 — **7건 전부 새 케이스로 잠갔다**(+ 부분 잠금 2건 확장).
+
+| 규칙 | 잠근 케이스 | 변이 |
+|---|---|---|
+| R2 세션 쿠키 지속(정본은 브라우저 저장소) | `keepsNoSessionAcrossARestart` · 쿠키 왕복 3건 | M7-3 |
+| R9 `locked` 재사용 — (라우트, 상태) 키 | `neverReadsLockedFromTheTokenAlone` · `separatesTheTwoLockedTokens` · 분류 표 | M7-5 · M7-6 |
+| R10 429 무토큰 — 상태 우선 | `judgesATextHtml429AsRateLimited` · 분류 표 3행 | M7-5 |
+| R12 세션 폐기 조건 | `dropsTheSessionOnlyOnUnauthenticated`(8행) | M7-6 |
+| R13 데드라인 | `timesOutInsteadOfWaitingForever` · `neverWaitsForever` · 프로브 `givesUpAtItsDeadline` | (행이 스텁을 매달아 두므로 데드라인 제거 변이는 red가 아니라 **무한 대기**가 된다 — 순수 `effectiveTimeoutMs` 행이 0/음수 경로를 잠근다) |
+| R14 Origin/Referer 부재 | `sendsNoOriginRefererOrSessionHeader` + 실서버 404 | M7-2 |
+| R15 SameSite=Lax 쿠키의 비브라우저 처리 | 스텁 쿠키 왕복(POST 포함) + 실서버 2종 | (실측 항목) |
+| (부분) R4 create에 `x-edit-client` | `attachesTheEditClientOnlyOnItsThreeRoutes`(14행) | M7-1 |
+| (부분) R5 action 없는 lock의 `{}` | `sendsAnEmptyObjectWhenTheBodyIsEmpty` · `sendsNeitherBodyNorContentTypeWithoutABody`(7행) | M7-4 |
+
+크로스체크가 지목한 공백 2건도 잠갔다: **buildQuery**(`QueryStringTest` 27행 — 기대값은 전부 node로 정본을 실행해 얻었다 ·
+와이어 7행) · **리다이렉트**(`followsOnlySameOriginRedirectsForApiCalls` · 프로브 302 3건).
+
+### 변이 결과표 (2026-09-11 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
+
+| 변이 | 내용 | 결과(`build.bat`) |
+|---|---|---|
+| **M7-1** | `x-edit-client`를 값만 있으면 모든 라우트에 | exit 1 · **10 red**(3 라우트 밖 행 전부) |
+| **M7-2** | `Origin: http://evil.example` 부착 | exit 1 · 1 red(`sendsNoOriginRefererOrSessionHeader`) |
+| **M7-3** | 쿠키 자를 파일 지속 자로(`%TEMP%`에 저장·로드) | exit 1 · 2 red(`keepsNoSessionAcrossARestart` + 프로브 새 자) · 변이가 실제로 파일을 썼다 → 삭제 |
+| **M7-4** | `body`를 `QJsonObject`로 합침(nullopt도 `{}`) | exit 1 · **6 red**(무본문 POST 5 + DELETE 1 · GET 행은 green) |
+| **M7-5** | 판별 순서 뒤집기(JSON 먼저 → 상태) | exit 1 · 4 red(순수 2행 + text/html 429 + 상태 전수) |
+| **M7-6** | 모든 401에서 세션 폐기 | exit 1 · 3 red(**편집 잠금 충돌** · 자격 오류 · 무토큰 401) |
+| **M7-7a** | `null`을 `key=`로 | exit 1 · 4 red(순수 3 + 와이어 1) |
+| **M7-7b** | 배열을 쉼표 결합 | exit 1 · **9 red**(deskUnsent·정본 행·빈 배열 2·원소 규칙 2·정본 반복 키·와이어 2) |
+| **M7-8** | 저장 순서를 step5(프로브 없이 저장)로 | exit 1 · 5 red(**프로브 실패 시 미저장** 2 · 최종 origin 저장 2 · 이벤트 수 1) |
 
 ## 무엇이 P4가 아닌가
 
