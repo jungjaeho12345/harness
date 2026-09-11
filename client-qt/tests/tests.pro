@@ -9,7 +9,11 @@ CONFIG -= app_bundle
 
 DESTDIR = $$PWD/release
 
-SOURCES += main.cpp \
+# The in-memory Model is a test double: it is compiled by THIS target only, never by the app
+# (gate review 2026-09-12 - it used to sit in common.pri and shipped inside news-client.exe).
+# The file stays under src/net/ so that "net/fakenewsmodel.h" keeps resolving through INCLUDEPATH.
+SOURCES += $$PWD/../src/net/fakenewsmodel.cpp \
+           main.cpp \
            smoketest.cpp \
            serverurltest.cpp \
            clientconfigtest.cpp \
@@ -41,7 +45,8 @@ SOURCES += main.cpp \
            screeninventorytest.cpp \
            timerpolicytest.cpp
 
-HEADERS += smoketest.h \
+HEADERS += $$PWD/../src/net/fakenewsmodel.h \
+           smoketest.h \
            serverurltest.h \
            clientconfigtest.h \
            configstoretest.h \

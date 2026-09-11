@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QPair>
+#include <QRegularExpression>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -103,6 +104,58 @@ QJsonArray items(const ModelResult &r)
 bool answered(const ModelResult &r)
 {
     return r.body.value(QStringLiteral("ok")).isBool();
+}
+
+// --- rule 7: reading a qmake list (pure) --------------------------------------------------------
+// The entries of every "<NAME> = ..." / "<NAME> += ..." assignment whose name is in names, with the
+// backslash continuation lines followed and trailing "#" comments dropped. Whitespace separates
+// entries, which is exactly how qmake reads these lists.
+QStringList qmakeListEntries(const QString &text, const QStringList &names)
+{
+    static const QRegularExpression assign(QStringLiteral("^([A-Za-z_]\\w*)\\s*\\+?=(.*)$"));
+    static const QRegularExpression space(QStringLiteral("\\s+"));
+    QStringList entries;
+    bool inside = false;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (const QString &raw : lines) {
+        QString line = raw.trimmed();
+        const qsizetype comment = line.indexOf(QLatin1Char('#'));
+        if (comment >= 0)
+            line = line.left(comment).trimmed();
+        const bool continues = line.endsWith(QLatin1Char('\\'));
+        if (continues) {
+            line.chop(1);
+            line = line.trimmed();
+        }
+
+        QString payload;
+        bool matched = inside;
+        if (!inside) {
+            const QRegularExpressionMatch m = assign.match(line);
+            if (m.hasMatch() && names.contains(m.captured(1))) {
+                payload = m.captured(2).trimmed();
+                matched = true;
+            }
+        } else {
+            payload = line;
+        }
+        if (!matched)
+            continue;
+        if (!payload.isEmpty())
+            entries << payload.split(space, Qt::SkipEmptyParts);
+        inside = continues;
+    }
+    return entries;
+}
+
+QStringList fakeEntries(const QStringList &entries)
+{
+    QStringList found;
+    for (const QString &entry : entries) {
+        if (entry.contains(QStringLiteral("fake"), Qt::CaseInsensitive))
+            found << entry;
+    }
+    return found;
 }
 
 } // namespace
@@ -351,6 +404,60 @@ void FakeNewsModelTest::rule6_saveArticleDropsTheBodyKey()
     QVERIFY2(!updated.contains(QStringLiteral("body")), compact(updated).constData());
     QCOMPARE(updated.value(QStringLiteral("markupVersion")).toString(), QStringLiteral("m2"));
     QVERIFY(!containsKeyDeep(fake.queryArticles().body, QStringLiteral("body")));
+}
+
+// rule 7: the build files decide what ships. A fake that is listed in the SHARED source list is
+// compiled into news-client.exe even though no line of src/** or app/** names it - dead weight in
+// the shipped binary and, worse, an in-process answer machine sitting next to the real Model.
+// The rule: the test double belongs to the TEST target only.
+void FakeNewsModelTest::rule7_isNotLinkedIntoTheApp()
+{
+    const QStringList sharedNames{QStringLiteral("CLIENT_SOURCES"), QStringLiteral("CLIENT_HEADERS")};
+    const QStringList targetNames{QStringLiteral("SOURCES"), QStringLiteral("HEADERS")};
+
+    // The predicate on known input: continuations are followed, other lists are not read, a trailing
+    // comment is not an entry, and "fake" is matched case-insensitively wherever it sits in the path.
+    const QString fixture = QStringLiteral(
+        "CLIENT_SOURCES = $$PWD/src/a.cpp \\\n"
+        "                 $$PWD/src/net/FakeNewsModel.cpp \\\n"
+        "                 $$PWD/src/b.cpp   # trailing comment\n"
+        "OTHER_SOURCES = $$PWD/src/fakeother.cpp\n"
+        "SOURCES += $$CLIENT_SOURCES\n");
+    QCOMPARE(qmakeListEntries(fixture, sharedNames).size(), 3);
+    QCOMPARE(fakeEntries(qmakeListEntries(fixture, sharedNames)),
+             QStringList{QStringLiteral("$$PWD/src/net/FakeNewsModel.cpp")});
+    QVERIFY2(fakeEntries(qmakeListEntries(fixture, QStringList{QStringLiteral("OTHER_SOURCES")})).size() == 1,
+             "the scanner reads the list it was asked for");
+
+    QString error;
+    QByteArray bytes;
+
+    // common.pri: what the app AND the tests compile. Nothing here may name the fake.
+    QVERIFY2(readRepoFile(QStringLiteral("client-qt/common.pri"), &bytes, &error), qPrintable(error));
+    const QStringList shared = qmakeListEntries(QString::fromUtf8(bytes), sharedNames);
+    QVERIFY2(shared.size() >= 20, qPrintable(QStringLiteral("only %1 shared entries - the parse lost the list").arg(shared.size())));
+    QVERIFY2(shared.contains(QStringLiteral("$$PWD/src/net/httpnewsmodel.cpp")),
+             qPrintable(QStringLiteral("non-vacuity: the real Model is not in CLIENT_SOURCES; entries: %1")
+                            .arg(shared.join(QStringLiteral(", ")))));
+    QVERIFY2(fakeEntries(shared).isEmpty(),
+             qPrintable(QStringLiteral("news-client.exe links the test double: ")
+                            + fakeEntries(shared).join(QStringLiteral(", "))));
+
+    // app/app.pro: the app target's own list must not add it back.
+    QVERIFY2(readRepoFile(QStringLiteral("client-qt/app/app.pro"), &bytes, &error), qPrintable(error));
+    const QStringList appOwn = qmakeListEntries(QString::fromUtf8(bytes), targetNames);
+    QVERIFY2(fakeEntries(appOwn).isEmpty(),
+             qPrintable(QStringLiteral("app.pro adds the test double: ") + fakeEntries(appOwn).join(QStringLiteral(", "))));
+
+    // tests/tests.pro: and it has to be compiled somewhere - this very test class uses it.
+    QVERIFY2(readRepoFile(QStringLiteral("client-qt/tests/tests.pro"), &bytes, &error), qPrintable(error));
+    const QStringList testOwn = qmakeListEntries(QString::fromUtf8(bytes), targetNames);
+    QVERIFY2(testOwn.contains(QStringLiteral("$$PWD/../src/net/fakenewsmodel.cpp")),
+             qPrintable(QStringLiteral("the test target no longer compiles the fake; entries: %1")
+                            .arg(testOwn.join(QStringLiteral(", ")))));
+    QVERIFY2(testOwn.contains(QStringLiteral("$$PWD/../src/net/fakenewsmodel.h")),
+             qPrintable(QStringLiteral("the test target no longer declares the fake; entries: %1")
+                            .arg(testOwn.join(QStringLiteral(", ")))));
 }
 
 // L131: lockerSessionId / lockerClientId are in no answer - not even when a seeded row carries

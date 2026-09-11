@@ -12,6 +12,11 @@ INCLUDEPATH += $$PWD/src
 # src/ui/** holds the screens (step5: the setup screen + the empty main window; step10..step11:
 # login and list). Every module lands here exactly once so that the app and the test runner
 # compile the same code.
+#
+# Test doubles do NOT belong here (gate review 2026-09-12): a module listed below is linked into
+# news-client.exe, and src/net/fakenewsmodel.* is named by nothing in src/** or app/**. It is
+# compiled by tests/tests.pro alone, and FakeNewsModelTest::rule7_isNotLinkedIntoTheApp() keeps
+# the word "fake" out of the two lists below.
 CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/shell/clientconfig.cpp \
                  $$PWD/src/shell/configstore.cpp \
@@ -28,7 +33,6 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/net/routetable.cpp \
                  $$PWD/src/net/newsmodel.cpp \
                  $$PWD/src/net/httpnewsmodel.cpp \
-                 $$PWD/src/net/fakenewsmodel.cpp \
                  $$PWD/src/net/sseparser.cpp \
                  $$PWD/src/net/changestream.cpp \
                  $$PWD/src/ui/setupscreen.cpp \
@@ -55,7 +59,6 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/net/routetable.h \
                  $$PWD/src/net/newsmodel.h \
                  $$PWD/src/net/httpnewsmodel.h \
-                 $$PWD/src/net/fakenewsmodel.h \
                  $$PWD/src/net/sseparser.h \
                  $$PWD/src/net/changestream.h \
                  $$PWD/src/ui/theme.h \
