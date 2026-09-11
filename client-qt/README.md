@@ -1124,7 +1124,7 @@ M10-2b의 드라이버 증거는 `articles-list`가 아니라 **목록 진입의
 
 | 축 | 판정자 | 기준값(2026-09-12) |
 |---|---|---|
-| Qt 모듈 전부(셸 순수 판정 · net · 컨트롤러 · 화면) | `cmd /c client-qt\build.bat`(빌드 + `tests/release/client-qt-tests.exe`) | 305 passed · 0 failed · 24 classes. **실행한 테스트 함수가 0이면 러너가 green을 거부**한다(exit 2) |
+| Qt 모듈 전부(셸 순수 판정 · net · 컨트롤러 · 화면) | `cmd /c client-qt\build.bat`(빌드 + `tests/release/client-qt-tests.exe`) | **310 passed · 0 failed · 25 classes**(④⑤ 게이트 후 — 위 마감 실측표의 305/24는 `8544a1b` 시점의 역사값이다). **실행한 테스트 함수가 0이면 러너가 green을 거부**한다(exit 2) |
 | 라우트 표 ↔ 동결 계약 39 · Model 35 · `x-edit-client` 3 · 금지 2 | 같은 커맨드 안의 `RouteContractTest` C-1~C-8(`docs/api-contract/endpoints.json`·`web/src/model/contract.js`를 **런타임에 읽는다**) | 표 37 + 금지 2 = 39 · `MODEL_KEYS` 35 개수·이름·순서 일치. **계약 파일이 없으면 skip이 아니라 FAIL 11** |
 | diag JSONL 계약(허용 이벤트 21 · 금지 키 7 · URL 리댁션 · 정본 바이트 대조) | `DiagTest` | 정본 `client/diag.js` 출력과 **바이트 동일**(매 빌드 로그에 두 줄이 나란히 찍힌다) |
 | SSE 프레임 파싱 · 종결 4사유 · 백오프 · 세션 종료 | `SseParserTest`·`ChangeStreamTest`(루프백 chunked 스텁) | 파서 16케이스 · 스트림 20케이스 |
@@ -1180,3 +1180,50 @@ SSE 실시간 갱신의 **기계 판정**(`--scenario list` — (i)(ii)(iii)) ·
 - **diag 이벤트를 늘리려면**: `shell::allowedDiagEvents()`(21) + 신설 이벤트면 `contractedFields()` + 위 처분 표 + `DiagTest` 케이스. 집합 밖 이름은 `log()`가 **거부**한다.
 - **자동화 훅**: `CLIENT_SELFTEST=1` + `--scenario boot|login|list` + `CLIENT_SCENARIO_USER`/`_PASSWORD`. 드라이버는 `scripts/verify-qt-client.mjs`이고 **새 드라이버를 만들지 말고 시나리오를 덧붙인다**.
 - **P5 착수 전제**: 실물 **MS-IME 육안 확인**(P0 스파이크의 잔여) · 에디터 요구사항을 `docs/news.md`로 읽을 때는 **`docs/news-md-overrides.md`를 함께** 볼 것(줄 번호가 부딪히면 대장이 이긴다).
+
+### ④⑤ 게이트 후 보강 (2026-09-12)
+
+**위 마감 실측표는 `8544a1b` 시점의 역사 기록이므로 고치지 않는다.** 그 뒤에 ④ 테스터가 붙인 게이트와 ⑤ 리뷰어가 낸 low를
+어떻게 처분했는지가 여기다. 기준값이 바뀐 곳은 위 「무엇이 기계로 판정되는가」 표의 첫 행(305/24 → **310/25**) 하나다.
+
+#### ④ 테스터 보강 — 주기 타이머 폐색 (커밋 `969e102`)
+
+`tests/timerpolicytest.{h,cpp}` 신설(테스트 +2 · 클래스 24 → 25). 위 「기계가 판정하지 않는 것」 6번(**폴링 배제는 관측 창
+5초 안의 주기에 대해서만 결정적**)의 사각을 **소스 스캔**으로 메운다: `client-qt/src/**`·`app/**`을 모듈 단위(헤더+cpp)로 모아
+`setInterval(`·`startTimer(`·`setSingleShot(false)`·`QBasicTimer`·`timerEvent(`가 나오면 red이고, `QTimer` 객체를 선언하고
+`setSingleShot(true)`를 부르지 않아도 red다. 비공허성은 `src/net/changestream`(SSE 재연결 타이머)이 실제로 잡히는 것으로 잠갔다.
+**5초 창보다 긴 주기는 드라이버가 여전히 못 보지만, 소스에 그런 타이머를 둘 수가 없다** — 두 게이트가 같은 구멍을 양쪽에서 막는다.
+
+#### ④⑤ findings 처분표
+
+| # | 발견 | 처분 | 커밋 |
+|---|---|---|---|
+| ⑤ F1 [low] | `common.pri:31,58`이 테스트 더블 `src/net/fakenewsmodel.{h,cpp}`를 `CLIENT_SOURCES`/`CLIENT_HEADERS`에 두어 `app/app.pro` 경유로 **`news-client.exe`에 링크**했다(`src/**`·`app/**`의 참조는 0건) | **고침** — `tests/tests.pro`(테스트 타깃) 전용 SOURCES/HEADERS로 이동. 파일 위치는 `src/net/` 유지(=`net/fakenewsmodel.h` include 경로·기존 문서 표기 무변). 잠금 `FakeNewsModelTest::rule7_isNotLinkedIntoTheApp()` — qmake 리스트 파서로 `common.pri`·`app.pro`에 `fake` 0건 + `tests.pro`에는 있음(양쪽이 동시에 비면 공허해지지 않는다). **exe 362,496 → 357,376 B(-5,120)** | `a4d546f` |
+| ⑤ F2 [low] | `src/shell/clientconfig.cpp:175-177`의 `shaped.x + shaped.width`가 int 덧셈인데 `wholeNumber()`(29-31행)가 int 전 범위를 허용 — 손편집 config에서 **부호있는 오버플로(UB)** | **고침** — 여덟 항 전부 `qint64`로 승격(창 쪽·작업영역 쪽 둘 다). 잠금 `ClientConfigTest::keepsBoundsArithmeticWithinRange()`(width/height INT_MAX · 오른쪽 끝이 INT_MAX를 넘는 모니터 · 반대 방향으로 INT_MIN 거부 · 파일에서 오는 경로) | `37c902e` |
+| ⑤ F3 [low] | `src/ui/mainwindow.cpp:41-43`의 신원 표시 QLabel이 `Qt::AutoText` — 서버 유래 `department`/`userId`(`logincontroller.cpp:86-100`)에 `<b>`가 오면 **마크업으로 렌더**된다 | **고침** — `src/ui`의 QLabel **13개 전부** `setTextFormat(Qt::PlainText)`. 유일한 예외는 실시간 표시 `liveLabel`(마크업이 이 코드가 쓰는 색 상수다)이고 테스트가 그 예외를 명시적으로 단언한다. 잠금 `ListScreenTest::serverDerivedTextNeverRendersAsMarkup()` | `f815946` |
+| ⑤ 이월 ① [low] | `scripts/verify-qt-client.mjs:73`의 `DEFAULT_QT_BIN`이 `client-qt/env.bat:6` Qt 경로의 **2차 사본**이다 | **이월(고치지 않음)** — `--qt-bin`/`QT_BIN_DIR` 우회가 있어 지금 막히지 않는다. 정본 1곳 통합은 **P8**(배포 형상)과 함께 | — |
+| ⑤ 이월 ② [low] | `tests/main.cpp:110,169`의 「0 실행이면 green 거부」가 **선언 수**(`countTestFunctions`)로 판정한다(실행 수가 아니다) | **이월** — `build.bat`이 러너를 무인자로 부르므로 현재 영향 0. **인자 필터를 쓰게 되면 실행 수로 바꿔야 한다** | — |
+| ④ [info] | 「diag에 세션 쿠키 0건」의 근거 | **사실 확인** — 문자열 검색이 아니라 **구조 보증**이다: 금지 키 7 + `net-request` 이벤트의 필드 화이트리스트 + `DiagTest` | — |
+| ④ [info] | `fakenewsmodel.cpp`의 `lockerClientId` | **사실 확인** — 가짜 서버의 **내부 장부**이고 `withoutPrivate()`가 응답에서 제거한다(override L131 준수 · `FakeNewsModelTest::neverExposesTheLockHolder()`가 잠근다) | — |
+
+**이름이 주어진 항목은 위 일곱이다.** ⑤가 approve와 함께 남긴 low의 수와 이 표의 줄 수가 어떻게 대응하는지는 처분 지시가
+구분하지 않았으므로 여기서 추정하지 않는다 — 추정한 매핑은 다음 감사에서 사실과 구분되지 않는다.
+
+**P5가 새 모듈을 등록할 때**: 위 「P5가 곧바로 쓸 것」의 「새 모듈 등록 2곳」은 **프로덕션 모듈**의 이야기다. **테스트 더블·스텁은
+`common.pri`가 아니라 `tests/tests.pro`에 등록한다**(F1) — `common.pri`에 넣으면 배포물에 실리고 `rule7`이 red가 된다.
+
+#### 최종 재실측 1회 (코드 마지막 커밋 `f815946` · 트리 clean)
+
+| 커맨드 | 결과 |
+|---|---|
+| `cmd /c client-qt\build.bat` | exit 0 · `Totals: 310 passed, 0 failed (classes: 25)` · `BUILD OK` |
+| `verify-qt-client --scenario boot --server exe` | exit 0 · 4,465 ms · 관측 8(A 4 · B 4) · 판정 33 · 실패 0 |
+| `verify-qt-client --scenario login --server exe` | exit 0 · 5,257 ms · 관측 17(G 0 · L+ 12 · L- 5) · 판정 40 · 실패 0 |
+| `verify-qt-client --scenario list --server exe` | exit 0 · 7,494 ms · 관측 15 · 판정 30 · 실패 0 |
+| `verify-qt-client --scenario list --server spring` | exit 0 · 11,789 ms · 관측 15 · 판정 30 · 실패 0 |
+| `cmd.exe /c "npm test"` | exit 0 · tests **1349** · pass 1349 · fail 0 · suites 59 |
+| `client-qt/release/news-client.exe` | **357,376 B**(F1 전 362,496 B — 테스트 더블이 빠진 만큼 줄었다) |
+| 리포 `news.db` | md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` **무변**(읽기만) |
+
+**`npm test`는 반드시 `cmd.exe /c`로 감싼다**: Node ≥ 20은 `.cmd`를 직접 spawn하지 못해 예외 없이 `status=null`을 돌려주고,
+그것이 「0 ms에 끝난 성공」으로 오독된다(마감 실측의 함정 ①). `status`가 **정수**인지 확인하라.
