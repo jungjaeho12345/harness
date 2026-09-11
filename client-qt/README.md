@@ -13,6 +13,8 @@ cmd /c client-qt\run.bat --selftest   CLIENT_SELFTEST=1과 똑같이 부팅(창 
                                       셸 불변식을 자기검사하고 이벤트 루프 없이 종료 — 통과 0 · 위반 1
 ```
 
+- `--scenario login`은 **하네스 전용 자동화 훅**이다(step10). `CLIENT_SELFTEST=1`이 아니면 앱은 **아무것도 하지 않고
+  exit 2**로 거부한다 — 이 가드는 **보안 경계가 아니라 사고 방지 장치**다(아래 「로그인 화면」 절).
 - `--selftest`는 **실제 부팅과 같은 user-data 폴더를 쓴다**(`CLIENT_USER_DATA`가 없으면 `%APPDATA%\기사작성기-qt`를
   만든다). 하네스·검증은 언제나 `CLIENT_USER_DATA`로 임시 폴더를 준다. 같은 폴더를 쥔 인스턴스가 이미 떠 있으면
   자기검사를 돌리지 못했으므로 **exit 1**이다(돌지 않은 자기검사가 성공으로 보고되는 길을 막는다).
@@ -803,6 +805,133 @@ step7 `LiveServerTest` 선례). 같은 이벤트 루프의 **raw `QTcpSocket` �
   컨트롤러는 재조회 중 도착한 신호를 합쳐라.
 - QNAM은 호스트당 HTTP/1.1 연결 6개 — 스트림은 연결 하나를 계속 쥔다(P4 1개 · P5 +1).
 - 원장: 스트림은 **연결마다** `net-request{route:'stream'}` 1줄(재연결도 1줄) — step11 기대 집합의 `stream`.
+
+## 로그인 화면 (2026-09-12 · step10)
+
+네이티브 클라가 **처음으로 서버와 실제로 말하는 화면**이다. ADR-003 그대로 View ← Controller ← Model:
+
+| 층 | 파일 | 하는 일 |
+|---|---|---|
+| View | `src/ui/loginscreen.*` | 로그인 카드(UI_GUIDE — 블루 라벨 · 명조 700 CTA · 오류 줄만 레드). 암호 필드는 **마스킹**, 제출 즉시 **비운다**(아이디는 재시도를 위해 남긴다) |
+| View | `src/ui/mainwindow.*` | 콘텐츠 2페이지 — **로그인 페이지**(창은 언제나 로그아웃 상태로 열린다) · **목록 슬롯**(step11이 목록 화면을 여기에 넣는다 — step10에서는 비어 있다) |
+| Controller | `src/ui/logincontroller.*` | `LoginController(INewsModel&, Diag*)` — **위젯 타입 0**(소스 스캔으로 잠금). 결과는 `LoginAttempt`/`SessionCheck` 값 + `loginSucceeded`/`loginFailed` 신호 |
+| 결선 | `src/shell/appshell.*` · `app/main.cpp` | 앱 창마다 Model 1개(`Options::modelFactory` — main.cpp는 창 전용 전송 = 창 전용 쿠키 자 위의 `HttpNewsModel`) + 컨트롤러 1개 |
+
+### 실패 축 — `outcome`으로만 가른다
+
+**컨트롤러는 `body.reason`을 읽지 않는다**(소스 스캔 `neverReadsTheReasonToken`으로 잠금). 로그인 429는 express-rate-limit의
+text/html이라 Model body가 `{ok:false, reason:"invalid-response"}` — **깨진 프록시 페이지와 같은 body**다(step8 발견). reason으로
+가르면 IP 제한이 「응답 깨짐」으로 보인다. `outcome`(전송 계층의 (라우트, 상태, 토큰) 판별)만이 둘을 가른다.
+
+| outcome | 종류 | 문장의 요지(전부 서로 다름 — `givesEveryKindItsOwnSentence`) |
+|---|---|---|
+| `InvalidCredentials` (401) | InvalidCredentials | 아이디 또는 암호가 올바르지 않다 |
+| `AccountLocked` (423) | AccountLocked | **이 계정**이 잠겼다 — 올바른 암호도 거부된다 · 잠시 후/관리자 |
+| `RateLimited` (429) | RateLimited | **이 컴퓨터(IP)**의 시도가 너무 많다 — 계정과 관계없이 잠시 뒤 |
+| `Forbidden` (403) | Refused | 서버가 이 계정의 로그인을 거부했다(사용 중지 등) |
+| `NetworkError` | Unreachable | 서버에 연결하지 못했다 |
+| `Timeout` | TimedOut | 제한 시간 안에 응답이 없다 |
+| `InvalidResponse` | InvalidResponse | 기사 서버의 응답이 아니다(프록시·인증 페이지) |
+| 그 밖(`Unauthenticated`·`ServerError`…) · 2xx인데 `ok:true` 아님 | Unexpected | 로그인하지 못했다(HTTP 상태) |
+
+서버 정책 숫자(5회·15분·10회)는 문장에 넣지 않았다 — 서버가 소유하고 바뀔 수 있다. **423/429는 실기로 재현하지 않는다**
+(`open_questions` (3) 확정 — 계정 잠금 5회/15분 · IP 10회/15분이 뒤 시나리오를 죽인다). 단위로만 잠갔고, 그 단위는 **와이어 모양
+응답을 생산 코드(`modelResultFrom` ∘ `classifyResponse`)로 정규화**해 컨트롤러에 넣는다(`tests/loginwire.h`) — 가짜가
+429의 `invalid-response` body를 흉내 내지 않고 **실제 정규화가 만든다**.
+
+### 신원은 캐시하지 않는다 (decisions (7) · override L123-128)
+
+- 로그인 응답의 `user`는 **읽지도 않는다.** 화면 전환의 첫 동작이 `GET /api/session`이고(`confirmSession()`), 거기서 얻은 것은
+  **표시 라벨**(`유저아이디 · 부서 · (권한)` — UI_GUIDE 상단바)뿐이다. 역할 기반 진리표는 없다(P7).
+- 서버가 로그인과 확인 사이에 계정을 바꾸면 라벨이 서버를 따른다 · 두 번 확인하면 두 번 묻는다(`confirmsTheIdentityWithTheServerNotTheLoginAnswer`).
+- 로그인 결과에 sessionId 없음(step8) — 세션은 창 전송의 쿠키 자에만 있고 **디스크에 쓰지 않는다**(드라이버가 user-data에
+  `config.json` 외 파일 0을 실측).
+
+### 화면 전환 (합성 루트 = `AppShell`)
+
+| 사건 | 전환 |
+|---|---|
+| `loginSucceeded` | `confirmSession()` → ok: 목록 슬롯 + 표시 라벨 / **확인 못 함**(401·무응답·비-JSON): 로그인 페이지 + 사유(**fail-closed** — 확인 안 된 신원으로 목록을 열지 않는다) |
+| `loginFailed` | 로그인 페이지에 머묾 + 문장. 신원 확인 요청 **0** |
+| 세션 종료(신원 확인 401 · 스트림의 `unauthorized` 프레임/열리기 전 401) | 로그인 페이지 + 「세션이 끝났습니다」. step9 `onSessionEnd`의 결선점은 `AppShell::sessionEndHandler()` — 순서는 `onStatus(false)` → 핸들러(`goesBackToLoginWhenTheStreamEndsTheSession`) · 셸이 사라진 뒤 불려도 무동작(`QPointer`). **step10 실기 경로에는 스트림이 없다** — step11의 `subscribe`가 이 핸들러를 넘긴다 |
+
+diag: 컨트롤러는 `login{status}`·`session{status}`만 쓴다(응답 없음 = `null` · 필드 화이트리스트는 step4 `contractedFields()`).
+**`login` 줄이 먼저 디스크에 쓰이고 그 다음 신호가 나간다** — 그래서 성공 경로의 diag가 `login{200}` → `net-request{session}` 순이다.
+
+### 자동화 훅 `--scenario login` — 사고 방지 장치이지 보안 경계가 아니다
+
+- **누구나 환경변수를 켤 수 있다.** 이 가드가 막는 것은 **실수로** 자동 로그인 경로가 도는 것(바로가기의 잘못된 인자, 복사한 명령줄)이지
+  의도적 사용이 아니다. 「가드가 있으니 안전하다」로 읽지 마라 — ADR-018 결정 ②·트레이드오프 ④가 같은 문장을 이미 적었다(step1).
+- **fail-closed**: `--scenario`처럼 **보이는 것**(`--scenario=login` 포함)은 `CLIENT_SELFTEST`가 **정확히 `1`**이 아니면 `main()`의
+  **맨 처음**에서 거부된다 — 잠금·폴더·diag·창·요청 전부 0, stderr에 고정 ASCII 문장, **exit 2**(`kScenarioRefusedExitCode` — 크래시·
+  DLL 부재 `0xC0000135`·selftest 실패 1과 구분). 가드를 통과해도 이름 없음·모르는 이름·중복·`--selftest` 동반·자격 누락은 전부 거부다.
+  거부 문장은 **인자도 자격도 되풀이하지 않는다**(인자가 잘못 입력된 암호일 수 있다 — `neverEchoesAnArgumentOrACredential`).
+- 훅이 하는 일은 **컨트롤러의 `login()` 1회 호출**뿐이다(위젯을 누르지 않는다 — 훅 실행 뒤에도 입력 필드는 빈 채다). 전송은 실제 HTTP.
+  그 뒤 전환은 버튼과 **같은 경로**(컨트롤러 신호)다. 앱 창이 없으면(서버 주소 미설정) 호출할 것이 없으므로 exit 3.
+- 자격은 env `CLIENT_SCENARIO_USER`·`CLIENT_SCENARIO_PASSWORD`(이름은 `appidentity.h`)로만 받고 컨트롤러에 한 번 넘긴 뒤 **로컬 사본을
+  지운다**(best-effort — **환경 블록에는 프로세스 수명 동안 남는다**. 그것은 하네스가 소유한다).
+- **이월(P8)**: 프로덕션 빌드에서 훅 코드를 **컴파일 타임에 제거**(별도 빌드 구성/매크로)하는 것은 배포 형상 결정과 함께 가야 하므로
+  P8로 넘긴다 — 그때까지 「env 하나로 켜지는 자동 로그인 경로가 배포물에 있다」가 사실이다. step12 `forward_notes`가 이 이월을 소유한다.
+- 수동 실증(AC): `CLIENT_SELFTEST` 없이 `cmd /c client-qt\run.bat --scenario login`(자격은 줌) → **exit 2 · 121 ms** · stderr
+  `news-client: --scenario is refused: CLIENT_SELFTEST=1 is not set (the scenario hook is a harness-only path)` · 실사용자
+  `%APPDATA%\기사작성기-qt` 전후 부재 · 출력에 암호 0.
+
+### 드라이버 `--scenario login` (`scripts/verify-qt-client.mjs`)
+
+한 서버 인스턴스에서 로그인 시도는 **3회**(교차 1 · 성공 1 · 거부 1)뿐이다.
+
+| 단계 | 내용 |
+|---|---|
+| G | `CLIENT_SELFTEST`만 뺀(자격은 준) 클라 → exit 2 · stderr에 가드 문장 · diag 파일·user-data 폴더 **미생성** · 출력에 암호 0. 설정 파일을 두지 않으므로 가드가 깨져도 이 단계에서 로그인은 일어날 수 없다(예산·세션 무소비) |
+| X | **클라 기동 전에** 드라이버가 같은 계정(desk)으로 Node fetch 로그인 → 200 · `sessionId` · `sid` 쿠키 · 그 세션으로 `/api/session` 200 |
+| L+ | `app-ready` → `config-loaded{true}` → `app-window{origin}` → `net-request{login,200}` → `login{200}` → `net-request{session,200}` → `session{200}` |
+| X2 | 클라가 `session{200}`까지 간 뒤 드라이버의 X 세션 → **401** — 같은 계정의 새 로그인이 서버에서 기존 세션을 끊었다 = 클라 로그인이 **이 서버에 desk로** 닿았다(자기 신고가 아닌 서버 측 사실) |
+| L- | 틀린 암호(실행마다 새 난수) **1회** → `login{401}` · `session` 0 · `list-loaded` 0 |
+
+**교차 순서가 규칙이다**: 같은 계정 로그인은 그 계정의 기존 세션을 **전부** 끊는다(`src/services/sessionService.js` `createSession` ·
+`server-spring` `SessionStore.createSession`). step10.md D.4 문구대로 클라 **뒤에** 드라이버가 desk로 로그인하면 **드라이버가 클라 세션을
+죽인다**(step9 실측). 그래서 X를 클라 앞에 두었고, 역방향으로 클라가 드라이버 세션을 끊는 사실(X2)을 교차 증거로 쓴다.
+두 실행 모두: 라우트 원장(계약 39 안 · 금지 2 0건 · `login`/`session` **정확 횟수** · **그 밖 라우트 0**) · 허용 이벤트 집합 ·
+diag 전문·stdout·stderr **암호 0건**(원문 + JSON 이스케이프 형) · user-data에 `config.json` 외 파일 0 · 앱이 판정 시점까지 생존.
+
+실측 diag 원문(spring · L+ · `--keep`으로 보존한 파일 그대로):
+
+```
+{"ts":"2026-09-11T18:24:00.684Z","event":"app-ready"}
+{"ts":"2026-09-11T18:24:00.686Z","event":"config-loaded","hasServerUrl":true}
+{"ts":"2026-09-11T18:24:01.372Z","event":"app-window","origin":"http://127.0.0.1:46822"}
+{"ts":"2026-09-11T18:24:01.449Z","event":"net-request","method":"POST","ms":76,"route":"login","status":200}
+{"ts":"2026-09-11T18:24:01.449Z","event":"login","status":200}
+{"ts":"2026-09-11T18:24:01.455Z","event":"net-request","method":"GET","ms":4,"route":"session","status":200}
+{"ts":"2026-09-11T18:24:01.455Z","event":"session","status":200}
+```
+
+L-는 앞 3줄 뒤 `{"event":"net-request","method":"POST","ms":125,"route":"login","status":401}` · `{"event":"login","status":401}`로 끝난다.
+
+### 사각지대 (정직하게)
+
+- **step10의 드라이버는 「네트워크 없는 페이지 전환」을 보지 못한다.** 실패 경로에서 신원 확인 없이 목록 슬롯만 보여 주는 변이(M10-2b)는
+  QtTest 2건이 red지만 드라이버는 green이다 — 빈 목록 슬롯은 아무 요청도 diag도 남기지 않는다. step11이 목록 화면을 슬롯에 넣으면
+  슬롯 표시 = `queryArticles`(`net-request{articles-list}`·`list-loaded`)가 되어 **드라이버의 `list-loaded 0` 단언이 그때 비공허해진다.**
+- 423/429 실기 미재현(위) · 스트림 결선은 단위만(위).
+
+### 변이 결과표 (2026-09-12 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
+
+| 변이 | 내용 | 결과 |
+|---|---|---|
+| **M10-1** | 423 문장을 401 문장과 같게 | `build.bat` exit 1 · 2 red(`reportsTheAccountLockOn423` · `givesEveryKindItsOwnSentence`) |
+| **M10-2** | 로그인 실패인데 전환 경로(`onLoginSucceeded`)로 | `build.bat` exit 1 · 2 red(AppShell) + **드라이버 `--scenario login` exit 1 · L- 3 red**(화면이 넘어가지 않았다 `session=1` · 허용 집합 밖 `session` · 원장 `session` 0 기대 1 실제) |
+| **M10-2b** | 로그인 실패인데 목록 슬롯만 표시(신원 확인 없음) | `build.bat` exit 1 · 2 red(`loginPageShown()` false) · **드라이버 green**(위 사각지대) |
+| **M10-3** | `CLIENT_SELFTEST` 가드 제거 | `build.bat` exit 1 · 34 red(가드 행 32 · 비반향 1 · env 1) + **드라이버 exit 1 · G 3 red**(exit 3 — 부팅해 설정 화면을 띄웠다 · stderr에 가드 문장 없음 · diag·user-data 생성) |
+| **M10-4** | 429를 `reason`(`invalid-response`)으로 분기 | `build.bat` exit 1 · 4 red(429 문장 · 포털 vs 429 · AppShell 문장 · 소스 스캔) |
+| **J10-1** | 판정부 `judgeLogin`의 거부 판정에서 `session 0` 조건 제거 | 자기검사 51/1 red(M10-2 모양 픽스처) → 드라이버는 시작 즉시 거부 · 원복 md5 동일 |
+
+### step11에 넘기는 사실
+
+- 목록 화면은 **`MainWindow`의 목록 슬롯**에 넣는다. 슬롯 진입은 이미 `confirmSession()` 뒤에만 일어난다 — 목록 조회는 그 뒤에 붙인다.
+- `subscribe`에는 `AppShell::sessionEndHandler()`를 넘겨라(세션 종료 → 로그인 페이지 · 순서 `onStatus(false)` → 핸들러).
+- 교차 축의 트리거 계정은 **desk가 아닌 계정**(reporter)으로 — X 순서 규칙과 같은 이유다.
+- `--scenario list`는 `shell/scenario.cpp`의 이름 검사 한 줄과 거부 문장을 바꾸면 된다(가드는 그대로 맨 앞).
 
 ## 무엇이 P4가 아닌가
 
