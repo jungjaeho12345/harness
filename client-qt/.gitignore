@@ -1,0 +1,12 @@
+release/
+debug/
+Makefile*
+.qmake.stash
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.res
+object_script.*
