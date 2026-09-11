@@ -67,6 +67,10 @@ tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-q
 | HTTP 전송 계층 | `web/src/model/httpModel.js` 88-118(`request()`) | `src/net/httptransport.{h,cpp}` · 테스트 `tests/httptransporttest.{h,cpp}`(루프백 스텁 `tests/stubhttpserver.*`) · 순수 정책 `tests/netpolicytest.{h,cpp}` | step7 |
 | 편집 표면 식별자 | `web/src/controller/useWriteController.js` 44-51(`nextClientId`) | `src/net/editclientid.{h,cpp}` · 테스트 `tests/netpolicytest.{h,cpp}` | step7 |
 | 실제 프로브 러너 | `client/main.js` 209-248(`requestHealthViaNet`) | `src/net/httpproberunner.{h,cpp}` · 테스트 `tests/httpproberunnertest.{h,cpp}` | step7 |
+| 라우트 표(데이터) | `docs/api-contract/endpoints.json`(동결 39) · `web/src/model/httpModel.js`의 호출 지점 | `src/net/routetable.{h,cpp}` · 테스트 `tests/routetabletest.{h,cpp}` · 계약 대조 `tests/routecontracttest.{h,cpp}` | step8 |
+| Model 인터페이스 35 | `web/src/model/contract.js`(`MODEL_KEYS`) | `src/net/newsmodel.{h,cpp}`(`INewsModel` · `ModelResult`) | step8 |
+| 실제 Model | `web/src/model/httpModel.js` | `src/net/httpnewsmodel.{h,cpp}` · 테스트 `tests/httpnewsmodeltest.{h,cpp}` | step8 |
+| 가짜 Model | `web/src/test/fakeModel.js` | `src/net/fakenewsmodel.{h,cpp}` · 테스트 `tests/fakenewsmodeltest.{h,cpp}` | step8 |
 | 앱 셸(부팅·화면 수명·bounds 저장) | `client/main.js` 결선 전체(`wireApp`·`createAppWindow`·`showLocalWindow`·`saveBoundsFrom`·`persistConfig`) | `src/shell/appshell.{h,cpp}` · 테스트 `tests/appshelltest.{h,cpp}` | step5 |
 | 화면 2개 · 테마 상수 | `client/pages/setup.html` · (앱 창은 원격 SPA라 대응 없음) | `src/ui/setupscreen.*` · `src/ui/mainwindow.*` · `src/ui/theme.h` | step5 |
 | 합성 루트 | `client/main.js` 26-63 | `app/main.cpp` | step5 |
@@ -561,6 +565,128 @@ Electron `requestSingleInstanceLock()`은 **배타 잠금 + 두 번째 실행 �
 | **M7-7a** | `null`을 `key=`로 | exit 1 · 4 red(순수 3 + 와이어 1) |
 | **M7-7b** | 배열을 쉼표 결합 | exit 1 · **9 red**(deskUnsent·정본 행·빈 배열 2·원소 규칙 2·정본 반복 키·와이어 2) |
 | **M7-8** | 저장 순서를 step5(프로브 없이 저장)로 | exit 1 · 5 red(**프로브 실패 시 미저장** 2 · 최종 origin 저장 2 · 이벤트 수 1) |
+
+## net 계층 — 계약 대조 · Model (2026-09-12 · step8)
+
+**라우트 표가 net 계층의 유일한 라우트 정본이다.** 메서드·경로 템플릿·인증 등급·본문 유무·`x-edit-client`·SSE가 한 곳
+(`src/net/routetable.cpp`)에 데이터로 있고, `HttpNewsModel`은 **라우트 id만 말한다**(경로·HTTP 메서드 문자열 0개). 전송
+계층의 `x-edit-client` 3 라우트 집합도 이제 이 표의 `sendsEditClient` 열에서 **파생**되고(step7의 별도 상수 폐지 — 정본 1개),
+`HttpProbeRunner`도 `health` 행을 표에서 취한다. 정본(`web/**`)·계약(`docs/api-contract/**`)은 **읽기만 했다**.
+
+### 라우트 표 — 37행 · 소비자 일대다
+
+| 사실 | 값 |
+|---|---|
+| 행 수 | **37** = 계약 39 − 금지 2(`collection-receive`·`collection-pull` — `forbiddenRouteIds()`에만 있고 `findRoute()`는 `nullptr`) |
+| 소비자(`consumer`) | 행마다 1개. **`saveArticle`만 2행**(`articles-create`·`articles-update`) · `health`의 소비자는 **`ProbeRunner`** · 나머지 36행 → `MODEL_KEYS` 35 |
+| `sendsEditClient` | 정확히 `articles-lock`·`articles-unlock`·`articles-update` |
+| `hasBody` | 본문 없는 POST 5종(`logout`·`articles-unlock`·`articles-force-unlock`·`distribution-targets-deactivate`·`distribution-tick`) · `articles-lock`은 **항상** 본문(`{}`) · GET/DELETE 없음. **표가 본문 유무를 결정한다**(호출부가 본문을 줘도 무본문 행이면 안 보낸다) |
+| `roles` 열 | **의도적으로 없다** — 역할은 서버가 매 요청 세션에서 도출한다(ADR-004). 클라 역할 표는 권한 캐시가 된다 |
+| 경로 인코딩 | `encodePathSegment` = `encodeURIComponent`(A-Z a-z 0-9 `- _ . ! ~ * ' ( )` 유지). **쿼리의 `buildQuery`(URLSearchParams)와 규칙이 다르다** — 기대값 8행은 node로 정본을 실행해 얻었다 |
+
+### 기계 대조 C-1~C-8 (`tests/routecontracttest.cpp`)
+
+QtTest가 **런타임에** `docs/api-contract/endpoints.json`과 `web/src/model/contract.js`를 **리포 루트 기준 상대 경로**로 찾아
+(테스트 바이너리 디렉토리 → 작업 디렉토리 순으로 위로 걸어 올라간다) 읽는다. **라우트 목록은 테스트 어디에도 적혀 있지 않다** —
+적힌 것은 계획이 고정한 정책(금지 2 · `x-edit-client` 3 · `saveArticle` 2 · 35)뿐이다.
+
+| 항목 | 테스트 | 판정 |
+|---|---|---|
+| C-1 | `c1_idSetIsExactlyTheContract` | 표 ∪ 금지 = 계약 id 집합(중복·겹침 0 · 37+2=39) — 드리프트는 **id로** 보고 |
+| C-2 | `c2_methodAndPathMatchTheContract` | method·path 문자 단위 일치 |
+| C-3 | `c3_authMatchesTheContract` | auth 6어휘 그대로(`public`·`session`·`admin`·`session-role`·`lock-holder`·`token`) |
+| C-4 | `c4_forbiddenRoutesAreNotInTheTable` | 금지 2행이 계약에 실재 · 표에 없음 · `findRoute`/`buildPath` 도달 불가 · **`token` 인증 행 전부가 금지** |
+| C-5 | `c5_sseRowsMatchTheContract` | `sse:true` 양방향 일치(계약에 SSE 행이 0이면 공허로 red) |
+| C-6 | `c6_editClientRowsAreExactlyThreeAndTheTransportsSet` | 정확히 3행 · 그 3 id · **`net::editClientRouteIds()`와 같음** · 계약의 `lock-holder` 행은 전부 포함 |
+| C-7 | `c7_consumersMapOneToMany` | ① 행마다 소비자 1 ② `ProbeRunner` = `{health}` ③ 나머지 ⊂ `MODEL_KEYS` ④ `MODEL_KEYS` 35 전부 ≥1행 ⑤ 2행 이상은 `saveArticle`뿐이고 정확히 `{articles-create, articles-update}` |
+| C-8 | `c8_modelKeysAreTheInterface` | `contract.js`의 `MODEL_KEYS` = `net::modelMethodNames()`(개수 35 · 이름 · **순서**). 이름 목록의 각 항목은 `&INewsModel::<name>`으로 **컴파일 결박**된다(없는 멤버 이름은 빌드가 안 된다) |
+
+- **계약 파일 부재 = red(skip 아님) — 실증**: 같은 테스트 바이너리를 리포 밖 임시 폴더로 복사해 실행 → **rc 1 · FAIL 11**
+  (파일 탐색 1 + C-1~C-8 전부 + 드리프트 1 + fake 무네트워크 스캔 1) · `SKIP` 0줄. 메시지가 탐색한 디렉토리를 전부 적는다.
+- **드리프트 감지 — 실증 2겹**: ① 상주 테스트 `detectsDriftInACopyOfTheContract`가 메모리 사본(행 추가 · 행 삭제 · path · method ·
+  auth · sse · 새 token 라우트 · create의 lock-holder화 · `MODEL_KEYS` 증감)마다 해당 비교기가 **그 이름을 보고**하는지 단언한다.
+  ② 리포 밖 임시 루트에 **한 행 늘린 `endpoints.json` 사본**을 두고 실제 바이너리를 돌림 → C-1만 red
+  (`contract routes neither in the table nor forbidden: articles-bulk-edit` · `table 37 + forbidden 2 != contract 40`).
+  원본은 읽기만 했다 — `git diff -- docs/api-contract web` 무출력.
+- **한계(decisions (4) ⑦)**: 이 대조는 「부른 경로가 계약에 있다」까지다. **요청 body shape의 전수 일치는 보증하지 않는다**
+  (와이어 테스트가 정본 호출과 같은 본문을 단언하지만, 서버가 그 본문을 받아들이는지는 실기 200으로만 확인된다).
+
+### Model — 결과 규약과 실기 범위
+
+- `ModelResult{outcome, status, body}`: `body`는 **정본 `request()`가 돌려줄 값 그대로**(서버 JSON 객체 무가공 · 응답 없음 =
+  `{ok:false, reason:"network-error"}` · 비-JSON = `{ok:false, reason:"invalid-response"}` — 합성은 이 둘뿐). **화면은 `outcome`으로
+  분기한다**: 로그인 429는 text/html이라 `body`는 정본대로 `invalid-response`이고 **`outcome`(RateLimited)만** IP 제한을 말한다
+  (`tellsARateLimitOnlyByOutcome`).
+- **실기(실서버)로 부르는 메서드는 P4에서 6개**다 — `login`·`restoreSession`·`logout`·`queryArticles`·`subscribe` + `getArticle`(선택).
+  **step8은 이 6개도 실서버에 붙이지 않았다**(step10·11의 화면·드라이버 시나리오가 부른다). **나머지 29개는 요청 조립만**
+  구현했고, 루프백 스텁 위에서 정본 호출과 1:1로 잠갔다(`eachMethodSendsTheRouteTheTableGivesIt` — REST 33 메서드 34 호출의
+  method·target·본문·`x-edit-client`·diag `route`·표의 `consumer`를 모두 대조하고, 커버리지가 「`MODEL_KEYS` − 스트림 2 = 33」
+  「표 − health − SSE 2 = 34」와 같음을 단언). **그 29개의 실제 왕복은 P4 범위 밖이며 미검증이다**(P5·P7이 화면을 붙일 때 넓힌다).
+- **`queryArticles` 결선**: 필터는 **step7의 `buildQuery`를 그대로** 거친다(`?status=RDS&status=DDH` · 정본 197~202행 동형 ·
+  `author=a%2Bb+c`). 쉼표 결합(M8-7)도 `QUrlQuery` 조립(M8-7b — `+`가 맨몸으로 남아 서버가 공백으로 읽는다)도 red다.
+- **SSE**: `subscribe()`는 **step9가 `ChangeStream`을 붙일 때까지 비활성**(아무것도 열지 않고 아무것도 보고하지 않음) ·
+  `subscribeLogs()`는 **P4 내내 비활성**(Z 전용 · P7 — `neverOpensTheLogStreamInP4`).
+- **기본 인자는 인터페이스에만 있다** — C++는 오버라이더가 기반의 기본 인자를 가린다(`fake.queryArticles()`가 컴파일되지 않음 —
+  실측). 35개 오버라이더에 기본값을 복제하면 어긋날 수 있으므로 **호출자는 `INewsModel&`로 부른다**(컨트롤러가 원래 그렇다).
+
+### 정본과의 의도적 이탈 (net · step8)
+
+1. **로그인 결과에 `sessionId`가 없다**(`HttpNewsModel`·`FakeNewsModel` 둘 다). 세션은 쿠키 자에만 있고(decisions (6)) 토큰이
+   컨트롤러·로그·화면에 닿지 않는다. 정본은 헤더 폴백 때문에 그 값을 돌려준다.
+2. **`logout()`은 응답과 무관하게 쿠키 자를 비운다**(정본 `writeSessionId(null)`이 요청 뒤 무조건 도는 것과 동형 — 500이어도).
+3. **빈/`.`/`..` 경로 파라미터는 요청을 보내지 않는다**(`notSentResult` = `network-error`). 정본은 `/api/articles/`(목록 라우트에 닿는다)나
+   `/api/articles/..`(점 세그먼트 정규화)를 보낸다.
+4. **`x-edit-client`는 표가 허락한 행에서만 전송 계층에 넘긴다**(전송 계층이 같은 집합으로 한 번 더 막는다) — `articles-create`에
+   clientId를 줘도 붙지 않는다(관측 트래픽은 정본 호출부와 같다).
+
+### FakeNewsModel — 규율과 정본 fake와 다른 점
+
+규율 6종(각각 테스트 1개): **1 결정적**(카운터 시계 `2026-01-01T00:00:00Z`+1초/회 · ID 카운터 · 리스너는 등록 순 `std::map` —
+`QHash`는 프로세스별 시드라 호출 순서가 흔들린다) · **2 무네트워크**(자기 소스 2파일에 네트워크·소켓 타입 이름 0 — 소스 스캔 +
+`std::is_constructible` 단언) · **3 35 전 구현**(이름표 = `modelMethodNames()` · 전부 `{ok:bool}` 응답 · `!is_abstract`) ·
+**4 비밀번호 없음**(서버 `SAFE_FIELDS` 허용목록 — 잠금 필드도 안 나간다 · 세션 5키/로그인 6키) · **5 soft-delete**(`deactivate`는 행 유지 ·
+사용자 「삭제」는 `updateUser {active:'N'}` · 삭제 멤버 부재는 `static_assert`) · **6 `saveArticle`이 `body` 키를 버린다**(생성·수정 둘 다).
+
+오버라이드 대장 제약: **L131** 어떤 응답에도 `lockerSessionId`·`lockerClientId`가 없다(시드 행에 있어도 — 보유자는 행 밖 표에 둔다) ·
+**L123-128** 세션은 id만 들고 **매 호출 현재 행에서 신원을 재도출**한다(역할 변경 즉시 반영 · 비활성화 = 세션 폐기 후 재활성해도 부활 없음) ·
+**L21** 사용자 삭제 메서드 없음.
+
+정본 fake(`web/src/test/fakeModel.js`)와 다르게 한 자리들 — **전부 서버·동결 계약 쪽으로 옮겼다**(fake가 서버와 다르면 그 위의 컨트롤러 테스트가 거짓 green이다):
+`updateUser`는 `{ok, changes}`(계약: not-found 없음 · 정본 fake는 `{ok,user}`/not-found) · 수신 설정 응답은 `SAFE_FIELDS`(password·apiKey 미노출) ·
+`deleteReceiverConfig`는 `{ok, changes}` · 로그인은 비밀번호 필수(정본 fake는 `password===undefined`면 통과) · 비활성 계정 로그인은 403 `inactive` ·
+`createUser`는 `active` 기본 `'Y'` · 목록 필터 `null` = 필터 없음(서버는 `buildQuery`가 키를 떨군 요청을 본다) · 결과에 서버 `STATUS_BY_REASON` 상태와
+전송 계층과 같은 `outcome`을 싣는다. **유일한 행 제거는 `deleteReceiverConfig`**다 — 서버가 실제로 설정 행을 지우는 계약 유일의 DELETE이고
+(수집 기사는 불변), 그대로 모사했다.
+
+### 무잠금 5건의 처분 (net 포트 스펙 route-table 갈래)
+
+| 규칙 | 처분 |
+|---|---|
+| 금지 2 라우트의 영구 배제 | **잠금** — C-4 + `findsNoForbiddenOrUnknownRoute` + `refusesAPathThatWouldLandElsewhere`(M8-3) |
+| `articles-create`의 `x-edit-client` | **잠금** — 와이어 행(clientId를 줘도 없음) + C-6(M8-4) |
+| auth 대조 | **잠금** — C-3(M8-5) |
+| 경로 파라미터 퍼센트 인코딩 | **잠금** — `encodesAPathSegmentLikeEncodeURIComponent` 8행 + 와이어 `AKR%201` |
+| `roles` 열 부재 | **의도로 기록** — 위 표(ADR-004) |
+
+### 변이 결과표 (2026-09-12 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
+
+| 변이 | 내용 | 결과(`build.bat`) |
+|---|---|---|
+| **M8-1** | 표에서 `users-update` 행 삭제 | exit 1 · 5 red(C-1 · C-7 · 드리프트 · 와이어 · 경로 채우기) |
+| **M8-2** | `articles-get` path를 `/api/article/:id`로 | exit 1 · 6 red(**C-2** · 드리프트 · 와이어 · 경로 3) |
+| **M8-3** | `collection-receive`를 표에 삽입 | exit 1 · 4 red(**C-4** `forbidden route 'collection-receive' is in the table` · C-1 · C-7 · 커버리지) |
+| **M8-4** | `sendsEditClient`를 4행으로(`articles-create`) | exit 1 · 4 red(**C-6** + step7 `namesExactlyThreeEditClientRoutes`·`attachesTheEditClientOnlyOnItsThreeRoutes` — 전송 계층이 표에서 파생된다는 증거 · 와이어) |
+| **M8-5** | `login`의 auth를 `session`으로 | exit 1 · 2 red(**C-3** `login: auth 'session' != contract 'public'` · 드리프트) |
+| **M8-6** | `articles-create`의 소비자를 비움 | exit 1 · 3 red(**C-7** ①⑤ 둘 다 이름으로 보고 · `routesOf` · 와이어 consumer) |
+| **M8-7** | `queryArticles`가 배열을 쉼표로 결합 | exit 1 · 2 red(**결선 테스트** `status=RDS%2CDDH` · 와이어) |
+| M8-7b | 쿼리를 `QUrlQuery`로 조립해 경로에 붙임 | exit 1 · 2 red(`author=a+b%20c` · `q=a%20b`) |
+| MF-1 | fake가 `body` 키를 보존 | exit 1 · 1 red(규율 6) |
+| MF-2 | fake에 `#include <QNetworkAccessManager>` | exit 1 · 1 red(규율 2 `names QNetwork`) |
+| MF-3 | fake 시계를 벽시계로 | exit 1 · 1 red(규율 1 — 20 ms 간격의 두 실행이 다른 바이트) |
+| MF-4 | `queryUsers`가 행을 통째로 | exit 1 · 1 red(규율 4 `password in …`) |
+| MF-5 | `deactivate`가 행을 지움 | exit 1 · 2 red(규율 5 · 배부 대상 왕복) |
+| MF-6 | 기사 투영에서 locker 필드를 안 지움 | exit 1 · 1 red(L131) |
+| MF-7 | 로그인 시점 신원 스냅샷을 캐시 | exit 1 · 1 red(L123-128 — 2026-08 감사 권한상승 패턴) |
 
 ## 무엇이 P4가 아닌가
 
