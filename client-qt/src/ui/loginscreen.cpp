@@ -16,6 +16,7 @@ namespace {
 QLabel *fieldLabel(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
+    label->setTextFormat(Qt::PlainText);
     label->setStyleSheet(QStringLiteral("color: %1; font-weight: 700; letter-spacing: 1px;")
                              .arg(QLatin1String(theme::kBlue)));
     return label;
@@ -36,6 +37,7 @@ LoginScreen::LoginScreen(QWidget *parent) : QWidget(parent)
 
     auto *title = new QLabel(QStringLiteral("기사 작성기 로그인"), card);
     title->setObjectName(QStringLiteral("loginTitle"));
+    title->setTextFormat(Qt::PlainText);
     title->setStyleSheet(QStringLiteral("color: %1; font-size: 18px; font-weight: 700; border-left: 3px solid %2;"
                                         " padding-left: %3px;")
                              .arg(QLatin1String(theme::kInk), QLatin1String(theme::kRed))
@@ -68,8 +70,11 @@ LoginScreen::LoginScreen(QWidget *parent) : QWidget(parent)
                                 .arg(theme::kSpaceMd));
 
     // The error line: red, the one alert colour (UI_GUIDE). Empty until a login fails.
+    // PlainText, not the QLabel default Qt::AutoText: the wording can carry a server-supplied
+    // fragment, and a value that looks like markup must be read, not rendered.
     m_error = new QLabel(card);
     m_error->setObjectName(QStringLiteral("loginError"));
+    m_error->setTextFormat(Qt::PlainText);
     m_error->setWordWrap(true);
     m_error->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kRed)));
     m_error->setHidden(true);

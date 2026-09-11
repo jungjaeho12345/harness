@@ -4,7 +4,10 @@
 
 #include "ui/listcontroller.h"
 #include "ui/listscreen.h"
+#include "ui/logincontroller.h"
+#include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
+#include "ui/setupscreen.h"
 #include "ui/theme.h"
 
 #include <QAbstractItemView>
@@ -20,6 +23,7 @@
 #include <QString>
 #include <QStringList>
 #include <QTableWidget>
+#include <QWidget>
 #include <QtTest>
 
 using ui::ListColumn;
@@ -314,4 +318,62 @@ void ListScreenTest::topBarIs48PxWithALiveIndicatorOnTheListPage()
     window.showLoginPage();
     QCOMPARE(left.count(), 1);
     QVERIFY(!window.liveStatusVisible());
+}
+
+// Gate review 2026-09-12 (low): QLabel's default is Qt::AutoText, which guesses - a string that
+// looks like markup is RENDERED as markup. The identity line is assembled from the server's
+// department/name (logincontroller.cpp identityLabelFrom), the error lines carry server wording,
+// so every label the screens write into is pinned to Qt::PlainText. The live indicator is the one
+// exception: its markup is a colour constant this code writes itself.
+void ListScreenTest::serverDerivedTextNeverRendersAsMarkup()
+{
+    // Non-vacuity: the sample really is a string Qt would have promoted to rich text.
+    const QString hostile = QStringLiteral("<b>정치부</b>");
+    QVERIFY2(Qt::mightBeRichText(hostile), "the sample would not be auto-detected as markup");
+
+    ui::MainWindow window(QStringLiteral("http://127.0.0.1:3001"));
+    ui::SetupScreen setup(QStringLiteral("stand-in"));
+
+    QStringList guessing;
+    const QList<const QWidget *> roots{&window, &setup};
+    int seen = 0;
+    for (const QWidget *root : roots) {
+        for (const QLabel *label : root->findChildren<const QLabel *>()) {
+            ++seen;
+            if (label->objectName() == QLatin1String("liveLabel")) {
+                QCOMPARE(label->textFormat(), Qt::RichText);  // deliberate, and it is ours
+                continue;
+            }
+            if (label->textFormat() != Qt::PlainText) {
+                guessing << (label->objectName().isEmpty() ? QStringLiteral("<unnamed>: ") + label->text()
+                                                           : label->objectName());
+            }
+        }
+    }
+    QVERIFY2(seen >= 10, qPrintable(QStringLiteral("only %1 labels found - the sweep lost the screens").arg(seen)));
+    QVERIFY2(guessing.isEmpty(),
+             qPrintable(QStringLiteral("labels left on Qt::AutoText: ") + guessing.join(QStringLiteral(", "))));
+
+    // The server-derived string reaches the label unchanged - it is shown, not escaped away.
+    const QString identity = ui::identityLabelFrom(QJsonObject{{QStringLiteral("userId"), QStringLiteral("kim")},
+                                                               {QStringLiteral("department"), hostile},
+                                                               {QStringLiteral("role"), QStringLiteral("R")}});
+    QCOMPARE(identity, QStringLiteral("kim · <b>정치부</b> · (R)"));
+    window.setStatusText(identity);
+    QCOMPARE(window.statusText(), identity);
+
+    ui::ListScreen *list = window.listScreen();
+    QVERIFY(list);
+    ui::ListViewState state = stateWith(QList<QJsonObject>(), 1, 1, 0);
+    state.error = hostile;
+    list->render(state);
+    QCOMPARE(list->errorText(), hostile);
+
+    ui::LoginScreen *login = window.loginScreen();
+    QVERIFY(login);
+    login->showError(hostile);
+    QCOMPARE(login->errorText(), hostile);
+
+    setup.showStatus(hostile, true);
+    QCOMPARE(setup.statusText(), hostile);
 }

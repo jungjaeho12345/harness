@@ -204,10 +204,14 @@ ListScreen::ListScreen(QWidget *parent) : QWidget(parent)
     // The one P4 menu's name (ListPage.jsx MENU_LABELS.deskUnsent). There is no menu bar - P7's.
     m_title = new QLabel(QStringLiteral("데스크 미송고"), this);
     m_title->setObjectName(QStringLiteral("listTitle"));
+    m_title->setTextFormat(Qt::PlainText);
     m_title->setStyleSheet(QStringLiteral("color: %1; font-size: 15px; font-weight: 700;").arg(QLatin1String(theme::kInk)));
 
+    // PlainText, not the QLabel default Qt::AutoText: the error line carries server wording and a
+    // string that looks like markup must be shown, not rendered.
     m_error = new QLabel(this);
     m_error->setObjectName(QStringLiteral("listError"));
+    m_error->setTextFormat(Qt::PlainText);
     m_error->setWordWrap(true);
     m_error->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kRed)));
     m_error->setHidden(true);
@@ -248,6 +252,7 @@ ListScreen::ListScreen(QWidget *parent) : QWidget(parent)
     m_next->setObjectName(QStringLiteral("nextPageButton"));
     m_page = new QLabel(this);
     m_page->setObjectName(QStringLiteral("pageLabel"));
+    m_page->setTextFormat(Qt::PlainText);
     m_page->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kInk)));
     pager->addStretch(1);
     pager->addWidget(m_previous);

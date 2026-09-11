@@ -34,15 +34,22 @@ MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent)
 
     auto *title = new QLabel(QStringLiteral("기사작성기"), topBar);
     title->setObjectName(QStringLiteral("titleLabel"));
+    title->setTextFormat(Qt::PlainText);
     title->setStyleSheet(QStringLiteral("color: %1; font-size: 16px; font-weight: 700;")
                              .arg(QLatin1String(theme::kInk)));
 
     // The status slot: "user - department - (role)" once the server has confirmed the session.
+    // PlainText, not the QLabel default Qt::AutoText: the line is assembled from the server's
+    // userId/department/role (logincontroller.cpp identityLabelFrom), and AutoText would guess a
+    // value that looks like markup into markup. It is text to read, never a document to render.
     m_status = new QLabel(m_idleStatus, topBar);
     m_status->setObjectName(QStringLiteral("statusLabel"));
+    m_status->setTextFormat(Qt::PlainText);
     m_status->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kInk)));
 
     // The live indicator (.yh-live): red dot = the change stream is connected, grey = dropped.
+    // The one rich-text label in the client - its markup is the colour constant written below,
+    // and nothing from the network reaches it.
     m_live = new QLabel(topBar);
     m_live->setObjectName(QStringLiteral("liveLabel"));
     m_live->setTextFormat(Qt::RichText);

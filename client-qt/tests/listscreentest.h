@@ -21,6 +21,7 @@ private slots:
     void showsAQueryErrorAboveTheRows();
     void isReadOnly();
     void topBarIs48PxWithALiveIndicatorOnTheListPage();
+    void serverDerivedTextNeverRendersAsMarkup();
 };
 
 #endif // CLIENT_QT_TESTS_LISTSCREENTEST_H
