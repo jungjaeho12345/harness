@@ -425,9 +425,10 @@ void RouteContractTest::refusesAContractItCannotRead()
 void RouteContractTest::c1_idSetIsExactlyTheContract()
 {
     LOAD_CONTRACT(contract);
-    QCOMPARE(contract.size(), 39);  // the frozen inventory (README: REST 37 + SSE 2)
+    // The named comparison first, so a drift is reported by id rather than by a count.
     const QStringList problems = checkIdSet(contract, net::routeTable(), net::forbiddenRouteIds());
     QVERIFY2(problems.isEmpty(), qPrintable(report(problems)));
+    QCOMPARE(contract.size(), 39);  // the frozen inventory (README: REST 37 + SSE 2)
     QCOMPARE(net::routeTable().size(), 37);
 }
 
