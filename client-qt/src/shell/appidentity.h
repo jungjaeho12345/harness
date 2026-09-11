@@ -44,6 +44,12 @@ inline QString electronUserDataFolder()
 
 // Single instance guard (step5 wires these; the names live here). ASCII, and deliberately
 // unlike anything the Electron shell can derive from its own folder name.
+//
+// These are BASE names. The OS objects step5 creates append a digest of the resolved user
+// data folder (shell::instanceNamesFor in singleinstance.h), because the canonical lock is
+// scoped to the user data folder too (client/main.js:56-63 - requestSingleInstanceLock()
+// derives its key from userData). That scoping is what keeps a harness run on a temporary
+// CLIENT_USER_DATA from colliding with - or activating - the real user's running client.
 inline QString singleInstanceMutex()
 {
     return QStringLiteral("ArticleClientQt-SingleInstance");
@@ -66,6 +72,14 @@ inline QString userDataEnvVar()
 inline QString diagFileEnvVar()
 {
     return QStringLiteral("CLIENT_DIAG_FILE");
+}
+
+// Harness switch, inherited verbatim (client/main.js:28 - exactly "1" turns it on). Windows are
+// still created and every diag event is still written; they are just never shown, so a run
+// does not take over the desktop. An accident guard, NOT a security boundary (ADR-018 (2)).
+inline QString selftestEnvVar()
+{
+    return QStringLiteral("CLIENT_SELFTEST");
 }
 
 } // namespace names

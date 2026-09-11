@@ -8,11 +8,15 @@
 //      neither by default nor with "-o -,txt" - while plain printf from this file lands
 //      normally. build.bat redirects, so each class logs to a temp file that we echo
 //      ourselves; otherwise the log would show a failure count and no diagnosis.
+#include "appshelltest.h"
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
+#include "proberunnertest.h"
 #include "serverurltest.h"
+#include "singleinstancetest.h"
 #include "smoketest.h"
+#include "windowpolicytest.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -117,6 +121,10 @@ int main(int argc, char **argv)
     runTestClass<ClientConfigTest>(baseArgs, logDir.path(), totals);
     runTestClass<ConfigStoreTest>(baseArgs, logDir.path(), totals);
     runTestClass<DiagTest>(baseArgs, logDir.path(), totals);
+    runTestClass<WindowPolicyTest>(baseArgs, logDir.path(), totals);
+    runTestClass<SingleInstanceTest>(baseArgs, logDir.path(), totals);
+    runTestClass<ProbeRunnerTest>(baseArgs, logDir.path(), totals);
+    runTestClass<AppShellTest>(baseArgs, logDir.path(), totals);
 
     if (totals.classes == 0 || totals.tests == 0) {
         std::fprintf(stderr,

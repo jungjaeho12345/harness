@@ -14,10 +14,18 @@ SOURCES += main.cpp \
            serverurltest.cpp \
            clientconfigtest.cpp \
            configstoretest.cpp \
-           diagtest.cpp
+           diagtest.cpp \
+           windowpolicytest.cpp \
+           singleinstancetest.cpp \
+           proberunnertest.cpp \
+           appshelltest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
            clientconfigtest.h \
            configstoretest.h \
-           diagtest.h
+           diagtest.h \
+           windowpolicytest.h \
+           singleinstancetest.h \
+           proberunnertest.h \
+           appshelltest.h
