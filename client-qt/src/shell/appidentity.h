@@ -82,6 +82,19 @@ inline QString selftestEnvVar()
     return QStringLiteral("CLIENT_SELFTEST");
 }
 
+// The scenario hook's credentials (step10 - shell/scenario.h). New with the Qt client (the Electron
+// shell has no scenario hook): read only when --scenario login passes the CLIENT_SELFTEST guard,
+// handed to the login controller once, never stored and never logged.
+inline QString scenarioUserEnvVar()
+{
+    return QStringLiteral("CLIENT_SCENARIO_USER");
+}
+
+inline QString scenarioPasswordEnvVar()
+{
+    return QStringLiteral("CLIENT_SCENARIO_PASSWORD");
+}
+
 } // namespace names
 } // namespace shell
 

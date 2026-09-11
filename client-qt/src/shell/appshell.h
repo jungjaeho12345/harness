@@ -19,7 +19,19 @@
 //   (2) app-ready -> read config -> config-loaded{hasServerUrl}
 //   (3) serverUrl ? app-window : local-window{page:setup} + setup-shown{reason:no-config}
 // No probe on this path - probes are user actions only.
+//
+// Login (step10). An app window gets ONE Model (Options::modelFactory, called with the origin the
+// window serves - main.cpp builds an HttpNewsModel over its own transport = its own cookie jar) and
+// one ui::LoginController over it. The window opens on the login page; the screen changes are:
+//   loginSucceeded  -> confirmSession() (GET /api/session - decisions (7) 2) -> ok: list slot + the
+//                      display label / not ok: back to the login page with the reason
+//   loginFailed     -> stay on the login page with the message (never past it)
+//   the session ends (a 401 identity check, the stream's unauthorized frame - sessionEndHandler())
+//                   -> back to the login page
+// The scenario hook (shell/scenario.h) only calls the controller's login(); everything above follows
+// from that one call exactly as it does from the button.
 
+#include "net/newsmodel.h"
 #include "shell/clientconfig.h"
 
 #include <QList>
@@ -32,6 +44,7 @@
 #include <memory>
 
 namespace ui {
+class LoginController;
 class MainWindow;
 class SetupScreen;
 } // namespace ui
@@ -66,6 +79,9 @@ public:
         bool selftest = false;
         // Work areas of the monitors right now. Called at boot (restore) and at close (save).
         std::function<QList<QRect>()> workAreas;
+        // The Model of an app window (step10), made once per window with the origin it serves. An
+        // app window without one has no login controller - --selftest reports that as a failure.
+        std::function<std::unique_ptr<net::INewsModel>(const QString &origin)> modelFactory;
     };
 
     AppShell(const QString &userDataDir, InstanceGuard &guard, Diag &diag, ConfigFileSystem &fs,
@@ -84,15 +100,30 @@ public:
     Bounds savedBounds() const;
     bool appWindowShown() const;
     int probeCount() const;
+    ui::LoginController *loginController() const;
+
+    // The scenario hook's one action (step10 A): call the login controller - never a widget. false
+    // (and nothing called) when there is no app window to log in from (no server configured).
+    bool runLoginScenario(const QString &userId, const QString &password);
+
+    // What a change stream is handed as onSessionEnd (step9 - net::INewsModel::subscribe): the
+    // stream already reported onStatus(false); this takes the window back to the login page. Safe to
+    // call after the shell is gone (it then does nothing).
+    net::SessionEndHandler sessionEndHandler();
 
 public slots:
     // The setup screen's two buttons.
     void requestSave(const QString &input);
     void requestProbe(const QString &input);
+    // Back to the login page with a sentence (the session is over, or it could not be confirmed).
+    void returnToLogin(const QString &message);
 
 private slots:
     void onSecondInstance();
     void onAppWindowClosing();
+    void onLoginRequested(const QString &userId, const QString &password);
+    void onLoginSucceeded();
+    void onLoginFailed(const QString &message);
 
 private:
     void createAppWindow();
@@ -113,6 +144,10 @@ private:
     Bounds m_savedBounds;
     bool m_appWindowShown = false;
     int m_probeCount = 0;
+    // Declared before the windows: destroyed after them (a window's widgets never outlive the
+    // controller they signal), and the controller before the Model it holds a reference to.
+    std::unique_ptr<net::INewsModel> m_model;
+    std::unique_ptr<ui::LoginController> m_login;
     std::unique_ptr<ui::MainWindow> m_appWindow;
     std::unique_ptr<ui::SetupScreen> m_setupScreen;
 };

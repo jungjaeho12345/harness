@@ -20,6 +20,7 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/shell/proberunner.cpp \
                  $$PWD/src/shell/singleinstance.cpp \
                  $$PWD/src/shell/appshell.cpp \
+                 $$PWD/src/shell/scenario.cpp \
                  $$PWD/src/net/querystring.cpp \
                  $$PWD/src/net/httptransport.cpp \
                  $$PWD/src/net/editclientid.cpp \
@@ -31,7 +32,9 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/net/sseparser.cpp \
                  $$PWD/src/net/changestream.cpp \
                  $$PWD/src/ui/setupscreen.cpp \
-                 $$PWD/src/ui/mainwindow.cpp
+                 $$PWD/src/ui/mainwindow.cpp \
+                 $$PWD/src/ui/logincontroller.cpp \
+                 $$PWD/src/ui/loginscreen.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
@@ -41,6 +44,7 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/proberunner.h \
                  $$PWD/src/shell/singleinstance.h \
                  $$PWD/src/shell/appshell.h \
+                 $$PWD/src/shell/scenario.h \
                  $$PWD/src/net/querystring.h \
                  $$PWD/src/net/httptransport.h \
                  $$PWD/src/net/editclientid.h \
@@ -53,7 +57,9 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/net/changestream.h \
                  $$PWD/src/ui/theme.h \
                  $$PWD/src/ui/setupscreen.h \
-                 $$PWD/src/ui/mainwindow.h
+                 $$PWD/src/ui/mainwindow.h \
+                 $$PWD/src/ui/logincontroller.h \
+                 $$PWD/src/ui/loginscreen.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

@@ -6,10 +6,13 @@
 #include "shell/serverurl.h"
 #include "shell/singleinstance.h"
 #include "shell/windowpolicy.h"
+#include "ui/logincontroller.h"
+#include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
 #include "ui/setupscreen.h"
 
 #include <QDir>
+#include <QPointer>
 #include <QVariantMap>
 #include <QWidget>
 
@@ -126,6 +129,19 @@ void AppShell::createAppWindow()
 
     m_appWindow = std::make_unique<ui::MainWindow>(m_serverOrigin);
     connect(m_appWindow.get(), &ui::MainWindow::closing, this, &AppShell::onAppWindowClosing);
+
+    // step10: the window's Model - one per window, for the origin it serves (on the setup path that is
+    // the origin the probe ENDED at) - and the login controller over it. Nothing is asked of the
+    // server here: the window opens on its login page, logged out.
+    if (m_options.modelFactory)
+        m_model = m_options.modelFactory(m_serverOrigin);
+    if (m_model) {
+        m_login = std::make_unique<ui::LoginController>(*m_model, &m_diag);
+        connect(m_appWindow->loginScreen(), &ui::LoginScreen::loginRequested, this, &AppShell::onLoginRequested);
+        connect(m_login.get(), &ui::LoginController::loginSucceeded, this, &AppShell::onLoginSucceeded);
+        connect(m_login.get(), &ui::LoginController::loginFailed, this, &AppShell::onLoginFailed);
+    }
+
     const WindowPlacement plan = planAppWindow(m_savedBounds);
     applyWindowPlacement(*m_appWindow, plan);
     if (!m_options.selftest) {
@@ -267,7 +283,7 @@ QStringList AppShell::selfTestFailures() const
         failures << QStringLiteral("a probe ran during boot - probes are user actions only");
     if (m_diag.rejectedEventCount() != 0)
         failures << QStringLiteral("diag refused an event name outside the allowed set");
-    for (const QString &name : shellDiagEvents()) {
+    for (const QString &name : shellDiagEvents() + ui::loginControllerDiagEvents()) {
         if (!isAllowedDiagEvent(name))
             failures << QStringLiteral("shell event outside the step4 set: ") + name;
     }
@@ -278,6 +294,8 @@ QStringList AppShell::selfTestFailures() const
         failures << QStringLiteral("exactly one screen must exist after boot");
     else if ((m_bootScreen == BootScreen::App) != haveApp)
         failures << QStringLiteral("the screen does not match the boot decision");
+    if (haveApp && !m_login)
+        failures << QStringLiteral("the app window has no login controller (no Model was injected)");
     if (m_options.selftest
         && ((haveApp && m_appWindow->isVisible()) || (haveSetup && m_setupScreen->isVisible())))
         failures << QStringLiteral("a window is visible under selftest");
@@ -312,6 +330,73 @@ bool AppShell::appWindowShown() const
 int AppShell::probeCount() const
 {
     return m_probeCount;
+}
+
+ui::LoginController *AppShell::loginController() const
+{
+    return m_login.get();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Login (step10).
+
+bool AppShell::runLoginScenario(const QString &userId, const QString &password)
+{
+    // The hook's whole job: one controller call. What follows - the screen change, the identity
+    // check - is the app's own path, reached through the controller's signals exactly as from the
+    // button. No widget is touched (step10 A).
+    if (!m_login)
+        return false;
+    m_login->login(userId, password);
+    return true;
+}
+
+void AppShell::onLoginRequested(const QString &userId, const QString &password)
+{
+    if (m_login)
+        m_login->login(userId, password);
+}
+
+void AppShell::onLoginSucceeded()
+{
+    // decisions (7) 2: entering the post-login screen asks the server who we are - the login answer's
+    // user is never kept. Nothing past the login page is shown before that answer (fail-closed): a
+    // session the server does not confirm - or cannot be asked about - sends the window back.
+    const ui::SessionCheck check = m_login->confirmSession();
+    if (!check.ok) {
+        returnToLogin(check.message);
+        return;
+    }
+    m_appWindow->setStatusText(check.identityLabel);  // display only - never a permission
+    m_appWindow->loginScreen()->clearError();
+    m_appWindow->showListPage();  // the list slot; the list screen lands here in step11
+}
+
+void AppShell::onLoginFailed(const QString &message)
+{
+    // Never past the login page on a failure: the sentence is shown and nothing else happens (no
+    // identity check, no list).
+    m_appWindow->loginScreen()->showError(message);
+}
+
+void AppShell::returnToLogin(const QString &message)
+{
+    if (!m_appWindow)
+        return;
+    m_appWindow->setStatusText(m_appWindow->idleStatusText());
+    m_appWindow->showLoginPage();
+    m_appWindow->loginScreen()->showError(message);
+}
+
+net::SessionEndHandler AppShell::sessionEndHandler()
+{
+    // step9: the stream already reported onStatus(false) and stopped for good. A handle kept past the
+    // shell's life must not reach a dead object, hence the guarded pointer.
+    const QPointer<AppShell> self(this);
+    return [self] {
+        if (self)
+            self->returnToLogin(ui::sessionEndedMessage());
+    };
 }
 
 } // namespace shell

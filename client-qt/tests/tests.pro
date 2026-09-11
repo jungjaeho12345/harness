@@ -33,7 +33,9 @@ SOURCES += main.cpp \
            ssestubserver.cpp \
            sseparsertest.cpp \
            changestreamtest.cpp \
-           livestreamtest.cpp
+           livestreamtest.cpp \
+           scenariotest.cpp \
+           logincontrollertest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -58,4 +60,7 @@ HEADERS += smoketest.h \
            ssestubserver.h \
            sseparsertest.h \
            changestreamtest.h \
-           livestreamtest.h
+           livestreamtest.h \
+           loginwire.h \
+           scenariotest.h \
+           logincontrollertest.h

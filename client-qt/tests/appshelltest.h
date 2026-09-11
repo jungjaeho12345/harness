@@ -61,6 +61,16 @@ private slots:
     void savesTheRedirectedOriginOfARealProbe();
     void savesNothingWhenARealProbeMeetsAPortal();
 
+    // --- login (step10): the app window's two pages and the screen changes ---------------
+    void opensTheAppWindowOnTheLoginPageWithoutAskingTheServer();
+    void masksThePasswordAndLetsGoOfItOnSubmit();
+    void entersTheListSlotOnlyAfterTheServerConfirmsTheIdentity();
+    void staysOnTheLoginPageWhenLoginFails();
+    void goesBackToLoginWhenTheIdentityCheckFails();
+    void goesBackToLoginWhenTheStreamEndsTheSession();
+    void runsTheLoginScenarioThroughTheControllerNotTheWidgets();
+    void cannotRunTheLoginScenarioWithoutAnAppWindow();
+
     // --- --selftest ---------------------------------------------------------------------
     void selfTestPassesAfterACleanBoot();
     void selfTestFailsWhenTheInvariantsDoNotHold();

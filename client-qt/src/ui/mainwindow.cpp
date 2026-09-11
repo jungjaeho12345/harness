@@ -1,16 +1,19 @@
 #include "ui/mainwindow.h"
 
+#include "ui/loginscreen.h"
 #include "ui/theme.h"
 
 #include <QCloseEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace ui {
 
-MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent) : QWidget(parent)
+MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent)
+    : QWidget(parent), m_idleStatus(QStringLiteral("서버 %1 · 로그인 전").arg(serverOrigin))
 {
     setWindowTitle(QStringLiteral("기사작성기"));
 
@@ -33,8 +36,8 @@ MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent) : QWidget(p
     title->setStyleSheet(QStringLiteral("color: %1; font-size: 16px; font-weight: 700;")
                              .arg(QLatin1String(theme::kInk)));
 
-    // The status slot. step10 puts "user - department - (role)" and the live state here.
-    m_status = new QLabel(QStringLiteral("서버 %1 · 로그인 전").arg(serverOrigin), topBar);
+    // The status slot: "user - department - (role)" once the server has confirmed the session.
+    m_status = new QLabel(m_idleStatus, topBar);
     m_status->setObjectName(QStringLiteral("statusLabel"));
     m_status->setStyleSheet(QStringLiteral("color: %1;").arg(QLatin1String(theme::kInk)));
 
@@ -42,17 +45,59 @@ MainWindow::MainWindow(const QString &serverOrigin, QWidget *parent) : QWidget(p
     bar->addStretch(1);
     bar->addWidget(m_status);
 
-    // Empty on purpose: the login (step10) and list (step11) screens land here.
-    auto *content = new QWidget(this);
-    content->setObjectName(QStringLiteral("content"));
+    // The content pages. The login card first - an app window always starts logged out (the cookie
+    // jar is memory only: decisions (6)).
+    m_pages = new QStackedWidget(this);
+    m_pages->setObjectName(QStringLiteral("content"));
+    m_login = new LoginScreen(m_pages);
+    m_listSlot = new QWidget(m_pages);
+    m_listSlot->setObjectName(QStringLiteral("listSlot"));  // empty on purpose until step11
+    m_pages->addWidget(m_login);
+    m_pages->addWidget(m_listSlot);
+    m_pages->setCurrentWidget(m_login);
 
     layout->addWidget(topBar);
-    layout->addWidget(content, 1);
+    layout->addWidget(m_pages, 1);
 }
 
 QString MainWindow::statusText() const
 {
     return m_status->text();
+}
+
+void MainWindow::setStatusText(const QString &text)
+{
+    m_status->setText(text);
+}
+
+QString MainWindow::idleStatusText() const
+{
+    return m_idleStatus;
+}
+
+LoginScreen *MainWindow::loginScreen() const
+{
+    return m_login;
+}
+
+void MainWindow::showLoginPage()
+{
+    m_pages->setCurrentWidget(m_login);
+}
+
+void MainWindow::showListPage()
+{
+    m_pages->setCurrentWidget(m_listSlot);
+}
+
+bool MainWindow::loginPageShown() const
+{
+    return m_pages->currentWidget() == m_login;
+}
+
+bool MainWindow::listPageShown() const
+{
+    return m_pages->currentWidget() == m_listSlot;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

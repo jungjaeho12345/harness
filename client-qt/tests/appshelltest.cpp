@@ -1,5 +1,6 @@
 #include "appshelltest.h"
 
+#include "loginwire.h"
 #include "stubhttpserver.h"
 
 #include "net/httpproberunner.h"
@@ -10,6 +11,8 @@
 #include "shell/proberunner.h"
 #include "shell/serverurl.h"
 #include "shell/singleinstance.h"
+#include "ui/logincontroller.h"
+#include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
 #include "ui/setupscreen.h"
 
@@ -20,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QList>
 #include <QPushButton>
 #include <QRect>
@@ -171,6 +175,10 @@ public:
 // or the real HTTP runner (step7) aimed at loopback stubs.
 enum class Runner { StandIn, Scripted, Http };
 
+// Whether the shell gets a Model factory (step10). Every rig gets one - as main.cpp always does -
+// except the --selftest case that proves a missing one is reported.
+enum class ModelWiring { Fake, None };
+
 // One test's world: a temporary user data folder with the diag file inside it (the harness
 // layout), the fakes, and the shell under test.
 struct Rig {
@@ -182,9 +190,14 @@ struct Rig {
     ScriptedRunner scripted;
     std::unique_ptr<net::HttpProbeRunner> http;
     QList<QRect> workAreas{QRect(0, 0, 1920, 1080)};
+    // The app window's Model (owned by the shell; this is a view of it) and what the factory saw.
+    loginwire::WireScriptedModel *model = nullptr;
+    int modelsMade = 0;
+    QString modelOrigin;
     std::unique_ptr<AppShell> app;
 
-    explicit Rig(bool selftest, bool primary = true, Runner kind = Runner::StandIn)
+    explicit Rig(bool selftest, bool primary = true, Runner kind = Runner::StandIn,
+                 ModelWiring wiring = ModelWiring::Fake)
         : diag(QDir(dir.path()).filePath(QStringLiteral("diag.jsonl"))),
           guard(shell::instanceNamesFor(dir.path()), primary)
     {
@@ -196,6 +209,15 @@ struct Rig {
         AppShell::Options options;
         options.selftest = selftest;
         options.workAreas = [this] { return workAreas; };
+        if (wiring == ModelWiring::Fake) {
+            options.modelFactory = [this](const QString &origin) -> std::unique_ptr<net::INewsModel> {
+                auto made = std::make_unique<loginwire::WireScriptedModel>();
+                model = made.get();
+                ++modelsMade;
+                modelOrigin = origin;
+                return made;
+            };
+        }
         app = std::make_unique<AppShell>(dir.path(), guard, diag, fs, injected, options);
     }
 
@@ -220,7 +242,43 @@ struct Rig {
         QVERIFY2(button, buttonName);
         button->click();
     }
+
+    QByteArray diagRaw() const
+    {
+        QFile file(diagPath());
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    }
+
+    ui::LoginScreen *loginScreen() const { return app->appWindow() ? app->appWindow()->loginScreen() : nullptr; }
+
+    QLineEdit *field(const char *name) const
+    {
+        return loginScreen() ? loginScreen()->findChild<QLineEdit *>(QLatin1String(name)) : nullptr;
+    }
+
+    // The user's path: type into the two fields and press the login button.
+    void submitLogin(const QString &user, const QString &password) const
+    {
+        QVERIFY2(loginScreen(), "no login screen to type into");
+        QLineEdit *userField = field("userIdEdit");
+        QLineEdit *passwordField = field("passwordEdit");
+        QVERIFY2(userField && passwordField, "the login fields are missing");
+        userField->setText(user);
+        passwordField->setText(password);
+        QPushButton *button = loginScreen()->findChild<QPushButton *>(QStringLiteral("loginButton"));
+        QVERIFY2(button, "loginButton");
+        button->click();
+    }
 };
+
+QJsonObject lastEvent(const QList<QJsonObject> &events, const QString &name)
+{
+    for (int i = events.size() - 1; i >= 0; --i) {
+        if (events.at(i).value(QStringLiteral("event")).toString() == name)
+            return events.at(i);
+    }
+    return QJsonObject();
+}
 
 } // namespace
 
@@ -873,6 +931,234 @@ void AppShellTest::savesNothingWhenARealProbeMeetsAPortal()
 }
 
 // ---------------------------------------------------------------------------
+// Login (step10). The app window opens logged out (the cookie jar is memory only - decisions (6))
+// and asks the server nothing by itself: its Model is made once, for the origin it serves, and not
+// called until someone logs in. On the setup path the Model is made when - and only when - the app
+// window opens, for the PROMOTED origin the probe ended at.
+void AppShellTest::opensTheAppWindowOnTheLoginPageWithoutAskingTheServer()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+
+    ui::MainWindow *window = rig.app->appWindow();
+    QVERIFY(window);
+    QVERIFY(window->loginPageShown());
+    QVERIFY(!window->listPageShown());
+    QCOMPARE(window->statusText(), window->idleStatusText());
+    QVERIFY(rig.app->loginController());
+    QCOMPARE(rig.modelsMade, 1);
+    QCOMPARE(rig.modelOrigin, kOrigin);
+    QVERIFY(rig.model);
+    QCOMPARE(rig.model->loginCalls, 0);
+    QCOMPARE(rig.model->sessionCalls, 0);
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("login")));
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("session")));
+
+    Rig setup(true, true, Runner::Scripted);
+    setup.scripted.verdict.ok = true;
+    setup.scripted.finalUrl = QStringLiteral("https://news.example/api/health");
+    setup.app->start();
+    QCOMPARE(setup.modelsMade, 0);
+    QVERIFY(!setup.app->loginController());
+    setup.app->setupScreen()->setAddress(kOrigin);
+    setup.click("saveButton");
+    QCOMPARE(setup.modelsMade, 1);
+    QCOMPARE(setup.modelOrigin, QStringLiteral("https://news.example"));
+    QVERIFY(setup.app->appWindow()->loginPageShown());
+}
+
+// The password field is masked, and the password leaves the screen the moment it is submitted (the
+// id stays, for the retry). Nothing typed reaches the diag.
+void AppShellTest::masksThePasswordAndLetsGoOfItOnSubmit()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+    QLineEdit *password = rig.field("passwordEdit");
+    QVERIFY(password);
+    QCOMPARE(password->echoMode(), QLineEdit::Password);
+
+    rig.submitLogin(loginwire::kUser, QStringLiteral("pw-typed-4d2a"));
+
+    QVERIFY(password->text().isEmpty());
+    QCOMPARE(rig.field("userIdEdit")->text(), loginwire::kUser);
+    QCOMPARE(rig.model->loginCalls, 1);
+    QVERIFY(!rig.diagRaw().contains("pw-typed-4d2a"));
+}
+
+// Success = login{200}, then the identity asked of the server (session{200}), THEN the list slot with
+// the server's display label. Nothing past the login page before that answer.
+void AppShellTest::entersTheListSlotOnlyAfterTheServerConfirmsTheIdentity()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+
+    ui::MainWindow *window = rig.app->appWindow();
+    QVERIFY(window->listPageShown());
+    QVERIFY(!window->loginPageShown());
+    QCOMPARE(rig.model->loginCalls, 1);
+    QCOMPARE(rig.model->sessionCalls, 1);
+    QCOMPARE(window->statusText(), QStringLiteral("desk · 편집부 · (D)"));
+    QVERIFY(rig.loginScreen()->errorText().isEmpty());
+    const QList<QJsonObject> events = rig.events();
+    QCOMPARE(namesOf(events), (QStringList{QStringLiteral("app-ready"), QStringLiteral("config-loaded"),
+                                           QStringLiteral("app-window"), QStringLiteral("login"),
+                                           QStringLiteral("session")}));
+    QCOMPARE(events.at(3).value(QStringLiteral("status")).toInt(), 200);
+    QCOMPARE(events.at(4).value(QStringLiteral("status")).toInt(), 200);
+}
+
+// A failed login never gets past the login page: the sentence is shown, the server is NOT asked who
+// we are, and the list slot stays closed (mutation M10-2 must turn this red). The account lock and the
+// IP limit say different things on the same screen.
+void AppShellTest::staysOnTheLoginPageWhenLoginFails()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+    ui::MainWindow *window = rig.app->appWindow();
+
+    rig.submitLogin(loginwire::kUser, QStringLiteral("not-the-password"));
+    QVERIFY(window->loginPageShown());
+    QVERIFY(!window->listPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::InvalidCredentials));
+    QCOMPARE(rig.model->sessionCalls, 0);
+    QCOMPARE(window->statusText(), window->idleStatusText());
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("session")));
+    QCOMPARE(lastEvent(rig.events(), QStringLiteral("login")).value(QStringLiteral("status")).toInt(), 401);
+
+    rig.model->loginWire = loginwire::accountLocked();
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    QVERIFY(window->loginPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::AccountLocked));
+
+    rig.model->loginWire = loginwire::rateLimited();
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    QVERIFY(window->loginPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::RateLimited));
+    QCOMPARE(rig.model->sessionCalls, 0);
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("session")));
+}
+
+// The identity check says "no session" (or cannot be answered): back to the login page with the
+// reason - never an unconfirmed list.
+void AppShellTest::goesBackToLoginWhenTheIdentityCheckFails()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+    ui::MainWindow *window = rig.app->appWindow();
+
+    rig.model->sessionWire = loginwire::wireAnswer(QStringLiteral("session"), 401,
+                                                   QByteArrayLiteral(R"json({"ok":false,"reason":"unauthenticated"})json"));
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    QVERIFY(window->loginPageShown());
+    QVERIFY(!window->listPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::sessionEndedMessage());
+    QCOMPARE(window->statusText(), window->idleStatusText());
+    QCOMPARE(lastEvent(rig.events(), QStringLiteral("session")).value(QStringLiteral("status")).toInt(), 401);
+
+    rig.model->sessionWire = loginwire::noAnswer(net::Outcome::NetworkError);
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    QVERIFY(window->loginPageShown());
+    QCOMPARE(rig.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::Unreachable));
+}
+
+// step9's onSessionEnd, wired at the composition root: a stream that ends the session says
+// onStatus(false) first, then calls the shell's handler, which takes the window back to the login
+// page. A handler kept past the shell's life does nothing.
+void AppShellTest::goesBackToLoginWhenTheStreamEndsTheSession()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+    rig.submitLogin(loginwire::kUser, loginwire::kPassword);
+    ui::MainWindow *window = rig.app->appWindow();
+    QVERIFY(window->listPageShown());
+
+    const net::SessionEndHandler toLogin = rig.app->sessionEndHandler();
+    QVERIFY(toLogin);
+    QStringList order;
+    std::unique_ptr<net::Subscription> subscription = rig.model->subscribe(
+        QVariantMap(), net::ChangeHandler(),
+        [&order, window](bool connected) {
+            if (!connected)
+                order << (window->listPageShown() ? QStringLiteral("status-false-on-list") : QStringLiteral("status-false-elsewhere"));
+        },
+        [&order, window, toLogin] {
+            toLogin();
+            order << (window->loginPageShown() ? QStringLiteral("login-page") : QStringLiteral("still-on-list"));
+        });
+
+    rig.model->endStreamSession();
+
+    QCOMPARE(order, (QStringList{QStringLiteral("status-false-on-list"), QStringLiteral("login-page")}));
+    QCOMPARE(rig.loginScreen()->errorText(), ui::sessionEndedMessage());
+    QCOMPARE(window->statusText(), window->idleStatusText());
+
+    rig.app.reset();
+    toLogin();  // the shell is gone: nothing to do, nothing to crash on
+}
+
+// The hook's one action is the controller call. The fields stay empty (no widget was touched) and
+// the app's own path does the rest: login{200}, session{200}, the list slot. A failing scenario stays
+// on the login page exactly like the button does - it is the same path.
+void AppShellTest::runsTheLoginScenarioThroughTheControllerNotTheWidgets()
+{
+    Rig rig(true);
+    QVERIFY(rig.writeConfig(configJson(kOrigin)));
+    rig.app->start();
+    QVERIFY(rig.model);
+
+    QVERIFY(rig.app->runLoginScenario(loginwire::kUser, loginwire::kPassword));
+
+    QVERIFY(rig.field("userIdEdit")->text().isEmpty());
+    QVERIFY(rig.field("passwordEdit")->text().isEmpty());
+    QVERIFY(rig.app->appWindow()->listPageShown());
+    QCOMPARE(rig.model->loginCalls, 1);
+    QCOMPARE(rig.eventNames(), (QStringList{QStringLiteral("app-ready"), QStringLiteral("config-loaded"),
+                                            QStringLiteral("app-window"), QStringLiteral("login"),
+                                            QStringLiteral("session")}));
+
+    Rig wrong(true);
+    QVERIFY(wrong.writeConfig(configJson(kOrigin)));
+    wrong.app->start();
+    QVERIFY(wrong.model);
+    QVERIFY(wrong.app->runLoginScenario(loginwire::kUser, QStringLiteral("not-the-password")));
+    QVERIFY(wrong.app->appWindow()->loginPageShown());
+    QCOMPARE(wrong.loginScreen()->errorText(), ui::loginFailureMessage(ui::LoginFailure::InvalidCredentials));
+    QCOMPARE(wrong.model->sessionCalls, 0);
+}
+
+// No app window (no server configured) or no Model: nothing to call - the hook reports it (main.cpp
+// exits non-zero) instead of pretending it ran.
+void AppShellTest::cannotRunTheLoginScenarioWithoutAnAppWindow()
+{
+    Rig rig(true);
+    rig.app->start();
+    QVERIFY(rig.app->setupScreen());
+    QVERIFY(!rig.app->runLoginScenario(loginwire::kUser, loginwire::kPassword));
+    QCOMPARE(rig.modelsMade, 0);
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("login")));
+
+    Rig noModel(true, true, Runner::StandIn, ModelWiring::None);
+    QVERIFY(noModel.writeConfig(configJson(kOrigin)));
+    noModel.app->start();
+    QVERIFY(noModel.app->appWindow());
+    QVERIFY(!noModel.app->loginController());
+    QVERIFY(!noModel.app->runLoginScenario(loginwire::kUser, loginwire::kPassword));
+}
+
+// ---------------------------------------------------------------------------
 void AppShellTest::selfTestPassesAfterACleanBoot()
 {
     Rig withConfig(true);
@@ -911,4 +1197,11 @@ void AppShellTest::selfTestFailsWhenTheInvariantsDoNotHold()
     shownUnderSelftest.app->setupScreen()->show();
     QVERIFY(shownUnderSelftest.app->selfTestFailures().join(QLatin1Char(' ')).contains(
         QStringLiteral("visible")));
+
+    // step10: an app window that got no Model has no login controller - a composition root that
+    // forgot the factory is caught by --selftest, not by the first user.
+    Rig noModel(true, true, Runner::StandIn, ModelWiring::None);
+    QVERIFY(noModel.writeConfig(configJson(kOrigin)));
+    noModel.app->start();
+    QVERIFY(noModel.app->selfTestFailures().join(QLatin1Char(' ')).contains(QStringLiteral("login controller")));
 }

@@ -19,11 +19,13 @@
 #include "httptransporttest.h"
 #include "liveservertest.h"
 #include "livestreamtest.h"
+#include "logincontrollertest.h"
 #include "netpolicytest.h"
 #include "proberunnertest.h"
 #include "querystringtest.h"
 #include "routecontracttest.h"
 #include "routetabletest.h"
+#include "scenariotest.h"
 #include "serverurltest.h"
 #include "singleinstancetest.h"
 #include "smoketest.h"
@@ -147,6 +149,8 @@ int main(int argc, char **argv)
     runTestClass<FakeNewsModelTest>(baseArgs, logDir.path(), totals);
     runTestClass<SseParserTest>(baseArgs, logDir.path(), totals);
     runTestClass<ChangeStreamTest>(baseArgs, logDir.path(), totals);
+    runTestClass<ScenarioTest>(baseArgs, logDir.path(), totals);
+    runTestClass<LoginControllerTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
