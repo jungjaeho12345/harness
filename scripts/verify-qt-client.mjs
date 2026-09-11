@@ -1,5 +1,6 @@
-// Qt 네이티브 클라 자동 검증 드라이버 — 부팅 축(step6) + 로그인 축(step10) (phase 77 · ADR-018 (2)).
-// 사용: node scripts/verify-qt-client.mjs [--scenario boot|login|all] [--server exe|spring] [--client-exe <path>]
+// Qt 네이티브 클라 자동 검증 드라이버 — 부팅 축(step6) + 로그인 축(step10) + 목록 실시간 축(step11 — P4 완료 게이트)
+// (phase 77 · ADR-018 (2)).
+// 사용: node scripts/verify-qt-client.mjs [--scenario boot|login|list|all] [--server exe|spring] [--client-exe <path>]
 //        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
 //
 // 판정은 두 축의 교차다(네이티브 클라에는 CDP 가 없다):
@@ -21,11 +22,21 @@
 //      순서가 규칙이다: 같은 계정 로그인은 그 계정의 기존 세션을 전부 끊는다(src/services/sessionService.js createSession ·
 //      server-spring SessionStore.createSession — step9 실측). 클라 뒤에 하면 드라이버가 클라 세션을 죽인다.
 //   L+ 성공: 부팅 A → net-request{login,200} → login{200} → net-request{session,200} → session{200}
+//      → (step11 — 목록 슬롯에 목록이 앉았다) net-request{articles-list,200} → list-loaded → net-request{stream,200} → sse-open → sse-ready
 //   X2 클라 로그인 뒤 드라이버의 X 세션이 401 — 같은 계정의 새 로그인이 서버에서 그것을 끊었다 = 클라 로그인이 **이 서버에 desk 로**
 //      닿았다(diag 자기 신고가 아닌 서버 측 사실)
-//   L- 거부: 틀린 비밀번호로 새 클라 1회 → login{401} · 화면이 넘어가지 않는다(session 0 · list-loaded 0)(M10-2 가 여기서 red)
+//   L- 거부: 틀린 비밀번호로 새 클라 1회 → login{401} · 화면이 넘어가지 않는다(session 0 · list-loaded 0 · articles-list 0)
+//      (M10-2 가 여기서 red · step11 부터 목록 페이지는 어떤 경로로 현재가 되든 진입(신원 확인 → 조회)을 거치므로 M10-2b 도 red)
 //   두 실행 모두 라우트 원장(계약 39 안 · 금지 2 0건 · login/session 정확 횟수 · 그 밖 0) · diag·stdout·stderr 비밀번호 0건 ·
 //   user-data 에 config.json 외 파일 0(세션을 디스크에 쓰지 않는다 — decisions (6)).
+// 시나리오 list(step11 — 로드맵 P4 완료 게이트 「로그인 → 목록 SSE 실시간 갱신 실기 + diag 자동 검증」):
+//   R  드라이버가 **reporter** 세션으로 로그인하고 사전 기사 11건을 만든 뒤(N0 가 한 페이지를 넘게 — list-loaded{count} 가 페이지 행 수가
+//      아니라 전체 수임을 가른다) 서버에서 deskUnsent 수 N0 을 센다. 계정 분리가 규칙이다: 클라는 desk 이고, 같은 계정 로그인은 그 계정의
+//      기존 세션을 전부 끊는다(step9·10 실측) — 드라이버가 desk 로 로그인하면 클라의 세션·스트림이 401 로 죽는다.
+//   C  클라(--scenario list · desk) → 진입 시퀀스 …→session{200}→articles-list→list-loaded{deskUnsent,N0}→stream→sse-open→sse-ready
+//   T  sse-ready 를 본 **뒤** reporter 가 기사 1건 생성 → sse-change(≥1 · kind 무관) → articles-list → list-loaded{N0+1} · 서버 수 N0+1
+//   H  관측 창 5초(주기 재조회 앱은 이 사이 articles-list 를 더 부른다) → 종료 → 판정식 (i)(ii)(iii) 논리곱(qtClientDiag.mjs judgeList)
+//   diag·stdout·stderr 에 비밀번호·기사 제목·기사아이디 0건 · user-data 에 config.json 외 0 · 로그인 시도는 2회(reporter·desk)뿐이다.
 // 절차: 판정부 자기검사 → 계약 라우트 목록(docs/api-contract/endpoints.json) → 자산 해석(없으면 exit 1 + 빌드 힌트 · skip 금지)
 //   → 데이터 안전 사전 스냅샷 → 리포 밖 임시 루트(DATA_DIR 시드 · 스풀 · CLIENT_USER_DATA · diag) → 서버 기동 + health
 //   → Qt exe 직접 spawn(run.bat 경유 금지 — 배치를 거치면 종료 제어와 종료 코드가 흐려진다) → 시나리오 → 자식 강제 종료
@@ -48,8 +59,8 @@ import { SAMPLE_USERS, seedUsers } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
 import { listFilesRecursive, osEnvAllowlist, parseServerMode, springServerEnv } from './lib/integrationMode.mjs';
 import {
-  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeLogin,
-  loadContractRouteIds, loginSequences, parseDiagLines,
+  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeList, judgeLogin,
+  listSequences, loadContractRouteIds, loginSequences, parseDiagLines,
 } from './lib/qtClientDiag.mjs';
 import { qtClientEnv } from './lib/qtClientEnv.mjs';
 
@@ -83,11 +94,18 @@ const SCENARIO_ACCOUNT = SAMPLE_USERS.find((u) => u.userId === 'desk');
 const SCENARIO_REFUSED_EXIT_CODE = 2; // client-qt/src/shell/scenario.h kScenarioRefusedExitCode
 const GUARD_EXIT_TIMEOUT_MS = 10000;
 const SCENARIO_ARGS = Object.freeze(['--scenario', 'login']);
+// --- 목록 시나리오(step11) ---
+// 서버 측 사실의 주체 — 클라(desk)와 **다른 계정**. 역시 시드 정본에서 읽는다.
+const LIST_ACCOUNT = SAMPLE_USERS.find((u) => u.userId === 'reporter');
+const SCENARIO_LIST_ARGS = Object.freeze(['--scenario', 'list']);
+const PRESEED_ARTICLES = 11; // 한 페이지(10) 초과
+const LIST_HOLD_MS = 5000; // 재조회 관측 뒤 관측 창 — M11-1p(2초 주기)의 2.5배. 주기 ≤ 창인 폴링 앱은 결정적으로 (iii) 에 걸린다
 
-const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|login|all] [--server exe|spring] [--client-exe <path>]
+const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|login|list|all] [--server exe|spring] [--client-exe <path>]
        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
-  --scenario      boot | login | all(기본 — boot + login). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
-                  login = 가드 거부(G) · 서버 교차(X·X2) · 로그인 성공(L+) · 틀린 비밀번호 1회(L-).
+  --scenario      boot | login | list | all(기본 — boot + login + list). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
+                  login = 가드 거부(G) · 서버 교차(X·X2) · 로그인 성공(L+ — 목록 진입까지) · 틀린 비밀번호 1회(L-).
+                  list = reporter 가 만든 기사가 클라(desk) 목록에 SSE 로 실시간 반영되는가(P4 완료 게이트 — (i)(ii)(iii)).
   --server        exe(기본) | spring. exe = 서버 SEA exe(dist/), spring = java -jar server-spring/target/*.jar.
   --client-exe    Qt 클라 exe(기본 client-qt/release/news-client.exe). .exe 만 받는다(run.bat 경유 금지).
   --qt-bin <dir>  Qt bin 디렉토리 — 자식 PATH 맨 앞에 싣는다(기본: env QT_BIN_DIR → ${DEFAULT_QT_BIN}).
@@ -124,7 +142,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
-  if (!['boot', 'login', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|login|all): ${opts.scenario}`);
+  if (!['boot', 'login', 'list', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|login|list|all): ${opts.scenario}`);
   const mode = parseServerMode(opts.server);
   if (!mode.ok) die(mode.message);
   // 모드 전용 플래그가 다른 모드에 오면 거부다(값을 줬는데 아무 효과가 없는 실행 금지).
@@ -536,6 +554,111 @@ async function scenarioLogin(ctx) {
   return { parts };
 }
 
+// --- 시나리오 list (step11 — 로드맵 P4 완료 게이트) ---
+// 서버 측 사실은 **reporter** 세션으로 만든다(파일 머리 주석의 계정 분리 규칙). 세션 토큰은 어떤 출력에도 싣지 않는다.
+async function serverCreateArticle(origin, sid, title) {
+  try {
+    const res = await fetch(`${origin}/api/articles`, {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: `sid=${sid}` },
+      body: JSON.stringify({ title, markupVersion: `${title}\n목록 실시간 갱신 검증 (끝)` }), signal: AbortSignal.timeout(10000),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    return { status: res.status, ok: body?.ok === true, articleId: typeof body?.articleId === 'string' ? body.articleId : null };
+  } catch (err) {
+    return { status: -1, ok: false, articleId: null, error: String(err && err.name) };
+  }
+}
+
+// deskUnsent 필터 그대로(status=RDS&status=DDH — 목록은 권한으로 걸러지지 않는다) 서버가 센 수. 클라 list-loaded{count} 와 대조한다.
+async function serverDeskUnsentCount(origin, sid) {
+  try {
+    const res = await fetch(`${origin}/api/articles?status=RDS&status=DDH`, { headers: { cookie: `sid=${sid}` }, signal: AbortSignal.timeout(10000) });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    return { status: res.status, count: Array.isArray(body?.items) ? body.items.length : -1 };
+  } catch (err) {
+    return { status: -1, count: -1, error: String(err && err.name) };
+  }
+}
+
+async function scenarioList(ctx) {
+  const { tmpRoot, origin, check, opts, routeIds } = ctx;
+  const marker = randomBytes(4).toString('hex');
+  const titles = [];
+  const ids = [];
+  const none = { lines: [], diagFile: null, children: [] };
+
+  // R — reporter 세션(서버 측 사실의 주체) · 사전 기사 · 서버가 센 N0.
+  const rep = await serverLogin(origin, LIST_ACCOUNT.userId, LIST_ACCOUNT.password);
+  check('R: 드라이버 로그인(Node fetch · reporter — 클라 desk 와 다른 계정) → 200 · sid 쿠키',
+    rep.status === 200 && rep.body?.ok === true && Boolean(rep.sid), `status=${rep.status}${rep.error ? ` ${rep.error}` : ''}`);
+  if (!rep.sid) return none;
+  let created = 0;
+  for (let i = 0; i < PRESEED_ARTICLES; i += 1) {
+    const title = `qtlist-${marker}-seed${String(i).padStart(2, '0')}`;
+    const r = await serverCreateArticle(origin, rep.sid, title);
+    titles.push(title);
+    if (r.articleId) ids.push(r.articleId);
+    if (r.status === 200 && r.ok && r.articleId) created += 1;
+  }
+  check(`R: 사전 기사 ${PRESEED_ARTICLES}건 생성(POST /api/articles · 새 기사는 RDS = deskUnsent 안)`, created === PRESEED_ARTICLES, `생성 ${created}`);
+  const before = await serverDeskUnsentCount(origin, rep.sid);
+  check('R: 서버가 센 deskUnsent 수 N0(GET /api/articles?status=RDS&status=DDH)', before.status === 200 && before.count >= PRESEED_ARTICLES,
+    `status=${before.status} N0=${before.count}`);
+  if (before.status !== 200 || before.count < 0) return none;
+  const n0 = before.count;
+
+  // C — 클라(desk · --scenario list). 훅은 로그인 컨트롤러를 1회 부를 뿐이고 목록은 앱 자신의 성공 경로로 따라온다.
+  const userData = nodePath.join(tmpRoot, 'ud-list');
+  fs.mkdirSync(userData);
+  const configFile = nodePath.join(userData, 'config.json');
+  fs.writeFileSync(configFile, `${JSON.stringify({ schemaVersion: 1, serverUrl: origin })}\n`);
+  const configBytes = fs.readFileSync(configFile);
+  const diagFile = nodePath.join(tmpRoot, 'diag-list.jsonl');
+  const env = ctx.clientEnv(userData, diagFile, { scenario: { userId: SCENARIO_ACCOUNT.userId, password: SCENARIO_ACCOUNT.password } });
+  const t0 = Date.now();
+  const child = ctx.spawnClient(env, SCENARIO_LIST_ARGS);
+  const entered = await waitForDiag(diagFile, listSequences('entry', { origin, n0 }), opts.timeout, child);
+  check(`C: 진입 시퀀스 관측(…→list-loaded{deskUnsent,N0=${n0}}→sse-open→sse-ready)`, entered.ok,
+    entered.ok ? `${Date.now() - t0}ms` : waitDetail(entered, child));
+
+  // T — (i) sse-ready 를 본 **뒤에만** 쏜다. 진입을 못 봤으면 쏘지 않는다(ready 전 트리거는 신호를 놓친다 — sse.md).
+  let triggerAt = null;
+  if (entered.ok) {
+    const title = `qtlist-${marker}-live`;
+    triggerAt = Date.now();
+    const r = await serverCreateArticle(origin, rep.sid, title);
+    titles.push(title);
+    if (r.articleId) ids.push(r.articleId);
+    check('T: 트리거 — reporter 가 기사 1건 생성(sse-ready 관측 뒤) → 200 · articleId', r.status === 200 && r.ok && Boolean(r.articleId), `status=${r.status}`);
+    const refreshed = await waitForDiag(diagFile, listSequences('refresh', { origin, n0 }), opts.timeout, child);
+    check(`T: 실시간 갱신 관측(sse-change → articles-list → list-loaded{N0+1=${n0 + 1}})`, refreshed.ok,
+      refreshed.ok ? `트리거 뒤 ${Date.now() - triggerAt}ms` : waitDetail(refreshed, child));
+    const after = await serverDeskUnsentCount(origin, rep.sid);
+    check('T: 서버가 센 deskUnsent 수 = N0+1(클라가 보고한 수와 같은 서버 측 사실)', after.status === 200 && after.count === n0 + 1,
+      `status=${after.status} count=${after.count}`);
+  }
+
+  // H — 관측 창: 재조회를 본 뒤에도 앱을 살려 둔다. 주기 재조회(폴링) 앱은 이 사이 articles-list 를 더 불러 (iii) 이 red 가 된다.
+  await sleep(LIST_HOLD_MS);
+  check('C: 인스턴스가 판정 시점까지 살아 있다(관측 창 포함)', !childDead(child), childDead(child) ? `exit=${describeExit(child)}` : '');
+  await killChild(child);
+  await waitStreams(child);
+
+  const final = readDiag(diagFile);
+  for (const c of judgeList({ ...final, origin, routeIds, n0, triggerAt })) check(c.name, c.ok, c.detail);
+  const files = listFilesRecursive(userData) ?? [];
+  check('C: config.json 무변 · user-data 에 config.json 외 파일 0(세션을 디스크에 쓰지 않는다)',
+    fs.readFileSync(configFile).equals(configBytes) && files.length === 1 && files[0] === 'config.json', `files=${JSON.stringify(files)}`);
+  const diagText = fs.existsSync(diagFile) ? fs.readFileSync(diagFile, 'utf8') : '';
+  const secrets = [SCENARIO_ACCOUNT.password, ...titles, ...ids];
+  const leak = countSecretOccurrences(`${diagText}\n${child._out}\n${child._err}`, secrets);
+  check('C: diag 전문·stdout·stderr 에 비밀번호·기사 제목·기사아이디 0건(list-loaded 는 메뉴와 수만 싣는다)', diagText.length > 0 && leak.total === 0,
+    `diag ${Buffer.byteLength(diagText)}B · 검사 ${secrets.length}종 · 발견 ${leak.total}`);
+  return { lines: final.lines, diagFile, children: [child] };
+}
+
 function dumpScenario(label, result) {
   if (!result) return;
   process.stderr.write(`--- ${label} diag ---\n${result.lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
@@ -623,6 +746,7 @@ async function main() {
     const plan = [];
     if (opts.scenario === 'boot' || opts.scenario === 'all') plan.push(['A', scenarioBootA], ['B', scenarioBootB]);
     if (opts.scenario === 'login' || opts.scenario === 'all') plan.push(['login', scenarioLogin]);
+    if (opts.scenario === 'list' || opts.scenario === 'all') plan.push(['list', scenarioList]);
     for (const [label, run] of plan) {
       const failedBefore = failures.length;
       const result = await run(ctx);

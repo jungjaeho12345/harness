@@ -276,7 +276,7 @@ void ListScreen::render(const ListViewState &state)
             const QString &key = columns.at(c).key;
             auto *item = new QTableWidgetItem(formatListCell(key, row.value(key)));
             // override L104: the time columns are centred (.yh-col--time); everything else left.
-            item->setTextAlignment(isTimeKey(key) ? int(Qt::AlignCenter) : int(Qt::AlignLeft | Qt::AlignVCenter));
+            item->setTextAlignment(isTimeKey(key) ? Qt::Alignment(Qt::AlignCenter) : (Qt::AlignLeft | Qt::AlignVCenter));
             m_table->setItem(r, c, item);
         }
     }

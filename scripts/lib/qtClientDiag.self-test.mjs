@@ -15,6 +15,8 @@
 //   · (step10) 로그인 성공/거부 판정 — 거부인데 화면이 넘어간 diag(session 요청이 생긴다)가 red 인가(M10-2 의 판정부 쪽 증거)
 //   · (step10) 비밀 유출 점검이 원문·JSON 이스케이프 형을 세고, 보고에 비밀을 싣지 않는가
 //   · (step10) 시나리오 자격은 호출자가 줄 때만 실리고 부모 env 에서 새지 않는가 · selftest:false 가 가드 키를 뺀다
+//   · (step11) 로그인 성공 = 목록 진입(list-loaded·스트림) · 거부 경로의 articles-list 요청은 red(M10-2b 가 드라이버에 드러나는 모양)
+//   · (step11) 목록 판정 (i)(ii)(iii) — 트리거가 ready 전 · 재조회 없음(M11-1) · 폴링(M11-1p) · ready 재조회 · 낡은 수가 각각 red
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,9 +24,10 @@ import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS, LOGIN_ALLOWED_EVENTS, LOGIN_MIN_EVENTS, LOGIN_ROUTE_COUNTS,
-  bootSequences, contractRouteIds, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeEventNames, judgeLogin,
-  judgeObservationCount, judgeRouteLedger, loadContractRouteIds, loginSequences, parseDiagLines,
+  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS, LIST_ALLOWED_EVENTS, LIST_EXPECTED_ROUTES, LIST_MENU, LIST_MIN_EVENTS,
+  LIST_ROUTE_COUNTS, LOGIN_ALLOWED_EVENTS, LOGIN_MIN_EVENTS, LOGIN_ROUTE_COUNTS,
+  bootSequences, contractRouteIds, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeEventNames, judgeList, judgeLogin,
+  judgeObservationCount, judgeRouteLedger, listSequences, loadContractRouteIds, loginSequences, parseDiagLines,
 } from './qtClientDiag.mjs';
 import { qtClientEnv } from './qtClientEnv.mjs';
 
@@ -367,7 +370,11 @@ test('judgeBoot 은 알 수 없는 경로·routeIds 누락을 던진다', () => 
 // client-qt 가 --scenario login 으로 남기는 모양(step10 QtTest 의 AppShell 순서 + 전송 계층 net-request).
 const HEAD = [line('app-ready'), line('config-loaded', { hasServerUrl: true }), line('app-window', { origin: ORIGIN })].join('');
 const netReq = (route, status, method = route === 'login' ? 'POST' : 'GET') => line('net-request', { route, method, status, ms: 12 });
-const LOGIN_OK = HEAD + netReq('login', 200) + line('login', { status: 200 }) + netReq('session', 200) + line('session', { status: 200 });
+// step11: 로그인 성공의 꼬리 = 목록 진입(조회 → list-loaded → 스트림 → ready).
+const LIST_TAIL = (count) => netReq('articles-list', 200) + line('list-loaded', { menu: 'deskUnsent', count })
+  + netReq('stream', 200) + line('sse-open') + line('sse-ready');
+const LOGGED_IN = HEAD + netReq('login', 200) + line('login', { status: 200 }) + netReq('session', 200) + line('session', { status: 200 });
+const LOGIN_OK = LOGGED_IN + LIST_TAIL(0);
 const LOGIN_REJECTED = HEAD + netReq('login', 401) + line('login', { status: 401 });
 const login = (kind, text, extra = {}) => {
   const { lines, rejected } = parseDiagLines(text);
@@ -375,13 +382,14 @@ const login = (kind, text, extra = {}) => {
 };
 
 test('로그인 판정 상수: 허용 집합·최소 관측·원장 횟수가 시퀀스와 맞물린다', () => {
-  assert.deepEqual([...LOGIN_ALLOWED_EVENTS.success], ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login', 'session']);
+  assert.deepEqual([...LOGIN_ALLOWED_EVENTS.success],
+    ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login', 'session', 'list-loaded', 'sse-open', 'sse-ready']);
   assert.deepEqual([...LOGIN_ALLOWED_EVENTS.rejected], ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login']);
-  assert.equal(LOGIN_MIN_EVENTS.success, 7);
+  assert.equal(LOGIN_MIN_EVENTS.success, 12);
   assert.equal(LOGIN_MIN_EVENTS.rejected, 5);
-  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.success }, { login: 1, session: 1 });
-  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.rejected }, { login: 1, session: 0 });
-  assert.equal(loginSequences('success', { origin: ORIGIN })[0].length, 7);
+  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.success }, { login: 1, session: 1, 'articles-list': 1, stream: 1 });
+  assert.deepEqual({ ...LOGIN_ROUTE_COUNTS.rejected }, { login: 1, session: 0, 'articles-list': 0, stream: 0 });
+  assert.equal(loginSequences('success', { origin: ORIGIN })[0].length, 12);
   assert.equal(loginSequences('rejected', { origin: ORIGIN })[0].length, 5);
   assert.throws(() => loginSequences('success'), /origin/);
   assert.throws(() => loginSequences('maybe', { origin: ORIGIN }), /경로/);
@@ -427,6 +435,20 @@ test('로그인: 훅이 두 번 불렀거나(login 2회) 시나리오 밖 라우
   assert.ok(failedNames(login('success', pulled)).some((n) => n.includes('라우트 원장')));
 });
 
+test('(step11) L+: 목록에 들어가지 않은 성공(list-loaded·스트림 없음)은 red — 성공 = 목록 진입', () => {
+  const failed = failedNames(login('success', LOGGED_IN));
+  assert.ok(failed.some((n) => n.includes('sse-ready')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('list-loaded 정확히 1회')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+});
+
+test('(step11) L-: 거부인데 목록 조회가 나갔다(articles-list 요청) — 목록 페이지 전환이 원장에 드러나는 모양은 red', () => {
+  const listed = LOGIN_REJECTED + netReq('articles-list', 401);
+  const failed = failedNames(login('rejected', listed));
+  assert.ok(failed.some((n) => n.includes('화면이 넘어가지 않았다')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+});
+
 test('로그인: 앱이 다른 서버를 겨눴거나(origin 불일치) diag 가 비면 red', () => {
   assert.ok(failedNames(login('success', LOGIN_OK.replace(ORIGIN, 'http://127.0.0.1:3001'))).some((n) => n.includes('app-window{origin}')));
   const empty = failedNames(login('rejected', ''));
@@ -437,6 +459,108 @@ test('로그인: 앱이 다른 서버를 겨눴거나(origin 불일치) diag 가
 test('judgeLogin 은 알 수 없는 경로·routeIds 누락을 던진다', () => {
   assert.throws(() => judgeLogin('maybe', { lines: [], rejected: [], origin: ORIGIN, routeIds: ROUTES }), /경로/);
   assert.throws(() => judgeLogin('success', { lines: [], rejected: [], origin: ORIGIN }), /knownRouteIds/);
+});
+
+// --- 목록 시나리오 판정 (step11 — 로드맵 P4 완료 게이트) ---
+
+const N0 = 11;
+const TRIGGER_AT = Date.parse(TS) + 150; // 트리거 = sse-ready(TS) 뒤
+const LIST_ENTRY = LOGGED_IN + LIST_TAIL(N0);
+const loaded = (count) => line('list-loaded', { menu: 'deskUnsent', count });
+const LIST_OK = LIST_ENTRY + line('sse-change', { kind: 'create' }) + netReq('articles-list', 200) + loaded(N0 + 1);
+const list = (text, extra = {}) => {
+  const { lines, rejected } = parseDiagLines(text);
+  return judgeList({ lines, rejected, origin: ORIGIN, routeIds: ROUTES, n0: N0, triggerAt: TRIGGER_AT, ...extra });
+};
+
+test('목록 판정 상수: 허용 집합·기대 라우트·정확 횟수·최소 관측이 시퀀스와 맞물린다', () => {
+  assert.equal(LIST_MENU, 'deskUnsent');
+  assert.deepEqual([...LIST_ALLOWED_EVENTS],
+    ['app-ready', 'config-loaded', 'app-window', 'net-request', 'login', 'session', 'list-loaded', 'sse-open', 'sse-ready', 'sse-change']);
+  assert.ok(!LIST_ALLOWED_EVENTS.includes('sse-unauthorized') && !LIST_ALLOWED_EVENTS.includes('sse-closed'));
+  assert.deepEqual([...LIST_EXPECTED_ROUTES], ['login', 'session', 'articles-list', 'stream']);
+  assert.deepEqual({ ...LIST_ROUTE_COUNTS }, { login: 1, session: 1, 'articles-list': 2 });
+  assert.equal(LIST_MIN_EVENTS, 15);
+  assert.equal(listSequences('entry', { origin: ORIGIN, n0: N0 })[0].length, 12);
+  assert.equal(listSequences('refresh', { origin: ORIGIN, n0: N0 })[0].length, LIST_MIN_EVENTS);
+  assert.throws(() => listSequences('entry', { origin: ORIGIN, n0: -1 }), /N0/);
+  assert.throws(() => listSequences('entry', { origin: ORIGIN, n0: 1.5 }), /N0/);
+  assert.throws(() => listSequences('poll', { origin: ORIGIN, n0: 0 }), /단계/);
+  assert.throws(() => listSequences('entry', { n0: 0 }), /origin/);
+});
+
+test('실시간 갱신 diag 는 전 항목 green · (i)(ii)(iii) 가 항목으로 있다 · 다른 kind 가 섞여도 통과', () => {
+  const checks = list(LIST_OK);
+  assert.deepEqual(failedNames(checks), []);
+  assert.equal(checks.length, 10);
+  for (const c of checks) assert.ok(c.name.startsWith('list: '), c.name);
+  for (const tag of ['(i)', '(ii)', '(iii)']) assert.ok(checks.some((c) => c.name.includes(tag)), tag);
+  const mixed = LIST_ENTRY + line('sse-change', { kind: 'lock' }) + line('sse-change', { kind: null }) + netReq('articles-list', 200) + loaded(N0 + 1);
+  assert.deepEqual(failedNames(list(mixed)), []);
+});
+
+test('(i) 트리거를 sse-ready 전에 쐈거나 쏘지 않았거나 ready 가 없으면 red', () => {
+  assert.ok(failedNames(list(LIST_OK, { triggerAt: Date.parse(TS) - 1 })).some((n) => n.includes('(i)')));
+  assert.ok(failedNames(list(LIST_OK, { triggerAt: null })).some((n) => n.includes('(i)')));
+  const failed = failedNames(list(LIST_OK.replace(line('sse-ready'), '')));
+  assert.ok(failed.some((n) => n.includes('(i)')) && failed.some((n) => n.includes('(ii)')), JSON.stringify(failed));
+});
+
+test('(ii)(iii) M11-1 모양 — change 를 받고도 재조회하지 않는 앱은 둘 다 red', () => {
+  const failed = failedNames(list(LIST_ENTRY + line('sse-change', { kind: 'create' })));
+  assert.ok(failed.some((n) => n.includes('(ii)')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('(iii)')), JSON.stringify(failed));
+});
+
+test('(ii) 재조회가 낡은 수(N0)를 보고했거나 sse-change 없이 온 재조회는 red', () => {
+  const stale = LIST_ENTRY + line('sse-change', { kind: 'create' }) + netReq('articles-list', 200) + loaded(N0);
+  assert.ok(failedNames(list(stale)).some((n) => n.includes('(ii)')));
+  const noSignal = LIST_ENTRY + netReq('articles-list', 200) + loaded(N0 + 1);
+  assert.ok(failedNames(list(noSignal)).some((n) => n.includes('(ii)')));
+});
+
+test('(iii) M11-1p 모양 — SSE 를 무시하고 주기 재조회하는 앱은 (ii) 가 green 이어도 red', () => {
+  const tick = netReq('articles-list', 200) + loaded(N0 + 1);
+  const checks = list(LIST_ENTRY + line('sse-change', { kind: 'create' }) + tick + tick + tick);
+  assert.equal(checks.find((c) => c.name.includes('(ii)')).ok, true, '(ii) 만 보면 폴링 앱도 green 이다 — 그래서 (iii) 이 있다');
+  const failed = failedNames(checks);
+  assert.ok(failed.some((n) => n.includes('(iii)')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+});
+
+test('(iii) ready 에 재조회하는 앱(진입 + ready 조회 + 신호 조회 = 3)은 red', () => {
+  const readyRequery = LIST_ENTRY + netReq('articles-list', 200) + loaded(N0)
+    + line('sse-change', { kind: 'create' }) + netReq('articles-list', 200) + loaded(N0 + 1);
+  assert.ok(failedNames(list(readyRequery)).some((n) => n.includes('(iii)')));
+});
+
+test('목록: 진입 수가 서버가 센 N0 과 다르면(클라 자기 신고 불일치) 진입 항목이 red', () => {
+  assert.ok(failedNames(list(LIST_OK, { n0: N0 + 5 })).some((n) => n.includes('진입')));
+});
+
+test('목록: 세션이 끊겼거나(sse-unauthorized) 스트림이 닫혔거나 신원을 다시 물었으면 red', () => {
+  const killed = LIST_OK + line('sse-unauthorized') + line('sse-closed', { reason: 'unauthorized-frame' });
+  assert.ok(failedNames(list(killed)).some((n) => n.includes('허용 이벤트')));
+  const failed = failedNames(list(LIST_OK + netReq('session', 200) + line('session', { status: 200 })));
+  assert.ok(failed.some((n) => n.includes('session 1')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+});
+
+test('목록: 시나리오 밖 라우트(기사 단건·금지)·diag 비었음·깨진 줄은 red', () => {
+  assert.ok(failedNames(list(LIST_OK + netReq('articles-get', 200))).some((n) => n.includes('라우트 원장')));
+  assert.ok(failedNames(list(LIST_OK + netReq('collection-pull', 200, 'POST'))).some((n) => n.includes('라우트 원장')));
+  const empty = failedNames(list(''));
+  assert.ok(empty.some((n) => n.includes('관측 이벤트 수')) && empty.some((n) => n.includes('(iii)')), JSON.stringify(empty));
+  assert.ok(failedNames(list(`${LIST_OK}{broken}\n`)).some((n) => n.includes('깨진 줄')));
+});
+
+test('judgeList 는 routeIds·N0·triggerAt 명세 오류를 판정 전에 던진다', () => {
+  const base = { lines: [], rejected: [], origin: ORIGIN, routeIds: ROUTES, n0: 0, triggerAt: 0 };
+  assert.throws(() => judgeList({ ...base, routeIds: undefined }), /knownRouteIds/);
+  assert.throws(() => judgeList({ ...base, n0: -1 }), /N0/);
+  assert.throws(() => judgeList({ ...base, n0: undefined }), /N0/);
+  assert.throws(() => judgeList({ ...base, triggerAt: undefined }), /triggerAt/);
+  assert.throws(() => judgeList({ ...base, triggerAt: 'now' }), /triggerAt/);
 });
 
 // --- 비밀 유출 점검 ---
