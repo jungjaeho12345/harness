@@ -13,7 +13,8 @@ cmd /c client-qt\run.bat --selftest   CLIENT_SELFTEST=1과 똑같이 부팅(창 
                                       셸 불변식을 자기검사하고 이벤트 루프 없이 종료 — 통과 0 · 위반 1
 ```
 
-- `--scenario login`은 **하네스 전용 자동화 훅**이다(step10). `CLIENT_SELFTEST=1`이 아니면 앱은 **아무것도 하지 않고
+- `--scenario login`·`--scenario list`는 **하네스 전용 자동화 훅**이다(step10·11 — `list`도 로그인 컨트롤러 1회 호출이고 목록은
+  앱 자신의 성공 경로로 따라온다). `CLIENT_SELFTEST=1`이 아니면 앱은 **아무것도 하지 않고
   exit 2**로 거부한다 — 이 가드는 **보안 경계가 아니라 사고 방지 장치**다(아래 「로그인 화면」 절).
 - `--selftest`는 **실제 부팅과 같은 user-data 폴더를 쓴다**(`CLIENT_USER_DATA`가 없으면 `%APPDATA%\기사작성기-qt`를
   만든다). 하네스·검증은 언제나 `CLIENT_USER_DATA`로 임시 폴더를 준다. 같은 폴더를 쥔 인스턴스가 이미 떠 있으면
@@ -813,7 +814,7 @@ step7 `LiveServerTest` 선례). 같은 이벤트 루프의 **raw `QTcpSocket` �
 | 층 | 파일 | 하는 일 |
 |---|---|---|
 | View | `src/ui/loginscreen.*` | 로그인 카드(UI_GUIDE — 블루 라벨 · 명조 700 CTA · 오류 줄만 레드). 암호 필드는 **마스킹**, 제출 즉시 **비운다**(아이디는 재시도를 위해 남긴다) |
-| View | `src/ui/mainwindow.*` | 콘텐츠 2페이지 — **로그인 페이지**(창은 언제나 로그아웃 상태로 열린다) · **목록 슬롯**(step11이 목록 화면을 여기에 넣는다 — step10에서는 비어 있다) |
+| View | `src/ui/mainwindow.*` | 콘텐츠 2페이지 — **로그인 페이지**(창은 언제나 로그아웃 상태로 열린다) · **목록 슬롯**(step10에서는 비어 있었다 — step11부터 `ListScreen`, 아래 「목록 화면」) |
 | Controller | `src/ui/logincontroller.*` | `LoginController(INewsModel&, Diag*)` — **위젯 타입 0**(소스 스캔으로 잠금). 결과는 `LoginAttempt`/`SessionCheck` 값 + `loginSucceeded`/`loginFailed` 신호 |
 | 결선 | `src/shell/appshell.*` · `app/main.cpp` | 앱 창마다 Model 1개(`Options::modelFactory` — main.cpp는 창 전용 전송 = 창 전용 쿠키 자 위의 `HttpNewsModel`) + 컨트롤러 1개 |
 
@@ -851,7 +852,7 @@ text/html이라 Model body가 `{ok:false, reason:"invalid-response"}` — **깨�
 
 | 사건 | 전환 |
 |---|---|
-| `loginSucceeded` | `confirmSession()` → ok: 목록 슬롯 + 표시 라벨 / **확인 못 함**(401·무응답·비-JSON): 로그인 페이지 + 사유(**fail-closed** — 확인 안 된 신원으로 목록을 열지 않는다) |
+| `loginSucceeded` | `confirmSession()` → ok: 목록 슬롯 + 표시 라벨 / **확인 못 함**(401·무응답·비-JSON): 로그인 페이지 + 사유(**fail-closed** — 확인 안 된 신원으로 목록을 열지 않는다). **step11 갱신**: 이 확인은 이제 목록 진입(`ListController::enter()`)의 첫 동작이다 — 같은 구현 `checkSession()`, 요청 수 동일(session 1) |
 | `loginFailed` | 로그인 페이지에 머묾 + 문장. 신원 확인 요청 **0** |
 | 세션 종료(신원 확인 401 · 스트림의 `unauthorized` 프레임/열리기 전 401) | 로그인 페이지 + 「세션이 끝났습니다」. step9 `onSessionEnd`의 결선점은 `AppShell::sessionEndHandler()` — 순서는 `onStatus(false)` → 핸들러(`goesBackToLoginWhenTheStreamEndsTheSession`) · 셸이 사라진 뒤 불려도 무동작(`QPointer`). **step10 실기 경로에는 스트림이 없다** — step11의 `subscribe`가 이 핸들러를 넘긴다 |
 
@@ -913,6 +914,7 @@ L-는 앞 3줄 뒤 `{"event":"net-request","method":"POST","ms":125,"route":"log
 - **step10의 드라이버는 「네트워크 없는 페이지 전환」을 보지 못한다.** 실패 경로에서 신원 확인 없이 목록 슬롯만 보여 주는 변이(M10-2b)는
   QtTest 2건이 red지만 드라이버는 green이다 — 빈 목록 슬롯은 아무 요청도 diag도 남기지 않는다. step11이 목록 화면을 슬롯에 넣으면
   슬롯 표시 = `queryArticles`(`net-request{articles-list}`·`list-loaded`)가 되어 **드라이버의 `list-loaded 0` 단언이 그때 비공허해진다.**
+  → **step11에서 닫혔다**(아래 「목록 화면」 변이표 M10-2b 재실증 — 목록 페이지는 어떤 경로로 현재가 되든 목록 진입을 거친다).
 - 423/429 실기 미재현(위) · 스트림 결선은 단위만(위).
 
 ### 변이 결과표 (2026-09-12 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
@@ -932,6 +934,149 @@ L-는 앞 3줄 뒤 `{"event":"net-request","method":"POST","ms":125,"route":"log
 - `subscribe`에는 `AppShell::sessionEndHandler()`를 넘겨라(세션 종료 → 로그인 페이지 · 순서 `onStatus(false)` → 핸들러).
 - 교차 축의 트리거 계정은 **desk가 아닌 계정**(reporter)으로 — X 순서 규칙과 같은 이유다.
 - `--scenario list`는 `shell/scenario.cpp`의 이름 검사 한 줄과 거부 문장을 바꾸면 된다(가드는 그대로 맨 앞).
+
+## 목록 화면 — P4 완료 게이트 (2026-09-12 · step11)
+
+로드맵 P4의 완료 게이트 「로그인 → 목록 **SSE 실시간 갱신** 실기 + diag 이벤트로 자동 검증」을 닫는 step이다. ADR-003 그대로
+View ← Controller ← Model:
+
+| 층 | 파일 | 하는 일 |
+|---|---|---|
+| Controller | `src/ui/listcontroller.*` | `ListController(INewsModel&, Diag*)` — 위젯·전송·타이머 0(소스 스캔 `dependsOnNoWidgetAndNoTimer`). 진입 = `checkSession()`(GET /api/session) → `queryArticles(deskUnsent)` → `subscribe` |
+| View | `src/ui/listscreen.*` | 11컬럼 표 · 상태 배지 · 행 hover 틴트 · 페이저 · 쿼리 오류 줄 · **읽기 전용** |
+| View | `src/ui/mainwindow.*` | 창 껍데기 — 목록 페이지 = `ListScreen` · 상단바(48px) 우측 실시간 표시(`● 실시간`/`● 연결 끊김`, 목록 페이지에서만) · `listPageEntered/Left` 신호 |
+| 결선 | `src/shell/appshell.*` | 로그인 성공 → 목록 진입 → **확인된 진입만** 목록 페이지를 띄운다 · 다른 경로로 목록 페이지가 현재가 되어도 같은 진입(웹 `ListPage` 마운트 동형) · 로그인 페이지로 가면 목록 이탈(스트림 닫기·행 삭제) |
+| 인벤토리 | `src/ui/screens.*` | 화면 레지스트리 `{login, list, setup}` + 창 껍데기 `{MainWindow}` |
+
+### 목록 규율 (코드가 강제하는 것)
+
+- **메뉴는 `deskUnsent` 1개**(`{status:['RDS','DDH']}` — `web/src/controller/useViewController.js` 70~72) · 부서는 '전체'(키 없음).
+  필터는 `HttpNewsModel::queryArticles` → step7 `buildQuery`를 지난다 — 와이어 `GET /api/articles?status=RDS&status=DDH`를 스텁 서버로
+  잠갔다(`spellsTheFilterWithBuildQueryOnTheWire`). 서버측 페이징 파라미터는 만들지 않는다(계약에 없다).
+- **`change` = kind 무관 전체 재조회**(override L80): `onStreamEvent(StreamEvent::Change)`는 **kind를 받지도 않는다** — 분기할 재료가
+  없다. 소스에 `"kind"` 리터럴 0(잠금) · create·update·lock·status·derive·kind 없는 프레임이 각각 **정확히 1회** 같은 필터로 재조회.
+- **재조회 유발자는 `change`와 사용자 액션뿐**: ready(첫 ready·재연결 ready)는 실시간 표시만 켠다. 타이머 0 — 2.6초(M11-1p 주기 2초 초과)
+  경과에 호출 수 불변 + 컨트롤러의 `QTimer` 자식 0 + 소스 토큰 스캔. P4 목록에는 사용자 재조회 액션이 없다(메뉴·조회 버튼은 P7).
+- **병합(step9 발견 반영)**: 전송의 `send()`는 로컬 이벤트 루프로 기다리므로 그 사이 change가 도착할 수 있다. 진행 중이면 **새 조회를
+  시작하지 않고 dirty만 세우고**, 끝나면 후속 재조회 **1회**. 그 후속 도중 또 오면 1회 더 — **신호는 버리지 않는다**(버리면 목록이 낡는다) ·
+  동시 조회는 최대 1(겹치면 늦은 옛 응답이 새 목록을 덮는다 — 웹은 seq 가드로 막는 문제). 잠금: 조회 중 change 3건 → 후속 정확히 1회 ·
+  후속 중 change → 1회 더 · 최대 깊이 1 · 최종 행 수 = 전부 반영(`mergesChangesThatArriveDuringAQuery`·`neverDropsAChangeThatArrivesDuringAQuery`).
+- **진입마다 신원 재확인**(decisions (7)) — `checkSession()`은 LoginController와 **같은 구현**이다(step10의 `confirmSession()`이 이제 그것을
+  부른다). 표시 라벨만 받고 보관하지 않는다. **401**(확인·조회) / **`unauthorized` 프레임** → 스트림 영구 종료 + 행 삭제 + `sessionEnded`
+  → 로그인 페이지. 그 밖 조회 실패(무응답·비-JSON·5xx)는 **행 유지 + 오류 줄**, `list-loaded`를 쓰지 않는다(쓸 수가 없다).
+- **페이징 10은 클라 몫**(계약에 페이징·총수 없음 — baseline (F)) · 경계 0·9·10·11·23건 잠금 · 줄어든 목록은 페이지를 끌어내리고 늘어난
+  목록은 페이지 유지(`useViewController.js` 160~163) · 페이지 이동은 조회가 아니다 · **createdAt 내림차순 안정 정렬** — 서버의 ORDER BY는
+  계약에 없으므로 순서는 클라가 소유한다(올바른 서버에서는 무동작 · 같은 시각은 서버 순서 유지 · 시각 없음은 끝).
+- diag: `session{status}`(확인) · `list-loaded{menu,count}`(count = 전체 행 수, 페이지 행 수가 아니다) — 제목·아이디 0(바이트 검사).
+- 표시: 컬럼은 **`web/src/view/columnConfig.js`를 런타임에 읽어** 카탈로그 12종(키·라벨·순서 · `distributedAt`만 기본 숨김)을 대조한 뒤
+  11종을 보인다(override L97·L100 · 토글은 P7) · 시간 `YYYY-MM-DD HH:mm` **고정**, 가운데 정렬(override L104 — 전역 설정은 P6) · 배지 색은
+  **`web/src/view/statusBadge.js` 11종을 런타임에 읽어 대조**(UI_GUIDE 6종은 값으로도 잠금) · 표는 UI_GUIDE `.yh-table`(thead `#f5f5f5` ·
+  th 하단 2px 블루 · td 1px `#ddd` · 행 hover 틴트 `rgba(10,77,166,0.08)`) · 우클릭·더블클릭·편집·선택·헤더 클릭 정렬 없음.
+
+### 「화면」의 정의와 인벤토리 잠금 (decisions (5))
+
+- **화면 = 사용자에게 보이는 최상위 창, 또는 그 창의 주 내용 패널 하나.** `MainWindow`는 **창 껍데기**(로그인·목록 화면이 번갈아 앉는 틀)이지
+  화면이 아니다. 그러므로 P4의 화면 id는 `login`(`LoginScreen`) · `list`(`ListScreen`) · `setup`(`SetupScreen`) **3개**다.
+- 레지스트리: `ui::screenRegistry()` = `{login, list, setup}`(클래스 이름은 `staticMetaObject`로 컴파일 결박 — 없는 클래스는 빌드되지 않는다) ·
+  `ui::windowShellClasses()` = `{MainWindow}`. 네 번째 화면을 **등록**하면 `registersExactlyTheThreeP4Screens`가 red.
+- **소스 스캔 교차(규칙과 한계 한 줄)**: `client-qt/src/**`·`client-qt/app/**`의 모든 `.h`/`.cpp`(빌드 포함 여부 무관)에서 주석을 걷어내고
+  `class|struct X [final] : … {`의 기반이 Qt 위젯 이름 패턴(`Q…Widget|Window|Dialog|Frame|View|Area|Edit|Box|Label|Button|Bar|Splitter|Wizard|Page`)
+  이거나 이미 찾은 위젯 클래스면(추이) 위젯 클래스로 세고, 그 집합이 **레지스트리 ∪ 창 껍데기와 정확히 같아야** green이다 — **한계**: 서브클래스
+  없이 만든 창(`new QWidget` 최상위 표시 같은 동적 생성)·매크로/`#if 0`/별칭으로 만든 클래스·패턴 밖 Qt 기반 이름은 보지 못한다(다이얼로그 종류만은
+  `QDialog`·`QMessageBox`·`QMainWindow` 등 이름 토큰이 주석 밖에 0개임을 따로 잠갔다 — `sourcesOpenNoDialogWindow`).
+- 스캐너 자체는 알려진 입력으로 잠갔다(`scannerFindsWidgetClassesAndOnlyThose` — 추이·`final`·다중 기반·한정 이름·주석·URL 문자열·raw 문자열·
+  비위젯 기반·전방 선언·`enum class`).
+
+### 드라이버 `--scenario list` (완료 게이트 · `scripts/verify-qt-client.mjs`)
+
+| 단계 | 내용 |
+|---|---|
+| R | 드라이버가 **reporter** 세션으로 로그인 → 사전 기사 **11건**(N0가 한 페이지를 넘게 — `list-loaded{count}`가 페이지 행 수가 아니라 전체 수임을 가른다) → 서버가 센 deskUnsent 수 **N0**(`GET /api/articles?status=RDS&status=DDH`) |
+| C | 클라(`--scenario list` · **desk**) → `app-window` → `login{200}` → `session{200}` → `net-request{articles-list,200}` → `list-loaded{deskUnsent,N0}` → `net-request{stream,200}` → `sse-open` → `sse-ready` |
+| T | **`sse-ready`를 본 뒤에만** reporter가 기사 1건 생성 → `sse-change`(≥1 · kind 무관) → `net-request{articles-list,200}` → `list-loaded{N0+1}` · 서버 수 N0+1 교차 |
+| H | **관측 창 5초**(M11-1p 2초 주기의 2.5배) — 주기 재조회 앱은 이 사이 `articles-list`를 더 부른다 → 종료 → `judgeList` |
+
+판정식은 **세 조건의 논리곱**(`scripts/lib/qtClientDiag.mjs` `judgeList` 10항목): **(i)** 트리거 시각 ≥ `sse-ready` ts · **(ii)** `sse-ready` 뒤
+`sse-change` ≥1 → `articles-list` 200 → `list-loaded{N0+1}` · **(iii)** 시나리오 전 구간 `articles-list` **정확히 2**. 그 밖에 진입(N0 = 서버가 센
+수) · login 1·session 1 · list-loaded 2 · 허용 집합(**`sse-unauthorized`·`sse-closed` 없음** = 클라 세션·스트림이 끝까지 살아 있다) · 원장(계약
+39 안 · 금지 0 · 기대 4 포함 · 그 밖 0). 교차: 서버 수 N0 → N0+1 · diag·stdout·stderr에 **비밀번호·기사 제목 12·기사아이디 12 = 25종 0건** ·
+user-data에 `config.json` 외 0.
+
+- **계정 분리가 규칙이다**: 같은 계정 로그인은 그 계정의 기존 세션을 전부 끊는다(step9·10 실측). 드라이버가 desk로 로그인하면 클라의
+  세션과 스트림이 401로 죽고 그것이 클라 버그처럼 보인다 — 그래서 트리거 주체는 reporter다.
+- **(iii)이 결정적인 이유**: `POST /api/articles`는 `notifyChange('create')`를 정확히 1회 낸다 · P4 목록엔 액션이 없어 클라가 스스로
+  change를 만들지 않는다 · 트리거는 진입 조회 뒤다 ⇒ 진입 1 + 신호 후 1 = 2. `sse.md`의 경고(정확 kind·개수 단언은 flake)는 kind와 프레임
+  개수에 대한 것이고, 게이트는 kind를 단언하지 않고 **호출 횟수**를 센다.
+- 로그인 시도는 서버 인스턴스당 list 2회(reporter·desk) · all 5회(login 3 + list 2) — IP 제한 10회/15분 안.
+- **로그인 판정(step10)의 갱신**: 성공 경로가 이제 목록까지 이어진다 — L+ 시퀀스에 `articles-list` → `list-loaded` → `stream` → `sse-open` →
+  `sse-ready`를 붙이고 원장을 `login 1 · session 1 · articles-list 1 · stream 1 · 그 밖 0`으로 · L-는 `session 0 · list-loaded 0 · articles-list 0`.
+
+실측 diag 원문(exe · 1회차 — 제목·아이디 없음):
+
+```
+{"ts":"2026-09-11T19:28:12.570Z","event":"app-ready"}
+{"ts":"2026-09-11T19:28:12.570Z","event":"config-loaded","hasServerUrl":true}
+{"ts":"2026-09-11T19:28:13.267Z","event":"app-window","origin":"http://127.0.0.1:46429"}
+{"ts":"2026-09-11T19:28:13.426Z","event":"net-request","method":"POST","ms":135,"route":"login","status":200}
+{"ts":"2026-09-11T19:28:13.426Z","event":"login","status":200}
+{"ts":"2026-09-11T19:28:13.426Z","event":"net-request","method":"GET","ms":3,"route":"session","status":200}
+{"ts":"2026-09-11T19:28:13.426Z","event":"session","status":200}
+{"ts":"2026-09-11T19:28:13.426Z","event":"net-request","method":"GET","ms":4,"route":"articles-list","status":200}
+{"ts":"2026-09-11T19:28:13.426Z","event":"list-loaded","count":11,"menu":"deskUnsent"}
+{"ts":"2026-09-11T19:28:13.442Z","event":"net-request","method":"GET","ms":6,"route":"stream","status":200}
+{"ts":"2026-09-11T19:28:13.442Z","event":"sse-open"}
+{"ts":"2026-09-11T19:28:13.442Z","event":"sse-ready"}
+{"ts":"2026-09-11T19:28:13.590Z","event":"sse-change","kind":"create"}
+{"ts":"2026-09-11T19:28:13.612Z","event":"net-request","method":"GET","ms":27,"route":"articles-list","status":200}
+{"ts":"2026-09-11T19:28:13.612Z","event":"list-loaded","count":12,"menu":"deskUnsent"}
+```
+
+| 실행 | 결과 |
+|---|---|
+| `--scenario list --server exe` 1·2회차 | exit 0 · 판정 30 · 실패 0 · N0=11 → 12 · articles-list=2 · 트리거는 ready 뒤 118/43 ms · 재조회는 트리거 뒤 148 ms(1회차) |
+| `--scenario list --server spring` 1·2회차 | exit 0 · 판정 30 · 실패 0 · N0=11 → 12 · articles-list=2 · 트리거는 ready 뒤 12/91 ms · 재조회는 트리거 뒤 141 ms(1회차) |
+| `--scenario all` exe · spring | exit 0 · 관측 40(A 4 · B 4 · G 0 · L+ 12 · L- 5 · list 15) · 판정 83 · 실패 0 |
+
+### 육안 확인 (P4의 유일한 육안 항목 · 2026-09-12)
+
+`CLIENT_SELFTEST` **없이** `cmd /c client-qt\run.bat`으로 띄운 **실제로 보이는 앱**(훅 없음 · 임시 `CLIENT_USER_DATA` · 임시 `DATA_DIR`의 Node exe
+서버 · 사전 기사 11건). 로그인은 창에 입력했다(전경 창이 news-client일 때만 키를 보내고, 한글 IME가 글자를 바꾸지 못하게 붙여넣기로).
+
+- 로그인 카드 → **목록이 실제로 그려진다**: 상단바 우측 `desk · 편집부 · (D) ● 실시간`(빨간 점) · 「데스크 미송고」 · **11컬럼**(배부시간 없음) ·
+  최신순 10행 · 시간 `YYYY-MM-DD HH:mm` 가운데 · 회색 RDS 배지 · 페이저 `이전(비활성) 1 / 2 · 총 11건 다음`.
+- 다른 곳(Node fetch · reporter 세션)에서 기사를 만들자 **조작 없이 목록이 스스로 갱신됐다** — 새 기사가 맨 위, `총 12건`(diag `list-loaded` 11 → 12,
+  트리거 뒤 211 ms · 같은 실행의 diag는 게이트와 같은 15줄).
+- 시간 칸은 저장된 UTC 자릿수 그대로다(`listFormat.js`와 같은 규약 — 타임존 이동 없음 · 전역 형식 설정은 P6).
+- 스크린샷은 리포 밖(오케스트레이터 스크래치패드 `s11-visual-0-login.png`·`s11-visual-1-list.png`·`s11-visual-2-updated.png`)에 두었다.
+
+### 변이 결과표 (2026-09-12 · 전건 기대 = 실제 · 원복은 소스 diff 0으로 판정)
+
+변이는 스크래치 도구가 정확한 한 곳 문자열 치환으로 심고 되돌렸다. 원복 증거는 매번 `git diff --stat -- client-qt/src client-qt/app
+client-qt/tests` 무출력이다(재빌드한 exe는 md5가 매번 다르다).
+
+| 변이 | 내용 | QtTest(`build.bat`) | 드라이버 |
+|---|---|---|---|
+| **M11-1** | change 수신 시 재조회하지 않음 | exit 1 · 10 red(신호당 1회 · kind 무관 · 병합 2 · 401 종료 · 조회 실패 · 페이지 클램프 · 재진입 · diag · AppShell 화면 갱신) | `--scenario list` exe **exit 1 · 6 red** — **(ii)**(`missing=net-request`) · **(iii)**(`articles-list=1`) · 관측 13 < 15 · list-loaded 1 · 원장 · T 대기 |
+| **M11-1p** | SSE 무시 + **2초 주기 타이머** 재조회 | exit 1 · 12 red(M11-1의 10 + `hasNoPeriodicTimer` + 소스 스캔 `QTimer`) | exe **exit 1 · 3 red** — **(ii)는 green**(주기 조회가 N0+1을 가져왔다) · **(iii) `articles-list=4`** · list-loaded 4 · 원장. (ii)만 있었다면 통과했다 — (iii)이 있는 이유 그대로 |
+| **M11-2** | 재조회는 하되 화면 갱신 없이 `list-loaded`만 | exit 1 · 2 red(`showsTheListAndRefreshesTheScreenOnAChange` · `leavesTheListWhenGoingBackToLogin`) | exe **exit 0 — 잡지 못한다**(diag는 픽셀을 보지 못한다 — QtTest와 육안 확인이 그 자리를 메운다) |
+| **M11-3** | 필터를 `{status:['RDS']}`로 | exit 1 · 3 red(`queriesTheDeskUnsentFilter` · 와이어 `status=RDS&status=DDH` · AppShell 행 수) | exe **exit 0 — 잡지 못한다**(사전·트리거 기사가 전부 RDS다 — reporter는 DDH를 만들 수 없고 드라이버는 desk로 로그인하지 않는다) |
+| **M11-4** | 화면을 하나 더 **등록**(`detail` → `ListScreen`) | exit 1 · 1 red(`registersExactlyTheThreeP4Screens` — Actual 4 / Expected 3) | — |
+| **M11-5** | 화면 클래스를 하나 더 만들되 **미등록**(`class DetailScreen : public QWidget` — `listscreen.h`) | exit 1 · 1 red(`sourcesHoldNoUnregisteredWidgetClass` — 「widget classes nobody registered: DetailScreen」). 자기신고 레지스트리만 있었다면 green이었다 | — |
+| **M10-2b 재실증** | 로그인 실패인데 목록 페이지를 표시(신원 확인 없이 — step10과 같은 한 줄) | exit 1 · 2 red(`staysOnTheLoginPageWhenLoginFails` · 훅 경로) | `--scenario login` exe **exit 1 · L- 3 red** — 화면이 넘어가지 않았다 `session=1` · 허용 집합 밖 `session` · 원장 `session` 0 기대 1 실제 → **step10 사각지대가 닫혔다** |
+
+M10-2b의 드라이버 증거는 `articles-list`가 아니라 **목록 진입의 신원 확인 요청**이다 — 목록 페이지가 현재가 되면 진입이 먼저 신원을 묻고,
+세션이 없으니 401로 **조회 전에** 로그인 페이지로 되돌린다(그래서 `articles-list`·`list-loaded`는 0으로 남는다 · L-는 셋 다 0을 단언한다).
+판정부 쪽은 같은 모양들을 픽스처로 잠갔다(M11-1 · M11-1p · ready 재조회 · 낡은 수 · 트리거 선후 · 세션 종료 · 거부 경로의 `articles-list`) —
+자기검사 52 → 65.
+
+### 사각지대 (정직하게)
+
+- **M11-2·M11-3은 드라이버가 잡지 못한다**(위 표) — 각각 QtTest가 잡는다.
+- **폴링 배제는 관측 창(5초) 안의 주기에 대해서만 결정적이다.** 창보다 긴 주기의 폴링 앱이 우연히 트리거 직후 조회하고 창 안에서 다시
+  조회하지 않으면 통과할 수 있다. M11-1p(2초 주기)는 결정적으로 red다.
+- **놓친 신호는 다음 신호까지 목록을 낡게 둔다**: ready는 재조회하지 않으므로 진입 조회와 스트림 ready 사이, 그리고 일시 단절 동안의
+  변경은 다음 change가 올 때까지 반영되지 않는다 — 웹 정본(ready → `setLive`만)과 같은 동작이고 게이트 (iii)의 전제다(P5·P7 재검토 후보).
+- 423/429 실기 미재현(step10) · 목록의 우클릭·편집·상세·컬럼 설정·검색·6메뉴는 P7 · 날짜 전역 설정은 P6.
 
 ## 무엇이 P4가 아닌가
 
