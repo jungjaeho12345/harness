@@ -18,7 +18,13 @@ SOURCES += main.cpp \
            windowpolicytest.cpp \
            singleinstancetest.cpp \
            proberunnertest.cpp \
-           appshelltest.cpp
+           appshelltest.cpp \
+           stubhttpserver.cpp \
+           querystringtest.cpp \
+           netpolicytest.cpp \
+           httptransporttest.cpp \
+           httpproberunnertest.cpp \
+           liveservertest.cpp
 
 HEADERS += smoketest.h \
            serverurltest.h \
@@ -28,4 +34,10 @@ HEADERS += smoketest.h \
            windowpolicytest.h \
            singleinstancetest.h \
            proberunnertest.h \
-           appshelltest.h
+           appshelltest.h \
+           stubhttpserver.h \
+           querystringtest.h \
+           netpolicytest.h \
+           httptransporttest.h \
+           httpproberunnertest.h \
+           liveservertest.h

@@ -1,9 +1,9 @@
 #ifndef CLIENT_QT_SHELL_PROBERUNNER_H
 #define CLIENT_QT_SHELL_PROBERUNNER_H
 
-// Server probe - the injection point (phase 77 step5). The HTTP transport that really asks
-// GET <origin>/api/health belongs to the net layer (step7); this step only creates the seam and
-// injects a stand-in that says, loudly, that it is one.
+// Server probe - the injection point (phase 77 step5). The runner that really asks
+// GET <origin>/api/health is net::HttpProbeRunner (step7), and that is what the composition root
+// injects; the stand-in below stays for tests and says, loudly, that it is one.
 //
 // probeOrigin() is the port of client/main.js:188-200 and owns the rule the pure verdict module
 // could not lock (port spec R26): the redirect-promoted origin is used ONLY when the verdict is a
@@ -36,8 +36,8 @@ public:
     virtual QString limitationNotice() const;
 };
 
-// The runner the step5 composition root injects. It sends nothing and answers unreachable every
-// time - never ok, never a guess. Its notice says so on the setup screen.
+// step5's stand-in (the composition root injected it until step7). It sends nothing and answers
+// unreachable every time - never ok, never a guess. Its notice says so on the setup screen.
 class UnimplementedProbeRunner : public ProbeRunner
 {
 public:

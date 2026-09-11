@@ -20,6 +20,10 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/shell/proberunner.cpp \
                  $$PWD/src/shell/singleinstance.cpp \
                  $$PWD/src/shell/appshell.cpp \
+                 $$PWD/src/net/querystring.cpp \
+                 $$PWD/src/net/httptransport.cpp \
+                 $$PWD/src/net/editclientid.cpp \
+                 $$PWD/src/net/httpproberunner.cpp \
                  $$PWD/src/ui/setupscreen.cpp \
                  $$PWD/src/ui/mainwindow.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
@@ -31,6 +35,10 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/proberunner.h \
                  $$PWD/src/shell/singleinstance.h \
                  $$PWD/src/shell/appshell.h \
+                 $$PWD/src/net/querystring.h \
+                 $$PWD/src/net/httptransport.h \
+                 $$PWD/src/net/editclientid.h \
+                 $$PWD/src/net/httpproberunner.h \
                  $$PWD/src/ui/theme.h \
                  $$PWD/src/ui/setupscreen.h \
                  $$PWD/src/ui/mainwindow.h

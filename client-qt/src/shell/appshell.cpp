@@ -178,12 +178,20 @@ void AppShell::requestSave(const QString &input)
             m_setupScreen->showStatus(describeAddressProblem(normalized.reason), true);
         return;  // nothing saved, nothing logged (the canonical returns before any diag line)
     }
-    // step5 saves what normalises (step5.md D). The canonical probes first and saves only the
-    // final origin of a SUCCESSFUL probe (client/main.js:129-134); that order returns with the
-    // real transport in step7 - client-qt/README.md.
-    m_serverOrigin = normalized.origin;
+    // client/main.js:130-141 (restored in step7): normalise -> probe -> a failed probe saves
+    // NOTHING, not even the typed address (an unreachable address would send the next boot
+    // straight to a dead app window) -> a successful one saves the origin the probe ENDED at
+    // (promoted on success only - R26), and config-saved / the app window carry that same value.
+    ++m_probeCount;
+    const ProbeOutcome outcome = probeOrigin(m_probeRunner, m_diag, normalized.origin);
+    if (!outcome.ok) {
+        if (m_setupScreen)
+            m_setupScreen->showStatus(describeProbe(outcome), true);
+        return;
+    }
+    m_serverOrigin = outcome.origin;
     persistConfig();
-    m_diag.log(QStringLiteral("config-saved"), QVariantMap{{QStringLiteral("origin"), normalized.origin}});
+    m_diag.log(QStringLiteral("config-saved"), QVariantMap{{QStringLiteral("origin"), outcome.origin}});
     createAppWindow();
 }
 

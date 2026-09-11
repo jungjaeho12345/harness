@@ -30,9 +30,9 @@ HealthVerdict UnimplementedProbeRunner::probe(const QString &origin, QString *fi
 QString UnimplementedProbeRunner::limitationNotice() const
 {
     return QStringLiteral(
-        "연결 확인은 아직 구현되지 않았습니다 — step7에서 실제 HTTP로 붙습니다. "
-        "지금 [연결 확인]은 서버에 요청을 보내지 않고 항상 '서버에 닿지 못함(unreachable)'으로 "
-        "답하며, [저장]은 주소 형식만 검사하고 연결을 확인하지 않은 채 저장합니다.");
+        "연결 확인 대역 러너가 주입되어 있습니다 — 실제 HTTP 러너(step7 net::HttpProbeRunner)가 아닙니다. "
+        "[연결 확인]은 서버에 요청을 보내지 않고 항상 '서버에 닿지 못함(unreachable)'으로 답하며, "
+        "[저장]은 연결 확인이 성공해야만 저장하므로 이 러너로는 저장되지 않습니다.");
 }
 
 int UnimplementedProbeRunner::callCount() const

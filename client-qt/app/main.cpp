@@ -3,11 +3,11 @@
 // Thin on purpose: it builds the dependencies, injects them into the shell and runs the event
 // loop. Every decision - boot branch, single instance, window bounds, diag events - lives in
 // src/shell, where the tests can drive it with fakes. Nothing below may reach for a global.
+#include "net/httpproberunner.h"
 #include "shell/appidentity.h"
 #include "shell/appshell.h"
 #include "shell/configstore.h"
 #include "shell/diag.h"
-#include "shell/proberunner.h"
 #include "shell/singleinstance.h"
 #include "shell/windowpolicy.h"
 
@@ -58,9 +58,10 @@ int main(int argc, char **argv)
     //     can be dropped early is released early.
     shell::SingleInstanceGuard guard(shell::instanceNamesFor(userDataDir));
     shell::Diag diag(shell::diagFilePathFromEnvironment());
-    // The transport is step7's. Until it lands, this stand-in answers "unreachable" to every
-    // probe and says so on the setup screen.
-    shell::UnimplementedProbeRunner probeRunner;
+    // The real probe (step7): GET <origin>/api/health through the net transport, on user actions
+    // only - [연결 확인] and [저장] (which probes first and saves only a success). Nothing on the
+    // boot path calls it, and it builds no network object until it runs.
+    net::HttpProbeRunner probeRunner(&diag);
 
     shell::AppShell::Options options;
     options.selftest = selftestArg || selftestEnvironment();

@@ -12,7 +12,12 @@
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
+#include "httpproberunnertest.h"
+#include "httptransporttest.h"
+#include "liveservertest.h"
+#include "netpolicytest.h"
 #include "proberunnertest.h"
+#include "querystringtest.h"
 #include "serverurltest.h"
 #include "singleinstancetest.h"
 #include "smoketest.h"
@@ -125,6 +130,15 @@ int main(int argc, char **argv)
     runTestClass<SingleInstanceTest>(baseArgs, logDir.path(), totals);
     runTestClass<ProbeRunnerTest>(baseArgs, logDir.path(), totals);
     runTestClass<AppShellTest>(baseArgs, logDir.path(), totals);
+    runTestClass<QueryStringTest>(baseArgs, logDir.path(), totals);
+    runTestClass<NetPolicyTest>(baseArgs, logDir.path(), totals);
+    runTestClass<HttpTransportTest>(baseArgs, logDir.path(), totals);
+    runTestClass<HttpProbeRunnerTest>(baseArgs, logDir.path(), totals);
+
+    // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
+    // driver asks for it, so an ordinary run neither executes nor "skips" it.
+    if (qEnvironmentVariableIsSet("CLIENT_QT_LIVE_ORIGIN"))
+        runTestClass<LiveServerTest>(baseArgs, logDir.path(), totals);
 
     if (totals.classes == 0 || totals.tests == 0) {
         std::fprintf(stderr,

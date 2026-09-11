@@ -1,10 +1,14 @@
 #include "appshelltest.h"
 
+#include "stubhttpserver.h"
+
+#include "net/httpproberunner.h"
 #include "shell/appshell.h"
 #include "shell/clientconfig.h"
 #include "shell/configstore.h"
 #include "shell/diag.h"
 #include "shell/proberunner.h"
+#include "shell/serverurl.h"
 #include "shell/singleinstance.h"
 #include "ui/mainwindow.h"
 #include "ui/setupscreen.h"
@@ -146,6 +150,27 @@ QRect rectOf(const shell::Bounds &b)
     return QRect(b.x, b.y, b.width, b.height);
 }
 
+// A transport double for the save-order cases: a fixed verdict and a fixed "final URL".
+class ScriptedRunner : public shell::ProbeRunner
+{
+public:
+    shell::HealthVerdict verdict;
+    QString finalUrl;  // null QString = nothing observed
+    int calls = 0;
+
+    shell::HealthVerdict probe(const QString &, QString *reached) override
+    {
+        ++calls;
+        if (reached)
+            *reached = finalUrl;
+        return verdict;
+    }
+};
+
+// Which probe runner the shell gets: step5's stand-in (always unreachable), the scripted double,
+// or the real HTTP runner (step7) aimed at loopback stubs.
+enum class Runner { StandIn, Scripted, Http };
+
 // One test's world: a temporary user data folder with the diag file inside it (the harness
 // layout), the fakes, and the shell under test.
 struct Rig {
@@ -154,17 +179,24 @@ struct Rig {
     shell::Diag diag;
     FakeGuard guard;
     shell::UnimplementedProbeRunner runner;
+    ScriptedRunner scripted;
+    std::unique_ptr<net::HttpProbeRunner> http;
     QList<QRect> workAreas{QRect(0, 0, 1920, 1080)};
     std::unique_ptr<AppShell> app;
 
-    explicit Rig(bool selftest, bool primary = true)
+    explicit Rig(bool selftest, bool primary = true, Runner kind = Runner::StandIn)
         : diag(QDir(dir.path()).filePath(QStringLiteral("diag.jsonl"))),
           guard(shell::instanceNamesFor(dir.path()), primary)
     {
+        if (kind == Runner::Http)
+            http = std::make_unique<net::HttpProbeRunner>(&diag, 3000);
+        shell::ProbeRunner &injected = kind == Runner::Scripted ? static_cast<shell::ProbeRunner &>(scripted)
+                                       : kind == Runner::Http   ? static_cast<shell::ProbeRunner &>(*http)
+                                                                : static_cast<shell::ProbeRunner &>(runner);
         AppShell::Options options;
         options.selftest = selftest;
         options.workAreas = [this] { return workAreas; };
-        app = std::make_unique<AppShell>(dir.path(), guard, diag, fs, runner, options);
+        app = std::make_unique<AppShell>(dir.path(), guard, diag, fs, injected, options);
     }
 
     QString diagPath() const { return QDir(dir.path()).filePath(QStringLiteral("diag.jsonl")); }
@@ -303,7 +335,8 @@ void AppShellTest::emitsOnlyAllowedEventNames()
     for (const QString &name : vocabulary)
         QVERIFY2(shell::isAllowedDiagEvent(name), qPrintable(name));
 
-    Rig rig(true);
+    Rig rig(true, true, Runner::Scripted);
+    rig.scripted.verdict.ok = true;
     rig.app->start();
     QVERIFY(rig.app->setupScreen());
     rig.app->setupScreen()->setAddress(QStringLiteral("127.0.0.1:3001"));
@@ -312,7 +345,10 @@ void AppShellTest::emitsOnlyAllowedEventNames()
     rig.guard.knock();
 
     const QStringList written = rig.eventNames();
-    QCOMPARE(written.size(), 8);  // boot 4 + probe + config-saved + app-window + second-instance
+    // boot 4 + probe (button) + probe (save probes first, step7) + config-saved + app-window
+    // + second-instance
+    QCOMPARE(written.size(), 9);
+    QCOMPARE(written.count(QStringLiteral("probe")), 2);
     for (const QString &name : written)
         QVERIFY2(vocabulary.contains(name), qPrintable(name));
     QCOMPARE(rig.diag.rejectedEventCount(), 0);
@@ -681,28 +717,19 @@ void AppShellTest::showsTheStandInNoticeOnTheSetupScreen()
     QVERIFY(!label->isHidden());
 }
 
-// Save = normalise, persist, config-saved{origin}, then the app window replaces the setup screen
-// (client/main.js:129-142). In step5 saving does NOT probe first - see client-qt/README.md.
-void AppShellTest::savesANormalisedAddressAndOpensTheAppWindow()
+// step5 put the stand-in's warning on the runner; with the real runner injected (step7) the
+// setup screen has nothing to confess and the label stays hidden.
+void AppShellTest::showsNoNoticeOnceTheRealRunnerIsInjected()
 {
-    Rig rig(true);
+    Rig rig(true, true, Runner::Http);
     rig.app->start();
-    QVERIFY(rig.app->setupScreen());
-    rig.app->setupScreen()->setAddress(QStringLiteral("  LOCALHOST:3001/list?x=1 "));
+    ui::SetupScreen *screen = rig.app->setupScreen();
+    QVERIFY(screen);
 
-    rig.click("saveButton");
-
-    const QString origin = QStringLiteral("http://localhost:3001");
-    QCOMPARE(rig.savedConfig().serverUrl, origin);
-    const QList<QJsonObject> events = rig.events();
-    QCOMPARE(namesOf(events).mid(4), (QStringList{QStringLiteral("config-saved"), QStringLiteral("app-window")}));
-    QCOMPARE(events.at(4).value(QStringLiteral("origin")).toString(), origin);
-    QCOMPARE(events.at(5).value(QStringLiteral("origin")).toString(), origin);
-
-    QVERIFY(!rig.app->setupScreen());
-    QVERIFY(rig.app->appWindow());
-    QCOMPARE(rig.app->serverOrigin(), origin);
-    QCOMPARE(rig.runner.callCount(), 0);
+    QVERIFY(screen->noticeText().isEmpty());
+    QLabel *label = screen->findChild<QLabel *>(QStringLiteral("noticeLabel"));
+    QVERIFY(label);
+    QVERIFY(label->isHidden());
 }
 
 void AppShellTest::refusesToSaveAnAddressThatDoesNotNormalise()
@@ -721,8 +748,126 @@ void AppShellTest::refusesToSaveAnAddressThatDoesNotNormalise()
     rig.click("saveButton");
     QVERIFY2(screen->statusText().contains(QStringLiteral("empty")), qPrintable(screen->statusText()));
 
+    QCOMPARE(rig.runner.callCount(), 0);  // an address that does not normalise is never probed
     QCOMPARE(rig.fs.count(QStringLiteral("writeFile")), 0);
     QVERIFY(!rig.eventNames().contains(QStringLiteral("config-saved")));
+    QVERIFY(rig.app->setupScreen());
+    QVERIFY(!rig.app->appWindow());
+}
+
+// ---------------------------------------------------------------------------
+// client/main.js:132-133 - "실패한 주소는 저장하지 않는다": normalise -> probe -> a failed probe
+// saves NOTHING (not even the typed address), writes no config-saved and keeps the setup screen.
+// Saving first (the step5 order) would store an address the next boot cannot reach.
+void AppShellTest::savesNothingWhenTheProbeFails()
+{
+    Rig rig(true);  // the stand-in: every probe is unreachable
+    rig.app->start();
+    ui::SetupScreen *screen = rig.app->setupScreen();
+    QVERIFY(screen);
+    screen->setAddress(QStringLiteral("127.0.0.1:3001"));
+
+    rig.click("saveButton");
+
+    QCOMPARE(rig.runner.callCount(), 1);
+    QCOMPARE(rig.fs.count(QStringLiteral("writeFile")), 0);
+    QCOMPARE(rig.fs.count(QStringLiteral("renameOver")), 0);
+    QVERIFY(rig.savedConfig().serverUrl.isEmpty());
+    const QList<QJsonObject> events = rig.events();
+    QCOMPARE(namesOf(events).mid(4), QStringList{QStringLiteral("probe")});
+    QCOMPARE(events.at(4).value(QStringLiteral("ok")).toBool(true), false);
+    QCOMPARE(events.at(4).value(QStringLiteral("reason")).toString(), QStringLiteral("unreachable"));
+    QVERIFY(rig.app->setupScreen());
+    QVERIFY(!rig.app->appWindow());
+    QVERIFY(rig.app->serverOrigin().isEmpty());
+    QVERIFY2(screen->statusText().contains(QStringLiteral("unreachable")), qPrintable(screen->statusText()));
+}
+
+// client/main.js:132-137: a successful probe saves the origin the probe ENDED at (the promoted
+// one - R26), not the address that was typed; config-saved and the app window carry it too.
+void AppShellTest::savesTheProbedFinalOriginAndOpensTheAppWindow()
+{
+    Rig rig(true, true, Runner::Scripted);
+    rig.scripted.verdict.ok = true;
+    rig.scripted.finalUrl = QStringLiteral("https://news.example/api/health");
+    rig.app->start();
+    QVERIFY(rig.app->setupScreen());
+    rig.app->setupScreen()->setAddress(QStringLiteral("  LOCALHOST:3001/list?x=1 "));
+
+    rig.click("saveButton");
+
+    const QString typed = QStringLiteral("http://localhost:3001");
+    const QString promoted = QStringLiteral("https://news.example");
+    QCOMPARE(rig.scripted.calls, 1);
+    QCOMPARE(rig.savedConfig().serverUrl, promoted);
+    const QList<QJsonObject> events = rig.events();
+    QCOMPARE(namesOf(events).mid(4), (QStringList{QStringLiteral("probe"), QStringLiteral("config-saved"),
+                                                 QStringLiteral("app-window")}));
+    QCOMPARE(events.at(4).value(QStringLiteral("origin")).toString(), typed);
+    QCOMPARE(events.at(4).value(QStringLiteral("finalOrigin")).toString(), promoted);
+    QCOMPARE(events.at(4).value(QStringLiteral("promoted")).toBool(false), true);
+    QCOMPARE(events.at(5).value(QStringLiteral("origin")).toString(), promoted);
+    QCOMPARE(events.at(6).value(QStringLiteral("origin")).toString(), promoted);
+
+    QVERIFY(!rig.app->setupScreen());
+    QVERIFY(rig.app->appWindow());
+    QCOMPARE(rig.app->serverOrigin(), promoted);
+}
+
+// The same, end to end over real HTTP: the typed server answers 302 to another origin whose
+// /api/health is the article server - that other origin is what gets saved.
+void AppShellTest::savesTheRedirectedOriginOfARealProbe()
+{
+    StubHttpServer typed;
+    StubHttpServer real;
+    QVERIFY(typed.listen());
+    QVERIFY(real.listen());
+    typed.always(StubReply::redirect(shell::healthUrl(real.origin()).toUtf8()));
+    real.always(StubReply::json(200, R"json({"ok":true})json"));
+
+    Rig rig(true, true, Runner::Http);
+    rig.app->start();
+    QVERIFY(rig.app->setupScreen());
+    rig.app->setupScreen()->setAddress(typed.origin());
+
+    rig.click("saveButton");
+
+    QCOMPARE(rig.savedConfig().serverUrl, real.origin());
+    QCOMPARE(rig.app->serverOrigin(), real.origin());
+    const QList<QJsonObject> events = rig.events();
+    QCOMPARE(namesOf(events).mid(4), (QStringList{QStringLiteral("net-request"), QStringLiteral("probe"),
+                                                 QStringLiteral("config-saved"), QStringLiteral("app-window")}));
+    QCOMPARE(events.at(4).value(QStringLiteral("route")).toString(), QStringLiteral("health"));
+    QCOMPARE(events.at(5).value(QStringLiteral("origin")).toString(), typed.origin());
+    QCOMPARE(events.at(5).value(QStringLiteral("finalOrigin")).toString(), real.origin());
+    QCOMPARE(events.at(5).value(QStringLiteral("promoted")).toBool(false), true);
+    QCOMPARE(events.at(6).value(QStringLiteral("origin")).toString(), real.origin());
+    QCOMPARE(typed.requests().size(), 1);
+    QCOMPARE(real.requests().size(), 1);
+}
+
+// A captive portal answers 200 with a page: not the article server -> nothing saved.
+void AppShellTest::savesNothingWhenARealProbeMeetsAPortal()
+{
+    StubHttpServer portal;
+    QVERIFY(portal.listen());
+    portal.always(StubReply::html(200, "<html>Sign in to the Wi-Fi</html>"));
+
+    Rig rig(true, true, Runner::Http);
+    rig.app->start();
+    QVERIFY(rig.app->setupScreen());
+    rig.app->setupScreen()->setAddress(portal.origin());
+
+    rig.click("saveButton");
+
+    QCOMPARE(rig.fs.count(QStringLiteral("writeFile")), 0);
+    QVERIFY(!rig.eventNames().contains(QStringLiteral("config-saved")));
+    const QJsonObject probe = rig.events().last();
+    QCOMPARE(probe.value(QStringLiteral("event")).toString(), QStringLiteral("probe"));
+    QCOMPARE(probe.value(QStringLiteral("ok")).toBool(true), false);
+    QCOMPARE(probe.value(QStringLiteral("reason")).toString(), QStringLiteral("not-article-server"));
+    QCOMPARE(probe.value(QStringLiteral("finalOrigin")).toString(), portal.origin());
+    QCOMPARE(probe.value(QStringLiteral("promoted")).toBool(true), false);
     QVERIFY(rig.app->setupScreen());
     QVERIFY(!rig.app->appWindow());
 }

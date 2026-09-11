@@ -52,8 +52,14 @@ private slots:
     // --- setup screen -------------------------------------------------------------------
     void probesOnlyWhenTheUserAsks();
     void showsTheStandInNoticeOnTheSetupScreen();
-    void savesANormalisedAddressAndOpensTheAppWindow();
+    void showsNoNoticeOnceTheRealRunnerIsInjected();
     void refusesToSaveAnAddressThatDoesNotNormalise();
+
+    // --- save = probe first, then the final origin (step7 restores client/main.js:129-137) ---
+    void savesNothingWhenTheProbeFails();
+    void savesTheProbedFinalOriginAndOpensTheAppWindow();
+    void savesTheRedirectedOriginOfARealProbe();
+    void savesNothingWhenARealProbeMeetsAPortal();
 
     // --- --selftest ---------------------------------------------------------------------
     void selfTestPassesAfterACleanBoot();
