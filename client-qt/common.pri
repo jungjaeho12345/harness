@@ -10,8 +10,9 @@ INCLUDEPATH += $$PWD/src
 
 # Shared implementation sources. step2..step5 add src/shell/**, step7..step9 add src/net/**,
 # src/ui/** holds the screens (step5: the setup screen + the empty main window; step10..step11:
-# login and list). Every module lands here exactly once so that the app and the test runner
-# compile the same code.
+# login and list). src/editor/** is the editor's pure layer (phase 78 / P5 - widget-independent
+# ports of web/src/view/editor*.js). Every module lands here exactly once so that the app and the
+# test runner compile the same code.
 #
 # Test doubles do NOT belong here (gate review 2026-09-12): a module listed below is linked into
 # news-client.exe, and src/net/fakenewsmodel.* is named by nothing in src/** or app/**. It is
@@ -41,7 +42,8 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/ui/loginscreen.cpp \
                  $$PWD/src/ui/listcontroller.cpp \
                  $$PWD/src/ui/listscreen.cpp \
-                 $$PWD/src/ui/screens.cpp
+                 $$PWD/src/ui/screens.cpp \
+                 $$PWD/src/editor/editorroles.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
@@ -68,7 +70,8 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/ui/loginscreen.h \
                  $$PWD/src/ui/listcontroller.h \
                  $$PWD/src/ui/listscreen.h \
-                 $$PWD/src/ui/screens.h
+                 $$PWD/src/ui/screens.h \
+                 $$PWD/src/editor/editorroles.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

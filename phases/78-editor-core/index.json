@@ -31,16 +31,63 @@
     "(3) **잠금 획득 실기(step9)를 exe·spring 두 모드에서 어디까지 도는가.** 기본안: 드라이버가 reporter로 기사 1건 생성 → desk 클라가 열어 `articles-lock` 200 → 편집 → `articles-update` 200 → `articles-unlock` → 드라이버가 서버 측 본문·잠금 확인. **강제 해제(force-unlock)·잠금 충돌(다른 clientId의 409/423)은 P7(관리)·별도 시나리오**로 미루고, P5는 정상 획득·저장·해제 1왕복만 실기로 돈다(phase 77 open_questions (3) 패턴 — 같은 인스턴스에서 부정 경로 반복 금지). 충돌 경로가 P5에 필요하면 step9 착수 전에 말하라."
   ],
   "steps": [
-    { "step": 0, "name": "baseline-and-editor-skeleton", "status": "pending" },
-    { "step": 1, "name": "block-model", "status": "pending" },
-    { "step": 2, "name": "coloring-roles", "status": "pending" },
-    { "step": 3, "name": "marker-newline-guard", "status": "pending" },
-    { "step": 4, "name": "caret-range", "status": "pending" },
-    { "step": 5, "name": "shortcuts-13", "status": "pending" },
-    { "step": 6, "name": "undo-history", "status": "pending" },
-    { "step": 7, "name": "autosave-draft", "status": "pending" },
-    { "step": 8, "name": "text-engine-widget", "status": "pending" },
-    { "step": 9, "name": "writer-state-machine", "status": "pending" },
-    { "step": 10, "name": "closeout", "status": "pending" }
-  ]
+    {
+      "step": 0,
+      "name": "baseline-and-editor-skeleton",
+      "status": "completed",
+      "started_at": "2026-09-22T06:45:11+0900",
+      "summary": "**기준선은 이 머신(Qt 6.8.3 msvc2022_64 · MSVC 14.50.35717 · SDK 10.0.26100.0 · 세 경로 실재 확인)에서 12커맨드를 연속 2회 직접 재측정해 두 회차 전건 동일(flake 0)이고 인계값과 전건 일치한다. `client-qt/src/editor/`를 신설해 P0 스파이크 순수 로직(`classifyLines`·`colorForRole`·`isInputBlocked`·`END_MARKER`)을 첫 프로덕션 모듈 `editor/editorroles.{h,cpp}`로 이식했고, QtTest가 **310 → 314 passed / 0 failed(25 → 26 클래스)**로 섰다.** ① **기준선(회차 1 · 회차 2 동일)**: `cmd.exe /c client-qt\\build.bat` exit 0 · **310 passed / 0 failed (classes: 25)** · `verify-qt-client --scenario boot --server exe` 관측 8 · 판정 33 · 실패 0 · `login` exe 관측 17 · 판정 40 · 실패 0 · `list` exe 관측 15 · 판정 30 · 실패 0 · `list --server spring --java-home <JDK25>` 관측 15 · 판정 30 · 실패 0 · `npm test` **1349 pass / 0 fail / 0 skip(59 suites)** · `npm run lint`·`npm run build` exit 0 · `spa-parity` 관측 39 · diffs 0 · 허용 528 · `spool-parity` 폴더 3 · 파일 11 · diffs 0 · 눈감은 자리 66/66 · `spring-contract --parity` **313관측 diffs 0**(default 246 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3) · 리포 `news.db` **md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 전 실행 전후 무변**(읽기만) · `uploads/` 32파일 6,068,792 B. **정직 기록**: 회차 1의 첫 실행에서 `npm test`·`lint`·`build`가 exit 1이었는데 원인은 측정 스크립트가 `PATH` 앞에 `System32`를 붙여 `bash`가 WSL 런처, `find`가 `find.exe`로 해석된 것(제품 회귀 아님)이다 — `PATH` 뒤에 붙이도록 고쳐 그 3커맨드를 다시 돌린 값이 위 수치다. 서버 exe·Spring jar는 RUNBOOK 1.2대로 06:42/06:44에 선빌드된 것을 썼다. ② **이식**: `editor::` 네임스페이스 · `Role{Title,Subtitle,Body,End}` · 색 `#0a4da6/#c8102e/#1a1a1a/#d4af37` · 게이트는 마지막 `(끝)`의 `lastIndexOf` 시작 오프셋 「이상」 차단(UTF-16 코드유닛) — 헤더 주석에 웹 `editorColoring.js`/`editorNewline.js`/`editorContent.js`와 동형임을 명시. `common.pri`의 `CLIENT_SOURCES`/`CLIENT_HEADERS`에 등록(프로덕션 모듈 · 테스트 더블 아님), `tests/tests.pro`·`tests/main.cpp`의 `runTestClass<EditorRolesTest>()` 한 줄로 결선. 컴파일 경고 0. ③ **QtTest `EditorRolesTest` 4함수**(`endMarkerIsTheCanonicalLiteral` 코드유닛 0x28/0xB05D/0x29 · `classifiesLines` 13행 · `colorsMatchTheWebDefaults` · `gatesInputAtTheLastMarker` 16행) — 행은 스파이크 selftest T1/T2 순수 절반 + `editorColoring.test.js` structure&colors 1~4 + `editorNewline.test.js` isInputBlocked 2건 + 경계(인덱스 4/5 · 두 마커 · 서로게이트 · 인용 마커)이고 **기대값은 전부 웹 정본을 node로 실행해 얻었다**. 행 이름은 ASCII만. **TDD red 실증**: 틀린 스텁으로 먼저 빌드 → `294 passed, 20 failed` · BUILD FAILED → 실구현으로 green. ④ **우회 변이 3종(전건 기대 = 실제 · 원복은 원본 사본과 `cmp` 동일로 판정)**: M1 색 상수 `#0a4da6→#0a4da7` → `colorsMatchTheWebDefaults` red(313/1) · M2 `>=`→`>` → 「at marker start」 5행 red(309/5) · M3 `lastIndexOf`→`indexOf` → 「between two markers is open」 red(313/1) · 원복 후 최종 빌드 **314/0** · `--scenario boot --server exe` exit 0(판정 33 실패 0). ⑤ **범위**: `git status`는 `client-qt/src/editor/**`·`client-qt/common.pri`·`client-qt/tests/**`·`phases/78-editor-core/**`만 · 무접촉 축(`server-spring web client src contract spikes client-qt/src/net client-qt/src/shell client-qt/src/ui client-qt/app server test docs package.json tools`) `git diff --stat` 무출력. ⑥ **다음 step에 넘기는 사실**: (a) open_questions (1) 답 — P0 스파이크 위젯은 **`QPlainTextEdit` + `QSyntaxHighlighter`**(문서 리비전당 1회 재분류 캐시 · 조합 중 재분류 금지 · 차단 구간에서 `ImEnabled=false` · `insertFromMimeData` 게이트) 기반으로 go였다 → step8 기본안. (b) `classifyLines`의 `(끝)` 줄 판정은 스파이크대로 `QString::trimmed()`인데 정본은 JS `trim()`이다 — 두 공백 집합이 다르다(JS 측은 node 실측: U+FEFF는 trim되고 U+0085는 남는다 · Qt 측 「U+0085를 trim, U+FEFF는 남김」은 `QChar::isSpace` 문서 기준 **미실측**) → **step2가 전수 대조·실측으로 잠글 항목**.(c) `END_MARKER`의 단일 출처는 이제 `editor/editorroles.h`다(step1은 재사용 — 리터럴 재기재 금지). (d) 전체 재빌드는 이 머신에서 약 8분(495초), 증분은 30~60초 — 변이 1건당 1회 빌드."
+    },
+    {
+      "step": 1,
+      "name": "block-model",
+      "status": "pending"
+    },
+    {
+      "step": 2,
+      "name": "coloring-roles",
+      "status": "pending"
+    },
+    {
+      "step": 3,
+      "name": "marker-newline-guard",
+      "status": "pending"
+    },
+    {
+      "step": 4,
+      "name": "caret-range",
+      "status": "pending"
+    },
+    {
+      "step": 5,
+      "name": "shortcuts-13",
+      "status": "pending"
+    },
+    {
+      "step": 6,
+      "name": "undo-history",
+      "status": "pending"
+    },
+    {
+      "step": 7,
+      "name": "autosave-draft",
+      "status": "pending"
+    },
+    {
+      "step": 8,
+      "name": "text-engine-widget",
+      "status": "pending"
+    },
+    {
+      "step": 9,
+      "name": "writer-state-machine",
+      "status": "pending"
+    },
+    {
+      "step": 10,
+      "name": "closeout",
+      "status": "pending"
+    }
+  ],
+  "created_at": "2026-09-22T06:45:11+0900"
 }
