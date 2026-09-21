@@ -13,6 +13,7 @@
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
+#include "editorcontenttest.h"
 #include "editorrolestest.h"
 #include "fakenewsmodeltest.h"
 #include "httpnewsmodeltest.h"
@@ -161,6 +162,7 @@ int main(int argc, char **argv)
     runTestClass<ScreenInventoryTest>(baseArgs, logDir.path(), totals);
     runTestClass<TimerPolicyTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorRolesTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditorContentTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
