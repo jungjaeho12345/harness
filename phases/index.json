@@ -389,8 +389,8 @@
     },
     {
       "dir": "70-spring-admin-crud",
-      "status": "planned",
-      "note": "[계획 2026-08-22: harness-planner 산출 — Spring 포팅 P1 세 번째 도메인 묶음 '관리자 CRUD'(receiver-config 3 + distribution-targets 4 = 7 라우트). 8 step(schema-required → receiver-config repo/service/http → distribution-target repo/service/http → parity-closeout). green 지점 2곳: step3(receiver-config.contract.js) · step6(distribution-targets.contract.js). 두 계약 파일이 서로·미구현 라우트에 의존하지 않는 자기완결이라 phase 69의 상호 픽스처 함정이 없다. 핵심 함정: (1) DELETE /api/receiver-config/:id는 시스템 유일 행 삭제 라우트 → NoSchemaSqlInMainSourcesTest를 ReceiverConfig 하나만 허용하도록 좁힘(step1) (2) RequiredSchema TABLES 4→6 확장은 전역 파급 → 정본 픽스처 동시 확장(step0) (3) distribution-targets.contract.js를 default에 편입하면 송고 훅 전제(phase 69)가 깨질 수 있으나 --test-concurrency=1 순차 + 알파벳 순서(articles-write 뒤) + 파일 자체 deactivate 회수로 활성 대상-송고 공존 창 0 → step7이 --parity diff 0으로 실증. AC는 리눅스 환경(리포 /home/user/harness, JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64, 프레시 체크아웃 npm ci)으로 작성. RoutePolicy 무수정(7 라우트 이미 AuthClass.ADMIN 등재)·ReasonStatus 무수정(사유 전부 기존 표 또는 폴백 400). 다음 게이트: ② harness-plan-reviewer 검토 대기.]"
+      "status": "completed",
+      "note": "[마감 2026-08-24: phase 70 'Spring 관리자 CRUD'(receiver-config 3 + distribution-targets 4 = 7 라우트) 구현·머지 완료 — PR #113 · 머지 커밋 5fd1ccb. 코드(Spring 6 클래스·7 라우트)·계약 2파일·스키마 테이블·의존 phase 71~74 완료가 모두 이를 확인. 상위 인덱스에 'planned'로 남아 있던 stale 마커를 실상에 맞춰 2026-10-05 completed로 정정.]"
     },
     {
       "dir": "71-spring-collection",
