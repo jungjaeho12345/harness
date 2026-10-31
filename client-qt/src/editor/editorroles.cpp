@@ -12,13 +12,11 @@ const QString END_MARKER = QStringLiteral("(끝)");
 const EditorColors COLORS{QColor(QStringLiteral("#0a4da6")), QColor(QStringLiteral("#c8102e")),
                           QColor(QStringLiteral("#1a1a1a")), QColor(QStringLiteral("#d4af37"))};
 
-namespace {
-
 // ECMAScript String.prototype.trim() strips WhiteSpace (TAB, VT, FF, SP, NBSP, ZWNBSP U+FEFF and
-// every Unicode Space_Separator) and LineTerminator (LF, CR, LS U+2028, PS U+2029). This is NOT
-// QChar::isSpace(): that one also strips U+0085 (NEL) and does not strip U+FEFF. Measured on both
-// sides (node 24 · Qt 6.8.3, 2026-11-01); the test table in tests/editorcoloringtest.cpp holds
-// the rows.
+// every Unicode Space_Separator) and LineTerminator (LF, CR, LS U+2028, PS U+2029); the regex class
+// \s is the same set. This is NOT QChar::isSpace(): that one also strips U+0085 (NEL) and does not
+// strip U+FEFF. Measured on both sides (node 24 · Qt 6.8.3, 2026-11-01); the test tables in
+// tests/editorcoloringtest.cpp (trim) and tests/editorrangetest.cpp (\s) hold the rows.
 bool isJsWhitespace(QChar c)
 {
     switch (c.unicode()) {
@@ -37,6 +35,8 @@ bool isJsWhitespace(QChar c)
         return c.category() == QChar::Separator_Space; // Unicode Zs
     }
 }
+
+namespace {
 
 QStringView trimLikeJs(const QString &s)
 {

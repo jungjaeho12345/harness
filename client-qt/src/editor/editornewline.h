@@ -32,6 +32,7 @@
 //
 // Pure: QString and the step1 block model only - no widget, no global state. Nothing mutates its input.
 
+#include "editor/editorcaret.h" // TextPoint - the caret, owned by the caret model since step4
 #include "editor/editorcontent.h"
 
 #include <QString>
@@ -70,12 +71,8 @@ int overwriteExtendLength(const QString &text, int offset);
 // editorEditOps.js isEndMarkerBlock and the isEnd lambdas of editorShortcuts.js / writerBody.js.
 bool isMarkerBlock(const Block &block);
 
-// A caret in text-only coordinates (the web Point): lineIndex = the ordinal of a text block (embeds
-// are not counted), offset = an absolute offset into blocksToText(blocks).
-struct TextPoint {
-    int lineIndex = 0;
-    int offset = 0;
-};
+// A caret in text-only coordinates (the web Point) is editor::TextPoint (editorcaret.h): lineIndex = the
+// ordinal of a text block (embeds are not counted), offset = an absolute offset into blocksToText(blocks).
 
 // A selection. An end that is std::nullopt is unknown. Both unknown is the web's `range = null` and
 // `{start: null, end: null}` at once - the web treats the two alike, so C++ has one spelling: TextRange{}.

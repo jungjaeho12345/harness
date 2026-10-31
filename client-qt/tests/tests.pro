@@ -47,7 +47,9 @@ SOURCES += $$PWD/../src/net/fakenewsmodel.cpp \
            editorrolestest.cpp \
            editorcoloringtest.cpp \
            editorcontenttest.cpp \
-           editornewlinetest.cpp
+           editornewlinetest.cpp \
+           editorcarettest.cpp \
+           editorrangetest.cpp
 
 HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            smoketest.h \
@@ -84,4 +86,6 @@ HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            editorrolestest.h \
            editorcoloringtest.h \
            editorcontenttest.h \
-           editornewlinetest.h
+           editornewlinetest.h \
+           editorcarettest.h \
+           editorrangetest.h

@@ -24,6 +24,7 @@
 // Not here: the user colour override (web setEditorColors / resetEditorColors) - that is the
 // preferences wiring, P6 (index.json excluded (a)).
 
+#include <QChar>
 #include <QColor>
 #include <QString>
 #include <QStringList>
@@ -47,6 +48,14 @@ struct EditorColors {
     QColor end;
 };
 extern const EditorColors COLORS;
+
+// Whether one UTF-16 code unit is ECMAScript whitespace - WhiteSpace + LineTerminator, the set JS
+// String.prototype.trim() strips and the regex class \s matches (the same set by the spec): TAB, LF, VT,
+// FF, CR, SP, NBSP, LS U+2028, PS U+2029, ZWNBSP U+FEFF and every Unicode Space_Separator (Zs). This is
+// NOT QChar::isSpace(): that one also takes U+0085 (NEL) and does not take U+FEFF (measured on both sides,
+// step2). The one whitespace predicate of the editor layer - isEndLine trims with it (step2) and
+// wordBoundsAt (editorrange.h) splits words with it (step4, published from here then).
+bool isJsWhitespace(QChar c);
 
 // Whether a line is the "(끝)" marker line: its text trimmed the way JS String.prototype.trim()
 // trims (ECMAScript WhiteSpace + LineTerminator) equals END_MARKER exactly. The same judgement
