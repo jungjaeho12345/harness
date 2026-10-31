@@ -45,6 +45,7 @@ SOURCES += $$PWD/../src/net/fakenewsmodel.cpp \
            screeninventorytest.cpp \
            timerpolicytest.cpp \
            editorrolestest.cpp \
+           editorcoloringtest.cpp \
            editorcontenttest.cpp
 
 HEADERS += $$PWD/../src/net/fakenewsmodel.h \
@@ -80,4 +81,5 @@ HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            screeninventorytest.h \
            timerpolicytest.h \
            editorrolestest.h \
+           editorcoloringtest.h \
            editorcontenttest.h

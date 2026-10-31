@@ -2,20 +2,27 @@
 #define CLIENT_QT_EDITOR_EDITORROLES_H
 
 // Line roles, role colours and the "(끝)" input gate - the first production module of the editor
-// layer (phase 78 step0). Ported from the P0 spike's pure logic (spikes/p0-qt-editor/editorlogic.*,
-// frozen - read, never edited), which is itself the Qt twin of two web pure modules:
-//   classifyLines / colorForRole  <-> web/src/view/editorColoring.js
+// layer (phase 78 step0, completed against the web canonical in step2). Ported from the P0 spike's
+// pure logic (spikes/p0-qt-editor/editorlogic.*, frozen - read, never edited), which is itself the
+// Qt twin of two web pure modules:
+//   classifyLines / colorForRole / COLORS / colorLines / shouldRecolor / RECOLOR_TRIGGERS
+//                                 <-> web/src/view/editorColoring.js
 //   isInputBlocked                <-> web/src/view/editorNewline.js
 //   END_MARKER                    <-> web/src/view/editorContent.js (the same literal)
 //
 // Widget-independent on purpose (decisions (1)): QString / QColor only, so every rule is locked by
 // QtTest without a window. The text engine (step8) calls these; it never re-decides a role or the
-// marker itself.
+// marker itself. Recolouring happens only after an IME commit (decisions (4)) - shouldRecolor is
+// the pure half of that rule.
 //
-// Scope of this step: the spike's rules as they are. step2 compares classifyLines / colorForRole with
-// editorColoring.js rule by rule (including how "(끝)" is trimmed - the spike uses QString::trimmed(),
-// the canonical uses JS String.prototype.trim(); the two sets of whitespace are not identical), and
-// step3 moves isInputBlocked next to the rest of the newline/marker rules.
+// step2 compared this module with editorColoring.js rule by rule (tests/editorcoloringtest.*):
+//   - the "(끝)" line is judged with JS String.prototype.trim(), not QString::trimmed() - the two
+//     whitespace sets differ on U+0085 (Qt strips, JS does not) and U+FEFF (JS strips, Qt does not)
+//   - "blank" in the subtitle region means exactly the empty string (web l === '')
+//   - the colour defaults live in COLORS, the single source every colour reader uses
+// Not here: the user colour override (web setEditorColors / resetEditorColors) - that is the
+// preferences wiring, P6 (index.json excluded (a)). step3 moves isInputBlocked next to the rest of
+// the newline/marker rules.
 
 #include <QColor>
 #include <QString>
@@ -30,17 +37,49 @@ extern const QString END_MARKER;
 
 enum class Role { Title, Subtitle, Body, End };
 
+// The default role colours (editorColoring.COLORS): Title #0a4da6 / Subtitle #c8102e /
+// Body #1a1a1a / End #d4af37. The single source - colorForRole reads these. User colour
+// preferences (title/subtitle/body are overridable on the web, end is not) are P6.
+struct EditorColors {
+    QColor title;
+    QColor subtitle;
+    QColor body;
+    QColor end;
+};
+extern const EditorColors COLORS;
+
+// Whether a line is the "(끝)" marker line: its text trimmed the way JS String.prototype.trim()
+// trims (ECMAScript WhiteSpace + LineTerminator) equals END_MARKER exactly. The same judgement
+// the web applies to marker blocks in editorNewline.js / editorShortcuts.js / editorEditOps.js -
+// later steps call this instead of QString::trimmed().
+bool isEndLine(const QString &line);
+
 // Lines -> one role per line (editorColoring.classifyLines):
-//   - a line whose trimmed text is "(끝)" is End, wherever it sits
+//   - a line that isEndLine is End, wherever it sits
 //   - line 0 is Title
-//   - if the subtitle region (indices 1..4 = web slice(1, 5)) holds an empty line, there is no
-//     subtitle: every line from index 1 on is Body (End lines stay End)
+//   - if the subtitle region (indices 1..4 = web slice(1, 5)) holds an exactly-empty line, there
+//     is no subtitle: every line from index 1 on is Body (End lines stay End)
 //   - otherwise indices 1..4 are Subtitle and 5.. are Body
 QVector<Role> classifyLines(const QStringList &lines);
 
-// Role -> colour: Title #0a4da6 / Subtitle #c8102e / Body #1a1a1a / End #d4af37
-// (editorColoring.COLORS defaults - user colour preferences are P6).
+// Role -> colour from COLORS; a value outside the enumerators maps to body (web: unknown -> body).
 QColor colorForRole(Role role);
+
+// Body text -> one {text, role, color} per line (editorColoring.colorLines). The text is split on
+// "\n" alone, like JS split('\n'): "" is one line, "\r" stays in the text, a trailing "\n" yields a
+// trailing empty line.
+struct ColoredLine {
+    QString text;
+    Role role;
+    QColor color;
+};
+QVector<ColoredLine> colorLines(const QString &text);
+
+// When recolouring is allowed (editorColoring.shouldRecolor): never while an IME composition is in
+// progress; otherwise only on one of RECOLOR_TRIGGERS ("compositionend", "blur", "load"), compared
+// exactly. The widget (step8) maps its events onto these names.
+extern const QStringList RECOLOR_TRIGGERS;
+bool shouldRecolor(const QString &trigger, bool composing = false);
 
 // Whether inserting at caretOffset is refused: blocked when the caret sits at or after the start of
 // the LAST "(끝)" marker (lastIndexOf), allowed before it (editorNewline.isInputBlocked). Offsets are
