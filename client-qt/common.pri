@@ -47,7 +47,9 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/editor/editorcontent.cpp \
                  $$PWD/src/editor/editornewline.cpp \
                  $$PWD/src/editor/editorcaret.cpp \
-                 $$PWD/src/editor/editorrange.cpp
+                 $$PWD/src/editor/editorrange.cpp \
+                 $$PWD/src/editor/editorshortcuts.cpp \
+                 $$PWD/src/editor/editoreditops.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
@@ -79,7 +81,9 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/editor/editorcontent.h \
                  $$PWD/src/editor/editornewline.h \
                  $$PWD/src/editor/editorcaret.h \
-                 $$PWD/src/editor/editorrange.h
+                 $$PWD/src/editor/editorrange.h \
+                 $$PWD/src/editor/editorshortcuts.h \
+                 $$PWD/src/editor/editoreditops.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

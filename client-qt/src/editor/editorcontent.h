@@ -3,7 +3,8 @@
 
 // The article body block model - markupVersion "yh-editor" v1 (phase 78 step1). A 1:1 port of
 // web/src/view/editorContent.js; its spec (editorContent.test.js) lives on as
-// tests/editorcontenttest.cpp.
+// tests/editorcontenttest.cpp. Plus, since step5, the text-line -> block index bridge of
+// web/src/view/writerBody.js (textLineToBlockIndex), which every block-level edit shares.
 //
 // CRITICAL (carried over from the web module): the body is ALWAYS handled as blocks, never stored as
 // a plain string (news.md / SCHEMA.md). A block is text {type:'text', text[, align]} or an embed
@@ -126,6 +127,12 @@ QVector<Block> textToBlocks(const QString &text);
 
 // Whether the text blocks hold "(끝)" (editor::END_MARKER - the backend's hasEndMarker criterion).
 bool hasEndMarker(const QVector<Block> &blocks);
+
+// The index into blocks of text line textLineIndex - the textLineIndex-th text block, embeds not counted
+// (web writerBody.textLineToBlockIndex, step5: the bridge from a caret's TextPoint.lineIndex to the block a
+// shortcut or the word delete edits; P6's find and embed insertion use it too). -1 when there is no such line
+// (negative, or past the last text line).
+int textLineToBlockIndex(const QVector<Block> &blocks, int textLineIndex);
 
 } // namespace editor
 

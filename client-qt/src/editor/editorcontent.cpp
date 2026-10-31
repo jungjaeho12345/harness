@@ -693,4 +693,18 @@ bool hasEndMarker(const QVector<Block> &blocks)
     return blocksToText(blocks).contains(END_MARKER);
 }
 
+int textLineToBlockIndex(const QVector<Block> &blocks, int textLineIndex)
+{
+    // Count text blocks only; the count starts below 0, so a negative index never matches (web: null too).
+    int count = -1;
+    for (qsizetype i = 0; i < blocks.size(); ++i) {
+        if (isTextBlock(blocks.at(i))) {
+            ++count;
+            if (count == textLineIndex)
+                return int(i);
+        }
+    }
+    return -1;
+}
+
 } // namespace editor
