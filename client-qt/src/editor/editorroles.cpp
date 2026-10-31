@@ -123,13 +123,4 @@ bool shouldRecolor(const QString &trigger, bool composing)
     return RECOLOR_TRIGGERS.contains(trigger); // case-sensitive, like Array.prototype.includes
 }
 
-bool isInputBlocked(const QString &text, int caretOffset)
-{
-    // lastIndexOf on UTF-16 - the same unit and the same "last marker" rule as the JS canonical.
-    const qsizetype markerStart = text.lastIndexOf(END_MARKER);
-    if (markerStart < 0)
-        return false;
-    return caretOffset >= markerStart;
-}
-
 } // namespace editor

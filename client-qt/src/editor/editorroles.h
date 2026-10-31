@@ -1,14 +1,15 @@
 #ifndef CLIENT_QT_EDITOR_EDITORROLES_H
 #define CLIENT_QT_EDITOR_EDITORROLES_H
 
-// Line roles, role colours and the "(끝)" input gate - the first production module of the editor
-// layer (phase 78 step0, completed against the web canonical in step2). Ported from the P0 spike's
-// pure logic (spikes/p0-qt-editor/editorlogic.*, frozen - read, never edited), which is itself the
-// Qt twin of two web pure modules:
+// Line roles and role colours - the first production module of the editor layer (phase 78 step0,
+// completed against the web canonical in step2). Ported from the P0 spike's pure logic
+// (spikes/p0-qt-editor/editorlogic.*, frozen - read, never edited), which is itself the Qt twin of
+// web pure modules:
 //   classifyLines / colorForRole / COLORS / colorLines / shouldRecolor / RECOLOR_TRIGGERS
 //                                 <-> web/src/view/editorColoring.js
-//   isInputBlocked                <-> web/src/view/editorNewline.js
 //   END_MARKER                    <-> web/src/view/editorContent.js (the same literal)
+// The spike's third function, the "(끝)" input gate isInputBlocked (web editorNewline.js), moved to
+// editor/editornewline.h in step3, next to the rest of the newline / marker rules.
 //
 // Widget-independent on purpose (decisions (1)): QString / QColor only, so every rule is locked by
 // QtTest without a window. The text engine (step8) calls these; it never re-decides a role or the
@@ -21,8 +22,7 @@
 //   - "blank" in the subtitle region means exactly the empty string (web l === '')
 //   - the colour defaults live in COLORS, the single source every colour reader uses
 // Not here: the user colour override (web setEditorColors / resetEditorColors) - that is the
-// preferences wiring, P6 (index.json excluded (a)). step3 moves isInputBlocked next to the rest of
-// the newline/marker rules.
+// preferences wiring, P6 (index.json excluded (a)).
 
 #include <QColor>
 #include <QString>
@@ -80,12 +80,6 @@ QVector<ColoredLine> colorLines(const QString &text);
 // exactly. The widget (step8) maps its events onto these names.
 extern const QStringList RECOLOR_TRIGGERS;
 bool shouldRecolor(const QString &trigger, bool composing = false);
-
-// Whether inserting at caretOffset is refused: blocked when the caret sits at or after the start of
-// the LAST "(끝)" marker (lastIndexOf), allowed before it (editorNewline.isInputBlocked). Offsets are
-// UTF-16 code units, the same unit as a JS string index (a surrogate pair counts 2). Deleting, moving
-// and selecting are never gated by this - removing the marker re-opens input everywhere.
-bool isInputBlocked(const QString &text, int caretOffset);
 
 } // namespace editor
 

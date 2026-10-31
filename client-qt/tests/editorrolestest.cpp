@@ -1,5 +1,6 @@
 #include "editorrolestest.h"
 
+#include "editor/editornewline.h" // isInputBlocked has lived here since step3
 #include "editor/editorroles.h"
 
 #include <QColor>
