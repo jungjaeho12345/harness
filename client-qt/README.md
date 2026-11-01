@@ -1457,7 +1457,7 @@ P4의 divergence(재시작 = 재로그인 등 — 「P4 마감」 이전 장들)
 
 - **판정부 자기검사**: 드라이버가 매 실행 시작 시 `scripts/lib/qtClientDiag.self-test.mjs`를 돌려 **77건 통과**(9 실행 × 2회차).
 - **자산 지문(두 회차 · 각 회차의 측정 전·중·후 전부 동일)**: 리포 `news.db` **606,208 B · md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 무변**(읽기만 — DB로 열지 않았다) ·
-  `uploads/` **32파일 6,068,792 B** · `client-qt/release/news-client.exe` **538,624 B**(P4 357,376 B). 소스가 무변이라 두 회차 모두 **재컴파일 0**이었다(`build.bat`은 qmake·nmake 무작업 + 러너 실행).
+  `uploads/` **32파일 6,068,792 B** · `client-qt/release/news-client.exe` **538,624 B(⑤ 후속 F1~F5 재링크 뒤 539,136 B)**(P4 357,376 B). 소스가 무변이라 두 회차 모두 **재컴파일 0**이었다(`build.bat`은 qmake·nmake 무작업 + 러너 실행).
 - **`--java-home D:/agents/tools/jdk-25.0.4.1+1`**: 이 셸에는 `JAVA_HOME`이 없다 — 없으면 6~9·14~16번은 usage로 **exit 1**이고 회귀가 아니다.
 - **미측정(정직하게)**: `server-spring`의 `./mvnw clean verify` · `tools/news-migrator`의 `clean verify` · `npm run test:web`(vitest 전체)은 이 phase에서 돌리지 않았다.
   Java·web을 한 줄도 고치지 않았고(spring 모드는 2026-09-22 step0이 `-DskipTests package`로 만든 jar 그대로) 각 step이 이식에 필요한 웹 스펙만 vitest로 개별 확인했다(각 step 요약).
