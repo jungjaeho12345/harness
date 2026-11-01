@@ -44,6 +44,9 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/ui/listscreen.cpp \
                  $$PWD/src/ui/screens.cpp \
                  $$PWD/src/ui/editorwidget.cpp \
+                 $$PWD/src/ui/editcontroller.cpp \
+                 $$PWD/src/ui/writerhost.cpp \
+                 $$PWD/src/ui/editscenario.cpp \
                  $$PWD/src/editor/editorroles.cpp \
                  $$PWD/src/editor/editorcontent.cpp \
                  $$PWD/src/editor/editornewline.cpp \
@@ -54,7 +57,8 @@ CLIENT_SOURCES = $$PWD/src/shell/serverurl.cpp \
                  $$PWD/src/editor/editorhistory.cpp \
                  $$PWD/src/editor/editordraft.cpp \
                  $$PWD/src/editor/editordraftstore.cpp \
-                 $$PWD/src/editor/editorinput.cpp
+                 $$PWD/src/editor/editorinput.cpp \
+                 $$PWD/src/editor/writerbody.cpp
 CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/shell/appidentity.h \
                  $$PWD/src/shell/clientconfig.h \
@@ -83,6 +87,9 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/ui/listscreen.h \
                  $$PWD/src/ui/screens.h \
                  $$PWD/src/ui/editorwidget.h \
+                 $$PWD/src/ui/editcontroller.h \
+                 $$PWD/src/ui/writerhost.h \
+                 $$PWD/src/ui/editscenario.h \
                  $$PWD/src/editor/editorroles.h \
                  $$PWD/src/editor/editorcontent.h \
                  $$PWD/src/editor/editornewline.h \
@@ -93,7 +100,8 @@ CLIENT_HEADERS = $$PWD/src/shell/serverurl.h \
                  $$PWD/src/editor/editorhistory.h \
                  $$PWD/src/editor/editordraft.h \
                  $$PWD/src/editor/editordraftstore.h \
-                 $$PWD/src/editor/editorinput.h
+                 $$PWD/src/editor/editorinput.h \
+                 $$PWD/src/editor/writerbody.h
 
 SOURCES += $$CLIENT_SOURCES
 HEADERS += $$CLIENT_HEADERS

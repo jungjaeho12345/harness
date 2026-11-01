@@ -1,6 +1,6 @@
 // Qt 네이티브 클라 자동 검증 드라이버 — 부팅 축(step6) + 로그인 축(step10) + 목록 실시간 축(step11 — P4 완료 게이트)
-// (phase 77 · ADR-018 (2)).
-// 사용: node scripts/verify-qt-client.mjs [--scenario boot|login|list|all] [--server exe|spring] [--client-exe <path>]
+// (phase 77 · ADR-018 (2)) + 편집 잠금 실기 축(phase 78 step9 — P5 의 첫 서버 왕복).
+// 사용: node scripts/verify-qt-client.mjs [--scenario boot|login|list|edit|all] [--server exe|spring] [--client-exe <path>]
 //        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
 //
 // 판정은 두 축의 교차다(네이티브 클라에는 CDP 가 없다):
@@ -37,6 +37,18 @@
 //   T  sse-ready 를 본 **뒤** reporter 가 기사 1건 생성 → sse-change(≥1 · kind 무관) → articles-list → list-loaded{N0+1} · 서버 수 N0+1
 //   H  관측 창 5초(주기 재조회 앱은 이 사이 articles-list 를 더 부른다) → 종료 → 판정식 (i)(ii)(iii) 논리곱(qtClientDiag.mjs judgeList)
 //   diag·stdout·stderr 에 비밀번호·기사 제목·기사아이디 0건 · user-data 에 config.json 외 0 · 로그인 시도는 2회(reporter·desk)뿐이다.
+// 시나리오 edit(phase 78 step9 — open_questions (3) 기본안: 정상 획득·저장·해제 1왕복만. 강제 해제·잠금 충돌은 P7):
+//   R  드라이버가 **reporter** 로 로그인해 yh-editor 본문 기사 1건을 만들고(서버 사실: 본문 그대로 · 잠금 없음) deskUnsent N0 을 센다.
+//      기대 본문은 정본 web 모듈(editorContent·editorNewline·writerBody)로 계산한다 — 첫 줄 끝에 EDIT_SCENARIO_TEXT 를 마커 게이트 경유로 삽입.
+//   P  기록 프록시를 띄운다: 클라는 프록시 origin 에 붙고, 프록시는 요청을 바꾸지 않고 서버로 넘기며 요청마다 (라우트 id · 상태 ·
+//      x-edit-client 유무와 값)을 적는다(SSE 는 그대로 흘려보낸다). **값은 판정·유출 검사에만 쓰고 어떤 출력에도 싣지 않는다.**
+//   C  클라(--scenario edit · desk · CLIENT_SCENARIO_ARTICLE) — 훅은 로그인 컨트롤러 1회 → 목록이 live 가 된 뒤 그 행을 writer 로 연다:
+//      편집 화면이 먼저 현재 페이지(목록 떠남 · 스트림 stop) → articles-get → articles-lock(200) → 게이트 경유 편집 1회 → 자동저장 1회(1초)
+//      → articles-update(PUT 200) → articles-unlock(200) → 목록 재진입(session → articles-list → stream → sse-ready). 위젯은 만지지 않는다.
+//   S  서버 사실(reporter 세션): 저장 본문 = 기대 본문(바이트) · 제목 = 첫 줄 · lockYN=N(해제됨) · modifier=desk
+//   판정: judgeEdit(diag 순서·횟수) × judgeEditWire(x-edit-client 가 정확히 lock·update·unlock 에만 · 표면당 값 1개 · 와이어 = diag) ·
+//   user-data 에 config.json·editor-drafts.json 만(초안 = 편집 뒤 필드 · clientId 없음) · diag·stdout·stderr 에 비밀번호·제목·본문·
+//   기사아이디·EditClientId 0건. 로그인 시도는 2회(reporter·desk)다.
 // 절차: 판정부 자기검사 → 계약 라우트 목록(docs/api-contract/endpoints.json) → 자산 해석(없으면 exit 1 + 빌드 힌트 · skip 금지)
 //   → 데이터 안전 사전 스냅샷 → 리포 밖 임시 루트(DATA_DIR 시드 · 스풀 · CLIENT_USER_DATA · diag) → 서버 기동 + health
 //   → Qt exe 직접 spawn(run.bat 경유 금지 — 배치를 거치면 종료 제어와 종료 코드가 흐려진다) → 시나리오 → 자식 강제 종료
@@ -47,6 +59,7 @@
 // 주의: scripts/** 는 eslint ignore 대상이다 — 인자 가드와 판정부 자기검사가 정적 안전망이다. import 금지(CLI 즉시 실행).
 
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import nodePath from 'node:path';
@@ -59,10 +72,16 @@ import { SAMPLE_USERS, seedUsers } from '../src/db/seed.js';
 import { flagValue } from './lib/cliArgs.mjs';
 import { listFilesRecursive, osEnvAllowlist, parseServerMode, springServerEnv } from './lib/integrationMode.mjs';
 import {
-  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeList, judgeLogin,
-  listSequences, loadContractRouteIds, loginSequences, parseDiagLines,
+  CLIENT_FORBIDDEN_ROUTE_IDS, bootSequences, countSecretOccurrences, diffSnapshots, editSequences, findSequence, judgeBoot, judgeEdit,
+  judgeEditWire, judgeList, judgeLogin, listSequences, loadContractRouteIds, loadContractRoutes, loginSequences, matchContractRoute,
+  parseDiagLines,
 } from './lib/qtClientDiag.mjs';
 import { qtClientEnv } from './lib/qtClientEnv.mjs';
+// 편집 시나리오의 기대 본문은 정본 web 순수 모듈이 계산한다(읽기·import 만 — web/** 무수정). 클라가 같은 편집을 C++ 이식층으로 한 결과가
+// 서버에 바이트 그대로 저장됐는지가 S 판정이다.
+import * as webContent from '../web/src/view/editorContent.js';
+import * as webNewline from '../web/src/view/editorNewline.js';
+import * as webWriter from '../web/src/view/writerBody.js';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = nodePath.resolve(nodePath.dirname(SCRIPT_PATH), '..');
@@ -100,12 +119,22 @@ const LIST_ACCOUNT = SAMPLE_USERS.find((u) => u.userId === 'reporter');
 const SCENARIO_LIST_ARGS = Object.freeze(['--scenario', 'list']);
 const PRESEED_ARTICLES = 11; // 한 페이지(10) 초과
 const LIST_HOLD_MS = 5000; // 재조회 관측 뒤 관측 창 — M11-1p(2초 주기)의 2.5배. 주기 ≤ 창인 폴링 앱은 결정적으로 (iii) 에 걸린다
+// --- 편집 시나리오(phase 78 step9) ---
+const SCENARIO_EDIT_ARGS = Object.freeze(['--scenario', 'edit']);
+const EDIT_ARTICLE_ENV = 'CLIENT_SCENARIO_ARTICLE'; // client-qt/src/ui/editscenario.cpp editScenarioArticleEnvVar
+const EDIT_SCENARIO_TEXT = ' [qt-edit]'; // client-qt/src/ui/editscenario.cpp editScenarioText — 두 곳이 어긋나면 S 판정이 red 다
+const DRAFTS_FILE = 'editor-drafts.json'; // client-qt/src/editor/editordraftstore.cpp draftFileName
+// 초안·디스크에 있어서는 안 되는 키(세션·자격·잠금 보유자 — clientConfig CRITICAL 승계 · decisions (3)).
+const DRAFT_FORBIDDEN_KEYS = Object.freeze(['sessionId', 'sid', 'cookie', 'password', 'token', 'clientId', 'editClientId', 'x-edit-client',
+  'role', 'lockerSessionId', 'lockerClientId']);
 
-const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|login|list|all] [--server exe|spring] [--client-exe <path>]
+const USAGE = `사용법: node scripts/verify-qt-client.mjs [--scenario boot|login|list|edit|all] [--server exe|spring] [--client-exe <path>]
        [--qt-bin <dir>] [--server-exe <path>] [--jar <path>] [--java-home <path>] [--keep] [--timeout <ms>]
-  --scenario      boot | login | list | all(기본 — boot + login + list). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
+  --scenario      boot | login | list | edit | all(기본 — boot + login + list + edit). boot = 설정 있음(A, + 두 번째 인스턴스) · 설정 없음(B).
                   login = 가드 거부(G) · 서버 교차(X·X2) · 로그인 성공(L+ — 목록 진입까지) · 틀린 비밀번호 1회(L-).
                   list = reporter 가 만든 기사가 클라(desk) 목록에 SSE 로 실시간 반영되는가(P4 완료 게이트 — (i)(ii)(iii)).
+                  edit = reporter 가 만든 기사를 클라(desk)가 목록에서 열어 잠그고(lock 200) 편집·자동저장·저장(PUT 200)·해제(unlock 200)
+                         하는가 — 기록 프록시가 x-edit-client 를 정확히 lock·update·unlock 에만 싣는지 와이어에서 본다(phase 78 step9).
   --server        exe(기본) | spring. exe = 서버 SEA exe(dist/), spring = java -jar server-spring/target/*.jar.
   --client-exe    Qt 클라 exe(기본 client-qt/release/news-client.exe). .exe 만 받는다(run.bat 경유 금지).
   --qt-bin <dir>  Qt bin 디렉토리 — 자식 PATH 맨 앞에 싣는다(기본: env QT_BIN_DIR → ${DEFAULT_QT_BIN}).
@@ -142,7 +171,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') { opts.timeout = Number(take(i, '--timeout')); i += 1; }
     else die(`알 수 없는 인자: ${a}`);
   }
-  if (!['boot', 'login', 'list', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|login|list|all): ${opts.scenario}`);
+  if (!['boot', 'login', 'list', 'edit', 'all'].includes(opts.scenario)) die(`--scenario 값이 유효하지 않다(boot|login|list|edit|all): ${opts.scenario}`);
   const mode = parseServerMode(opts.server);
   if (!mode.ok) die(mode.message);
   // 모드 전용 플래그가 다른 모드에 오면 거부다(값을 줬는데 아무 효과가 없는 실행 금지).
@@ -659,6 +688,220 @@ async function scenarioList(ctx) {
   return { lines: final.lines, diagFile, children: [child] };
 }
 
+// --- 시나리오 edit (phase 78 step9 — 잠금 획득 실기 왕복 · 로드맵 P5 의 첫 서버 왕복) ---
+// 서버 측 사실은 **reporter** 세션으로 만든다(같은 계정 로그인은 기존 세션을 끊는다 — 클라는 desk). 세션 토큰은 어떤 출력에도 싣지 않는다.
+async function serverPostArticle(origin, sid, dto) {
+  try {
+    const res = await fetch(`${origin}/api/articles`, {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: `sid=${sid}` }, body: JSON.stringify(dto),
+      signal: AbortSignal.timeout(10000),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    return { status: res.status, ok: body?.ok === true, articleId: typeof body?.articleId === 'string' ? body.articleId : null };
+  } catch (err) {
+    return { status: -1, ok: false, articleId: null, error: String(err && err.name) };
+  }
+}
+
+async function serverGetArticle(origin, sid, articleId) {
+  try {
+    const res = await fetch(`${origin}/api/articles/${encodeURIComponent(articleId)}`, {
+      headers: { cookie: `sid=${sid}` }, signal: AbortSignal.timeout(10000),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* 비-JSON — body null */ }
+    return { status: res.status, article: body?.article ?? null, contents: body?.contents ?? null };
+  } catch (err) {
+    return { status: -1, article: null, contents: null, error: String(err && err.name) };
+  }
+}
+
+// 클라의 편집 1회를 정본 web 모듈로 계산한다 — 첫 텍스트 줄 끝(캐럿)에서 isInputBlocked → insertTextIntoBlocks → serializeBodyFromBlocks.
+// client-qt/src/ui/editscenario.cpp editScenarioEdit 와 같은 정의다. 게이트가 거부하면 null.
+function expectedScenarioEdit(markupVersion) {
+  const blocks = webContent.deserialize(markupVersion);
+  const text = webContent.blocksToText(blocks);
+  const offset = text.split('\n')[0].length;
+  if (webNewline.isInputBlocked(text, offset)) return null;
+  const edited = webNewline.insertTextIntoBlocks(blocks, { lineIndex: 0, offset }, EDIT_SCENARIO_TEXT).blocks;
+  const body = webWriter.serializeBodyFromBlocks(edited);
+  return { body, title: webWriter.bodyTitle(body) };
+}
+
+// 기록 프록시 — 클라는 이 origin 에 붙는다. 요청은 바꾸지 않고(홉 단위 헤더만 빼고 Host 를 서버로) 넘기고, 응답은 버퍼링 없이 흘려보낸다
+// (SSE 포함). 요청마다 { method, route(계약 id|null), status, editClient(값|null) } 을 도착 순서로 적는다. editClient 값은 judgeEditWire 와
+// 유출 검사만 읽는다 — 이 함수도 어떤 줄도 출력하지 않는다.
+async function startWireProxy(upstreamOrigin, routes) {
+  const upstream = new URL(upstreamOrigin);
+  const hopByHop = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade']);
+  const pass = (headers) => Object.fromEntries(Object.entries(headers).filter(([name]) => !hopByHop.has(name.toLowerCase())));
+  const ledger = [];
+  const server = http.createServer((req, res) => {
+    const pathname = (req.url ?? '').split('?')[0];
+    const value = req.headers['x-edit-client'];
+    const entry = {
+      method: req.method, route: matchContractRoute(routes, req.method, pathname), status: null, editClient: typeof value === 'string' ? value : null,
+    };
+    ledger.push(entry);
+    const forward = http.request({
+      hostname: upstream.hostname, port: upstream.port, method: req.method, path: req.url, headers: { ...pass(req.headers), host: upstream.host },
+    }, (answer) => {
+      entry.status = answer.statusCode ?? null;
+      res.writeHead(answer.statusCode ?? 502, pass(answer.headers));
+      res.flushHeaders();
+      answer.pipe(res);
+    });
+    forward.on('error', () => {
+      if (!res.headersSent) res.writeHead(502);
+      res.end();
+    });
+    req.pipe(forward);
+    res.on('close', () => forward.destroy());
+  });
+  const port = await pickFreePort();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, CONNECT_HOST, resolve);
+  });
+  return {
+    origin: `http://${CONNECT_HOST}:${port}`,
+    ledger,
+    close: () => new Promise((resolve) => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    }),
+  };
+}
+
+// EG — `--scenario edit` 의 두 거부(부팅 전 · 흔적 없음): 셸 가드(CLIENT_SELFTEST 없음)와 편집 대상 누락(CLIENT_SCENARIO_ARTICLE 없음).
+// 클라는 edit 를 list 로 바꿔 셸의 무수정 가드에 넘긴다(client-qt/src/ui/editscenario.h) — 그 결선이 실제 바이너리에서 서 있는지 본다.
+async function editGuardRefusal(ctx, { label, dirName, diagName, selftest, article, stderrHas }) {
+  const { tmpRoot, check } = ctx;
+  const userData = nodePath.join(tmpRoot, dirName); // 만들지 않는다 — 생기면 거부가 부팅 뒤에 일어났다는 뜻이다
+  const diagFile = nodePath.join(tmpRoot, diagName);
+  const env = {
+    ...ctx.clientEnv(userData, diagFile, { selftest, scenario: { userId: SCENARIO_ACCOUNT.userId, password: SCENARIO_ACCOUNT.password } }),
+    ...(article ? { [EDIT_ARTICLE_ENV]: article } : {}),
+  };
+  const child = ctx.spawnClient(env, SCENARIO_EDIT_ARGS);
+  const exited = await waitExit(child, GUARD_EXIT_TIMEOUT_MS);
+  if (exited) await waitStreams(child);
+  else await killChild(child);
+  check(`${label}: 부팅 전 거부 exit ${SCENARIO_REFUSED_EXIT_CODE} · 사유 ${stderrHas} · diag·CLIENT_USER_DATA 미생성`,
+    exited && child.exitCode === SCENARIO_REFUSED_EXIT_CODE && child._err.includes(stderrHas) && !fs.existsSync(diagFile) && !fs.existsSync(userData),
+    `exit=${describeExit(child)} stderr=${JSON.stringify(tail(child._err, 200))}`);
+  const leak = countSecretOccurrences(`${child._out}\n${child._err}`, [SCENARIO_ACCOUNT.password]);
+  check(`${label}: stdout·stderr 에 비밀번호 0건`, leak.total === 0, `발견 ${leak.total}`);
+  return child;
+}
+
+async function scenarioEdit(ctx) {
+  const { tmpRoot, origin, check, opts, routeIds, contractRoutes } = ctx;
+  const none = { lines: [], diagFile: null, children: [] };
+  const guards = [
+    await editGuardRefusal(ctx, { label: 'EG1', dirName: 'ud-edit-g1', diagName: 'diag-edit-g1.jsonl', selftest: false,
+      article: 'AKR00000000000000000', stderrHas: 'CLIENT_SELFTEST=1' }),
+    await editGuardRefusal(ctx, { label: 'EG2', dirName: 'ud-edit-g2', diagName: 'diag-edit-g2.jsonl', selftest: true,
+      article: null, stderrHas: EDIT_ARTICLE_ENV }),
+  ];
+  none.children = guards;
+  const marker = randomBytes(4).toString('hex');
+  const title = `qtedit-${marker}`;
+  const bodyLine = `편집 잠금 실기 검증 본문 ${marker}`;
+  const original = webContent.serialize([
+    webContent.textBlock(title), webContent.textBlock(bodyLine), webContent.textBlock(webContent.END_MARKER),
+  ]);
+  const expected = expectedScenarioEdit(original);
+  check('R: 기대 본문을 정본(web editorNewline·writerBody)으로 계산 — 첫 줄 끝 삽입이 마커 게이트를 통과한다', expected !== null);
+  if (!expected) return none;
+
+  // R — reporter 세션 · 편집할 기사 1건 · 생성 직후 서버 사실 · N0.
+  const rep = await serverLogin(origin, LIST_ACCOUNT.userId, LIST_ACCOUNT.password);
+  check('R: 드라이버 로그인(Node fetch · reporter — 클라 desk 와 다른 계정) → 200 · sid 쿠키',
+    rep.status === 200 && rep.body?.ok === true && Boolean(rep.sid), `status=${rep.status}${rep.error ? ` ${rep.error}` : ''}`);
+  if (!rep.sid) return none;
+  const made = await serverPostArticle(origin, rep.sid, { title, markupVersion: original });
+  check('R: 편집할 기사 1건 생성(POST /api/articles · yh-editor 본문 · RDS = deskUnsent 안)', made.status === 200 && made.ok && Boolean(made.articleId),
+    `status=${made.status}`);
+  if (!made.articleId) return none;
+  const articleId = made.articleId;
+  const pre = await serverGetArticle(origin, rep.sid, articleId);
+  check('R: 생성 직후 서버 사실 — 본문이 보낸 그대로 · 잠겨 있지 않다',
+    pre.status === 200 && pre.article?.markupVersion === original && pre.contents?.lockYN !== 'Y', `status=${pre.status} lockYN=${pre.contents?.lockYN}`);
+  const counted = await serverDeskUnsentCount(origin, rep.sid);
+  check('R: 서버가 센 deskUnsent 수 N0(GET /api/articles?status=RDS&status=DDH)', counted.status === 200 && counted.count >= 1,
+    `status=${counted.status} N0=${counted.count}`);
+  if (counted.status !== 200 || counted.count < 1) return none;
+  const n0 = counted.count;
+
+  // P — 기록 프록시. C — 클라(desk · --scenario edit · 편집할 기사 id 는 env 로).
+  const proxy = await startWireProxy(origin, contractRoutes);
+  const userData = nodePath.join(tmpRoot, 'ud-edit');
+  fs.mkdirSync(userData);
+  const configFile = nodePath.join(userData, 'config.json');
+  fs.writeFileSync(configFile, `${JSON.stringify({ schemaVersion: 1, serverUrl: proxy.origin })}\n`);
+  const configBytes = fs.readFileSync(configFile);
+  const diagFile = nodePath.join(tmpRoot, 'diag-edit.jsonl');
+  const env = {
+    ...ctx.clientEnv(userData, diagFile, { scenario: { userId: SCENARIO_ACCOUNT.userId, password: SCENARIO_ACCOUNT.password } }),
+    [EDIT_ARTICLE_ENV]: articleId,
+  };
+  const t0 = Date.now();
+  const child = ctx.spawnClient(env, SCENARIO_EDIT_ARGS);
+  const seen = await waitForDiag(diagFile, editSequences({ origin: proxy.origin, n0 }), opts.timeout, child);
+  check('C: 편집 왕복 시퀀스 관측(…→sse-ready→sse-closed{stopped}→articles-get·lock·update·unlock 200→재진입…→sse-ready)', seen.ok,
+    seen.ok ? `${Date.now() - t0}ms` : waitDetail(seen, child));
+  await sleep(SETTLE_MS); // 늦게 오는 줄(재진입 뒤 신호 재조회 등)까지 판정에 넣는다
+
+  // S — 서버 측 사실(reporter 세션으로 다시 읽는다 — 클라의 자기 신고가 아니다).
+  const after = await serverGetArticle(origin, rep.sid, articleId);
+  check('S: 서버에 저장된 본문 = 정본으로 계산한 기대 본문(바이트 동일 — 클라 C++ 이식층의 편집·직렬화 = 웹 정본)',
+    after.status === 200 && after.article?.markupVersion === expected.body,
+    `status=${after.status} 길이 기대 ${expected.body.length} · 실제 ${typeof after.article?.markupVersion === 'string' ? after.article.markupVersion.length : '-'}`);
+  check('S: 제목 = 편집 뒤 본문 첫 줄(bodyTitle — 커밋이 제목을 다시 끌어냈다) · article·contents 둘 다',
+    after.article?.title === expected.title && after.contents?.title === expected.title);
+  check('S: 잠금 해제됨(lockYN=N — 해제가 잠근 표면과 같은 id 로 받아들여졌다)', after.contents?.lockYN === 'N', `lockYN=${after.contents?.lockYN}`);
+  check('S: 수정자 = desk(PUT 이 클라 세션의 사용자로 기록됐다 · reporter 아님)', after.contents?.modifier === SCENARIO_ACCOUNT.userId,
+    `modifier=${after.contents?.modifier}`);
+
+  check('C: 인스턴스가 판정 시점까지 살아 있다(편집 뒤 목록 재진입까지 제 경로로 돈다)', !childDead(child), childDead(child) ? `exit=${describeExit(child)}` : '');
+  await killChild(child);
+  await waitStreams(child);
+  await proxy.close();
+
+  const final = readDiag(diagFile);
+  for (const c of judgeEdit({ ...final, origin: proxy.origin, routeIds, n0 })) check(c.name, c.ok, c.detail);
+  for (const c of judgeEditWire({ wire: proxy.ledger, lines: final.lines, routeIds })) check(c.name, c.ok, c.detail);
+
+  // 디스크: config.json 무변 · 초안 파일 하나 — 그 안에 이 기사 1건(키 = articleId)의 편집 뒤 필드(자동저장 1회)뿐.
+  const files = (listFilesRecursive(userData) ?? []).slice().sort();
+  check(`C: config.json 무변 · user-data 에 config.json·${DRAFTS_FILE} 만(세션·자격을 디스크에 쓰지 않는다)`,
+    fs.readFileSync(configFile).equals(configBytes) && JSON.stringify(files) === JSON.stringify(['config.json', DRAFTS_FILE]), `files=${JSON.stringify(files)}`);
+  const draftPath = nodePath.join(userData, DRAFTS_FILE);
+  const draftText = fs.existsSync(draftPath) ? fs.readFileSync(draftPath, 'utf8') : '';
+  let drafts = null;
+  try { drafts = JSON.parse(draftText); } catch { /* 깨진 파일 — 아래 판정이 red */ }
+  const entry = drafts && typeof drafts === 'object' ? drafts[articleId] : undefined;
+  const dataKeys = entry && entry.data && typeof entry.data === 'object' ? Object.keys(entry.data) : [];
+  check('C: 자동저장 초안 = 이 기사 1건(키 = articleId)의 편집 뒤 본문·제목 · savedAt 수 · 금지 키 0',
+    Boolean(drafts) && JSON.stringify(Object.keys(drafts)) === JSON.stringify([articleId]) && entry?.data?.body === expected.body
+      && entry?.data?.title === expected.title && typeof entry?.savedAt === 'number'
+      && dataKeys.every((k) => !DRAFT_FORBIDDEN_KEYS.includes(k)),
+    `keys ${drafts && typeof drafts === 'object' ? Object.keys(drafts).length : '-'} · data 키 ${dataKeys.length}`);
+
+  const clientIds = [...new Set(proxy.ledger.map((w) => w.editClient).filter((v) => typeof v === 'string' && v.length >= 4))];
+  const diagText = fs.existsSync(diagFile) ? fs.readFileSync(diagFile, 'utf8') : '';
+  const secrets = [SCENARIO_ACCOUNT.password, LIST_ACCOUNT.password, title, bodyLine, articleId, ...clientIds];
+  const leak = countSecretOccurrences(`${diagText}\n${child._out}\n${child._err}`, secrets);
+  check('C: diag 전문·stdout·stderr 에 비밀번호·기사 제목·본문·기사아이디·EditClientId 0건', diagText.length > 0 && leak.total === 0,
+    `diag ${Buffer.byteLength(diagText)}B · 검사 ${secrets.length}종(clientId ${clientIds.length}) · 발견 ${leak.total}`);
+  const diskLeak = countSecretOccurrences(draftText, [SCENARIO_ACCOUNT.password, LIST_ACCOUNT.password, ...clientIds]);
+  check('C: 초안 파일에 비밀번호·EditClientId 0건(초안은 편집 필드만 — clientId 는 디스크에 쓰지 않는다)', draftText.length > 0 && diskLeak.total === 0,
+    `발견 ${diskLeak.total}`);
+  return { lines: final.lines, diagFile, children: [...guards, child] };
+}
+
 function dumpScenario(label, result) {
   if (!result) return;
   process.stderr.write(`--- ${label} diag ---\n${result.lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
@@ -674,8 +917,10 @@ async function main() {
   runSelfTest(nodePath.join(LIB_DIR, 'qtClientDiag.self-test.mjs'));
 
   let routeIds;
+  let contractRoutes;
   try {
     routeIds = loadContractRouteIds(ENDPOINTS_JSON);
+    contractRoutes = loadContractRoutes(ENDPOINTS_JSON); // 편집 시나리오의 기록 프록시가 경로 → 라우트 id 로 되돌릴 때
   } catch (err) {
     die(`계약 라우트 목록을 읽지 못했다(${ENDPOINTS_JSON}): ${err && err.message}`);
   }
@@ -733,7 +978,7 @@ async function main() {
     }
 
     const ctx = {
-      tmpRoot, origin, check, opts, routeIds,
+      tmpRoot, origin, check, opts, routeIds, contractRoutes,
       clientEnv: (userDataDir, diagFile, extra = {}) => qtClientEnv({
         parentEnv: process.env, platform: process.platform, qtBinDir: client.qtBin, userDataDir, diagFile, ...extra,
       }),
@@ -747,6 +992,7 @@ async function main() {
     if (opts.scenario === 'boot' || opts.scenario === 'all') plan.push(['A', scenarioBootA], ['B', scenarioBootB]);
     if (opts.scenario === 'login' || opts.scenario === 'all') plan.push(['login', scenarioLogin]);
     if (opts.scenario === 'list' || opts.scenario === 'all') plan.push(['list', scenarioList]);
+    if (opts.scenario === 'edit' || opts.scenario === 'all') plan.push(['edit', scenarioEdit]);
     for (const [label, run] of plan) {
       const failedBefore = failures.length;
       const result = await run(ctx);

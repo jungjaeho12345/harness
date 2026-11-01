@@ -13,6 +13,7 @@
 #include "clientconfigtest.h"
 #include "diagtest.h"
 #include "configstoretest.h"
+#include "editcontrollertest.h"
 #include "editorcarettest.h"
 #include "editorcoloringtest.h"
 #include "editorcontenttest.h"
@@ -26,6 +27,7 @@
 #include "editorrolestest.h"
 #include "editorshortcutstest.h"
 #include "editorwidgettest.h"
+#include "editscenariotest.h"
 #include "fakenewsmodeltest.h"
 #include "httpnewsmodeltest.h"
 #include "httpproberunnertest.h"
@@ -48,6 +50,8 @@
 #include "sseparsertest.h"
 #include "timerpolicytest.h"
 #include "windowpolicytest.h"
+#include "writerbodytest.h"
+#include "writerhosttest.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -185,6 +189,10 @@ int main(int argc, char **argv)
     runTestClass<EditorDraftStoreTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorInputTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorWidgetTest>(baseArgs, logDir.path(), totals);
+    runTestClass<WriterBodyTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditControllerTest>(baseArgs, logDir.path(), totals);
+    runTestClass<WriterHostTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditScenarioTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.

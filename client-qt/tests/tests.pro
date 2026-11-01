@@ -56,7 +56,11 @@ SOURCES += $$PWD/../src/net/fakenewsmodel.cpp \
            editordrafttest.cpp \
            editordraftstoretest.cpp \
            editorinputtest.cpp \
-           editorwidgettest.cpp
+           editorwidgettest.cpp \
+           writerbodytest.cpp \
+           editcontrollertest.cpp \
+           writerhosttest.cpp \
+           editscenariotest.cpp
 
 HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            smoketest.h \
@@ -102,4 +106,9 @@ HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            editordrafttest.h \
            editordraftstoretest.h \
            editorinputtest.h \
-           editorwidgettest.h
+           editorwidgettest.h \
+           editwire.h \
+           writerbodytest.h \
+           editcontrollertest.h \
+           writerhosttest.h \
+           editscenariotest.h

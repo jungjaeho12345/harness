@@ -270,9 +270,11 @@ void ListScreenTest::showsAQueryErrorAboveTheRows()
     QCOMPARE(screen.rowCount(), 1);  // the rows it had stay
 }
 
-// excluded (b): no context menu, no double-click action, no editing, no selection - and nothing in the
-// source that would open a menu, a dialog or an article.
-void ListScreenTest::isReadOnly()
+// excluded (b): no context menu, no editing in the table, no selection - and nothing in the source that would
+// open a menu or a dialog, or reach the Model. phase 78 step9 opened exactly ONE action, the editing path: the
+// table's cellDoubleClicked becomes articleOpenRequested (the screen names the article; the writer gets and locks
+// it). Any other double-click hook (itemDoubleClicked, a mouseDoubleClickEvent override) is a second action.
+void ListScreenTest::isReadOnlyButForTheOneEditingPath()
 {
     ListScreen screen;
     QTableWidget *table = tableOf(screen);
@@ -284,10 +286,46 @@ void ListScreenTest::isReadOnly()
     QString error;
     const QString source = repoText(QStringLiteral("client-qt/src/ui/listscreen.cpp"), &error);
     QVERIFY2(source.size() > 500, qPrintable(error));
-    for (const QString &token : {QStringLiteral("doubleClicked"), QStringLiteral("customContextMenuRequested"),
-                                 QStringLiteral("contextMenuEvent"), QStringLiteral("QMenu"), QStringLiteral("QDialog"),
-                                 QStringLiteral("INewsModel"), QStringLiteral("lockArticle"), QStringLiteral("getArticle")})
+    for (const QString &token : {QStringLiteral("customContextMenuRequested"), QStringLiteral("contextMenuEvent"),
+                                 QStringLiteral("QMenu"), QStringLiteral("QDialog"), QStringLiteral("INewsModel"),
+                                 QStringLiteral("lockArticle"), QStringLiteral("getArticle"),
+                                 QStringLiteral("itemDoubleClicked"), QStringLiteral("mouseDoubleClickEvent")})
         QVERIFY2(!source.contains(token), qPrintable(QStringLiteral("listscreen.cpp names ") + token));
+    QCOMPARE(source.count(QStringLiteral("cellDoubleClicked")), 1);
+    QCOMPARE(source.count(QStringLiteral("emit articleOpenRequested")), 1);
+}
+
+// The one action: a double-click on a row asks for that row's article - once, by id, nothing else. A row without an
+// id asks for nothing, and a re-render maps the rows afresh (the page shown, not a page seen before).
+void ListScreenTest::doubleClickAsksToEditThatRowsArticle()
+{
+    ListScreen screen;
+    QTableWidget *table = tableOf(screen);
+    QVERIFY(table);
+    QSignalSpy wanted(&screen, &ListScreen::articleOpenRequested);
+    QJsonObject second = sampleRow();
+    second.insert(QStringLiteral("articleId"), QStringLiteral("AKR20260912000100002"));
+    QJsonObject anonymous = sampleRow();
+    anonymous.remove(QStringLiteral("articleId"));
+    ui::ListViewState state;
+    state.rows = {sampleRow(), second, anonymous};
+    state.total = 3;
+    screen.render(state);
+
+    emit table->cellDoubleClicked(1, columnOf(QStringLiteral("title")));
+    QCOMPARE(wanted.count(), 1);
+    QCOMPARE(wanted.takeFirst().at(0).toString(), QStringLiteral("AKR20260912000100002"));
+    emit table->cellDoubleClicked(2, 0);
+    QCOMPARE(wanted.count(), 0);
+    emit table->cellDoubleClicked(7, 0);
+    QCOMPARE(wanted.count(), 0);
+
+    state.rows = {second};
+    state.total = 1;
+    screen.render(state);
+    emit table->cellDoubleClicked(0, 0);
+    QCOMPARE(wanted.count(), 1);
+    QCOMPARE(wanted.takeFirst().at(0).toString(), QStringLiteral("AKR20260912000100002"));
 }
 
 // UI_GUIDE layout: a 48 px top bar; the live indicator sits on its right on the list page only, and
