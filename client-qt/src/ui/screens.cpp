@@ -1,5 +1,6 @@
 #include "ui/screens.h"
 
+#include "ui/editorwidget.h"
 #include "ui/listscreen.h"
 #include "ui/loginscreen.h"
 #include "ui/mainwindow.h"
@@ -25,7 +26,8 @@ const QList<ScreenEntry> &screenRegistry()
 {
     static const QList<ScreenEntry> registry{{QStringLiteral("login"), bareName(LoginScreen::staticMetaObject)},
                                              {QStringLiteral("list"), bareName(ListScreen::staticMetaObject)},
-                                             {QStringLiteral("setup"), bareName(SetupScreen::staticMetaObject)}};
+                                             {QStringLiteral("setup"), bareName(SetupScreen::staticMetaObject)},
+                                             {QStringLiteral("editor"), bareName(EditorWidget::staticMetaObject)}};
     return registry;
 }
 

@@ -185,18 +185,22 @@ QString sorted(const QSet<QString> &set)
 
 } // namespace
 
-// The registry: exactly login, list, setup (M11-4 - registering a fourth turns this red), each bound to
-// a real widget class, and the main window is declared as the window shell, not a screen.
-void ScreenInventoryTest::registersExactlyTheThreeP4Screens()
+// The registry: exactly login, list, setup (M11-4 - registering a fourth turns this red) and, since phase 78
+// step8, the one P5 editor screen - the text engine (step8 AC: the editor adds the article-editing path only - no
+// context menu, no view menus: P7). Each is bound to a real widget class, and the main window is declared as the
+// window shell, not a screen.
+void ScreenInventoryTest::registersTheThreeP4ScreensAndTheP5Editor()
 {
     const QList<ui::ScreenEntry> &registry = ui::screenRegistry();
     QSet<QString> ids;
     for (const ui::ScreenEntry &entry : registry)
         ids.insert(entry.id);
-    QCOMPARE(registry.size(), 3);
-    QCOMPARE(ids, (QSet<QString>{QStringLiteral("login"), QStringLiteral("list"), QStringLiteral("setup")}));
+    QCOMPARE(registry.size(), 4);
+    QCOMPARE(ids, (QSet<QString>{QStringLiteral("login"), QStringLiteral("list"), QStringLiteral("setup"),
+                                 QStringLiteral("editor")}));
     QCOMPARE(registryClasses(),
-             (QSet<QString>{QStringLiteral("LoginScreen"), QStringLiteral("ListScreen"), QStringLiteral("SetupScreen")}));
+             (QSet<QString>{QStringLiteral("LoginScreen"), QStringLiteral("ListScreen"), QStringLiteral("SetupScreen"),
+                            QStringLiteral("EditorWidget")}));
     QCOMPARE(ui::windowShellClasses(), QStringList{QStringLiteral("MainWindow")});
 }
 

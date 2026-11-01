@@ -10,6 +10,9 @@
 // client-qt/src and client-qt/app for every widget class and requires that set to be exactly the
 // registered screens plus the window shell (tests/screeninventorytest.cpp). Building one more screen
 // (P7's menus, P5's editor) turns that test red - scope does not grow quietly.
+//
+// phase 78 (P5) step8 added exactly one: "editor" - the text engine, the main panel of the one editing path P5 opens
+// (an article from the list - index.json excluded (b): no context menu, no view menus, no detail window).
 
 #include <QList>
 #include <QString>
@@ -18,7 +21,7 @@
 namespace ui {
 
 struct ScreenEntry {
-    QString id;         // login | list | setup
+    QString id;         // login | list | setup | editor
     QString className;  // the widget class, without its namespace
 };
 

@@ -20,10 +20,12 @@
 #include "editordrafttest.h"
 #include "editoreditopstest.h"
 #include "editorhistorytest.h"
+#include "editorinputtest.h"
 #include "editornewlinetest.h"
 #include "editorrangetest.h"
 #include "editorrolestest.h"
 #include "editorshortcutstest.h"
+#include "editorwidgettest.h"
 #include "fakenewsmodeltest.h"
 #include "httpnewsmodeltest.h"
 #include "httpproberunnertest.h"
@@ -181,6 +183,8 @@ int main(int argc, char **argv)
     runTestClass<EditorHistoryTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorDraftTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorDraftStoreTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditorInputTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditorWidgetTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
