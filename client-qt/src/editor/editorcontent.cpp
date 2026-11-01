@@ -566,6 +566,23 @@ bool operator==(const JsonValue &a, const JsonValue &b)
     return false;
 }
 
+bool parseJson(const QString &text, JsonValue *out)
+{
+    JsonValue value;
+    if (!Parser(text).parse(&value))
+        return false;
+    if (out)
+        *out = value;
+    return true;
+}
+
+QString stringifyJson(const JsonValue &value)
+{
+    QString out;
+    writeValue(out, value);
+    return out;
+}
+
 // ---- blocks -----------------------------------------------------------------------------------
 
 bool operator==(const Block &a, const Block &b)

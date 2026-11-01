@@ -81,6 +81,13 @@ struct JsonMember {
 bool operator==(const JsonValue &a, const JsonValue &b);
 inline bool operator!=(const JsonValue &a, const JsonValue &b) { return !(a == b); }
 
+// JSON.parse / JSON.stringify over JsonValue - the very grammar deserialize() reads and the very writer serialize()
+// uses, exposed since step7 for the draft file (editordraftstore.h), which keeps the web's storage bytes.
+// parseJson answers false - and leaves *out alone - for anything JSON.parse throws on, and for nesting deeper than
+// 512 levels (the divergence above).
+bool parseJson(const QString &text, JsonValue *out);
+QString stringifyJson(const JsonValue &value);
+
 struct Block {
     enum class Type { Text, Embed };
 

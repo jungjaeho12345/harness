@@ -16,6 +16,8 @@
 #include "editorcarettest.h"
 #include "editorcoloringtest.h"
 #include "editorcontenttest.h"
+#include "editordraftstoretest.h"
+#include "editordrafttest.h"
 #include "editoreditopstest.h"
 #include "editorhistorytest.h"
 #include "editornewlinetest.h"
@@ -177,6 +179,8 @@ int main(int argc, char **argv)
     runTestClass<EditorShortcutsTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorEditOpsTest>(baseArgs, logDir.path(), totals);
     runTestClass<EditorHistoryTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditorDraftTest>(baseArgs, logDir.path(), totals);
+    runTestClass<EditorDraftStoreTest>(baseArgs, logDir.path(), totals);
 
     // A manual round trip against a real server (step7 검증 절차 3·4). Registered only when a
     // driver asks for it, so an ordinary run neither executes nor "skips" it.
