@@ -27,6 +27,7 @@
 #include <QTextLayout>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace ui {
@@ -129,10 +130,41 @@ void EditorWidget::setBlocks(const QVector<editor::Block> &blocks)
     }
     m_restoreQueued = false;
     const bool fresh = documentText().isEmpty();
-    m_blocks = editor::normalizeBlocks(blocks);
+    const QVector<editor::Block> next = editor::normalizeBlocks(blocks);
+    // A renormalized body pushed back (WriterHost - a typing edit with text lines after a "(끝)" line): the marker
+    // lines go last and every other text line keeps its text and order, so the caret keeps its column on its own line,
+    // moved up by the marker lines above it; on a marker line it keeps its place against the "(끝)" in the one marker
+    // that goes last. The minimal edit alone rewrites everything from the first marker line on and leaves the caret at
+    // the end, behind the marker.
+    int keptLine = -1;
+    int keptColumn = 0;
+    if (!fresh && next != m_blocks && next == editor::renormalizeEndMarker(m_blocks)) {
+        const QTextCursor c = textCursor();
+        keptColumn = c.positionInBlock();
+        int line = 0;
+        int markersAbove = 0;
+        for (const editor::Block &b : std::as_const(m_blocks)) {
+            if (!editor::isTextBlock(b))
+                continue;
+            if (line == c.blockNumber()) {
+                keptLine = line - markersAbove;
+                if (editor::isMarkerBlock(b)) { // blanks around "(끝)" at most (isEndLine) - the last line now
+                    keptLine = std::numeric_limits<int>::max();
+                    keptColumn = int(std::clamp<qsizetype>(keptColumn - b.text.indexOf(editor::END_MARKER), 0,
+                                                           editor::END_MARKER.size()));
+                }
+                break;
+            }
+            markersAbove += editor::isMarkerBlock(b) ? 1 : 0;
+            ++line;
+        }
+    }
+    m_blocks = next;
     showText(shownText());
     if (fresh)
         setTextCursor(QTextCursor(document()));
+    else if (keptLine >= 0)
+        placeCaret(keptLine, keptColumn);
     recolor(QStringLiteral("load"));
 }
 
@@ -286,8 +318,10 @@ void EditorWidget::restoreDocument()
 }
 
 // The document becomes `target` through one minimal edit (the common prefix and suffix stay), so the caret and the
-// scroll position survive where the text did not change. Returns the end of the changed region in the new text.
-int EditorWidget::showText(const QString &target)
+// scroll position survive where the text did not change. Where the edit went is NOT read off it: over identical
+// characters the common prefix and suffix slide (an Enter at the end of "ab" over "cd" reads as a line break after
+// "ab⏎") - an edit path that knows where its text went places the caret itself (CaretAfter::Line).
+void EditorWidget::showText(const QString &target)
 {
     const QString current = documentText();
     const qsizetype nc = current.size();
@@ -314,25 +348,29 @@ int EditorWidget::showText(const QString &target)
             document()->setPlainText(target); // never expected - the shown text maps 1:1 onto blocks
     }
     m_shown = target;
-    return int(p + inserted.size());
 }
 
-bool EditorWidget::applyBlocks(const QVector<editor::Block> &next, editor::EditKind kind, CaretAfter caret, int caretLine)
+// The caret to `column` of text line `textLine` (each clamped into the document), the selection dropped.
+void EditorWidget::placeCaret(int textLine, int column)
+{
+    const QTextBlock block = document()->findBlockByNumber(std::clamp(textLine, 0, document()->blockCount() - 1));
+    QTextCursor c = textCursor();
+    c.setPosition(block.position() + std::clamp(column, 0, block.length() - 1));
+    setTextCursor(c);
+}
+
+bool EditorWidget::applyBlocks(const QVector<editor::Block> &next, editor::EditKind kind, CaretAfter caret, int caretLine,
+                               int caretColumn)
 {
     const QVector<editor::Block> normalized = editor::normalizeBlocks(next);
     if (normalized == m_blocks)
         return false;
     m_blocks = normalized;
-    const int editEnd = showText(shownText());
-    if (caret == CaretAfter::EditEnd) {
-        QTextCursor c = textCursor();
-        c.setPosition(std::clamp(editEnd, 0, document()->characterCount() - 1));
-        setTextCursor(c);
-    } else if (caret == CaretAfter::LineStart) {
-        const int line = std::clamp(caretLine, 0, document()->blockCount() - 1);
-        setTextCursor(QTextCursor(document()->findBlockByNumber(line)));
-    }
+    showText(shownText());
+    if (caret == CaretAfter::Line)
+        placeCaret(caretLine, caretColumn);
     recolor(QStringLiteral("load")); // a structural edit re-renders, as the web's remount does
+    // Last, with the caret in place: a slot may push a renormalized body back (WriterHost) and that starts from it.
     emitEdited(kind);
     return true;
 }
@@ -369,6 +407,8 @@ bool EditorWidget::acceptNativeEdit(const editor::TextEdit &edit)
         return false; // no native edit is legitimate in read-only (the IME path above proved Qt can make one)
     if (m_shown.mid(edit.start, edit.removed).contains(QLatin1Char('\n')) || edit.inserted.contains(QLatin1Char('\n')))
         return false; // a line made or removed natively - only the widget's own paths change the line structure
+    if (edit.inserted.contains(QChar::LineSeparator))
+        return false; // Qt's Shift+Enter (it reaches Qt while composing): a line break inside the block - never typed
     if (!edit.inserted.isEmpty() && editor::isInputBlocked(realText(), edit.start))
         return false; // the marker gate, at the point the text went in
     const int line = int(m_shown.left(edit.start).count(QLatin1Char('\n')));
@@ -437,7 +477,17 @@ bool EditorWidget::replaceRange(const editor::TextRange &range, const QString &t
     if (!text.isEmpty() && editor::isInputBlocked(realText(), at))
         return false; // the marker gate; a deletion is never refused here - replaceRangeInBlocks clamps it
     const editor::InsertResult result = editor::replaceRangeInBlocks(m_blocks, range, text);
-    return applyBlocks(result.blocks, kind, CaretAfter::EditEnd);
+    // The caret goes to the end of the inserted text, counted from where replaceRangeInBlocks put it (caretLineIndex)
+    // and never read off the document diff (showText): an Enter at the end of a line left it one line too far down -
+    // on the "(끝)" line, where the next key is refused, when that line came next.
+    const QTextBlock start = document()->findBlock(at);
+    const qsizetype lastBreak = text.lastIndexOf(QLatin1Char('\n'));
+    int column = std::numeric_limits<int>::max(); // rule 3 moved a one-line insertion in front of the marker: the line end
+    if (lastBreak >= 0)
+        column = int(text.size() - lastBreak - 1); // the end of the last inserted line
+    else if (result.caretLineIndex == start.blockNumber())
+        column = at - start.position() + int(text.size()); // after the text, on the line it went into
+    return applyBlocks(result.blocks, kind, CaretAfter::Line, result.caretLineIndex, column);
 }
 
 bool EditorWidget::replaceSelection(const QString &text, editor::EditKind kind)
@@ -473,7 +523,7 @@ void EditorWidget::deleteLine(int textLine)
     const int index = editor::textLineToBlockIndex(m_blocks, textLine);
     if (index < 0)
         return;
-    applyBlocks(editor::deleteLineAt(m_blocks, index).blocks, editor::EditKind::Operation, CaretAfter::LineStart, textLine);
+    applyBlocks(editor::deleteLineAt(m_blocks, index).blocks, editor::EditKind::Operation, CaretAfter::Line, textLine);
 }
 
 void EditorWidget::deleteKey(QKeyEvent *e, bool backward)
@@ -496,12 +546,10 @@ void EditorWidget::deleteKey(QKeyEvent *e, bool backward)
             return;
         if (editor::isLineMergeBlocked(realLine(upper), realLine(upper + 1)))
             return;
-        const int joinAt = document()->findBlockByNumber(upper).position() + int(realLine(upper).size());
-        if (applyBlocks(editor::joinTextLines(m_blocks, upper), editor::EditKind::Typing, CaretAfter::Keep)) {
-            QTextCursor at = textCursor();
-            at.setPosition(joinAt);
-            setTextCursor(at);
-        }
+        // The caret to the join point inside applyBlocks, before edited() goes out - a push-back of the renormalized
+        // body starts from it. Set afterwards, it was an offset into the body before that push-back.
+        applyBlocks(editor::joinTextLines(m_blocks, upper), editor::EditKind::Typing, CaretAfter::Line, upper,
+                    int(realLine(upper).size()));
         return;
     }
     if (e->modifiers().testFlag(Qt::ControlModifier)) {
@@ -550,7 +598,7 @@ void EditorWidget::triggerShortcut(editor::Shortcut shortcut)
         break;
     case editor::Shortcut::InsertContinueMarker: {
         const editor::ContinueMarkerInsertion r = editor::insertContinueMarker(m_blocks, textCursor().blockNumber());
-        applyBlocks(r.blocks, editor::EditKind::Operation, CaretAfter::LineStart, r.caretTextLine);
+        applyBlocks(r.blocks, editor::EditKind::Operation, CaretAfter::Line, r.caretTextLine);
         break;
     }
     case editor::Shortcut::DeleteLine:
@@ -698,6 +746,7 @@ QMimeData *EditorWidget::createMimeDataFromSelection() const
 
 void EditorWidget::focusOutEvent(QFocusEvent *e)
 {
+    restoreIfPending();
     runNative([&] { QPlainTextEdit::focusOutEvent(e); }, false);
     updateComposing();
     recolor(QStringLiteral("blur"));

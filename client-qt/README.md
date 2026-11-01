@@ -1281,13 +1281,13 @@ SSE 실시간 갱신의 **기계 판정**(`--scenario list` — (i)(ii)(iii)) ·
 | 자동저장 초안(순수 · 매체·시각·scope 주입) | `editorDraft.js` | `src/editor/editordraft.{h,cpp}` | `EditorDraftTest` 28 · 123 | 19 | 7 |
 | 초안 파일 저장소 `editor-drafts.json` | localStorage `yh.editorDrafts`의 값 | `src/editor/editordraftstore.{h,cpp}` | `EditorDraftStoreTest` 9 · 69 | — | 7 |
 | 입력 라우팅(위젯의 GUI 비의존 절반 · Qt 키 → `KeyInput` · 단축키 판정 순서) | `WriterPage.jsx` `onKeyDown` 순서 | `src/editor/editorinput.{h,cpp}` | `EditorInputTest` 10 · 469 | —(순서 표 384행은 웹 정본 실행 생성) | 8 |
-| 텍스트 엔진 위젯 | `Editor.jsx`(contentEditable) | `src/ui/editorwidget.{h,cpp}` — `QPlainTextEdit` + `QSyntaxHighlighter` | `EditorWidgetTest` 26 · 44(오프스크린 · 실제 이벤트 핸들러) | — | 8 |
+| 텍스트 엔진 위젯 | `Editor.jsx`(contentEditable) | `src/ui/editorwidget.{h,cpp}` — `QPlainTextEdit` + `QSyntaxHighlighter` | `EditorWidgetTest` 26 · 44(오프스크린 · 실제 이벤트 핸들러)(④ 보강 뒤 28 · 46 · ⑤ 후속 뒤 **33 · 51**) | — | 8 |
 | 본문 제목·저장 직렬화 | `writerBody.js`(`bodyTitle`·`serializeBodyFromBlocks`) | `src/editor/writerbody.{h,cpp}` | `WriterBodyTest` 2 · 19 | — | 9 |
 | 편집 상태 기계(표면 1개) | `useWriteController.js` 편집 탭 + `WriterPage.jsx` 본문 상태 + `lockMessages.js` | `src/ui/editcontroller.{h,cpp}` | `EditControllerTest` 34 · 63 | — | 9 |
-| 편집 페이지 조립 | `WriterPage.jsx` | `src/ui/writerhost.{h,cpp}` + `mainwindow.*`(편집 페이지·상단 바) + `listscreen.*`(더블클릭) | `WriterHostTest` 9 · 11(+ `ListScreenTest`) | — | 9 |
+| 편집 페이지 조립 | `WriterPage.jsx` | `src/ui/writerhost.{h,cpp}` + `mainwindow.*`(편집 페이지·상단 바) + `listscreen.*`(더블클릭) | `WriterHostTest` 9 · 11(+ `ListScreenTest`)(④ 보강 뒤 11 · 13 · ⑤ 후속 뒤 **13 · 15**) | — | 9 |
 | 자동화 훅 `--scenario edit` | — | `src/ui/editscenario.{h,cpp}` + `app/main.cpp` | `EditScenarioTest` 10 · 21 | — | 9 |
 
-합계: P5 신규 **17 클래스 · 332 함수**(+ 갱신된 `ListScreenTest` 1 → P4 마감 310/25에서 **643/42**) · P5 클래스의 행 단위 PASS 2,569(전체 3,359) ·
+합계: P5 신규 **17 클래스 · 332 함수**(+ 갱신된 `ListScreenTest` 1 → P4 마감 310/25에서 **643/42**) · P5 클래스의 행 단위 PASS 2,569(전체 3,359)(④ 보강 뒤 336 함수 · 647/42 · 행 2,573(전체 3,363) · ⑤ 후속 뒤 **343 함수 · 654/42 · 행 2,580(전체 3,370)**) ·
 웹 it **180**(정적 집계 — ADR-019 ①·⑧). `writerBody.test.js`의 스펙은 step3 바이트 패리티 표(7행)와 step9 `WriterBodyTest`로 들어갔고 it 단위로 세지 않았다.
 
 ### 「(끝)」 마커 게이트 — 단일 지점 `src/editor/editornewline.h`
@@ -1389,6 +1389,8 @@ on · 1초.
 | 대소문자 변환 | 줄 끝 `isInputBlocked` 게이트 | 게이트 없음 | step8 |
 | 합쳐지는 두 줄 사이의 임베드 | 합친 줄 뒤에 보존 | — | step8 |
 | Shift+Enter | Enter와 같다(Qt의 U+2028 줄바꿈 금지) | — | step8 |
+| 조합 중 Shift+Enter · U+2028을 입력하는 키 | 거부 — 네이티브 편집이 넣은 U+2028은 줄바꿈처럼 원복(조합은 제자리에서 계속) | 조합 중 개입 없음(브라우저 기본) · 키 입력은 그대로 입력 | ⑤ 후속 F3 |
+| 재정규화 되밀기 뒤 캐럿(「(끝)」 뒤 줄에서의 타이핑 편집) | 편집 지점 그대로 — 마커 줄만 끝으로 가고 캐럿은 자기 줄·열(마커 줄 위였으면 「(끝)」 기준 같은 자리) | remount 뒤 되밀기 전 줄 번호의 줄 시작(그 자리가 마커 줄일 수 있다) | ⑤ 후속 F2 |
 | 블록이 담지 못하는 글자 | CR·U+2029·블록 안 LF → 공백, U+FDD0/1 → U+FFFD로 1:1 대체 표시(실제 텍스트는 블록) | pre-wrap 표시 | step8 |
 | 잠금 실패 | 읽기 전용 표면 + 웹 문구 | 탭을 열지 않는다 | step9 (b) · 책임자 확인 4 |
 | 본문 조회 실패 | 잠그지 않는다(LoadFailed) | 목록 행 폴백(빈 본문 저장 가능) | step9 (c) — fail-closed |
@@ -1435,7 +1437,7 @@ P4의 divergence(재시작 = 재로그인 등 — 「P4 마감」 이전 장들)
 
 | # | 커맨드 | 회차 1 | 회차 2 |
 |---|---|---|---|
-| 1 | `cmd.exe /c "client-qt\build.bat"` | exit 0 · 40,138 ms · `Totals: 643 passed, 0 failed (classes: 42)`(④ 보강 뒤 **647**/0) · `BUILD OK` · `FAIL!` 0줄 | exit 0 · 40,289 ms · **동일**(클래스별 QtTest `Totals` 42줄도 동일) |
+| 1 | `cmd.exe /c "client-qt\build.bat"` | exit 0 · 40,138 ms · `Totals: 643 passed, 0 failed (classes: 42)`(④ 보강 뒤 **647**/0 · ⑤ 후속 뒤 **654**/0) · `BUILD OK` · `FAIL!` 0줄 | exit 0 · 40,289 ms · **동일**(클래스별 QtTest `Totals` 42줄도 동일) |
 | 2 | `verify-qt-client --scenario boot --server exe` | exit 0 · 4,855 ms · 관측 8(A 4 · B 4) · 판정 33 · 실패 0 | exit 0 · 4,816 ms · **동일** |
 | 3 | `… --scenario login --server exe` | exit 0 · 5,779 ms · 관측 17(G 0 · L+ 12 · L- 5) · 판정 40 · 실패 0 | exit 0 · 5,699 ms · **동일** |
 | 4 | `… --scenario list --server exe` | exit 0 · 7,868 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 7,984 ms · **동일** |
@@ -1466,8 +1468,9 @@ P4의 divergence(재시작 = 재로그인 등 — 「P4 마감」 이전 장들)
 | 축 | 판정자 | 기준값(2026-11-01) |
 |---|---|---|
 | 에디터 이식층이 웹 정본과 같은가 | `build.bat`의 Editor*Test 12 클래스 + `WriterBodyTest` — 기대값은 웹 정본을 node로 실행해 생성 | 웹 it 180 전환 + 포트 잠금 · 0 failed |
-| 「(끝)」 게이트를 모든 쓰기 경로가 경유하는가 | `EditorWidgetTest`(오프스크린 · 위젯의 실제 이벤트 핸들러에 키·입력기·클립보드·포커스·마우스 이벤트) + `EditorInputTest` | 26 + 10 함수 · 경로마다 우회 변이 red 실증(step8) |
+| 「(끝)」 게이트를 모든 쓰기 경로가 경유하는가 | `EditorWidgetTest`(오프스크린 · 위젯의 실제 이벤트 핸들러에 키·입력기·클립보드·포커스·마우스 이벤트) + `EditorInputTest` | 26 + 10 함수 · 경로마다 우회 변이 red 실증(step8)(④ 보강 뒤 28 + 10 · ⑤ 후속 뒤 **33 + 10**) |
 | 조합 중 무개입(논리) | `EditorWidgetTest`(합성 `QInputMethodEvent`) | 조합 중 단축키·재색칠 0 · 차단 위치 조합 시작 거부 · 읽기 전용 IME 거부 |
+| 편집 뒤 캐럿(Enter · 붙여넣기 · 여러 줄 선택 위 입력 · 줄 병합 · 재정규화 되밀기) — ⑤ 후속 | `EditorWidgetTest` 3 함수 + `WriterHostTest` 2 함수(되밀기 결선) | 수정 전 소스에서 전부 red · 대안 「공통 접두사 상한」 변이는 2함수 red |
 | 상태 기계(전이 · fail-closed · 401 · coalesce · 복구 · 자동저장) | `EditControllerTest`(FakeNewsModel · 주입 시계) | 34 함수 |
 | 표면당 `EditClientId` · `x-edit-client` 3라우트 | `EditControllerTest` + 와이어 테스트(`tests/editwire.h`) | 표면 2개 × 3건 = 6건 · GET 0 · 두 표면 값 상이 |
 | 화면 4개 · 창 껍데기 1 · 다이얼로그 0 | `ScreenInventoryTest` | `{login, list, setup, editor}` + `{MainWindow}` |

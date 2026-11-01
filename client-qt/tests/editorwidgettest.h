@@ -44,6 +44,11 @@ private slots:
     void copyCarriesTheRealText();
     void aCompositionNeverCarriesInputPastTheMarker();
     void aCompositionNeverChangesTheLineStructureNatively();
+    void enterAtALineEndPutsTheCaretOnTheNewLine();
+    void enterAboveTheMarkerLineKeepsTheNextKeystroke();
+    void anInsertionThatRepeatsItsNeighboursPutsTheCaretAfterIt();
+    void aCompositionNeverTypesALineSeparator();
+    void aFocusOutPutsAPendingOutOfBandChangeBackFirst();
 };
 
 #endif // CLIENT_QT_TESTS_EDITORWIDGETTEST_H

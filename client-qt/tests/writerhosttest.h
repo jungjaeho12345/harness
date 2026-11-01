@@ -26,6 +26,8 @@ private slots:
     void opensOneSurfaceAtATime();
     void anEditOperationSavesTheBlocksTheEditorShows();
     void aSessionThatEndsOnSaveTurnsTheEditorReadOnly();
+    void aJoinBehindTheMarkerKeepsTheCaretThroughThePushBack();
+    void aDeleteBehindTheMarkerKeepsTheCaretThroughThePushBack();
 
 private:
     bool m_savedQuitOnLastWindowClosed = true;

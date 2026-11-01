@@ -398,3 +398,74 @@ void WriterHostTest::aSessionThatEndsOnSaveTurnsTheEditorReadOnly()
     QVERIFY(rig.window.listPageShown());
     QVERIFY(!rig.host->surface());
 }
+
+// phase 78 ⑤ follow-up F2. A typing edit behind "(끝)" - the lines a collected article carries after it (a copyright
+// line) - is renormalized and pushed back (the marker goes last), and the caret has to come through that push-back
+// where the edit left it. A join of "b" and "c" put it at the join offset of the body BEFORE the push-back: inside
+// "(끝)" after it, where the next key is refused. A join that makes the marker line itself ("   " + "(끝)") moves the
+// caret with the marker: right before "(끝)" it was, right before it it stays.
+void WriterHostTest::aJoinBehindTheMarkerKeepsTheCaretThroughThePushBack()
+{
+    {
+        const QVector<editor::Block> loaded{editor::textBlock(QStringLiteral("a")), editor::textBlock(editor::END_MARKER),
+                                            editor::textBlock(QStringLiteral("b")), editor::textBlock(QStringLiteral("c"))};
+        HostRig rig({defaultArticle(markup(loaded))});
+        ui::EditController *surface = rig.host->openArticle(kId);
+        QVERIFY(surface);
+        QCOMPARE(surface->state(), EditState::Editing);
+        ui::EditorWidget *editor = rig.editor();
+        QVERIFY(editor);
+        editor->focusLineStart(3); // the start of "c"
+        QTest::keyClick(editor, Qt::Key_Backspace);
+        const QVector<editor::Block> pushedBack{editor::textBlock(QStringLiteral("a")), editor::textBlock(QStringLiteral("bc")),
+                                                editor::textBlock(editor::END_MARKER)};
+        QCOMPARE(editor->blocks(), pushedBack);
+        QCOMPARE(surface->body(), editor::serialize(pushedBack));
+        QCOMPARE(editor->caret().lineIndex, 1);
+        QCOMPARE(editor->textCursor().positionInBlock(), 1); // the join: between "b" and "c"
+        QTest::keyClicks(editor, QStringLiteral("x"));
+        QCOMPARE(editor::blocksToText(editor->blocks()), QStringLiteral("a\nbxc\n") + editor::END_MARKER);
+    }
+    {
+        const QVector<editor::Block> loaded{editor::textBlock(QStringLiteral("a")), editor::textBlock(QStringLiteral("   ")),
+                                            editor::textBlock(editor::END_MARKER), editor::textBlock(QStringLiteral("b"))};
+        HostRig rig({defaultArticle(markup(loaded))});
+        ui::EditController *surface = rig.host->openArticle(kId);
+        QVERIFY(surface);
+        ui::EditorWidget *editor = rig.editor();
+        QVERIFY(editor);
+        editor->focusLineStart(2); // the start of the "(끝)" line
+        QTest::keyClick(editor, Qt::Key_Backspace); // "   (끝)" - still a marker line, so the merge gate allows it
+        const QVector<editor::Block> pushedBack{editor::textBlock(QStringLiteral("a")), editor::textBlock(QStringLiteral("b")),
+                                                editor::textBlock(editor::END_MARKER)};
+        QCOMPARE(editor->blocks(), pushedBack);
+        QCOMPARE(editor->caret().lineIndex, 2);
+        QCOMPARE(editor->textCursor().positionInBlock(), 0);
+    }
+}
+
+// phase 78 ⑤ follow-up F2. The same push-back after a character deleted behind "(끝)" (Qt's own delete - the caret was
+// already right when edited() went out): the push-back's minimal edit rewrites everything from the old marker line on,
+// and the caret it carried went to the end of the body, behind the marker. The caret keeps its line through the
+// push-back - every line but the marker keeps its text and order.
+void WriterHostTest::aDeleteBehindTheMarkerKeepsTheCaretThroughThePushBack()
+{
+    const QVector<editor::Block> loaded{editor::textBlock(QStringLiteral("a")), editor::textBlock(editor::END_MARKER),
+                                        editor::textBlock(QStringLiteral("bcd"))};
+    HostRig rig({defaultArticle(markup(loaded))});
+    ui::EditController *surface = rig.host->openArticle(kId);
+    QVERIFY(surface);
+    ui::EditorWidget *editor = rig.editor();
+    QVERIFY(editor);
+    editor->focusLineStart(2);
+    QTest::keyClick(editor, Qt::Key_End); // the end of "bcd"
+    QTest::keyClick(editor, Qt::Key_Backspace);
+    const QVector<editor::Block> pushedBack{editor::textBlock(QStringLiteral("a")), editor::textBlock(QStringLiteral("bc")),
+                                            editor::textBlock(editor::END_MARKER)};
+    QCOMPARE(editor->blocks(), pushedBack);
+    QCOMPARE(surface->body(), editor::serialize(pushedBack));
+    QCOMPARE(editor->caret().lineIndex, 1);
+    QCOMPARE(editor->textCursor().positionInBlock(), 2); // where the "d" was
+    QTest::keyClicks(editor, QStringLiteral("x"));
+    QCOMPARE(editor::blocksToText(editor->blocks()), QStringLiteral("a\nbcx\n") + editor::END_MARKER);
+}

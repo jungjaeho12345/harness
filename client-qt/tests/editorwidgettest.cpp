@@ -1264,3 +1264,154 @@ void EditorWidgetTest::aCompositionNeverChangesTheLineStructureNatively()
         QVERIFY(rec.edits.isEmpty());
     }
 }
+
+// phase 78 ⑤ follow-upF1. The caret after an Enter is where replaceRangeInBlocks put the text, never a reading of a
+// diff of the two documents: "ab" + Enter over "cd" is "ab⏎⏎cd", whose common prefix with "ab⏎cd" runs one character
+// past the edit ("ab⏎"), and the caret went to the start of "cd" - the next key typed "ab⏎⏎xcd". The web puts it at the
+// start of the new line (focusLineStart(caretLineIndex)).
+void EditorWidgetTest::enterAtALineEndPutsTheCaretOnTheNewLine()
+{
+    const QVector<Block> b = lines({QStringLiteral("ab"), QStringLiteral("cd"), editor::END_MARKER});
+    EditorWidget w;
+    w.setBlocks(b);
+    caretTo(w, 2); // the end of "ab" - a line follows
+    QTest::keyClick(&w, Qt::Key_Return);
+    const editor::InsertResult expected = editor::replaceRangeInBlocks(b, rangeIn(b, 2, 2), QStringLiteral("\n"));
+    QCOMPARE(bytes(w.blocks()), bytes(expected.blocks));
+    QCOMPARE(expected.caretLineIndex, 1);
+    QCOMPARE(w.caret().lineIndex, 1);
+    QCOMPARE(w.textCursor().positionInBlock(), 0);
+    QTest::keyClicks(&w, QStringLiteral("x"));
+    QCOMPARE(real(w), QStringLiteral("ab\nx\ncd\n") + editor::END_MARKER);
+}
+
+// phase 78 ⑤ follow-upF1. An Enter at the end of the line above "(끝)": the misplaced caret went to the start of the
+// marker line, where input is blocked - the next key was refused without a sound ("ab⏎cd⏎⏎(끝)"). Where rule 3 moves the
+// insertion (a caret between two marker lines: the new line goes under the line above the first one) the caret follows
+// the insertion - it went to the start of the first marker line instead, and since the input gate looks at the LAST
+// "(끝)", the next key glued itself to the first marker ("x(끝)" - no longer a marker line).
+void EditorWidgetTest::enterAboveTheMarkerLineKeepsTheNextKeystroke()
+{
+    {
+        const QVector<Block> b = lines({QStringLiteral("ab"), QStringLiteral("cd"), editor::END_MARKER});
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 5); // the end of "cd" - the marker line below
+        QTest::keyClick(&w, Qt::Key_Return);
+        QCOMPARE(w.caret().lineIndex, 2);
+        QCOMPARE(w.textCursor().positionInBlock(), 0);
+        QVERIFY(!editor::isInputBlocked(real(w), w.textCursor().position()));
+        QTest::keyClicks(&w, QStringLiteral("x"));
+        QCOMPARE(real(w), QStringLiteral("ab\ncd\nx\n") + editor::END_MARKER);
+    }
+    {
+        const QVector<Block> two = lines({QStringLiteral("a"), editor::END_MARKER, QStringLiteral("b"), editor::END_MARKER});
+        EditorWidget w;
+        w.setBlocks(two);
+        const int at = w.document()->findBlockByNumber(2).position(); // the start of "b", between the two markers
+        caretTo(w, at);
+        QTest::keyClick(&w, Qt::Key_Return);
+        const editor::InsertResult expected = editor::replaceRangeInBlocks(two, rangeIn(two, at, at), QStringLiteral("\n"));
+        QCOMPARE(bytes(w.blocks()), bytes(expected.blocks));
+        QCOMPARE(expected.caretLineIndex, 1); // rule 3: the new line went in under "a"
+        QCOMPARE(w.caret().lineIndex, 1);
+        QCOMPARE(w.textCursor().positionInBlock(), 0);
+        QTest::keyClicks(&w, QStringLiteral("x"));
+        QCOMPARE(real(w), QStringLiteral("a\nx\n") + editor::END_MARKER + QStringLiteral("\nb\n") + editor::END_MARKER);
+    }
+}
+
+// phase 78 ⑤ follow-upF1. An insertion whose text repeats its neighbours: "bc" pasted into "a|bcd" - the common
+// prefix ran past the edit and the caret landed after "abcbc" (5), not after the pasted "bc" (3); "b⏎b" pasted into
+// "a|b" - the caret went to the end, past the "b" that was there before. Typing over a multi-line selection slid the
+// other way: "d" over "b⏎cd" leaves "ad", the common suffix took the typed "d" and the caret went before it. The caret is
+// the end of the inserted text (multi-line: the end of its last line - step8 (d)), counted from the insertion point.
+void EditorWidgetTest::anInsertionThatRepeatsItsNeighboursPutsTheCaretAfterIt()
+{
+    {
+        const QVector<Block> b = lines({QStringLiteral("abcd"), editor::END_MARKER});
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 1);
+        QApplication::clipboard()->setText(QStringLiteral("bc"));
+        QTest::keyClick(&w, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(real(w), QStringLiteral("abcbcd\n") + editor::END_MARKER);
+        QCOMPARE(w.textCursor().position(), 3);
+    }
+    {
+        const QVector<Block> b = lines({QStringLiteral("ab")});
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 1);
+        QApplication::clipboard()->setText(QStringLiteral("b\nb"));
+        QTest::keyClick(&w, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(real(w), QStringLiteral("ab\nbb"));
+        QCOMPARE(w.caret().lineIndex, 1);
+        QCOMPARE(w.textCursor().positionInBlock(), 1);
+    }
+    {
+        const QVector<Block> b = lines({QStringLiteral("ab"), QStringLiteral("cd")});
+        EditorWidget w;
+        w.setBlocks(b);
+        select(w, 1, 5); // "b⏎cd"
+        QTest::keyClicks(&w, QStringLiteral("d"));
+        QCOMPARE(bytes(w.blocks()), bytes(editor::replaceRangeInBlocks(b, rangeIn(b, 1, 5), QStringLiteral("d")).blocks));
+        QCOMPARE(real(w), QStringLiteral("ad"));
+        QCOMPARE(w.textCursor().position(), 2);
+    }
+}
+
+// phase 78 ⑤ follow-upF3. While composing, Shift+Enter reaches Qt untouched (decisions (4)) and Qt types it as U+2028,
+// a line break inside the block - which divergence ⑦ (Shift+Enter = Enter, never Qt's line separator) rules out: it read
+// "ab<U+2028>한". The native edit is refused like a line break and the composition lands on its own line. One rule, so a
+// key that types U+2028 outside a composition is refused the same way.
+void EditorWidgetTest::aCompositionNeverTypesALineSeparator()
+{
+    const QVector<Block> b = lines({QStringLiteral("ab"), editor::END_MARKER});
+    {
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 2);
+        Recorder rec(w);
+        preedit(w, QStringLiteral("ㅎ"));
+        QVERIFY(w.isComposing());
+        QTest::keyClick(&w, Qt::Key_Return, Qt::ShiftModifier);
+        QVERIFY2(!real(w).contains(QChar(0x2028)), qPrintable(real(w)));
+        QCOMPARE(bytes(w.blocks()), bytes(b));
+        QCOMPARE(shown(w), displayed(b));
+        QVERIFY(rec.edits.isEmpty());
+        commit(w, QStringLiteral("한"));
+        QCOMPARE(real(w), QStringLiteral("ab한\n") + editor::END_MARKER);
+    }
+    {
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 1);
+        Recorder rec(w);
+        windowsKey(w, Qt::Key_unknown, Qt::NoModifier, 0, QString(QChar(0x2028)));
+        QCOMPARE(bytes(w.blocks()), bytes(b));
+        QCOMPARE(shown(w), displayed(b));
+        QVERIFY(rec.edits.isEmpty());
+    }
+}
+
+// phase 78 ⑤ follow-upF5. Every entry point puts a pending out-of-band change back before it acts - the focus-out
+// too: without that, its native pass (runNative) took the foreign text for an edit of its own and, where input is open,
+// mirrored it into the blocks and reported it as typing (fail open).
+void EditorWidgetTest::aFocusOutPutsAPendingOutOfBandChangeBackFirst()
+{
+    const QVector<Block> b = lines({QStringLiteral("본문")});
+    EditorWidget w;
+    w.setBlocks(b);
+    caretTo(w, 2);
+    Recorder rec(w);
+    w.insertPlainText(QStringLiteral("x")); // QPlainTextEdit's own API: the put-back is queued, not run yet
+    focusOut(w);
+    QCOMPARE(real(w), QStringLiteral("본문"));
+    QCOMPARE(shown(w), displayed(b));
+    QVERIFY(rec.edits.isEmpty());
+    QCoreApplication::processEvents();
+    QCOMPARE(real(w), QStringLiteral("본문"));
+    QCOMPARE(shown(w), displayed(b));
+    QVERIFY(rec.edits.isEmpty());
+}

@@ -2,6 +2,7 @@
 
 #include "editor/editorcontent.h"
 #include "editor/editornewline.h"
+#include "editor/writerbody.h"
 #include "ui/editorwidget.h"
 #include "ui/listscreen.h"
 #include "ui/mainwindow.h"
@@ -150,11 +151,11 @@ void WriterHost::onEdited(editor::EditKind kind)
         m_surface->commitEdit(editor::serialize(shown), kind);  // an edit operation: its own blocks (WriterPage)
         return;
     }
-    // Typing (step8 (b)(c)): saved as serializeBodyFromBlocks = serialize(renormalizeEndMarker(...)); when that moved a
-    // marker the widget is handed the result (the web's remount) - edited() is never sent while composing, so this
-    // setBlocks cannot break a composition.
+    // Typing (step8 (b)(c)): saved as serializeBodyFromBlocks (the one spelling - the scenario edit uses it too); when its
+    // renormalization moved a marker the widget is handed the renormalized blocks (the web's remount) - edited() is
+    // never sent while composing, so this setBlocks cannot break a composition.
+    m_surface->commitEdit(editor::serializeBodyFromBlocks(shown), kind);
     const QVector<editor::Block> fixed = editor::renormalizeEndMarker(shown);
-    m_surface->commitEdit(editor::serialize(fixed), kind);
     if (fixed != shown)
         widget->setBlocks(fixed);
 }

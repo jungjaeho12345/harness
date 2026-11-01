@@ -77,8 +77,9 @@ public:
 
     // The body. setBlocks is the state machine's write - opening an article, applying an undo / redo snapshot,
     // pushing back a renormalized body: the document follows with a minimal edit (the caret keeps its place where the
-    // text did not change), colours are recomputed ("load") and edited() is NOT emitted. A composition in progress is
-    // dropped first. blocks() is the current body: normalized blocks, embeds where they were.
+    // text did not change; a pushed-back renormalization of the current body keeps it on its own line and column -
+    // only the marker lines move), colours are recomputed ("load") and edited() is NOT emitted. A composition in
+    // progress is dropped first. blocks() is the current body: normalized blocks, embeds where they were.
     void setBlocks(const QVector<editor::Block> &blocks);
     QVector<editor::Block> blocks() const;
 
@@ -123,7 +124,7 @@ protected:
     void dropEvent(QDropEvent *e) override;
 
 private:
-    enum class CaretAfter { EditEnd, Keep, LineStart };
+    enum class CaretAfter { Keep, Line }; // Keep: where Qt's minimal edit leaves it; Line: a text line and a column
 
     QString realText() const;
     int textLineCount() const;
@@ -138,8 +139,10 @@ private:
 
     void restoreIfPending();
     void restoreDocument();
-    int showText(const QString &target);
-    bool applyBlocks(const QVector<editor::Block> &next, editor::EditKind kind, CaretAfter caret, int caretLine = 0);
+    void showText(const QString &target);
+    void placeCaret(int textLine, int column);
+    bool applyBlocks(const QVector<editor::Block> &next, editor::EditKind kind, CaretAfter caret, int caretLine = 0,
+                     int caretColumn = 0);
     template <typename Call>
     bool runNative(Call &&call, bool backward);
     bool acceptNativeEdit(const editor::TextEdit &edit);
