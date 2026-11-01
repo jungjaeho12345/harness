@@ -1435,7 +1435,7 @@ P4의 divergence(재시작 = 재로그인 등 — 「P4 마감」 이전 장들)
 
 | # | 커맨드 | 회차 1 | 회차 2 |
 |---|---|---|---|
-| 1 | `cmd.exe /c "client-qt\build.bat"` | exit 0 · 40,138 ms · `Totals: 643 passed, 0 failed (classes: 42)` · `BUILD OK` · `FAIL!` 0줄 | exit 0 · 40,289 ms · **동일**(클래스별 QtTest `Totals` 42줄도 동일) |
+| 1 | `cmd.exe /c "client-qt\build.bat"` | exit 0 · 40,138 ms · `Totals: 643 passed, 0 failed (classes: 42)`(④ 보강 뒤 **647**/0) · `BUILD OK` · `FAIL!` 0줄 | exit 0 · 40,289 ms · **동일**(클래스별 QtTest `Totals` 42줄도 동일) |
 | 2 | `verify-qt-client --scenario boot --server exe` | exit 0 · 4,855 ms · 관측 8(A 4 · B 4) · 판정 33 · 실패 0 | exit 0 · 4,816 ms · **동일** |
 | 3 | `… --scenario login --server exe` | exit 0 · 5,779 ms · 관측 17(G 0 · L+ 12 · L- 5) · 판정 40 · 실패 0 | exit 0 · 5,699 ms · **동일** |
 | 4 | `… --scenario list --server exe` | exit 0 · 7,868 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 7,984 ms · **동일** |

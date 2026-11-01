@@ -42,6 +42,8 @@ private slots:
     void readOnlyRefusesEveryEdit();
     void caretIsTheStep4TextPoint();
     void copyCarriesTheRealText();
+    void aCompositionNeverCarriesInputPastTheMarker();
+    void aCompositionNeverChangesTheLineStructureNatively();
 };
 
 #endif // CLIENT_QT_TESTS_EDITORWIDGETTEST_H

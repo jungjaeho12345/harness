@@ -1168,3 +1168,99 @@ void EditorWidgetTest::copyCarriesTheRealText()
     QCOMPARE(QApplication::clipboard()->text(), editor::blocksToText(b).left(8));
     QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("본문\r\n") + QChar(0x00A0) + QStringLiteral("x\n("));
 }
+
+// phase 78 ④ tester reinforcement. decisions (4) hands every key to Qt while a composition is in progress - a key
+// that moves the caret too (Qt moves it and keeps the preedit) and a paste. A later commit, or a key the input method
+// passes on, is then typed wherever the caret is NOW, and the composition-start gate (isInputBlocked before the first
+// preedit) is behind it: what keeps the last "(끝)" closed there is the second ask, at the point the text went in
+// (runNative -> nativeEditBetween -> acceptNativeEdit). The mutant without that second ask passed the whole suite
+// (643/0) and typed "본문(끝)한" / "본문(끝)x" / "본문(끝)한" (pasted marker) - a marker glued to text, as legacy bodies
+// and the web's unguarded line join (pre-decision 1) leave it.
+void EditorWidgetTest::aCompositionNeverCarriesInputPastTheMarker()
+{
+    const QString glued = QStringLiteral("본문") + editor::END_MARKER;
+    const QVector<Block> b = lines({glued});
+    const QList<QPair<QString, std::function<void(EditorWidget &)>>> moves{
+        {QStringLiteral("End"), [](EditorWidget &w) { QTest::keyClick(&w, Qt::Key_End); }},
+        {QStringLiteral("Right"), [](EditorWidget &w) { QTest::keyClick(&w, Qt::Key_Right); }},
+        {QStringLiteral("Ctrl+End"), [](EditorWidget &w) { QTest::keyClick(&w, Qt::Key_End, Qt::ControlModifier); }},
+    };
+    for (const auto &move : moves) {
+        for (const bool byCommit : {true, false}) {
+            const QString label = move.first + (byCommit ? QStringLiteral(" then a commit") : QStringLiteral(" then a key"));
+            EditorWidget w;
+            w.setBlocks(b);
+            caretTo(w, 1);
+            Recorder rec(w);
+            preedit(w, QStringLiteral("ㅎ"));
+            move.second(w);
+            // the path under test: still composing, and the caret where input is blocked
+            QVERIFY2(w.isComposing(), qPrintable(label));
+            QVERIFY2(editor::isInputBlocked(real(w), w.textCursor().position()), qPrintable(label));
+            if (byCommit)
+                commit(w, QStringLiteral("한"));
+            else
+                QTest::keyClicks(&w, QStringLiteral("x"));
+            QVERIFY2(real(w) == glued, qPrintable(label + QStringLiteral(": ") + real(w)));
+            QCOMPARE(bytes(w.blocks()), bytes(b));
+            QCOMPARE(shown(w), displayed(b));
+            QVERIFY2(rec.edits.isEmpty(), qPrintable(label));
+        }
+    }
+    {
+        // a "(끝)" pasted while composing - the paste is gated and allowed where no marker is yet - leaves the caret
+        // after it with the composition still on: its commit is refused there
+        EditorWidget w;
+        w.setBlocks(lines({QStringLiteral("본문")}));
+        caretTo(w, 2);
+        preedit(w, QStringLiteral("ㅎ"));
+        QApplication::clipboard()->setText(editor::END_MARKER);
+        QTest::keyClick(&w, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(real(w), glued);
+        QVERIFY(w.isComposing());
+        QVERIFY(editor::isInputBlocked(real(w), w.textCursor().position()));
+        commit(w, QStringLiteral("한"));
+        QCOMPARE(real(w), glued);
+        QCOMPARE(shown(w), displayed(b));
+    }
+}
+
+// phase 78 ④ tester reinforcement. While composing, Enter and a Delete at a line end also reach Qt untouched, and Qt
+// would split or join the line itself. Only the widget's own paths change the line structure (one document block =
+// one text line): the native edit is refused and the document put back - a Delete that would glue the line above to
+// "(끝)" included (pre-decision 1). The mutant that let a native line break through passed the whole suite (643/0).
+void EditorWidgetTest::aCompositionNeverChangesTheLineStructureNatively()
+{
+    const QVector<Block> b = lines({QStringLiteral("ab"), QStringLiteral("cd"), editor::END_MARKER});
+    const QList<QPair<int, Qt::KeyboardModifiers>> enters{{Qt::Key_Return, Qt::NoModifier}, {Qt::Key_Enter, Qt::KeypadModifier}};
+    for (const auto &press : enters) {
+        EditorWidget w;
+        w.setBlocks(b);
+        caretTo(w, 1);
+        Recorder rec(w);
+        preedit(w, QStringLiteral("ㅎ"));
+        QVERIFY(w.isComposing());
+        QTest::keyClick(&w, Qt::Key(press.first), press.second);
+        QCOMPARE(bytes(w.blocks()), bytes(b));
+        QCOMPARE(w.document()->blockCount(), 3);
+        QCOMPARE(shown(w), displayed(b));
+        QVERIFY(rec.edits.isEmpty());
+        commit(w, QStringLiteral("한")); // the composition still lands where it was, on its own line
+        QCOMPARE(real(w), QStringLiteral("a한b\ncd\n") + editor::END_MARKER);
+        QCOMPARE(w.document()->blockCount(), 3);
+    }
+    {
+        const QVector<Block> m = lines({QStringLiteral("body"), editor::END_MARKER});
+        EditorWidget w;
+        w.setBlocks(m);
+        caretTo(w, 4); // the end of "body", the marker line below
+        Recorder rec(w);
+        preedit(w, QStringLiteral("ㅎ"));
+        QVERIFY(w.isComposing());
+        QTest::keyClick(&w, Qt::Key_Delete);
+        QCOMPARE(bytes(w.blocks()), bytes(m));
+        QCOMPARE(shown(w), displayed(m));
+        QCOMPARE(w.document()->blockCount(), 2);
+        QVERIFY(rec.edits.isEmpty());
+    }
+}

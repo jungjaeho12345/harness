@@ -328,3 +328,73 @@ void WriterHostTest::opensOneSurfaceAtATime()
     QCOMPARE(rig.model.count(QStringLiteral("getArticle")), 1);
     QVERIFY(!rig.host->openArticle(QString()));
 }
+
+// phase 78 ④ tester reinforcement - (b) on the edit-operation path. Ctrl+D is an Operation (step8): it is committed as
+// the widget's own blocks - serialize(blocks()), WriterPage's edit-op bytes - and [저장] PUTs exactly that, so what is
+// saved is what is shown. A loaded body with text after "(끝)" is where a renormalization would make the two differ:
+// the mutant that renormalized operations behind the widget's back passed the whole suite (645/0).
+void WriterHostTest::anEditOperationSavesTheBlocksTheEditorShows()
+{
+    const QVector<editor::Block> loaded{editor::textBlock(QStringLiteral("a")), editor::textBlock(editor::END_MARKER),
+                                        editor::textBlock(QStringLiteral("b"))};
+    HostRig rig({defaultArticle(markup(loaded))});
+    ui::EditController *surface = rig.host->openArticle(kId);
+    QVERIFY(surface);
+    QCOMPARE(surface->state(), EditState::Editing);
+    ui::EditorWidget *editor = rig.editor();
+    QVERIFY(editor);
+    editor->focusLineStart(0);
+    QTest::keyClick(editor, Qt::Key_D, Qt::ControlModifier); // deletes "a" - the marker line is now the first line
+    const QVector<editor::Block> shown{editor::textBlock(editor::END_MARKER), editor::textBlock(QStringLiteral("b"))};
+    QCOMPARE(editor->blocks(), shown);
+    QCOMPARE(surface->body(), editor::serialize(shown));
+    QCOMPARE(surface->history().entries, (QStringList{markup(loaded), editor::serialize(shown)}));
+    QVERIFY(rig.button("editorSaveButton"));
+    rig.button("editorSaveButton")->click();
+    const QList<editwire::ModelCall> puts = rig.model.callsOf(QStringLiteral("saveArticle"));
+    QCOMPARE(puts.size(), 1);
+    QCOMPARE(puts.first().dto.value(QStringLiteral("markupVersion")).toString(), editor::serialize(editor->blocks()));
+}
+
+// phase 78 ④ tester reinforcement - the host half of (h) "a 401 ends the session". A [저장] answered 401
+// unauthenticated makes the open surface read only ON SCREEN as well: the editor takes no more input, [저장] / [복구]
+// go grey, the controller's sentence shows, the autosave stops - and [닫기] then asks nothing (no unlock). The mutants
+// that left the editor writable, or the actions enabled, after that transition passed the whole suite (645/0) -
+// every existing host test reaches read only at open, never from Editing.
+void WriterHostTest::aSessionThatEndsOnSaveTurnsTheEditorReadOnly()
+{
+    HostRig rig({defaultArticle()}, ui::AutosaveConfig{true, 60, 1});
+    rig.model.scripted[QStringLiteral("saveArticle")]
+        << editwire::wire(QStringLiteral("articles-update"), 401, R"({"ok":false,"reason":"unauthenticated"})");
+    ui::EditController *surface = rig.host->openArticle(kId);
+    QVERIFY(surface);
+    ui::EditorWidget *editor = rig.editor();
+    QVERIFY(editor);
+    QVERIFY(!editor->isReadOnly());
+    QVERIFY(rig.host->autosaveArmed());
+    editor->focusLineStart(0);
+    QTest::keyClicks(editor, QStringLiteral("q"));
+    QCOMPARE(surface->title(), QStringLiteral("qTitle one"));
+
+    QVERIFY(rig.button("editorSaveButton") && rig.button("editorRecoverButton") && rig.button("editorCloseButton"));
+    rig.button("editorSaveButton")->click();
+    QCOMPARE(surface->state(), EditState::SessionEnded);
+    QVERIFY2(editor->isReadOnly(), "the editor stayed writable after the session ended");
+    QVERIFY2(!rig.button("editorSaveButton")->isEnabled(), "[저장] stayed enabled after the session ended");
+    QVERIFY2(!rig.button("editorRecoverButton")->isEnabled(), "[복구] stayed enabled after the session ended");
+    QVERIFY(rig.button("editorCloseButton")->isEnabled());
+    QVERIFY(!surface->notice().isEmpty());
+    QCOMPARE(rig.window.editorNoticeText(), surface->notice());
+    QVERIFY(!rig.host->autosaveArmed());
+
+    const QVector<editor::Block> before = editor->blocks();
+    QTest::keyClicks(editor, QStringLiteral("zz"));
+    QTest::keyClick(editor, Qt::Key_Y, Qt::AltModifier);
+    QCOMPARE(editor->blocks(), before);
+
+    rig.model.calls.clear();
+    rig.button("editorCloseButton")->click();
+    QVERIFY2(rig.model.calls.isEmpty(), qPrintable(rig.model.methods().join(QLatin1Char(','))));
+    QVERIFY(rig.window.listPageShown());
+    QVERIFY(!rig.host->surface());
+}

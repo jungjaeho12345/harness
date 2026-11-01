@@ -24,6 +24,8 @@ private slots:
     void theWindowClosingUnlocksWithoutGoingBackToTheList();
     void autosaveRunsOnASingleShotTimerOnlyWhenEnabled();
     void opensOneSurfaceAtATime();
+    void anEditOperationSavesTheBlocksTheEditorShows();
+    void aSessionThatEndsOnSaveTurnsTheEditorReadOnly();
 
 private:
     bool m_savedQuitOnLastWindowClosed = true;
