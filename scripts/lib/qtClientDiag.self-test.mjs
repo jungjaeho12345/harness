@@ -17,6 +17,9 @@
 //   · (step10) 시나리오 자격은 호출자가 줄 때만 실리고 부모 env 에서 새지 않는가 · selftest:false 가 가드 키를 뺀다
 //   · (step11) 로그인 성공 = 목록 진입(list-loaded·스트림) · 거부 경로의 articles-list 요청은 red(M10-2b 가 드라이버에 드러나는 모양)
 //   · (step11) 목록 판정 (i)(ii)(iii) — 트리거가 ready 전 · 재조회 없음(M11-1) · 폴링(M11-1p) · ready 재조회 · 낡은 수가 각각 red
+//   · (phase 78 step9) 편집 판정 — 목록을 떠나지 않은 편집 · 잠금 전 PUT · 편집기의 신원 재질의 · 폴링 · 해제 누락 · 세션 끊김이 각각 red
+//   · (phase 78 step9) 와이어 원장 — 계약 경로→라우트 id 매칭(리터럴 우선) · x-edit-client 가 lock·update·unlock 밖에 실리거나 빠지면 ·
+//     표면당 값이 둘이거나 형식이 틀리면 · 와이어와 diag 가 어긋나면 red · 보고에 clientId 값을 싣지 않는다
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,10 +27,12 @@ import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS, LIST_ALLOWED_EVENTS, LIST_EXPECTED_ROUTES, LIST_MENU, LIST_MIN_EVENTS,
-  LIST_ROUTE_COUNTS, LOGIN_ALLOWED_EVENTS, LOGIN_MIN_EVENTS, LOGIN_ROUTE_COUNTS,
-  bootSequences, contractRouteIds, countSecretOccurrences, diffSnapshots, findSequence, judgeBoot, judgeEventNames, judgeList, judgeLogin,
-  judgeObservationCount, judgeRouteLedger, listSequences, loadContractRouteIds, loginSequences, parseDiagLines,
+  BOOT_ALLOWED_EVENTS, BOOT_MIN_EVENTS, CLIENT_FORBIDDEN_ROUTE_IDS, EDIT_ALLOWED_EVENTS, EDIT_CLIENT_ROUTES, EDIT_MIN_EVENTS, EDIT_ROUTE_COUNTS,
+  LIST_ALLOWED_EVENTS, LIST_EXPECTED_ROUTES, LIST_MENU, LIST_MIN_EVENTS, LIST_ROUTE_COUNTS, LOGIN_ALLOWED_EVENTS, LOGIN_MIN_EVENTS,
+  LOGIN_ROUTE_COUNTS,
+  bootSequences, contractRouteIds, contractRoutes, countSecretOccurrences, diffSnapshots, editSequences, findSequence, judgeBoot, judgeEdit,
+  judgeEditWire, judgeEventNames, judgeList, judgeLogin, judgeObservationCount, judgeRouteLedger, listSequences, loadContractRouteIds,
+  loadContractRoutes, loginSequences, matchContractRoute, parseDiagLines,
 } from './qtClientDiag.mjs';
 import { qtClientEnv } from './qtClientEnv.mjs';
 
@@ -561,6 +566,164 @@ test('judgeList 는 routeIds·N0·triggerAt 명세 오류를 판정 전에 던�
   assert.throws(() => judgeList({ ...base, n0: undefined }), /N0/);
   assert.throws(() => judgeList({ ...base, triggerAt: undefined }), /triggerAt/);
   assert.throws(() => judgeList({ ...base, triggerAt: 'now' }), /triggerAt/);
+});
+
+// --- 편집 시나리오 판정 (phase 78 step9 — 잠금 획득 실기 왕복) ---
+
+const CONTRACT_ROUTES = loadContractRoutes(ENDPOINTS_JSON);
+
+test('contractRoutes: 실제 계약 파일에서 id·method·path 를 읽는다 · 형식이 틀린 행은 던진다', () => {
+  assert.equal(CONTRACT_ROUTES.length, ROUTES.length);
+  assert.deepEqual(CONTRACT_ROUTES.map((r) => r.id), [...ROUTES]);
+  const lock = CONTRACT_ROUTES.find((r) => r.id === 'articles-lock');
+  assert.deepEqual({ ...lock }, { id: 'articles-lock', method: 'POST', path: '/api/articles/:id/lock' });
+  assert.throws(() => contractRoutes({ routes: [{ id: 'x', method: 'GET' }] }), /path/);
+  assert.throws(() => contractRoutes({ routes: [{ id: 'x', method: 'get', path: '/a' }] }), /method/);
+  assert.throws(() => contractRoutes({ routes: [{ id: 'x', method: 'GET', path: '/a' }, { id: 'x', method: 'GET', path: '/b' }] }), /중복/);
+  assert.throws(() => contractRoutes({ routes: [] }), /비었다/);
+});
+
+test('matchContractRoute: 경로를 라우트 id 로 — 리터럴 세그먼트가 이기고(search > :id) · 메서드·세그먼트 수가 다르거나 빈 세그먼트면 null', () => {
+  const m = (method, path) => matchContractRoute(CONTRACT_ROUTES, method, path);
+  assert.equal(m('GET', '/api/articles/search'), 'articles-search');
+  assert.equal(m('GET', '/api/articles/AKR20261101000100001'), 'articles-get');
+  assert.equal(m('PUT', '/api/articles/AKR1'), 'articles-update');
+  assert.equal(m('POST', '/api/articles/AKR1/lock'), 'articles-lock');
+  assert.equal(m('POST', '/api/articles/AKR1/unlock'), 'articles-unlock');
+  assert.equal(m('POST', '/api/articles'), 'articles-create');
+  assert.equal(m('GET', '/api/articles'), 'articles-list');
+  assert.equal(m('GET', '/api/articles/AKR1/history/7'), 'articles-history-snapshot');
+  assert.equal(m('GET', '/api/articles/AKR%201'), 'articles-get');
+  assert.equal(m('GET', '/api/stream'), 'stream');
+  assert.equal(m('DELETE', '/api/articles/AKR1'), null);
+  assert.equal(m('GET', '/api/articles/'), null);
+  assert.equal(m('GET', '/api/nothing'), null);
+  assert.equal(m('GET', '/api/articles/AKR1/lock'), null);
+  const twin = contractRoutes({ routes: [{ id: 'a', method: 'GET', path: '/x/:p' }, { id: 'b', method: 'GET', path: '/x/:q' }] });
+  assert.throws(() => matchContractRoute(twin, 'GET', '/x/1'), /모호/);
+});
+
+const EDIT_N0 = 1;
+const CID = 'c-0f8fad5b-d9cb-469f-a165-70867728950e';
+const EDIT_ENTRY = LOGGED_IN + LIST_TAIL(EDIT_N0);
+const EDIT_ROUND = line('sse-closed', { reason: 'stopped' }) + netReq('articles-get', 200) + netReq('articles-lock', 200, 'POST')
+  + netReq('articles-update', 200, 'PUT') + netReq('articles-unlock', 200, 'POST');
+const EDIT_REENTRY = netReq('session', 200) + line('session', { status: 200 }) + LIST_TAIL(EDIT_N0);
+const EDIT_OK = EDIT_ENTRY + EDIT_ROUND + EDIT_REENTRY;
+const edit = (text, extra = {}) => {
+  const { lines, rejected } = parseDiagLines(text);
+  return judgeEdit({ lines, rejected, origin: ORIGIN, routeIds: ROUTES, n0: EDIT_N0, ...extra });
+};
+const wireReq = (route, status, editClient = null, method = 'GET') => ({ method, route, status, editClient });
+const WIRE_OK = Object.freeze([
+  wireReq('login', 200, null, 'POST'), wireReq('session', 200), wireReq('articles-list', 200), wireReq('stream', 200),
+  wireReq('articles-get', 200), wireReq('articles-lock', 200, CID, 'POST'), wireReq('articles-update', 200, CID, 'PUT'),
+  wireReq('articles-unlock', 200, CID, 'POST'), wireReq('session', 200), wireReq('articles-list', 200), wireReq('stream', 200),
+]);
+const wired = (wire, text = EDIT_OK) => judgeEditWire({ wire, lines: parseDiagLines(text).lines, routeIds: ROUTES });
+const replaceWire = (index, patch) => WIRE_OK.map((w, i) => (i === index ? { ...w, ...patch } : w));
+
+test('편집 판정 상수: 허용 집합·정확 횟수·x-edit-client 라우트·최소 관측이 시퀀스와 맞물린다', () => {
+  assert.deepEqual([...EDIT_CLIENT_ROUTES], ['articles-lock', 'articles-update', 'articles-unlock']);
+  assert.deepEqual([...EDIT_ALLOWED_EVENTS], [...LIST_ALLOWED_EVENTS, 'sse-closed']);
+  assert.ok(!EDIT_ALLOWED_EVENTS.includes('sse-unauthorized'));
+  assert.deepEqual({ ...EDIT_ROUTE_COUNTS },
+    { login: 1, session: 2, stream: 2, 'articles-get': 1, 'articles-lock': 1, 'articles-update': 1, 'articles-unlock': 1 });
+  assert.equal(EDIT_MIN_EVENTS, 24);
+  assert.equal(editSequences({ origin: ORIGIN, n0: EDIT_N0 })[0].length, EDIT_MIN_EVENTS);
+  assert.throws(() => editSequences({ n0: 0 }), /origin/);
+  assert.throws(() => editSequences({ origin: ORIGIN, n0: -1 }), /N0/);
+});
+
+test('편집 왕복 diag 는 전 항목 green · 항목 이름은 edit: 접두어 · 재진입 뒤 신호 재조회 1회도 통과한다', () => {
+  const checks = edit(EDIT_OK);
+  assert.deepEqual(failedNames(checks), []);
+  assert.equal(checks.length, 9);
+  for (const c of checks) assert.ok(c.name.startsWith('edit: '), c.name);
+  const signalled = EDIT_OK + line('sse-change', { kind: 'lock' }) + netReq('articles-list', 200) + line('list-loaded', { menu: 'deskUnsent', count: EDIT_N0 });
+  assert.deepEqual(failedNames(edit(signalled)), []);
+});
+
+test('편집: 목록을 떠나지 않고 편집했거나(sse-closed 없음) 떠나기 전에 잠갔으면 red — 목록 스트림이 잠금 신호와 겹친다', () => {
+  const notLeft = failedNames(edit(EDIT_OK.replace(line('sse-closed', { reason: 'stopped' }), '')));
+  assert.ok(notLeft.some((n) => n.includes('sse-closed')), JSON.stringify(notLeft));
+  const early = EDIT_ENTRY + netReq('articles-get', 200) + netReq('articles-lock', 200, 'POST') + line('sse-closed', { reason: 'stopped' })
+    + netReq('articles-update', 200, 'PUT') + netReq('articles-unlock', 200, 'POST') + EDIT_REENTRY;
+  const failed = failedNames(edit(early));
+  assert.ok(failed.some((n) => n.includes('목록을 떠난 뒤')), JSON.stringify(failed));
+});
+
+test('편집: 잠금 전에 PUT 했거나(순서) PUT 이 거부됐거나(403) 해제가 없으면 red', () => {
+  const putFirst = EDIT_ENTRY + line('sse-closed', { reason: 'stopped' }) + netReq('articles-get', 200) + netReq('articles-update', 200, 'PUT')
+    + netReq('articles-lock', 200, 'POST') + netReq('articles-unlock', 200, 'POST') + EDIT_REENTRY;
+  assert.ok(failedNames(edit(putFirst)).some((n) => n.includes('articles-get/lock/update/unlock')));
+  const refused = EDIT_OK.replace(netReq('articles-update', 200, 'PUT'), netReq('articles-update', 403, 'PUT'));
+  assert.ok(failedNames(edit(refused)).some((n) => n.includes('articles-get/lock/update/unlock')));
+  const noUnlock = failedNames(edit(EDIT_OK.replace(netReq('articles-unlock', 200, 'POST'), '')));
+  assert.ok(noUnlock.some((n) => n.includes('articles-get/lock/update/unlock')), JSON.stringify(noUnlock));
+  assert.ok(noUnlock.some((n) => n.includes('라우트 원장')), JSON.stringify(noUnlock));
+});
+
+test('편집: 편집기가 신원을 다시 물었거나(session 3) 폴링했거나(신호 없는 재조회) 세션이 끊겼으면 red', () => {
+  const asked = EDIT_ENTRY + EDIT_ROUND.replace(netReq('articles-get', 200), netReq('session', 200) + line('session', { status: 200 }) + netReq('articles-get', 200))
+    + EDIT_REENTRY;
+  const failed = failedNames(edit(asked));
+  assert.ok(failed.some((n) => n.includes('session 2')), JSON.stringify(failed));
+  assert.ok(failed.some((n) => n.includes('라우트 원장')), JSON.stringify(failed));
+  const polled = EDIT_OK + netReq('articles-list', 200) + line('list-loaded', { menu: 'deskUnsent', count: EDIT_N0 });
+  assert.ok(failedNames(edit(polled)).some((n) => n.includes('articles-list')));
+  const killed = failedNames(edit(EDIT_OK + line('sse-unauthorized')));
+  assert.ok(killed.some((n) => n.includes('허용 이벤트')) && killed.some((n) => n.includes('sse-unauthorized')), JSON.stringify(killed));
+});
+
+test('편집: 금지·계약 밖 라우트 · 빈 diag · 깨진 줄 · 진입 수 불일치는 red · 명세 오류는 던진다', () => {
+  assert.ok(failedNames(edit(EDIT_OK + netReq('collection-pull', 200, 'POST'))).some((n) => n.includes('라우트 원장')));
+  assert.ok(failedNames(edit(EDIT_OK + netReq('articles-action', 200, 'POST'))).some((n) => n.includes('라우트 원장')));
+  const empty = failedNames(edit(''));
+  assert.ok(empty.some((n) => n.includes('관측 이벤트 수')), JSON.stringify(empty));
+  assert.ok(failedNames(edit(`${EDIT_OK}{broken}\n`)).some((n) => n.includes('깨진 줄')));
+  assert.ok(failedNames(edit(EDIT_OK, { n0: EDIT_N0 + 3 })).some((n) => n.includes('진입')));
+  const base = { lines: [], rejected: [], origin: ORIGIN, routeIds: ROUTES, n0: 0 };
+  assert.throws(() => judgeEdit({ ...base, routeIds: undefined }), /knownRouteIds/);
+  assert.throws(() => judgeEdit({ ...base, n0: -1 }), /N0/);
+});
+
+test('와이어 원장: 정상 왕복은 전 항목 green · 항목 이름은 wire: 접두어 · 보고에 clientId 값이 없다', () => {
+  const checks = wired(WIRE_OK);
+  assert.deepEqual(failedNames(checks), []);
+  assert.equal(checks.length, 5);
+  for (const c of checks) assert.ok(c.name.startsWith('wire: '), c.name);
+  assert.ok(!JSON.stringify(checks).includes(CID), '판정 보고가 clientId 를 되풀이했다');
+  const broken = wired(replaceWire(4, { editClient: CID }));
+  assert.ok(!JSON.stringify(broken).includes(CID), '실패 보고가 clientId 를 되풀이했다');
+});
+
+test('와이어 원장: x-edit-client 가 네 번째 라우트에 실리거나 편집 라우트에서 빠지면 red', () => {
+  assert.ok(failedNames(wired(replaceWire(4, { editClient: CID }))).some((n) => n.includes('정확히 lock·update·unlock')));
+  assert.ok(failedNames(wired(replaceWire(1, { editClient: CID }))).some((n) => n.includes('정확히 lock·update·unlock')));
+  assert.ok(failedNames(wired(replaceWire(7, { editClient: null }))).some((n) => n.includes('정확히 lock·update·unlock')));
+});
+
+test('와이어 원장: 표면 하나에 값이 둘이거나 형식이 c-<uuid v4> 가 아니면 red', () => {
+  const other = 'c-1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed';
+  assert.ok(failedNames(wired(replaceWire(7, { editClient: other }))).some((n) => n.includes('EditClientId 1개')));
+  const shortId = WIRE_OK.map((w) => (w.editClient ? { ...w, editClient: 'c-123' } : w));
+  assert.ok(failedNames(wired(shortId)).some((n) => n.includes('EditClientId 1개')));
+  const v1 = WIRE_OK.map((w) => (w.editClient ? { ...w, editClient: 'c-0f8fad5b-d9cb-169f-a165-70867728950e' } : w));
+  assert.ok(failedNames(wired(v1)).some((n) => n.includes('EditClientId 1개')));
+});
+
+test('와이어 원장: 계약 밖·금지 경로 · 편집 라우트 횟수/상태 · diag 와의 불일치는 red · 명세 오류는 던진다', () => {
+  assert.ok(failedNames(wired([...WIRE_OK, wireReq(null, 404)])).some((n) => n.includes('계약 라우트')));
+  assert.ok(failedNames(wired([...WIRE_OK, wireReq('collection-pull', 200, null, 'POST')])).some((n) => n.includes('계약 라우트')));
+  assert.ok(failedNames(wired(replaceWire(5, { status: 401 }))).some((n) => n.includes('각 정확히 1회')));
+  const twice = [...WIRE_OK.slice(0, 8), wireReq('articles-update', 200, CID, 'PUT'), ...WIRE_OK.slice(8)];
+  assert.ok(failedNames(wired(twice)).some((n) => n.includes('각 정확히 1회')));
+  assert.ok(failedNames(wired([...WIRE_OK, wireReq('articles-list', 200)])).some((n) => n.includes('diag')));
+  assert.ok(failedNames(wired(WIRE_OK.slice(0, -1))).some((n) => n.includes('diag')));
+  assert.ok(failedNames(wired([])).some((n) => n.includes('계약 라우트')));
+  assert.throws(() => judgeEditWire({ wire: 'x', lines: [], routeIds: ROUTES }), /wire/);
+  assert.throws(() => judgeEditWire({ wire: [], lines: [], routeIds: undefined }), /knownRouteIds/);
 });
 
 // --- 비밀 유출 점검 ---

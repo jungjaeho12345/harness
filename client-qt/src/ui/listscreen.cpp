@@ -229,6 +229,11 @@ ListScreen::ListScreen(QWidget *parent) : QWidget(parent)
     m_table->setWordWrap(false);
     m_table->setMouseTracking(true);
     m_table->viewport()->installEventFilter(this);
+    // The one action (phase 78 step9): a double-click names the row's article for editing - nothing else happens here.
+    connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        if (row >= 0 && row < m_rowArticleIds.size() && !m_rowArticleIds.at(row).isEmpty())
+            emit articleOpenRequested(m_rowArticleIds.at(row));
+    });
     m_table->setItemDelegate(new ListCellDelegate(statusColumn, &m_hoveredRow, m_table));
     QHeaderView *header = m_table->horizontalHeader();
     header->setSectionsClickable(false);  // no click-to-sort: the order is the controller's
@@ -275,8 +280,10 @@ void ListScreen::render(const ListViewState &state)
     const QList<ListColumn> columns = listColumns();
     m_table->setRowCount(0);  // replace, never append
     m_table->setRowCount(static_cast<int>(state.rows.size()));
+    m_rowArticleIds.clear();
     for (int r = 0; r < state.rows.size(); ++r) {
         const QJsonObject &row = state.rows.at(r);
+        m_rowArticleIds << row.value(QStringLiteral("articleId")).toString();
         for (int c = 0; c < columns.size(); ++c) {
             const QString &key = columns.at(c).key;
             auto *item = new QTableWidgetItem(formatListCell(key, row.value(key)));

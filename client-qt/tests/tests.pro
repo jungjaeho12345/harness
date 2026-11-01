@@ -43,7 +43,24 @@ SOURCES += $$PWD/../src/net/fakenewsmodel.cpp \
            listcontrollertest.cpp \
            listscreentest.cpp \
            screeninventorytest.cpp \
-           timerpolicytest.cpp
+           timerpolicytest.cpp \
+           editorrolestest.cpp \
+           editorcoloringtest.cpp \
+           editorcontenttest.cpp \
+           editornewlinetest.cpp \
+           editorcarettest.cpp \
+           editorrangetest.cpp \
+           editorshortcutstest.cpp \
+           editoreditopstest.cpp \
+           editorhistorytest.cpp \
+           editordrafttest.cpp \
+           editordraftstoretest.cpp \
+           editorinputtest.cpp \
+           editorwidgettest.cpp \
+           writerbodytest.cpp \
+           editcontrollertest.cpp \
+           writerhosttest.cpp \
+           editscenariotest.cpp
 
 HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            smoketest.h \
@@ -76,4 +93,22 @@ HEADERS += $$PWD/../src/net/fakenewsmodel.h \
            listcontrollertest.h \
            listscreentest.h \
            screeninventorytest.h \
-           timerpolicytest.h
+           timerpolicytest.h \
+           editorrolestest.h \
+           editorcoloringtest.h \
+           editorcontenttest.h \
+           editornewlinetest.h \
+           editorcarettest.h \
+           editorrangetest.h \
+           editorshortcutstest.h \
+           editoreditopstest.h \
+           editorhistorytest.h \
+           editordrafttest.h \
+           editordraftstoretest.h \
+           editorinputtest.h \
+           editorwidgettest.h \
+           editwire.h \
+           writerbodytest.h \
+           editcontrollertest.h \
+           writerhosttest.h \
+           editscenariotest.h

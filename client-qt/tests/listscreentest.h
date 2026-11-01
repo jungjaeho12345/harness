@@ -2,7 +2,8 @@
 #define CLIENT_QT_TESTS_LISTSCREENTEST_H
 
 // The list screen and the main window's top bar (phase 77 step11 B) - the view half, checked against
-// the web's own tables (columnConfig.js, statusBadge.js) read at run time.
+// the web's own tables (columnConfig.js, statusBadge.js) read at run time. Since phase 78 step9 the screen
+// has exactly one action, the editing path P5 opens: a double-click names the row's article.
 
 #include <QObject>
 
@@ -19,7 +20,8 @@ private slots:
     void rendersTheCurrentPageInElevenColumns();
     void pagerFollowsThePage();
     void showsAQueryErrorAboveTheRows();
-    void isReadOnly();
+    void isReadOnlyButForTheOneEditingPath();
+    void doubleClickAsksToEditThatRowsArticle();
     void topBarIs48PxWithALiveIndicatorOnTheListPage();
     void serverDerivedTextNeverRendersAsMarkup();
 };

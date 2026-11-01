@@ -1,8 +1,12 @@
-# client-qt — Qt 네이티브 클라이언트 (로드맵 P4 · phase 77)
+# client-qt — Qt 네이티브 클라이언트 (로드맵 P4 · phase 77 / P5 · phase 78)
 
 `docs/porting-plan-cpp-spring.md` §7 **P4 「C++ 클라 골격」** 의 산출물이다. Electron 셸 + 웹 SPA(`client/` + `web/`)를
 대체할 네이티브 클라이언트를 여기에 세운다. **P4까지는 Electron 클라가 상시 대체재**이므로(로드맵 187행) 이 모듈이
 동작하지 않아도 운영은 영향을 받지 않는다.
+
+**P5 갱신(phase 78 · 2026-11-01)**: 로드맵 P5 「에디터 코어」가 이 골격 위에 에디터(순수 이식층 `src/editor/` + 텍스트 엔진 ·
+편집 상태 기계 `src/ui/`)를 얹었다 — 아래 「에디터 — P5」 장과 「P5 마감」 장 · 결정은 `docs/ADR.md` **ADR-019**. 아래 P4 장들의
+서술은 그 시점의 기록이고, P5가 바꾼 자리에는 **「P5 갱신」** 표시를 덧붙였다.
 
 ## 빌드 · 실행
 
@@ -16,6 +20,8 @@ cmd /c client-qt\run.bat --selftest   CLIENT_SELFTEST=1과 똑같이 부팅(창 
 - `--scenario login`·`--scenario list`는 **하네스 전용 자동화 훅**이다(step10·11 — `list`도 로그인 컨트롤러 1회 호출이고 목록은
   앱 자신의 성공 경로로 따라온다). `CLIENT_SELFTEST=1`이 아니면 앱은 **아무것도 하지 않고
   exit 2**로 거부한다 — 이 가드는 **보안 경계가 아니라 사고 방지 장치**다(아래 「로그인 화면」 절).
+  **P5 갱신**: `--scenario edit`가 더해졌다(phase 78 step9) — `main.cpp`가 `list`로 바꿔 **같은 무수정 가드**에 넘기고, 가드를 지나도
+  `CLIENT_SCENARIO_ARTICLE`(편집할 기사 id)이 없으면 exit 2다(아래 「에디터 — P5」 장의 「자동화 훅과 드라이버」).
 - `--selftest`는 **실제 부팅과 같은 user-data 폴더를 쓴다**(`CLIENT_USER_DATA`가 없으면 `%APPDATA%\기사작성기-qt`를
   만든다). 하네스·검증은 언제나 `CLIENT_USER_DATA`로 임시 폴더를 준다. 같은 폴더를 쥔 인스턴스가 이미 떠 있으면
   자기검사를 돌리지 못했으므로 **exit 1**이다(돌지 않은 자기검사가 성공으로 보고되는 길을 막는다).
@@ -36,6 +42,9 @@ common.pri      공통 소스/헤더 목록 · INCLUDEPATH · CONFIG(c++17) · Q
 src/shell/      프로브 판정 · config · diag · 창 정책 · 단일 인스턴스 · 앱 셸   (step2~5)
 src/net/        라우트 표 · 전송 · Model 인터페이스 · SSE        (step7~9)
 src/ui/         서버 주소 설정 · 빈 메인 창(step5) · 로그인 · 목록(step10~11)
+                · P5: 텍스트 엔진 위젯 · 편집 상태 기계 · 편집 페이지 조립 · edit 훅   (phase 78 step8~9)
+src/editor/     P5 에디터 이식층 — 웹 editor*.js·writerBody.js 1:1 10모듈 + 이음매 2(초안 파일·입력 라우팅)
+                · 위젯 비의존   (phase 78 step0~9)
 app/            TARGET = news-client        → client-qt/release/news-client.exe
 tests/          TARGET = client-qt-tests    → client-qt/tests/release/client-qt-tests.exe
 ```
@@ -814,7 +823,7 @@ step7 `LiveServerTest` 선례). 같은 이벤트 루프의 **raw `QTcpSocket` �
 | 층 | 파일 | 하는 일 |
 |---|---|---|
 | View | `src/ui/loginscreen.*` | 로그인 카드(UI_GUIDE — 블루 라벨 · 명조 700 CTA · 오류 줄만 레드). 암호 필드는 **마스킹**, 제출 즉시 **비운다**(아이디는 재시도를 위해 남긴다) |
-| View | `src/ui/mainwindow.*` | 콘텐츠 2페이지 — **로그인 페이지**(창은 언제나 로그아웃 상태로 열린다) · **목록 슬롯**(step10에서는 비어 있었다 — step11부터 `ListScreen`, 아래 「목록 화면」) |
+| View | `src/ui/mainwindow.*` | 콘텐츠 2페이지 — **로그인 페이지**(창은 언제나 로그아웃 상태로 열린다) · **목록 슬롯**(step10에서는 비어 있었다 — step11부터 `ListScreen`, 아래 「목록 화면」). **P5 갱신**: 콘텐츠 페이지는 **셋**이다 — 세 번째 = **편집 페이지**(`EditorWidget` · 상단 바에 그 페이지 전용 [저장][복구][닫기] + 안내 문장 · 아래 「에디터 — P5」) |
 | Controller | `src/ui/logincontroller.*` | `LoginController(INewsModel&, Diag*)` — **위젯 타입 0**(소스 스캔으로 잠금). 결과는 `LoginAttempt`/`SessionCheck` 값 + `loginSucceeded`/`loginFailed` 신호 |
 | 결선 | `src/shell/appshell.*` · `app/main.cpp` | 앱 창마다 Model 1개(`Options::modelFactory` — main.cpp는 창 전용 전송 = 창 전용 쿠키 자 위의 `HttpNewsModel`) + 컨트롤러 1개 |
 
@@ -855,6 +864,10 @@ text/html이라 Model body가 `{ok:false, reason:"invalid-response"}` — **깨�
 | `loginSucceeded` | `confirmSession()` → ok: 목록 슬롯 + 표시 라벨 / **확인 못 함**(401·무응답·비-JSON): 로그인 페이지 + 사유(**fail-closed** — 확인 안 된 신원으로 목록을 열지 않는다). **step11 갱신**: 이 확인은 이제 목록 진입(`ListController::enter()`)의 첫 동작이다 — 같은 구현 `checkSession()`, 요청 수 동일(session 1) |
 | `loginFailed` | 로그인 페이지에 머묾 + 문장. 신원 확인 요청 **0** |
 | 세션 종료(신원 확인 401 · 스트림의 `unauthorized` 프레임/열리기 전 401) | 로그인 페이지 + 「세션이 끝났습니다」. step9 `onSessionEnd`의 결선점은 `AppShell::sessionEndHandler()` — 순서는 `onStatus(false)` → 핸들러(`goesBackToLoginWhenTheStreamEndsTheSession`) · 셸이 사라진 뒤 불려도 무동작(`QPointer`). **step10 실기 경로에는 스트림이 없다** — step11의 `subscribe`가 이 핸들러를 넘긴다 |
+
+**P5 갱신**: 목록 ↔ 편집 페이지 전환은 `AppShell`이 아니라 **`ui::WriterHost`** 몫이다 — 행 더블클릭 → 편집 페이지가 먼저 현재가
+되고(목록 이탈 = 스트림 stop) 그 뒤 조회·잠금 · [닫기] → unlock → 목록 페이지(셸이 위 「목록 진입」을 그대로 다시 돈다) · 메인 창 닫힘 →
+unlock(목록 재진입 없음). 아래 「에디터 — P5」 장의 「편집 페이지와 상태 기계」.
 
 diag: 컨트롤러는 `login{status}`·`session{status}`만 쓴다(응답 없음 = `null` · 필드 화이트리스트는 step4 `contractedFields()`).
 **`login` 줄이 먼저 디스크에 쓰이고 그 다음 신호가 나간다** — 그래서 성공 경로의 diag가 `login{200}` → `net-request{session}` 순이다.
@@ -944,9 +957,9 @@ View ← Controller ← Model:
 |---|---|---|
 | Controller | `src/ui/listcontroller.*` | `ListController(INewsModel&, Diag*)` — 위젯·전송·타이머 0(소스 스캔 `dependsOnNoWidgetAndNoTimer`). 진입 = `checkSession()`(GET /api/session) → `queryArticles(deskUnsent)` → `subscribe` |
 | View | `src/ui/listscreen.*` | 11컬럼 표 · 상태 배지 · 행 hover 틴트 · 페이저 · 쿼리 오류 줄 · **읽기 전용** |
-| View | `src/ui/mainwindow.*` | 창 껍데기 — 목록 페이지 = `ListScreen` · 상단바(48px) 우측 실시간 표시(`● 실시간`/`● 연결 끊김`, 목록 페이지에서만) · `listPageEntered/Left` 신호 |
+| View | `src/ui/mainwindow.*` | 창 껍데기 — 목록 페이지 = `ListScreen` · 상단바(48px) 우측 실시간 표시(`● 실시간`/`● 연결 끊김`, 목록 페이지에서만) · `listPageEntered/Left` 신호. **P5 갱신**: 편집 페이지(`EditorWidget`)와 그 페이지에서만 보이는 상단 바 영역(평문 안내 문장 · [저장][복구][닫기] — 메뉴 바 대신 · 메뉴·다이얼로그는 P6) · `editorSaveRequested`/`editorRecoverRequested`/`editorCloseRequested` 신호 |
 | 결선 | `src/shell/appshell.*` | 로그인 성공 → 목록 진입 → **확인된 진입만** 목록 페이지를 띄운다 · 다른 경로로 목록 페이지가 현재가 되어도 같은 진입(웹 `ListPage` 마운트 동형) · 로그인 페이지로 가면 목록 이탈(스트림 닫기·행 삭제) |
-| 인벤토리 | `src/ui/screens.*` | 화면 레지스트리 `{login, list, setup}` + 창 껍데기 `{MainWindow}` |
+| 인벤토리 | `src/ui/screens.*` | 화면 레지스트리 `{login, list, setup}` + 창 껍데기 `{MainWindow}`. **P5 갱신**: `{login, list, setup, editor}`(`editor` = `EditorWidget`) + 창 껍데기 `{MainWindow}` |
 
 ### 목록 규율 (코드가 강제하는 것)
 
@@ -972,6 +985,9 @@ View ← Controller ← Model:
   11종을 보인다(override L97·L100 · 토글은 P7) · 시간 `YYYY-MM-DD HH:mm` **고정**, 가운데 정렬(override L104 — 전역 설정은 P6) · 배지 색은
   **`web/src/view/statusBadge.js` 11종을 런타임에 읽어 대조**(UI_GUIDE 6종은 값으로도 잠금) · 표는 UI_GUIDE `.yh-table`(thead `#f5f5f5` ·
   th 하단 2px 블루 · td 1px `#ddd` · 행 hover 틴트 `rgba(10,77,166,0.08)`) · 우클릭·더블클릭·편집·선택·헤더 클릭 정렬 없음.
+  **P5 갱신**: 행 **더블클릭**이 목록 화면의 **유일한 동작**이 됐다 — `ListScreen`은 신호 `articleOpenRequested(articleId)`로 그 행의
+  기사 id만 이름 붙이고 Model에 닿지 않는다(조회·잠금·표시는 `ui::WriterHost`). 우클릭·선택·헤더 정렬은 여전히 없다(P7) —
+  `ListScreenTest`의 `isReadOnly`는 `isReadOnlyButForTheOneEditingPath`로 의도적으로 갱신됐다.
 
 ### 「화면」의 정의와 인벤토리 잠금 (decisions (5))
 
@@ -979,6 +995,10 @@ View ← Controller ← Model:
   화면이 아니다. 그러므로 P4의 화면 id는 `login`(`LoginScreen`) · `list`(`ListScreen`) · `setup`(`SetupScreen`) **3개**다.
 - 레지스트리: `ui::screenRegistry()` = `{login, list, setup}`(클래스 이름은 `staticMetaObject`로 컴파일 결박 — 없는 클래스는 빌드되지 않는다) ·
   `ui::windowShellClasses()` = `{MainWindow}`. 네 번째 화면을 **등록**하면 `registersExactlyTheThreeP4Screens`가 red.
+- **P5 갱신(phase 78 step8)**: 레지스트리는 이제 **화면 4개** `{login, list, setup, editor}`다 — `editor` = `EditorWidget`(편집 페이지의 주 내용
+  패널 · 래퍼 화면 없음). 테스트 이름이 `registersExactlyTheThreeP4Screens` → **`registersTheThreeP4ScreensAndTheP5Editor`**(기대 4)로 바뀌었고,
+  **다섯 번째**를 등록하면 red다. 창 껍데기는 그대로 `{MainWindow}`이고 다이얼로그 0(`sourcesOpenNoDialogWindow`)도 그대로다 — P5의 파일>복구에
+  확인창이 없는 이유다. 아래 변이표 M11-4의 함수 이름은 그 시점의 기록이라 고치지 않았다.
 - **소스 스캔 교차(규칙과 한계 한 줄)**: `client-qt/src/**`·`client-qt/app/**`의 모든 `.h`/`.cpp`(빌드 포함 여부 무관)에서 주석을 걷어내고
   `class|struct X [final] : … {`의 기반이 Qt 위젯 이름 패턴(`Q…Widget|Window|Dialog|Frame|View|Area|Edit|Box|Label|Button|Bar|Splitter|Wizard|Page`)
   이거나 이미 찾은 위젯 클래스면(추이) 위젯 클래스로 세고, 그 집합이 **레지스트리 ∪ 창 껍데기와 정확히 같아야** green이다 — **한계**: 서브클래스
@@ -1227,3 +1247,314 @@ SSE 실시간 갱신의 **기계 판정**(`--scenario list` — (i)(ii)(iii)) ·
 
 **`npm test`는 반드시 `cmd.exe /c`로 감싼다**: Node ≥ 20은 `.cmd`를 직접 spawn하지 못해 예외 없이 `status=null`을 돌려주고,
 그것이 「0 ms에 끝난 성공」으로 오독된다(마감 실측의 함정 ①). `status`가 **정수**인지 확인하라.
+
+## 에디터 — P5 (phase 78 · 2026-11-01)
+
+로드맵 P5(`docs/porting-plan-cpp-spring.md` **182행** — 텍스트 엔진·블록 모델·마커 계약·단축키 13종·IME·색상·undo·자동저장)의
+산출물이다. 결정·이유·대가는 **`docs/ADR.md` ADR-019**가, step별 실측 전문(기대값 출처·red 실증·우회 변이표)은
+**`phases/78-editor-core/index.json`의 `steps[].summary`**가 정본이다(**변이표는 그 summary에만 있다** — 이 장에는 소재만 적는다).
+이 장은 코드에서 시작할 자리와 판정의 경계만 적는다.
+
+### 두 층 — 이식층 `src/editor/`와 GUI·상태 기계 `src/ui/`
+
+- **의존 방향**: `src/ui` View(`EditorWidget` · `MainWindow`의 편집 페이지) ← `src/ui` Controller(`EditController` — 위젯 타입 0 ·
+  `INewsModel&`·`IDraftStore&`·주입 시계만) ← `src/net`(`INewsModel`). `src/editor`(이식층)는 위젯을 모르고, 위젯은 이식층을 **호출만** 한다.
+- **웹 테스트가 명세서다**: 데이터 행은 웹 정본 모듈을 node 24로 실행해 만든 값을 그대로 붙였다(수기 전사 0 · 생성기는 각 step의
+  스크래치패드 — 리포 밖). 9개 웹 스펙 파일의 it **180개**를 같은 순서로 옮겼고(아래 표의 「웹 it」 열) 나머지 행은 포트 잠금이다.
+- 새 프로덕션 모듈은 지금까지와 같이 `common.pri`의 `CLIENT_SOURCES`/`CLIENT_HEADERS`에 모듈당 1줄, 테스트 클래스는 `tests/main.cpp`의
+  `runTestClass<…>()` 한 줄, 테스트 더블은 `tests/tests.pro` 전용이다(위 「④⑤ 게이트 후 보강」 F1).
+
+### 빌드에 편입된 에디터 모듈 (2026-11-01 · `common.pri` 등록 기준)
+
+「QtTest」 열은 `함수 수 · 행 단위 PASS`(QtTest 자신의 클래스별 `Totals` — `initTestCase`·`cleanupTestCase` 포함 · 마감 실측 로그)다.
+
+| 모듈 | 웹 정본 | Qt | QtTest | 웹 it | step |
+|---|---|---|---|---|---|
+| 줄 역할·색 4종·마커 줄 판정(`isEndLine`)·JS 공백 집합 | `editorColoring.js`(+ P0 스파이크 `spikes/p0-qt-editor/editorlogic.*`) | `src/editor/editorroles.{h,cpp}` | `EditorRolesTest` 4 · 33 / `EditorColoringTest` 11 · 124 | 10(it 8~10은 setter 없이 성립하는 절반) | 0 · 2 |
+| 블록 모델(yh-editor v1 · 순서 보존 JSON) | `editorContent.js` | `src/editor/editorcontent.{h,cpp}` | `EditorContentTest` 25 · 69 | 22 | 1 |
+| 「(끝)」 입력 게이트·개행·재정규화·경계 병합 게이트 | `editorNewline.js`(+ 웹 4곳의 인라인 재정규화) | `src/editor/editornewline.{h,cpp}` | `EditorNewlineTest` 60 · 147 | 55 | 3 |
+| 캐럿(줄·오프셋 · `TextPoint`) | `editorCaret.js` | `src/editor/editorcaret.{h,cpp}` | `EditorCaretTest` 9 · 87 | 6 | 4 |
+| 단어·문단 범위 | `editorRange.js` | `src/editor/editorrange.{h,cpp}` | `EditorRangeTest` 22 · 202 | 17 | 4 |
+| 단축키 13종(`RESERVED_COMBOS`) · 키 인식 10 · 변환 | `editorShortcuts.js` + `editorGlyphKeymap.js`의 `RESERVED_COMBOS` + `editorFind.js`의 키 판정 1줄 | `src/editor/editorshortcuts.{h,cpp}` | `EditorShortcutsTest` 44 · 857 | 28 | 5 |
+| 단어 지우기 | `editorEditOps.js`의 `deleteWordAt` | `src/editor/editoreditops.{h,cpp}` | `EditorEditOpsTest` 11 · 90 | 9(정렬 29 it는 P6) | 5 |
+| undo/redo 스냅샷 스택 | `editorHistory.js` | `src/editor/editorhistory.{h,cpp}` | `EditorHistoryTest` 18 · 141 | 14 | 6 |
+| 자동저장 초안(순수 · 매체·시각·scope 주입) | `editorDraft.js` | `src/editor/editordraft.{h,cpp}` | `EditorDraftTest` 28 · 123 | 19 | 7 |
+| 초안 파일 저장소 `editor-drafts.json` | localStorage `yh.editorDrafts`의 값 | `src/editor/editordraftstore.{h,cpp}` | `EditorDraftStoreTest` 9 · 69 | — | 7 |
+| 입력 라우팅(위젯의 GUI 비의존 절반 · Qt 키 → `KeyInput` · 단축키 판정 순서) | `WriterPage.jsx` `onKeyDown` 순서 | `src/editor/editorinput.{h,cpp}` | `EditorInputTest` 10 · 469 | —(순서 표 384행은 웹 정본 실행 생성) | 8 |
+| 텍스트 엔진 위젯 | `Editor.jsx`(contentEditable) | `src/ui/editorwidget.{h,cpp}` — `QPlainTextEdit` + `QSyntaxHighlighter` | `EditorWidgetTest` 26 · 44(오프스크린 · 실제 이벤트 핸들러)(④ 보강 뒤 28 · 46 · ⑤ 후속 뒤 **33 · 51**) | — | 8 |
+| 본문 제목·저장 직렬화 | `writerBody.js`(`bodyTitle`·`serializeBodyFromBlocks`) | `src/editor/writerbody.{h,cpp}` | `WriterBodyTest` 2 · 19 | — | 9 |
+| 편집 상태 기계(표면 1개) | `useWriteController.js` 편집 탭 + `WriterPage.jsx` 본문 상태 + `lockMessages.js` | `src/ui/editcontroller.{h,cpp}` | `EditControllerTest` 34 · 63 | — | 9 |
+| 편집 페이지 조립 | `WriterPage.jsx` | `src/ui/writerhost.{h,cpp}` + `mainwindow.*`(편집 페이지·상단 바) + `listscreen.*`(더블클릭) | `WriterHostTest` 9 · 11(+ `ListScreenTest`)(④ 보강 뒤 11 · 13 · ⑤ 후속 뒤 **13 · 15**) | — | 9 |
+| 자동화 훅 `--scenario edit` | — | `src/ui/editscenario.{h,cpp}` + `app/main.cpp` | `EditScenarioTest` 10 · 21 | — | 9 |
+
+합계: P5 신규 **17 클래스 · 332 함수**(+ 갱신된 `ListScreenTest` 1 → P4 마감 310/25에서 **643/42**) · P5 클래스의 행 단위 PASS 2,569(전체 3,359)(④ 보강 뒤 336 함수 · 647/42 · 행 2,573(전체 3,363) · ⑤ 후속 뒤 **343 함수 · 654/42 · 행 2,580(전체 3,370)**) ·
+웹 it **180**(정적 집계 — ADR-019 ①·⑧). `writerBody.test.js`의 스펙은 step3 바이트 패리티 표(7행)와 step9 `WriterBodyTest`로 들어갔고 it 단위로 세지 않았다.
+
+### 「(끝)」 마커 게이트 — 단일 지점 `src/editor/editornewline.h`
+
+| 위젯의 쓰기 경로 | 거치는 게이트 |
+|---|---|
+| 타이핑 · IME 커밋 | `isInputBlocked`(삽입점 = 선택 시작) → Qt가 입력 → 편집 위치를 찾아 **재검증**(차단 위치 삽입·줄 경계 생성/삭제면 문서 원복 — 사전 게이트를 지운 변이 M3a도 이것이 막았다) |
+| Enter(수식어 무관) · 붙여넣기(Ctrl+V · Shift+Insert · `paste()`) · 여러 줄 선택 위 입력 · 줄바꿈이 든 입력 · IME 치환 | `isInputBlocked` → `replaceRangeInBlocks`(마커 clamp) |
+| 여러 줄 선택 삭제(BS · Del · Ctrl+X · Shift+Del · Ctrl+BS/Del · 선택 위 IME 조합 시작) | `replaceRangeInBlocks(…, "")` — `본문⏎(끝)`에서 `문⏎(끝`을 지우면 `본⏎(끝)`(웹 네이티브는 `본(끝)`) |
+| 비어 있지 않은 줄의 BS(줄 시작)/Del(줄 끝)과 그 Ctrl 형 | `isLineMergeBlocked` → `joinTextLines`(**웹 결함 비승계** — 사전 결정 ①) |
+| 빈 줄 BS/Del(수식어 무관) · Ctrl+D | `deleteLineAt`(마커 줄 삭제는 허용 — 지우면 입력 재개) |
+| Alt+Y · Ctrl+Y | `insertEndMarker`(중복 판정 = substring `hasEndMarker`) · `insertContinueMarker`(재정규화 — `(끝)`은 마지막에 남는다) |
+| 대소문자 변환 `transformCaretLine` — **P5 앱에는 진입점이 없다**(보기 메뉴 = P6 · 위젯 API와 QtTest만) | 줄 끝 `isInputBlocked` → `transformTextLine` |
+| 그 밖(`QPlainTextEdit` API 직접 호출 · 보조기술 · 밖으로 끌어낸 텍스트) | 위젯 경로가 만들지 않은 변경으로 감지 → 블록에서 복원(fail-closed) |
+
+- **한 줄 안의 삭제·이동·선택에는 게이트가 없다**(차단 대상이 아니다). 줄을 합치거나 여러 줄을 지울 때만 마커 줄이 다른 텍스트와 붙을 수 있다.
+- **판정 기준은 둘이고 섞지 않는다**: 입력 게이트 = 마지막 `(끝)`의 `lastIndexOf` 시작 오프셋 「이상」(UTF-16 · substring — 웹 동형) /
+  마커 줄 = `isEndLine`(JS `trim()` 공백 집합 — `QString::trimmed()`는 U+0085·U+FEFF에서 다르다). 위젯은 substring·trim으로 재판정하지 않는다.
+- 저장 바이트 = `serialize(renormalizeEndMarker(blocks))` = 웹 `serializeBodyFromBlocks`(step3 바이트 표 17행 · 드라이버 S가 실서버에서 다시 대조).
+
+### IME — 조합 중 무개입 (그리고 그것을 무엇이 판정하는가)
+
+- 조합 중: 단축키 인식 0 · 재색칠 0 · 캐럿 이동 0 — 키는 Qt/IME에 그대로 간다. 차단 위치: `Qt::ImEnabled=false` + 조합 시작 거부.
+  재색칠 트리거는 `shouldRecolor`의 `load`·`blur`·`compositionend`뿐이다. 읽기 전용 표면은 IME 커밋도 거부한다(step8이 적발한 Qt 동작).
+- 키: `keyInputFromQt(key, modifiers, nativeScanCode)` — `text()`를 읽지 않는다(Ctrl 하에서 제어문자). 판정 순서 = 웹 `WriterPage.onKeyDown`
+  (`SHORTCUT_ORDER` — 테스트가 `WriterPage.jsx`를 런타임에 읽어 대조). Ctrl+B · Ctrl+F · Alt+O · Alt+V는 **소비 + 신호만**(기능 P6) ·
+  Ctrl+Z / Ctrl+Shift+Z는 상태 기계로 · 문서 자체 undo off · Alt+글자·Tab은 입력하지 않는다(AltGr = Ctrl+Alt는 입력).
+- **QtTest가 판정하는 것은 논리 상태다**(합성 `QInputMethodEvent`·`QKeyEvent` → 문서·블록·논리 커서·서식 범위·신호). 실물 MS-IME의
+  화면 거동은 아래 「P5 마감」의 육안 체크리스트가 판정하고, **그 체크리스트는 아직 수행되지 않았다.**
+
+### 편집 페이지와 상태 기계 (`ui::WriterHost` · `ui::EditController`)
+
+- **편집 페이지 = 메인 창의 세 번째 페이지**(`EditorWidget`). 그 페이지에서만 상단 바에 평문 안내 문장과 **[저장] [복구] [닫기]**가
+  보인다(메뉴 바·다이얼로그 없음 — P6). **목록 화면의 유일한 동작은 행 더블클릭**이다(`articleOpenRequested(articleId)`).
+- **흐름**: 더블클릭 → **편집 페이지가 먼저 현재**(목록 이탈 = 스트림 stop) → `articles-get` → `articles-lock('revise', 표면 id)` →
+  편집(타이핑 · Ctrl+Z/Ctrl+Shift+Z · [복구]) → [저장] = `articles-update`(PUT · 편집 중일 때만) → [닫기] = `articles-unlock` → 목록 페이지
+  (셸이 신원 확인 → 조회 → 스트림으로 재진입). 메인 창 닫힘 = unlock(동기 · 재진입 없음). 열면 편집기에 포커스를 준다.
+  [저장]·[복구]는 편집 가능할 때만 켜진다. 같은 기사를 다시 열면 같은 표면(잠금 재요청 0), 표면이 열린 동안 다른 기사는 거절(한 번에 하나).
+- **표면 = `EditClientId` 1개**: `EditController`의 `const net::EditClientId` 멤버다 — 표면과 함께 생기고 사라진다. lock·save·unlock 세 호출만
+  Model의 clientId 인자로 넘기고, 전송이 `routetable.cpp`의 `sendsEditClient` 3행에서만 헤더로 싣는다(`src/net` 무수정). 필드·초안·안내 문장·
+  로그·diag 어디에도 그 값은 없다.
+
+| 상태 | 사건 | 다음 |
+|---|---|---|
+| Opening | get 401 | SessionEnded |
+| Opening | get 실패 · 기사 없음 | LoadFailed(**잠금 요청 0** — 웹의 목록 행 폴백은 빈 본문 저장 경로라 이식하지 않았다) |
+| Opening | get ok → lock `ok:true` | Editing |
+| Opening | lock 401 `unauthenticated` | SessionEnded(그 뒤 요청 0 — unlock도 없다) |
+| Opening | 그 밖의 lock 응답(401 `locked` · 403 · 404 · 네트워크 · 비JSON · 200 `ok:false`/`ok:'yes'`/`{}`) | LockRefused(읽기 전용 + `lockFailMessage`) |
+| Editing | commit · undo · redo · 복구 · 자동저장 | Editing(서버 요청 0) |
+| Editing | save ok / save 401 / save 그 밖 실패 | Editing +「저장되었습니다.」 / SessionEnded / Editing +「저장에 실패했습니다.」 |
+| Editing | close | Closed + unlock 1회 |
+| LockRefused · LoadFailed · SessionEnded | 모든 쓰기 / close | 거절(요청 0 · 초안 0) / Closed(unlock 0) |
+
+- **안내 문장**(`src/ui/editcontroller.cpp` — 웹 `lockMessages.js`·`WriterPage.jsx` 문구): 잠금 실패 `편집중입니다.`(locked) ·
+  `서버에 연결하지 못해 편집 잠금을 얻지 못했습니다. 잠시 후 다시 시도해 주세요.`(network-error · invalid-response) ·
+  `세션이 만료되었습니다. 다시 로그인한 뒤 편집해 주세요.` · `이 기사를 편집할 권한이 없습니다.` · `기사를 찾을 수 없습니다.` · 그 밖
+  `편집 잠금을 얻지 못해 편집할 수 없습니다.`(+ ` (사유)`) / 저장 `저장되었습니다.` · `저장에 실패했습니다.` / 복구 `복구할 자동저장 내용이 없습니다.` ·
+  `자동저장된 내용으로 복구했습니다. 되돌리기(Ctrl+Z)로 복구 전 본문으로 돌아갈 수 있습니다.` / 조회 실패 `기사를 불러오지 못했습니다…`.
+- **undo**: 타이핑 커밋 = `serialize(renormalizeEndMarker(blocks()))`(coalesce 후보 · 재정규화로 블록이 바뀌면 `setBlocks`로 되민다) ·
+  편집 op 커밋 = `serialize(blocks())` · coalesce = 타이핑 && 직전도 타이핑 && 500 ms 미만 · limit 100 · undo/redo 적용은 캡처하지 않는다 ·
+  베이스라인 = 로드한 원문 그대로 · [복구] = coalesce 없는 한 단계.
+- **자동저장**: 매 회 다시 무장하는 단발 타이머 · 편집 중 + 설정 on일 때만 · **운영 기본 off**(웹 기본값 — 켜는 UI는 P6) · 파일 =
+  `editor-drafts.json`(config.json 옆 · 운영 `%APPDATA%\기사작성기-qt\` · 하네스 `CLIENT_USER_DATA`) · 필드 = `DRAFT_FIELDS` 14(웹
+  `EDITABLE_FIELDS`) · 키 = articleId(P5에는 신규 기사가 없다) · scope = 프로세스당 `w-`+QUuid(`app/main.cpp`).
+
+### 자동화 훅과 드라이버 `--scenario edit` (`scripts/verify-qt-client.mjs`)
+
+훅: `CLIENT_SELFTEST=1` + `--scenario edit` + `CLIENT_SCENARIO_USER`/`_PASSWORD` + **`CLIENT_SCENARIO_ARTICLE`**(편집할 기사 id). `main.cpp`가
+`edit`를 `list`로 바꿔 **무수정 셸 가드**에 넘기고(가드가 먼저), 가드를 지나도 기사 id가 없으면 exit 2다. 훅은 목록이 live가 된 뒤
+컨트롤러·호스트만 부른다(위젯 무접촉) — 편집 = 첫 줄 끝 `isInputBlocked` → `insertTextIntoBlocks`(` [qt-edit]`) · 자동저장은 이 시나리오에서만
+on · 1초.
+
+| 단계 | 내용(2026-11-01 마감 실측값) |
+|---|---|
+| EG1 · EG2 | 거부 실기 — `CLIENT_SELFTEST` 없음 / `CLIENT_SCENARIO_ARTICLE` 없음 → 각각 부팅 전 exit 2 · diag·user-data 미생성 · 출력에 비밀번호 0 |
+| R | 드라이버가 **reporter**로 yh-editor 본문 기사 1건을 만든다(서버 사실: 본문 그대로 · `lockYN=N`) · deskUnsent N0=1 · 기대 본문은 **웹 정본 모듈**(`editorContent`·`editorNewline`·`writerBody`)로 계산 |
+| P | **기록 프록시** — 클라는 프록시 origin에 붙고, 프록시는 요청을 바꾸지 않고 서버로 넘기며(SSE는 그대로 흘린다) 요청마다 라우트 id·상태·`x-edit-client` 유무와 값을 적는다. **값은 판정·유출 검사에만 쓰고 어떤 출력에도 싣지 않는다** |
+| C | 클라(desk) — 진입 → `sse-ready` → `sse-closed{stopped}`(목록 이탈) → `articles-get`·`articles-lock`·`articles-update`·`articles-unlock` 각 200 → 재진입(`session` → `articles-list` → `stream` → `sse-ready`) · 관측 24 |
+| S | 서버 사실 — 저장 본문 = 기대 본문 **바이트 동일(174자)** · 제목 = 편집 뒤 첫 줄 · `lockYN=N` · `modifier=desk` |
+| 판정 | `judgeEdit`(순서 · 편집 왕복은 목록 이탈 뒤·재진입 신원 확인 전 · login 1 · session 2 · articles-list = list-loaded ∈ [2, 2+sse-change] · sse-closed{stopped} 1 · 허용 11종 · 원장 정확 횟수) × `judgeEditWire`(계약 라우트 매칭 · **`x-edit-client`는 정확히 lock·update·unlock 3건** · 편집 3 라우트 각 1회 200 · **표면당 값 1개**(c-uuid v4) · 와이어 = diag 11건) · user-data = `config.json`·`editor-drafts.json`만(초안 = 이 기사 1건의 편집 뒤 필드 14 · 금지 키 0) · diag·stdout·stderr·초안 파일에 비밀번호·제목·본문·기사아이디·`EditClientId` 0 → **판정 43 · 실패 0**(exe·spring 각 2회) |
+
+- **편집기 diag 이벤트를 신설하지 않은 이유**: 허용 집합 `shell::allowedDiagEvents()`(21종)가 `src/shell/`(phase 78 무접촉 경계) 안에 있어
+  `editor-open`·`lock-acquired`·`editor-saved`를 만들려면 shell을 고쳐야 한다. 그래서 **`net-request` 원장 × 와이어 원장 × 서버 사실**의 교차로
+  판정한다 — 와이어는 앱의 자기 신고가 아니라 프록시가 본 사실이다. 이벤트를 늘릴지는 아래 책임자 확인 대상 3번이다.
+- **드라이버가 보지 못하는 것**: 표면이 하나뿐이라 `EditClientId` 프로세스 공유 변이(step9 M1(a))에서 드라이버는 **green**이었다 —
+  QtTest(`EditControllerTest` + 스텁 서버 위 실제 `HttpNewsModel`/전송의 와이어 테스트 `tests/editwire.h` — 표면 2개 × 3건 = 6건 · GET 0 ·
+  두 값 상이)가 유일한 방어선이다. 서버 요청을 만들지 않는 동작(undo · 복구 · 읽기 전용 거부 · 게이트 거부)도 드라이버 밖이다.
+- 로그인 시도: edit 2회(reporter · desk) · `all` 7회 — IP 제한 10회/15분 안.
+
+### 웹과 의도적으로 다른 동작 (divergence — 전부 의도)
+
+| 자리 | Qt | 웹 | 근거 |
+|---|---|---|---|
+| 비어 있지 않은 줄의 BS/Del 경계 병합 | `isLineMergeBlocked` — 병합 결과가 마커 줄을 깨면 거부 | 브라우저 네이티브(가드 0 → `본문(끝)` 오염 송고 경로) | 사전 결정 ① · step3 — **웹 결함 비승계** |
+| 여러 줄 선택 삭제 | `replaceRangeInBlocks(…, "")` → `본⏎(끝)` · 첫 마커 줄과 그 뒤는 지우지 못한다(한 줄 안 삭제·Ctrl+D로는 가능) | 네이티브 → `본(끝)` | step3 이월 (b) → step8 |
+| 선택이 있을 때 BS/Del | 선택 삭제 | anchor 줄이 비면 그 줄 삭제 | step8 |
+| 붙여넣기 | 한 줄도 `replaceRangeInBlocks` · 여러 줄 뒤 캐럿 = 붙인 텍스트 끝 | 네이티브(여러 줄 선택 위면 줄 접착) · 캐럿 = 마지막 붙인 줄 시작 | step8 |
+| 대소문자 변환 | 줄 끝 `isInputBlocked` 게이트 | 게이트 없음 | step8 |
+| 합쳐지는 두 줄 사이의 임베드 | 합친 줄 뒤에 보존 | — | step8 |
+| Shift+Enter | Enter와 같다(Qt의 U+2028 줄바꿈 금지) | — | step8 |
+| 조합 중 Shift+Enter · U+2028을 입력하는 키 | 거부 — 네이티브 편집이 넣은 U+2028은 줄바꿈처럼 원복(조합은 제자리에서 계속) | 조합 중 개입 없음(브라우저 기본) · 키 입력은 그대로 입력 | ⑤ 후속 F3 |
+| 재정규화 되밀기 뒤 캐럿(「(끝)」 뒤 줄에서의 타이핑 편집) | 편집 지점 그대로 — 마커 줄만 끝으로 가고 캐럿은 자기 줄·열(마커 줄 위였으면 「(끝)」 기준 같은 자리) | remount 뒤 되밀기 전 줄 번호의 줄 시작(그 자리가 마커 줄일 수 있다) | ⑤ 후속 F2 |
+| 블록이 담지 못하는 글자 | CR·U+2029·블록 안 LF → 공백, U+FDD0/1 → U+FFFD로 1:1 대체 표시(실제 텍스트는 블록) | pre-wrap 표시 | step8 |
+| 잠금 실패 | 읽기 전용 표면 + 웹 문구 | 탭을 열지 않는다 | step9 (b) · 책임자 확인 4 |
+| 본문 조회 실패 | 잠그지 않는다(LoadFailed) | 목록 행 폴백(빈 본문 저장 가능) | step9 (c) — fail-closed |
+| 파일>복구 | 확인창 없이 undo 한 단계 + 안내 문장 | 확인창 | step9 (e) — P5 다이얼로그 0 |
+| 작성자 신원 폴백 | 미이식(author 없는 기사는 `''`) | 로그인 사용자 이름 | step9 (f) — 신원 미보관 |
+| 목록측 선(先)잠금(clientId 없음) | 미이식(표면당 잠금 1회) | 있음 | step9 (d) |
+| 512단계 초과 중첩 JSON 본문 | 평문 취급 | 재귀 파싱 | step1 |
+| 대소문자 Final_Sigma · Unicode 17.0 쌍 56개 | Qt 6.8.3 표(Unicode 16.0) | ICU 78.3(Unicode 17.0) | step5 — 행으로 잠금(Qt를 올리면 red) |
+| 색 환경설정 setter(`setEditorColors`) | 미이식 — `COLORS` 상수 | 모듈 전역 가변 | step2 — P6 |
+| 초안: 비객체 data · 문자열 아닌 필드 · `__proto__` · 부분 만료 · 배열/비 UTF-8 파일 | `editordraft.h`·`editordraftstore.h`에 기록 | 각 웹 동작 | step7 — 생산자가 만들지 않는 입력 |
+| undo 「같은 객체」 판정 | 값 동등 | 참조 동일성 | step6 |
+
+반대로 **Qt 기본 동작이 웹과 달라 웹에 맞춘 자리**도 있다: `QString::trimmed()` → `isEndLine`(JS trim) · `QChar::isSpace` → `isJsWhitespace` ·
+`QString::toUpper/toLower`의 고아 서로게이트 U+FFFD 치환 → 보존 · 읽기 전용 `QPlainTextEdit`의 IME 커밋 입력 → 거부 · `QPlainTextEdit`의 Alt+글자 입력 → 거부.
+P4의 divergence(재시작 = 재로그인 등 — 「P4 마감」 이전 장들)는 그대로다.
+
+### 알려진 한계 (정직하게)
+
+- **강제 해제·takeover를 표면이 감지하지 않는다**(P7) — 다른 사용자가 잠금을 가져가도 표면은 편집 가능한 채이고 **저장이 not-holder로 실패할 뿐**이다(save 403 → 편집 가능 유지 = 웹 동형 · 책임자 확인 5).
+- **표면 한 번에 하나** · **신규 기사(POST)·송고/보류/KILL·매핑·메뉴 없음**(신규 기사·송고의 소유 phase는 미확정 — step9 (h)는 「P7 등」으로 적었다).
+- **자동저장 기본 off** — 켜는 UI는 P6이고, 운영 빌드에서 자동저장/복구를 실기할 수단이 없다.
+- **앱이 강제 종료되면 잠금은 서버의 30분 stale까지 남는다** · **표면이 열린 채 메인 창을 닫으면 unlock이 동기 요청**이라 서버가 응답하지 않을 때 닫힘이 최대 15초(전송 기한) 늦다 — 두 경로 모두 실기로 재현하지는 않았다.
+- **임베드는 렌더 없이 운반된다**(P6) — Ctrl+D·빈 줄 삭제가 텍스트 줄의 동반 임베드를 함께 지우는 웹 규칙을 화면에서 볼 수 없다.
+- 대소문자 변환은 위젯 API(`transformCaretLine`)만 있고 앱에 진입점이 없다(보기 메뉴 = P6) · Ctrl+B·Ctrl+F·Alt+O·Alt+V는 소비만 한다(기능 P6).
+- 성능 축(긴 문서 스크롤·대량 본문·메모리·고DPI)은 측정하지 않았다.
+
+### 책임자 확인 대상 — [추정]으로 굳힌 다섯 (step7·9)
+
+| # | 현재 결정 | 대안 | 지금의 영향 | 근거 |
+|---|---|---|---|---|
+| 1 | 초안 scope = 프로세스당 `w-`+QUuid(웹의 브라우저 탭당 1개와 동형 · `app/main.cpp`) | scope 고정 또는 config 옆 영속(단일 인스턴스가 user-data 폴더 단위라 가능) | P5에는 신규 기사 표면이 없어 **미사용**(키 = articleId). 신규 탭이 생기면 재시작 뒤 이전 실행의 신규 탭 초안을 복구할 수 없다 | step7 ⑦(b) · step9 ⑧(1) |
+| 2 | undo 베이스라인 = 로드한 원문 그대로(웹 동형 · 변이 M5가 잠금) | `serialize(deserialize(원문))` | 레거시 평문 등 비정규 원문이면 첫 편집이 별개 undo 단계가 된다 | step1 ⑦(a) · step6 ⑦(c) · step9 ⑧(2) |
+| 3 | 편집기 diag 이벤트 0 | `editor-open`·`lock-acquired`·`editor-saved` 신설 | 서버 요청이 없는 동작은 QtTest만 본다 | shell 변경 동반 — step9 ③(a) |
+| 4 | 잠금 실패 = 읽기 전용 + 안내 | 웹처럼 열지 않음 | 사용자가 본문을 읽을 수 있다(편집·저장 불가) | step9 ③(b) |
+| 5 | save 403 not-holder → 편집 가능 유지(웹 동형) | 읽기 전용 전환 | 잠금을 잃은 뒤에도 입력은 되고 저장만 실패한다 | step9 ⑧(5) |
+
+## P5 마감 (2026-11-01 · phase 78 step10)
+
+### 마감 실측 — 연속 2회 (두 회차 수치 전건 동일 · flake 0)
+
+같은 트리(`feat-78-editor-core` · HEAD `45b1890` · 트리 clean)에서 **전 커맨드를 연속 2회** 돌렸다(회차 1 13:40~13:44 · 회차 2 13:44~13:48 KST).
+시간은 프로세스 전체 소요(ms)이고, 괄호 안은 그 커맨드가 자기 입으로 보고한 수치다. 빌드는 Git Bash에서
+`MSYS_NO_PATHCONV=1 cmd.exe /c "client-qt\build.bat"`(PATH **뒤**에 `/c/Windows/System32`)로 부르고 매번 `Totals:` 줄로 실제 실행을 확인했다.
+
+| # | 커맨드 | 회차 1 | 회차 2 |
+|---|---|---|---|
+| 1 | `cmd.exe /c "client-qt\build.bat"` | exit 0 · 40,138 ms · `Totals: 643 passed, 0 failed (classes: 42)`(④ 보강 뒤 **647**/0 · ⑤ 후속 뒤 **654**/0) · `BUILD OK` · `FAIL!` 0줄 | exit 0 · 40,289 ms · **동일**(클래스별 QtTest `Totals` 42줄도 동일) |
+| 2 | `verify-qt-client --scenario boot --server exe` | exit 0 · 4,855 ms · 관측 8(A 4 · B 4) · 판정 33 · 실패 0 | exit 0 · 4,816 ms · **동일** |
+| 3 | `… --scenario login --server exe` | exit 0 · 5,779 ms · 관측 17(G 0 · L+ 12 · L- 5) · 판정 40 · 실패 0 | exit 0 · 5,699 ms · **동일** |
+| 4 | `… --scenario list --server exe` | exit 0 · 7,868 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 7,984 ms · **동일** |
+| 5 | `… --scenario edit --server exe` | exit 0 · 5,041 ms · 관측 24 · 판정 43 · 실패 0 | exit 0 · 5,062 ms · **동일** |
+| 6 | `… --scenario boot --server spring --java-home …` | exit 0 · 8,639 ms · 관측 8 · 판정 33 · 실패 0 | exit 0 · 8,660 ms · **동일** |
+| 7 | `… --scenario login --server spring --java-home …` | exit 0 · 9,982 ms · 관측 17 · 판정 40 · 실패 0 | exit 0 · 9,849 ms · **동일** |
+| 8 | `… --scenario list --server spring --java-home …` | exit 0 · 12,160 ms · 관측 15 · 판정 30 · 실패 0 | exit 0 · 11,814 ms · **동일** |
+| 9 | `… --scenario edit --server spring --java-home …` | exit 0 · 9,052 ms · 관측 24 · 판정 43 · 실패 0 | exit 0 · 9,123 ms · **동일** |
+| 10 | `… --scenario all --server exe` | exit 0 · 20,763 ms · 관측 64(A 4 · B 4 · G 0 · L+ 12 · L- 5 · list 15 · edit 24) · 판정 116 · 실패 0 | exit 0 · 18,744 ms · **동일** |
+| 11 | `npm test` | exit 0 · 22,000 ms · tests **1349** · pass 1349 · fail 0 · cancelled 0 · skipped 0 · todo 0 · suites 59 | exit 0 · 21,802 ms · **동일** |
+| 12 | `npm run lint` | exit 0 · 7,508 ms | exit 0 · 7,510 ms |
+| 13 | `npm run build` | exit 0 · 3,725 ms · `built in 2.08s` | exit 0 · 3,674 ms · `built in 2.04s` |
+| 14 | `node scripts/spa-parity.mjs --java-home …` | exit 0 · 6,220 ms · 관측 **39** · diffs **0** · 허용 diff 528 | exit 0 · 6,099 ms · **동일** |
+| 15 | `node scripts/spool-parity.mjs --java-home …` | exit 0 · 7,684 ms · 폴더 3 · 파일 11 · diffs **0** · 눈감은 자리 66/66(db=sqlite) | exit 0 · 7,597 ms · **동일** |
+| 16 | `node scripts/spring-contract.mjs --parity --java-home …` | exit 0 · 55,698 ms · **313관측 diffs 0**(default 246 · minimal 55 · auth-negative 4 · failclosed 5 · prod-cookie 3) | exit 0 · 55,433 ms · **동일** |
+| 17 | `git status --porcelain` | **무출력**(측정 전·중·후) | **무출력**(측정 전·중·후) |
+
+- **판정부 자기검사**: 드라이버가 매 실행 시작 시 `scripts/lib/qtClientDiag.self-test.mjs`를 돌려 **77건 통과**(9 실행 × 2회차).
+- **자산 지문(두 회차 · 각 회차의 측정 전·중·후 전부 동일)**: 리포 `news.db` **606,208 B · md5 `7247e9e0dfe5cc8cd040ebb1dc9fb967` 무변**(읽기만 — DB로 열지 않았다) ·
+  `uploads/` **32파일 6,068,792 B** · `client-qt/release/news-client.exe` **538,624 B(⑤ 후속 F1~F5 재링크 뒤 539,136 B)**(P4 357,376 B). 소스가 무변이라 두 회차 모두 **재컴파일 0**이었다(`build.bat`은 qmake·nmake 무작업 + 러너 실행).
+- **`--java-home D:/agents/tools/jdk-25.0.4.1+1`**: 이 셸에는 `JAVA_HOME`이 없다 — 없으면 6~9·14~16번은 usage로 **exit 1**이고 회귀가 아니다.
+- **미측정(정직하게)**: `server-spring`의 `./mvnw clean verify` · `tools/news-migrator`의 `clean verify` · `npm run test:web`(vitest 전체)은 이 phase에서 돌리지 않았다.
+  Java·web을 한 줄도 고치지 않았고(spring 모드는 2026-09-22 step0이 `-DskipTests package`로 만든 jar 그대로) 각 step이 이식에 필요한 웹 스펙만 vitest로 개별 확인했다(각 step 요약).
+- **P4 마감 장의 표들은 2026-09-12 기준값의 역사 기록이라 고치지 않았다** — 현재 기준값은 이 장의 표다.
+
+### 무엇이 기계로 판정되는가 (그리고 무엇이 아닌가)
+
+| 축 | 판정자 | 기준값(2026-11-01) |
+|---|---|---|
+| 에디터 이식층이 웹 정본과 같은가 | `build.bat`의 Editor*Test 12 클래스 + `WriterBodyTest` — 기대값은 웹 정본을 node로 실행해 생성 | 웹 it 180 전환 + 포트 잠금 · 0 failed |
+| 「(끝)」 게이트를 모든 쓰기 경로가 경유하는가 | `EditorWidgetTest`(오프스크린 · 위젯의 실제 이벤트 핸들러에 키·입력기·클립보드·포커스·마우스 이벤트) + `EditorInputTest` | 26 + 10 함수 · 경로마다 우회 변이 red 실증(step8)(④ 보강 뒤 28 + 10 · ⑤ 후속 뒤 **33 + 10**) |
+| 조합 중 무개입(논리) | `EditorWidgetTest`(합성 `QInputMethodEvent`) | 조합 중 단축키·재색칠 0 · 차단 위치 조합 시작 거부 · 읽기 전용 IME 거부 |
+| 편집 뒤 캐럿(Enter · 붙여넣기 · 여러 줄 선택 위 입력 · 줄 병합 · 재정규화 되밀기) — ⑤ 후속 | `EditorWidgetTest` 3 함수 + `WriterHostTest` 2 함수(되밀기 결선) | 수정 전 소스에서 전부 red · 대안 「공통 접두사 상한」 변이는 2함수 red |
+| 상태 기계(전이 · fail-closed · 401 · coalesce · 복구 · 자동저장) | `EditControllerTest`(FakeNewsModel · 주입 시계) | 34 함수 |
+| 표면당 `EditClientId` · `x-edit-client` 3라우트 | `EditControllerTest` + 와이어 테스트(`tests/editwire.h`) | 표면 2개 × 3건 = 6건 · GET 0 · 두 표면 값 상이 |
+| 화면 4개 · 창 껍데기 1 · 다이얼로그 0 | `ScreenInventoryTest` | `{login, list, setup, editor}` + `{MainWindow}` |
+| 반복 타이머 0(자동저장 = 단발 재무장) | `TimerPolicyTest` | 소스 스캔 |
+| 편집 왕복 실기(get → lock → update → unlock · 저장 바이트 = 웹 정본) | `verify-qt-client --scenario edit` — `--server exe` **와** `--server spring` | 각 관측 24 · 판정 43 · 실패 0 · 174자 바이트 동일 · `x-edit-client` 3건 · 값 1 |
+| P4 축 무회귀 | `--scenario boot` · `login` · `list`(exe · spring) | 33 / 40 / 30 |
+| 판정부 비공허성 | 드라이버 시작 시 자기검사 + `npm test`의 `test/harness-vacuity-guards.test.js` | 자기검사 77 · 고아 0 |
+| 기존 축(웹 · 서버 · 계약) | `npm test` · `lint` · `build` · `spa-parity` · `spool-parity` · `spring-contract --parity` | 위 실측표 11~16 |
+
+**기계가 판정하지 않는 것 — 여기 있는 항목을 「검증됐다」고 적지 마라.**
+
+1. **실물 MS-IME의 화면 거동**(캐럿 튐 · preedit 표시 · IME의 키 전달 · 조합 직후 재색칠 · `ImEnabled` 전환 · 조합 중 클릭). QtTest는 합성 이벤트의 논리 상태까지다.
+2. **화면 픽셀.** 오프스크린 QtTest는 버튼 클릭·키 이벤트·논리 상태·서식 범위만 보았다(픽셀 0) — 역할 색이 보이는지, 안내 문장이 읽히는지는 육안이다.
+3. **물리 키보드.** 키 매핑 표는 windows 플랫폼 플러그인에 프로브 자기 창으로 PostMessage한 실측이다 — 하드웨어 스캔코드·Dvorak/AZERTY 실기가 아니다.
+4. **표면 둘 이상의 실기.** 드라이버는 표면 하나라 `EditClientId` 공유를 보지 못한다(step9 M1(a) 드라이버 green) — QtTest가 유일한 방어선이다.
+5. **강제 해제·takeover·잠금 충돌 실기**(P7 — phase 78 open_questions (3) 확정).
+6. **자동저장/복구의 운영 경로.** 운영 빌드에서 켤 수 없고, 하네스는 1초 자동저장 1회가 파일에 쓰였다는 사실만 본다.
+7. **요청 body shape 전수**(P4 한계 그대로 — PUT dto는 `toSaveDto` 단위 테스트와 실서버 200 + 저장 바이트 대조로 부분 확인).
+8. **성능**(긴 문서 · 대량 본문 · 고DPI).
+
+### 육안 확인 체크리스트 (P5 — 로드맵 완료 게이트 (2) · 사람만 판정)
+
+**이 표의 결과 칸은 전부 「미검증 — 사람 확인 필요」다.** 이 마감(step10)은 에이전트가 수행했고, 에이전트는 실물 MS-IME로 한글을 조합하며
+화면을 볼 수 없다 — **수행하지 않은 항목을 「통과」로 적지 않았다.** 사람이 각 항목을 1회 수행하고 결과 칸을 `정상` / `제약 있음` / `미확인`
+(또는 pass / fail)으로 **바꿔 적는다**. fail이면 fail로 적는다. **이 표가 채워지기 전까지 로드맵 P5 완료 게이트 (2)는 닫히지 않았다.**
+
+출처: RUNBOOK §4 1~5 · step8 육안 미검증 10항목 · step9 육안 미검증 9항목(`phases/78-editor-core/index.json` 각 summary의 마지막 절)을 겹치는 것끼리 합쳐
+**15항목**으로 만들었다(step9의 「픽셀 0」은 항목이 아니라 표 전체의 전제다 — 위 「기계가 판정하지 않는 것」 2).
+
+준비(한 번): ① `cmd /c client-qt\build.bat`(exit 0) ② 시험용 서버를 **임시 `DATA_DIR`**로 띄운다(리포 `news.db`를 열지 마라 · `desk`·`reporter`
+계정이 있어야 한다) ③ **reporter**로(웹 또는 `curl`) 시험 기사를 만든다 — (a) 제목·부제·본문·끝 `(끝)`이 있는 기사 (b) 줄 끝에 CR이 남는
+본문(수집 기사, 또는 CRLF 줄바꿈 평문 본문) (c) 잠금 실패 확인용 기사 ④ `cmd /c client-qt\run.bat` — **`CLIENT_SELFTEST`도 `--scenario`도 주지 않는다**
+⑤ 주소 입력 → [연결 확인] → 저장 → **desk**로 로그인 ⑥ Windows 입력기를 **Microsoft 한국어 IME**로 둔다.
+
+| # | 항목(출처) | 절차 | 기대 결과(판정 문구) | 실패하면 어디를 보는가 | 결과 |
+|---|---|---|---|---|---|
+| 1 | 조합 중 캐럿 튐 0(RUNBOOK 1 · step8 1 · step9 1) | 기사 (a)를 더블클릭해 열고 제목 줄·부제 줄·본문 줄·`(끝)` 바로 앞 줄에서 한글 문장을 이어 친다(받침·겹받침·조합 중 Backspace 포함 · 3분) | 조합 중인 글자 자리에 캐럿이 머문다 — 줄 처음·끝으로 튀거나 앞 글자로 돌아가지 않는다 | QtTest의 「조합 중 캐럿 이동 0」은 논리 커서다. 화면만 튄다면 레이아웃·하이라이터 재실행(step8 실측: preedit도 `contentsChange`를 내고 하이라이터가 다시 돈다 — 색은 캐시) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 2 | preedit 표시와 역할 색(step8 2) | 1번을 하며 조합 중 글자를 본다 | 조합 중 글자가 캐럿 자리에 IME 표시(밑줄 등)로 보이고, 그 줄의 역할 색(제목 블루 `#0a4da6` · 부제 레드 `#c8102e` · 본문 `#1a1a1a` · `(끝)` 골드 `#d4af37`)이 유지된다 | 서식 병합은 레이아웃 서식으로만 확인했다(픽셀 아님) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 3 | 조합 중 단축키 미개입(RUNBOOK 2 · step8 3) | 조합 중(글자가 확정되기 전)에 Alt+Y · Ctrl+Y · Ctrl+D · Ctrl+Z를 하나씩 누른다 | 조합이 진행 중인 동안에는 `(끝)` 삽입·`(계속)` 삽입·줄 삭제·되돌리기가 일어나지 않는다. **MS-IME가 키를 넘기기 전에 조합을 먼저 확정했다면** 그 뒤의 단축키 동작은 정상이다 — 어느 쪽이었는지를 적는다 | 위젯은 preedit이 비었을 때만 키를 인식한다(decisions (4)). 확정 없이 단축키가 먹으면 결함 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 4 | 확정 뒤에만 재색칠(RUNBOOK 3 · step8 4) | 빈 첫 줄에 제목을, 부제 구간(2~5번째 줄)에 글을 한글로 친 뒤 조합을 끝낸다(스페이스 · 다음 글자 · Enter) | 역할 색은 조합이 끝난 뒤에 바뀌고, 바뀌는 순간 캐럿·글자가 튀지 않는다 | 재색칠 트리거는 `compositionend`·`load`·`blur`뿐(`shouldRecolor`) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 5 | 차단 위치의 IME 정지와 재개(step8 5) | 한글 모드로 캐럿을 마지막 `(끝)` 위·뒤에 두고 친다 → 캐럿을 `(끝)` 앞으로 옮겨 다시 친다 | `(끝)` 위·뒤에서는 조합이 시작되지 않고 아무것도 입력되지 않는다 · 앞으로 옮기면 **한/영 상태를 유지한 채** 한글 조합이 재개된다 | 차단 구간에서 `Qt::ImEnabled=false`(스파이크 경로). 재개 뒤 영문으로 바뀌어 있으면 MS-IME 상태 복원 문제 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 6 | 조합 중 마우스 클릭(step8 6) | 한 글자를 조합하는 도중에 다른 줄을 마우스로 클릭한다 | 조합 중이던 글자가 **원래 자리에 한 번** 확정되고(중복·유실 0) 캐럿이 클릭한 곳으로 간다 — 다르게 동작하면 그 동작을 그대로 적는다 | 오프스크린 QtTest는 preedit 폐기만 보았다(실기에서는 Qt가 플랫폼 commit을 보낸다) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 7 | `(끝)` 뒤 입력 차단 — 전 경로(RUNBOOK 4 · step8 7 · step9 8) | 캐럿을 마지막 `(끝)` 뒤에 두고 영문·한글 타이핑 · Enter · Ctrl+V(한 줄 · 여러 줄) · Shift+Insert · Insert(수정 모드) 후 타이핑 · Alt+Y · Ctrl+Y. 이어서 `본문` 줄 끝 Delete(다음 줄이 `(끝)`) · `(끝)` 줄 시작 Backspace · `본문`~`(끝)`에 걸친 여러 줄 선택 후 Delete. 마지막으로 Ctrl+D로 `(끝)` 줄을 지우고 다시 친다 | `(끝)` 뒤 쓰기는 **어느 경로로도** 본문을 바꾸지 않는다 · Alt+Y는 마커를 늘리지 않는다 · Ctrl+Y의 `(계속)`이 들어가도 `(끝)`은 마지막 줄로 남는다 · 줄 병합은 `본문(끝)`을 만들지 않는다 · 여러 줄 선택 삭제 뒤에도 마커 줄이 온전히 남는다 · **삭제·이동·선택은 막히지 않는다** · 마커를 지우면 입력이 재개된다 | 위젯 머리 주석의 경로 표(`src/ui/editorwidget.h`)와 위 「「(끝)」 마커 게이트」 표. 대소문자 변환은 P5 앱에 진입점이 없어 수행 대상이 아니다(보기 메뉴 = P6) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 8 | 물리 키보드 단축키(step8 8) | 실제 키보드(QWERTY)에서 한글 모드·영문 모드 각각 Alt+Y · Ctrl+Y · Ctrl+D · Ctrl+Z · Ctrl+Shift+Z · Insert. 가능하면 Dvorak·AZERTY 배열로 바꿔 Ctrl+물리 Y · Ctrl+물리 W를 누른다 | 한글 모드에서도 같은 키가 같은 동작을 한다(물리 키 = 스캔코드) · Dvorak의 Ctrl+물리 Y = 찾기(P6 — 화면에 아무 일도 없다) · AZERTY의 Ctrl+물리 W = 되돌리기 | 키 매핑 표는 PostMessage 실측이다(하드웨어 미검증) · `EditorShortcutsTest`의 레이아웃 교차 16행과 `EditorInputTest`의 판정 순서 표 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 9 | CR 대체 공백 표시(step8 9) | 기사 (b)를 연다 | 각 줄이 한 줄로 보이고(줄이 둘로 쪼개지지 않는다) 줄 끝 CR 자리는 공백 1칸으로 보인다 | `displayLine` 대체 표시(실제 텍스트는 블록에 남는다) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 10 | undo/redo 체감(RUNBOOK 5 · step8 10 · step9 6) | 한 문장을 빠르게 친 뒤 Ctrl+Z, 다시 Ctrl+Shift+Z · 0.5초 넘게 쉬어 가며 친 뒤 Ctrl+Z 여러 번 · Ctrl+D 뒤 Ctrl+Z · Ctrl+Y가 redo가 아님을 확인 | 빠른 타이핑은 한 단계로, 쉬어 가며 친 것은 쉼마다 한 단계로 되돌아간다 · 되돌린 뒤 캐럿·색이 이상하지 않다 · Ctrl+Y는 `(계속)`을 넣는다 | coalesce 500 ms · limit 100 · 문서 자체 undo off(`EditControllerTest`·`EditorHistoryTest`) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 11 | 더블클릭 전환과 포커스(step9 2) | 목록에서 기사 (a) 행을 더블클릭한 뒤 클릭 없이 곧바로 타이핑한다 | 편집 페이지로 바뀌어 본문이 보이고, 입력이 편집기로 간다 | 호스트가 열 때 편집기에 포커스를 준다(화면으로 확인한 적 없음) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 12 | 상단 버튼과 안내 문장(step9 3) | 편집 중 [저장] → [복구](초안 없음)를 누르고 문장을 읽는다 | [저장] [복구] [닫기]가 보이고 `저장되었습니다.` · `복구할 자동저장 내용이 없습니다.`가 잘리지 않고 읽힌다 | 안내 문장은 평문(PlainText) 라벨이다 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 13 | 잠금 실패 화면(step9 4) | **다른 계정**(편집 권한이 있는 계정)으로 웹·Electron 클라에서 기사 (c)를 먼저 열어 잠가 둔다 → Qt에서 (c)를 더블클릭한다 | 본문이 **읽기 전용**으로 보이고 `편집중입니다.`가 읽힌다 · 어떤 키·붙여넣기·IME로도 본문이 바뀌지 않는다 · [저장]·[복구]가 비활성이다 | **같은 계정으로 로그인하면 Qt 세션이 끊긴다**(같은 사용자 로그인은 그 사용자의 기존 세션을 전부 무효화한다) — 계정을 먼저 확인 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 14 | 닫은 뒤 목록 재진입(step9 5) | 편집 중 [닫기] | 목록 페이지로 돌아오고 상단 바에 `● 실시간`이 다시 보인다 · 다른 계정이 만든 기사가 다시 실시간으로 나타난다 · 웹에서 그 기사가 잠겨 있지 않다 | 셸의 목록 진입(신원 확인 → 조회 → 스트림) | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) |
+| 15 | 자동저장/복구 실기(RUNBOOK 5 · step9 7) | — | **P5 운영 빌드에서는 수행할 수 없다** — 자동저장 기본 off이고 켜는 UI(환경설정)는 P6다. 하네스가 보인 사실은 `--scenario edit`의 1초 자동저장 1회가 `CLIENT_USER_DATA`의 `editor-drafts.json`에 편집 뒤 필드로 쓰였다는 것뿐이다 | P6가 환경설정을 붙인 뒤 이 항목을 다시 연다 | 미검증 — 사람 확인 필요(실물 MS-IME, `client-qt\run.bat`) · P5 운영 빌드로는 수행 불가(켜는 UI = P6) |
+
+**왜 이 열다섯은 자동화할 수 없는가**: 1~6은 실물 IME의 조합 이벤트 순서와 화면 레이아웃의 결과다(합성 `QInputMethodEvent`는 MS-IME가 실제로
+보내는 순서·확정 시점을 재현하지 못한다). 7·9~14는 같은 동작이 **화면에서 어떻게 보이는가**이고(QtTest는 논리 상태·서식 범위까지 — 픽셀 0),
+8은 물리 하드웨어, 15는 운영 빌드에 켤 수단이 없다.
+
+**여기 없는 것(자동 커맨드가 판정한다 — 육안으로 내리지 마라)**: 마커 게이트의 논리 판정(`EditorNewlineTest`·`EditorWidgetTest`) · 저장 바이트 = 웹 정본
+(`--scenario edit`의 S) · `x-edit-client` 3라우트·표면당 1개(`judgeEditWire` · 와이어 테스트) · 상태 전이·fail-closed(`EditControllerTest`) ·
+화면 인벤토리(`ScreenInventoryTest`) · 비밀번호·제목·본문·기사아이디·`EditClientId` 유출 0건(드라이버 매 실행).
+
+### P6(에디터 확장)가 곧바로 쓸 것
+
+정본은 `phases/78-editor-core/index.json`의 **`forward_notes`**다. 코드에서 시작할 자리만 적는다.
+
+- **정렬**(sortDocument/sortParagraph) → `editoreditops`에 · `sortParagraph`는 `paragraphBoundsAt`, 재정규화는 `renormalizeEndMarker`를 호출(재구현 금지).
+- **찾기 엔진** → `isFindReplace` 옆 · 위젯은 이미 Ctrl+F를 소비하고 `shortcutTriggered(FindReplace)`만 낸다(Ctrl+B · Alt+O · Alt+V도 같다).
+- **사용자 글리프 키맵** → `RESERVED_COMBOS`(정확히 13)를 읽고 웹 `isSwallowedByReservedHandlers`(느슨 변형)를 함께 이식 · 판정 순서상 자리는 `isRedo`와 `isDeleteLine` 사이.
+- **맞춤법** → `insertEndMarker().spellcheck`가 트리거 · Qt 네이티브 맞춤법은 배선하지 않는다(override L174 · ADR-011).
+- **색 환경설정** → `COLORS`는 기본값 상수로 두고 활성 색을 주입(모듈 전역 가변 금지 — 웹 `activeColors`가 테스트에 reset을 요구했던 이유).
+- **자동저장 환경설정** → `AutosaveConfig`를 `WriterHost::Options`로 주입(지금은 웹 기본 off · 60초 · 1일) — 켜는 UI가 생기면 육안 15번을 수행한다.
+- **대소문자 변환 메뉴** → `EditorWidget::transformCaretLine(fn)`(`toUpper`·`toLower`·`capitalizeFirst`·`toggleCase`) — 게이트가 내장돼 있다.
+- **임베드 렌더** → `Block::embed`는 키 순서 그대로 운반되고 있다. 「텍스트 줄 1 = 문서 블록 1」을 깨면 「캐럿 = `TextPoint` 무변환」 전제가 깨진다 — 설계 결정이 먼저다.
+- **상태표시줄**(`editorStats.paragraphIndex`) → `isParagraphBoundary`를 호출(정의 중복 금지).
+- **다이얼로그를 처음 여는 phase**는 `sourcesOpenNoDialogWindow`와 화면 인벤토리 결정을 함께 연다(P5의 파일>복구에 확인창이 없는 이유).
+- **Qt를 올리면** `EditorShortcutsTest`의 Unicode 17.0 행과 `currentUnicodeVersion() == Unicode_16_0` 단언이 red가 된다 — divergence가 사라진 것이니 헤더를 갱신하라.
+- **diag 이벤트를 늘리려면** `shell::allowedDiagEvents()`(21) + `contractedFields()` + 처분 표 + `DiagTest` — shell 변경이다(책임자 확인 3).
+
+### 무엇이 P5가 아닌가
+
+| 범위 밖 | 소유 phase |
+|---|---|
+| 임베드 7종 렌더·삽입 · 맞춤법+하이라이트 · 찾기바꾸기 · 표 · 인쇄 · 다이얼로그 17종 · 환경설정 8탭(자동저장·색 포함) · 보기 메뉴(정렬·대소문자) · 상태표시줄 · 인코딩 표시 | P6 |
+| 조회 6메뉴 · 컬럼 설정 · 우클릭 14액션 · 상세보기 창 · 관리 4화면 · 강제 해제·takeover 감지 · 잠금 충돌 실기 | P7 |
+| 신규 기사(POST) · 송고/보류/KILL · 매핑 | 소유 phase 미확정(step9 (h)는 「P7 등」) |
+| 한글 제품명 exe · 아이콘 · windeployqt · 설치 패키징 · 훅의 컴파일 타임 분리 · Electron 은퇴 | P8 |
+
+**서버·웹·Electron 클라·계약·`client-qt/src/net`·`client-qt/src/shell`은 P5가 한 줄도 고치지 않았다**(phase 78 각 step의 무접촉 축 `git diff --stat` 무출력).

@@ -6,8 +6,11 @@
 //
 // A view: it renders the ListViewState it is handed and emits the paging the user asked for. It holds
 // no Model and no controller (the shell wires them - shell::AppShell). READ ONLY on purpose (excluded
-// (b)): no context menu, no double-click action, no editing, no detail window, no column settings -
-// those are P7's, and building them now would stand an action matrix on a cached identity.
+// (b)): no context menu, no editing in the table, no detail window, no column settings - those are P7's,
+// and building them now would stand an action matrix on a cached identity. Its ONE action since phase 78
+// step9 is the editing path P5 opens: a double-click on a row asks for that row's article to be edited
+// (articleOpenRequested). The screen only names the article - getting, locking and showing it is the
+// writer's (ui::WriterHost), and whether this user may edit it is the server's answer to the lock.
 //
 // What it shows (docs/UI_GUIDE.md table): the 11 default columns of the web's catalog
 // (web/src/view/columnConfig.js - 12 columns, distributedAt hidden by default: override L97/L100), times
@@ -74,10 +77,13 @@ public:
 signals:
     void previousPageRequested();
     void nextPageRequested();
+    // A row was double-clicked (step9): edit that row's article. Never emitted for a row without an id.
+    void articleOpenRequested(const QString &articleId);
 
 protected:
     // The hovered row (UI_GUIDE: the whole row gets the blue tint, not one cell) - tracked on the table's
-    // viewport. Nothing else is read from the mouse: no click, double-click or context-menu action.
+    // viewport. Nothing else is read from the mouse here: no click or context-menu action (the double-click is
+    // the table's own cellDoubleClicked signal).
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -90,6 +96,7 @@ private:
     QPushButton *m_next = nullptr;
     QLabel *m_page = nullptr;
     int m_hoveredRow = -1;  // read by the cell painter
+    QStringList m_rowArticleIds;  // the articleId of each rendered row (step9's double-click)
 };
 
 } // namespace ui

@@ -432,6 +432,204 @@ export function judgeList({ lines, rejected, origin, routeIds, n0, triggerAt } =
   return checks;
 }
 
+// --- 계약 라우트 (id · method · path 템플릿) — 편집 시나리오의 와이어 원장이 요청 경로를 라우트 id 로 되돌린다 (phase 78 step9) ---
+export function contractRoutes(doc) {
+  if (!doc || !Array.isArray(doc.routes)) throw new Error('contractRoutes: endpoints.json 에 routes 배열이 없다.');
+  if (doc.routes.length === 0) throw new Error('contractRoutes: routes 가 비었다 — 경로 매칭이 전부 실패하거나 공허해진다.');
+  const routes = doc.routes.map((r, i) => {
+    if (!r || typeof r.id !== 'string' || r.id === '') throw new Error(`contractRoutes: routes[${i}] 에 id 가 없다.`);
+    if (typeof r.method !== 'string' || !/^[A-Z]+$/.test(r.method)) throw new Error(`contractRoutes: routes[${i}] 의 method 가 대문자 메서드가 아니다.`);
+    if (typeof r.path !== 'string' || !r.path.startsWith('/')) throw new Error(`contractRoutes: routes[${i}] 의 path 가 / 로 시작하지 않는다.`);
+    return Object.freeze({ id: r.id, method: r.method, path: r.path });
+  });
+  assertUnique(routes.map((r) => r.id), 'contractRoutes');
+  return Object.freeze(routes);
+}
+
+export function loadContractRoutes(filePath) {
+  return contractRoutes(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+}
+
+// 요청(method, pathname) → 계약 라우트 id. 같은 메서드 · 같은 세그먼트 수 · 리터럴 세그먼트는 글자 그대로 같고 ':param' 세그먼트는 비지
+// 않은 아무 값(인코딩된 값 그대로). 여럿이 맞으면 리터럴 세그먼트가 가장 많은 것(/api/articles/search 가 /api/articles/:id 를 이긴다) —
+// 그래도 둘 이상이면 계약이 모호하다(던진다 — 원장이 조용히 한쪽을 고르지 않게). 맞는 것이 없으면 null. pathname 은 쿼리를 뗀 경로다.
+export function matchContractRoute(routes, method, pathname) {
+  if (!Array.isArray(routes) || routes.length === 0) throw new Error('matchContractRoute: routes 가 비었다.');
+  if (typeof pathname !== 'string' || !pathname.startsWith('/')) return null;
+  const segments = pathname.split('/');
+  let best = null;
+  let bestLiterals = -1;
+  let tied = false;
+  for (const route of routes) {
+    if (route.method !== method) continue;
+    const template = route.path.split('/');
+    if (template.length !== segments.length) continue;
+    let literals = 0;
+    let ok = true;
+    for (let i = 0; i < template.length && ok; i += 1) {
+      if (template[i].startsWith(':')) ok = segments[i] !== '';
+      else if (template[i] === segments[i]) literals += 1;
+      else ok = false;
+    }
+    if (!ok) continue;
+    if (literals > bestLiterals) {
+      best = route.id;
+      bestLiterals = literals;
+      tied = false;
+    } else if (literals === bestLiterals) {
+      tied = true;
+    }
+  }
+  if (tied) throw new Error(`matchContractRoute: 계약 경로가 모호하다(${method} ${pathname} 에 같은 우선순위 두 행).`);
+  return best;
+}
+
+// --- 편집 시나리오 판정 (phase 78 step9 — 잠금 획득 실기 왕복 · 로드맵 P5 의 첫 서버 왕복) ---
+// 드라이버가 reporter 로 기사 1건을 만들고, 클라(desk · --scenario edit)는 목록 진입(→ sse-ready) 뒤 그 행을 편집 화면으로 연다.
+// 편집 화면이 먼저 현재 페이지가 되므로 목록이 떠나고(스트림 stop → sse-closed{stopped}) 그 다음에야 기사 조회 → 잠금 → (편집 · 자동저장
+// 1회) → PUT → 해제가 나간다. 닫으면 목록 페이지로 돌아가 셸이 목록에 다시 들어간다(신원 확인 → 조회 → 스트림). 판정은 두 원장의 교차다:
+//   diag  — 앱이 신고한 순서·횟수(judgeEdit)
+//   wire  — 드라이버의 기록 프록시가 본 실제 요청: 라우트 · 상태 · x-edit-client 유무와 값(judgeEditWire) — 값은 보고에 싣지 않는다
+// 결정성: 편집 동안 목록 스트림이 닫혀 있어 lock/update/unlock 의 변경 신호가 목록을 재조회시키지 않는다. 재진입 스트림이 해제 신호를
+// 받는 경우(서버 알림이 늦게 닿는 때)만 재조회가 하나 늘 수 있어 articles-list 는 [2, 2 + sse-change] 범위로 본다(폴링은 그 밖이다).
+export const EDIT_CLIENT_ROUTES = Object.freeze(['articles-lock', 'articles-update', 'articles-unlock']);
+export const EDIT_ALLOWED_EVENTS = Object.freeze([...LIST_ALLOWED_EVENTS, 'sse-closed']);
+export const EDIT_ROUTE_COUNTS = Object.freeze({
+  login: 1, session: 2, stream: 2, 'articles-get': 1, 'articles-lock': 1, 'articles-update': 1, 'articles-unlock': 1,
+});
+export const EDIT_MIN_EVENTS = 24;
+// net::issueEditClientId (client-qt/src/net/editclientid.cpp): "c-" + 소문자 무작위(버전 4) UUID.
+const EDIT_CLIENT_ID_FORMAT = /^c-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function editRoundTrip() {
+  return [
+    ['sse-closed', (l) => l.reason === 'stopped'],
+    ['net-request', (l) => l.route === 'articles-get' && l.status === 200],
+    ['net-request', (l) => l.route === 'articles-lock' && l.status === 200],
+    ['net-request', (l) => l.route === 'articles-update' && l.status === 200],
+    ['net-request', (l) => l.route === 'articles-unlock' && l.status === 200],
+  ];
+}
+
+function reentryTail(n0) {
+  return [['net-request', (l) => l.route === 'session' && l.status === 200], ['session', (l) => l.status === 200], ...listEntryTail(n0)];
+}
+
+// 드라이버의 대기용 · 판정용 — 로그인부터 재진입 sse-ready 까지 24항목.
+export function editSequences({ origin, n0 } = {}) {
+  if (typeof origin !== 'string' || origin === '') throw new Error('editSequences: origin(클라가 접속한 주소) 이 필요하다.');
+  assertListCount(n0, 'editSequences');
+  return [[...loggedInHead(origin), ...listEntryTail(n0), ...editRoundTrip(), ...reentryTail(n0)]];
+}
+
+// 자식 종료 후의 최종 diag 로 편집 실행을 판정한다 → [{ name, ok, detail }] (항목 수 고정 9).
+export function judgeEdit({ lines, rejected, origin, routeIds, n0 } = {}) {
+  if (!Array.isArray(routeIds) || routeIds.length === 0) throw new Error('judgeEdit: 원장 판정에 쓸 knownRouteIds(routeIds) 가 없다.');
+  assertListCount(n0, 'judgeEdit');
+  const checks = [];
+  const add = (name, ok, detail = '') => checks.push({ name: `edit: ${name}`, ok, detail });
+  const events = `events=[${lines.map((l) => l.event).join(',')}]`;
+  const countOf = (name) => lines.filter((l) => l.event === name).length;
+  const requestsOf = (route) => lines.flatMap((l, i) => (l.event === 'net-request' && l.route === route ? [i] : []));
+
+  add('diag 깨진 줄 0', rejected.length === 0, rejected.length ? JSON.stringify(rejected) : '');
+  const obs = judgeObservationCount(lines, EDIT_MIN_EVENTS);
+  add(`관측 이벤트 수 ≥ ${obs.minCount}`, obs.ok, `관측 ${obs.count}`);
+
+  const seq = findSequence(lines, editSequences({ origin, n0 })[0]);
+  add(`진입 …→list-loaded{N0=${n0}}→sse-ready → sse-closed{stopped} → articles-get/lock/update/unlock 200 → 재진입 session{200}`
+    + `→articles-list→list-loaded{N0}→stream→sse-open→sse-ready`, seq.ok, seq.ok ? '' : `missing=${seq.missing} ${events}`);
+
+  // 편집 왕복은 목록을 떠난 **뒤**(스트림이 닫힌 뒤)에 시작하고 재진입 전에 끝난다 — 순서가 어긋나면 잠금 신호가 목록 재조회와 겹친다.
+  const closedAt = lines.findIndex((l) => l.event === 'sse-closed');
+  const editAt = EDIT_CLIENT_ROUTES.concat(['articles-get']).flatMap((route) => requestsOf(route));
+  const sessionAt = requestsOf('session');
+  const within = closedAt >= 0 && editAt.length > 0 && sessionAt.length >= 2
+    && Math.min(...editAt) > closedAt && Math.max(...editAt) < sessionAt[1];
+  add('편집 왕복(articles-get·lock·update·unlock)은 목록을 떠난 뒤(sse-closed) · 재진입 신원 확인 전에만', within,
+    `sse-closed@${closedAt} 편집@[${editAt.join(',')}] session@[${sessionAt.join(',')}]`);
+
+  const logins = countOf('login');
+  const sessions = countOf('session');
+  add('login 1 · session 2(진입 · 편집 뒤 재진입 — 편집기는 신원을 다시 묻지 않는다)', logins === 1 && sessions === 2,
+    `login=${logins} session=${sessions}`);
+
+  const listCalls = requestsOf('articles-list').length;
+  const loaded = countOf('list-loaded');
+  const changes = countOf('sse-change');
+  add('articles-list = list-loaded · 2 이상 2 + sse-change 이하(진입 · 재진입 + 신호 재조회만 — 폴링 없음)',
+    listCalls === loaded && listCalls >= 2 && listCalls <= 2 + changes, `articles-list=${listCalls} list-loaded=${loaded} sse-change=${changes}`);
+
+  const closed = lines.filter((l) => l.event === 'sse-closed');
+  const unauthorized = countOf('sse-unauthorized');
+  add('sse-closed 정확히 1(reason=stopped — 편집 화면이 목록을 떠나게 했다) · sse-unauthorized 0',
+    closed.length === 1 && closed[0].reason === 'stopped' && unauthorized === 0,
+    `sse-closed=${JSON.stringify(closed.map((l) => l.reason))} sse-unauthorized=${unauthorized}`);
+
+  const names = judgeEventNames(lines, EDIT_ALLOWED_EVENTS);
+  add('허용 이벤트 집합 밖 0건(세션이 끝까지 살아 있다)', names.ok,
+    names.ok ? `허용 ${EDIT_ALLOWED_EVENTS.length}종` : JSON.stringify(names.violations));
+
+  const expectedRouteIds = [...Object.keys(EDIT_ROUTE_COUNTS), 'articles-list'];
+  const ledger = judgeRouteLedger(lines, {
+    knownRouteIds: routeIds, forbiddenRouteIds: CLIENT_FORBIDDEN_ROUTE_IDS, expectedRouteIds, expectedCounts: { ...EDIT_ROUTE_COUNTS },
+  });
+  const stray = Object.keys(ledger.counts).filter((id) => !expectedRouteIds.includes(id));
+  const ledgerOk = ledger.ok && stray.length === 0;
+  add(`라우트 원장(계약 밖·금지 0 · ${Object.entries(EDIT_ROUTE_COUNTS).map(([id, n]) => `${id}=${n}`).join(' ')} · articles-list 위 범위 · 그 밖 0)`,
+    ledgerOk, `net-request ${ledger.requestCount}건 ${JSON.stringify(ledger.counts)}${ledgerOk ? '' : ` ${JSON.stringify({ failures: ledger.failures, stray })}`}`);
+  return checks;
+}
+
+// 기록 프록시의 와이어 원장을 판정한다 → [{ name, ok, detail }] (항목 수 고정 5). wire = [{ method, route(id|null), status(수|null),
+// editClient(문자열|null) }] — 도착 순서. lines = 같은 실행의 diag(교차용). **detail 에 x-edit-client 값을 싣지 않는다**(decisions (3)).
+export function judgeEditWire({ wire, lines, routeIds } = {}) {
+  if (!Array.isArray(wire)) throw new TypeError('judgeEditWire: wire 는 요청 기록 배열이어야 한다.');
+  if (!Array.isArray(routeIds) || routeIds.length === 0) throw new Error('judgeEditWire: 원장 판정에 쓸 knownRouteIds(routeIds) 가 없다.');
+  if (!Array.isArray(lines)) throw new TypeError('judgeEditWire: lines(diag) 가 배열이어야 한다.');
+  const known = new Set(routeIds);
+  const forbidden = new Set(CLIENT_FORBIDDEN_ROUTE_IDS);
+  const checks = [];
+  const add = (name, ok, detail = '') => checks.push({ name: `wire: ${name}`, ok, detail });
+
+  const unmatched = wire.filter((w) => typeof w.route !== 'string' || !known.has(w.route)).length;
+  const banned = wire.filter((w) => forbidden.has(w.route)).length;
+  add('요청 ≥ 1 · 전부 계약 라우트(경로→id 매칭 실패 0) · 금지 2 라우트 0', wire.length > 0 && unmatched === 0 && banned === 0,
+    `요청 ${wire.length} · 매칭 실패 ${unmatched} · 금지 ${banned}`);
+
+  const carries = (w) => typeof w.editClient === 'string' && w.editClient !== '';
+  const editRoute = (w) => EDIT_CLIENT_ROUTES.includes(w.route);
+  const strayCarriers = wire.filter((w) => carries(w) && !editRoute(w)).map((w) => w.route);
+  const bareEdits = wire.filter((w) => editRoute(w) && !carries(w)).map((w) => w.route);
+  add('x-edit-client 는 정확히 lock·update·unlock 요청에만(그 3 라우트는 전부 싣고 다른 요청은 하나도 싣지 않는다)',
+    strayCarriers.length === 0 && bareEdits.length === 0,
+    `실은 요청 ${wire.filter(carries).length} · 밖에 실음 ${JSON.stringify(strayCarriers)} · 빠짐 ${JSON.stringify(bareEdits)}`);
+
+  const perEdit = EDIT_CLIENT_ROUTES.map((route) => {
+    const hits = wire.filter((w) => w.route === route);
+    return { route, n: hits.length, ok: hits.length === 1 && hits[0].status === 200 };
+  });
+  add(`편집 3 라우트 각 정확히 1회 · 200(${EDIT_CLIENT_ROUTES.join('·')})`, perEdit.every((e) => e.ok),
+    perEdit.map((e) => `${e.route}=${e.n}${e.ok ? '' : '(!)'}`).join(' '));
+
+  const values = [...new Set(wire.filter(carries).map((w) => w.editClient))];
+  const formatOk = values.length === 1 && EDIT_CLIENT_ID_FORMAT.test(values[0]);
+  add('표면당 EditClientId 1개(실린 값이 모두 같고 c-<uuid v4> 형식)', formatOk, `서로 다른 값 ${values.length} · 형식 ${formatOk ? 'ok' : '불일치'}`);
+
+  const tally = (pairs) => pairs.reduce((m, [route, status]) => {
+    const key = `${route}:${status}`;
+    m[key] = (m[key] ?? 0) + 1;
+    return m;
+  }, {});
+  const diagTally = tally(lines.filter((l) => l.event === 'net-request').map((l) => [l.route, l.status]));
+  const wireTally = tally(wire.map((w) => [w.route, w.status]));
+  const keys = [...new Set([...Object.keys(diagTally), ...Object.keys(wireTally)])].sort();
+  const diffs = keys.filter((k) => diagTally[k] !== wireTally[k]).map((k) => `${k} diag=${diagTally[k] ?? 0} wire=${wireTally[k] ?? 0}`);
+  add('와이어 ↔ diag: (route, status) 다중집합이 같다(앱의 자기 신고 = 와이어 사실)', diffs.length === 0,
+    diffs.length ? diffs.join(' · ') : `${wire.length}건 일치`);
+  return checks;
+}
+
 // --- 비밀 유출 점검 — 문자열 속 비밀의 출현 수(원문 + JSON 이스케이프 형) ---
 // 결과에 비밀 자체를 담지 않는다(보고가 곧 유출이 되지 않게 — 인덱스와 횟수만). 짧은 비밀은 거짓 양성·공허 판정이라 던진다.
 export function countSecretOccurrences(text, secrets) {

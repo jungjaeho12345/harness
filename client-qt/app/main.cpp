@@ -4,6 +4,11 @@
 // loop. Every decision - boot branch, single instance, window bounds, diag events, the login
 // screen changes - lives in src/shell and src/ui, where the tests can drive it with fakes. Nothing
 // below may reach for a global.
+//
+// phase 78 (P5) step9 adds the writer: each app window gets a ui::WriterHost over the window's own
+// Model (the same transport and cookie jar the login and the list use), the draft store next to
+// config.json, and the edit scenario of the automation hook (ui/editscenario.h).
+#include "editor/editordraftstore.h"
 #include "net/httpnewsmodel.h"
 #include "net/httpproberunner.h"
 #include "net/httptransport.h"
@@ -14,14 +19,20 @@
 #include "shell/scenario.h"
 #include "shell/singleinstance.h"
 #include "shell/windowpolicy.h"
+#include "ui/editscenario.h"
+#include "ui/listcontroller.h"
+#include "ui/mainwindow.h"
+#include "ui/writerhost.h"
 
 #include <QApplication>
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QLatin1Char>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QUuid>
 
 #include <cstdio>
 #include <cstring>
@@ -69,11 +80,24 @@ int main(int argc, char **argv)
     QStringList arguments;
     for (int i = 1; i < argc; ++i)
         arguments << QString::fromLocal8Bit(argv[i]);
-    shell::ScenarioRequest scenario = shell::scenarioRequestFromEnvironment(arguments);
+    // step9: `--scenario edit` reaches the shell's guard as `--scenario list` (ui/editscenario.h) - the guard itself
+    // is unchanged and decides first; the edit's own requirement (the article) is checked only after it said yes.
+    const ui::EditScenarioArgs editArgs = ui::editScenarioArgs(arguments);
+    shell::ScenarioRequest scenario = shell::scenarioRequestFromEnvironment(editArgs.shellArguments);
     if (scenario.refused) {
         std::fprintf(stderr, "news-client: %s\n", qPrintable(scenario.refusal));
         std::fflush(stderr);
         return shell::kScenarioRefusedExitCode;
+    }
+    QString editArticle;
+    if (editArgs.requested) {
+        const QByteArray articleVar = ui::editScenarioArticleEnvVar().toLatin1();
+        editArticle = qEnvironmentVariable(articleVar.constData()).trimmed();
+        if (editArticle.isEmpty()) {
+            std::fprintf(stderr, "news-client: %s\n", qPrintable(ui::editScenarioArticleRefusal()));
+            std::fflush(stderr);
+            return shell::kScenarioRefusedExitCode;
+        }
     }
 
     // --selftest: boot exactly like CLIENT_SELFTEST=1 (windows created, nothing shown, every diag
@@ -99,16 +123,34 @@ int main(int argc, char **argv)
     // boot path calls it, and it builds no network object until it runs.
     net::HttpProbeRunner probeRunner(&diag);
 
+    // step9: the editor's drafts - a file next to config.json in the same user data folder (so a harness run on a
+    // temporary CLIENT_USER_DATA never touches the real one), and this process's draft scope (the web keeps one per
+    // browser tab; here one per process - see phases/78-editor-core/index.json step9).
+    editor::DraftFileStore drafts(editor::draftFilePath(userDataDir));
+    ui::WriterHost::Options writer;
+    writer.clock = [] { return QDateTime::currentMSecsSinceEpoch(); };
+    writer.draftScope = QStringLiteral("w-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (editArgs.requested)
+        writer.autosave = ui::editScenarioAutosave();  // the scenario's one real snapshot; the default stays off
+    shell::AppShell *shellRef = nullptr;  // set right below - the factory runs inside start()
+
     shell::AppShell::Options options;
     options.selftest = selftestArg || selftestEnvironment();
     options.workAreas = &shell::screenWorkAreas;
     // step10: each app window talks through its own HttpNewsModel. Building it sends nothing - the
     // window opens logged out (no cookie is ever read from disk: decisions (6)).
-    options.modelFactory = [&diag](const QString &origin) -> std::unique_ptr<net::INewsModel> {
-        return std::make_unique<WindowModel>(origin, &diag);
+    // step9: the window's writer over THE SAME Model - one transport, one cookie jar, one session (a second
+    // transport would hold no session: every edit request would be a 401). The window owns the host, so it goes
+    // before the Model the shell destroys after it.
+    options.modelFactory = [&diag, &drafts, &shellRef, writer](const QString &origin) -> std::unique_ptr<net::INewsModel> {
+        auto model = std::make_unique<WindowModel>(origin, &diag);
+        if (ui::MainWindow *window = shellRef ? shellRef->appWindow() : nullptr)
+            new ui::WriterHost(*model, drafts, *window, writer, window);
+        return model;
     };
 
     shell::AppShell appShell(userDataDir, guard, diag, shell::realFileSystem(), probeRunner, options);
+    shellRef = &appShell;
     if (appShell.start() == shell::AppShell::StartResult::Secondary) {
         if (selftestArg) {
             // A self-test that did not run must not report success.
@@ -138,7 +180,7 @@ int main(int argc, char **argv)
         // path to a live list). The credentials are dropped from this process's copy right after the
         // call (best effort - the environment still holds them for the life of the process; the
         // harness owns that).
-        QTimer::singleShot(0, &appShell, [&appShell, &scenario] {
+        QTimer::singleShot(0, &appShell, [&appShell, &scenario, editArticle] {
             const bool ran = appShell.runLoginScenario(scenario.userId, scenario.password);
             scenario.password.fill(QLatin1Char('\0'));
             scenario.password.clear();
@@ -147,7 +189,27 @@ int main(int argc, char **argv)
                                      "(no server address is configured)\n");
                 std::fflush(stderr);
                 QCoreApplication::exit(3);
+                return;
             }
+            if (editArticle.isEmpty())
+                return;
+            // step9 `edit`: the one editing round trip, through the list controller and the writer host only (no
+            // widget). A failure says so in a fixed sentence (never the article) and ends the process.
+            ui::MainWindow *window = appShell.appWindow();
+            ui::WriterHost *host = window ? window->findChild<ui::WriterHost *>() : nullptr;
+            ui::ListController *list = appShell.listController();
+            if (!host || !list) {
+                std::fprintf(stderr, "news-client: the edit scenario could not run - no writer\n");
+                std::fflush(stderr);
+                QCoreApplication::exit(3);
+                return;
+            }
+            auto *edit = new ui::EditScenario(*list, *host, editArticle, [](const QString &why) {
+                std::fprintf(stderr, "news-client: the edit scenario stopped - %s\n", qPrintable(why));
+                std::fflush(stderr);
+                QCoreApplication::exit(3);
+            }, host);
+            edit->start();
         });
     }
 
